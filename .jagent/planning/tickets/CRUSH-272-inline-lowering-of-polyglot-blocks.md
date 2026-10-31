@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-272 |
 | **Priority** | P1 |
-| **Status** | In review |
+| **Status** | Done — PR #274 merged 2026-10-16; the crush-lang-guide labelling box is a docs follow-up in another repo |
 | **Phase** | M6 |
 | **Assignee** | claude |
 | **Dependencies** | CRUSH-270 (explicit `->` outputs, crush-web parity), CRUSH-250 (boa lowering), CRUSH-251 (closures) |
@@ -133,3 +133,7 @@ them out of the browser:
 - CRUSH-273: `math.*` module calls pass straight through to Crush's stdlib with Crush semantics.
 - CRUSH-274: the Crush lexer can't capture some polyglot block bodies (`'` in a comment, `''`).
 - Tuples as real `Value::Tuple` in the Python walker would let lowered blocks use them.
+
+## Survey 2026-10-31 (status)
+
+PR #274 (`agent/claude/CRUSH-272`) merged 2026-10-16. Previous status: `In review`.

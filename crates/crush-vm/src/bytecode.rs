@@ -146,6 +146,8 @@ pub const CELL_NEW: u8 = 0x85;
 pub const CELL_GET: u8 = 0x86;
 /// Pop a cell, then a value; store the value in the cell.
 pub const CELL_SET: u8 = 0x87;
+/// Call a function value with arguments stored in an array (CRUSH-293 D3).
+pub const CALL_VALUE_APPLY: u8 = 0x88;
 pub const AI_QUERY: u8 = 0x90;
 pub const AI_SYNTHESIZE: u8 = 0x91;
 pub const AI_AGENT_DELEGATION: u8 = 0x92;
@@ -221,6 +223,9 @@ pub const COPY: u8 = 0xC9;
 /// running any constructor: what a struct literal builds before it writes
 /// its fields (`SET_FIELD`s follow).
 pub const NEW_RECORD: u8 = 0xCA;
+/// Push the Kind itself as a value (CRUSH-277 D8): what a class name
+/// evaluates to, the receiver of a static member access.
+pub const LOAD_KIND: u8 = 0xCB;
 
 pub const HALT: u8 = 0xFF;
 
@@ -351,8 +356,8 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         CALL => Some(OperandKind::Func),
         MAKE_CLOSURE => Some(OperandKind::Closure),
         CALL_VALUE => Some(OperandKind::Count),
-        CELL_NEW | CELL_GET | CELL_SET => Some(OperandKind::None),
-        GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | IS_KIND | NEW_RECORD => Some(OperandKind::Str),
+        CELL_NEW | CELL_GET | CELL_SET | CALL_VALUE_APPLY => Some(OperandKind::None),
+        GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | IS_KIND | NEW_RECORD | LOAD_KIND => Some(OperandKind::Str),
         CALL_MEMBER | CONSTRUCT => Some(OperandKind::Member),
         GET_SLOT | SET_SLOT => Some(OperandKind::Count),
         COPY => Some(OperandKind::None),
@@ -519,6 +524,22 @@ impl Program {
         }
         let code = blob[off..off + code_len].to_vec();
         off += code_len;
+        // Validate the code section at load (CRUSH-285 review #8): every
+        // byte must start an instruction of this format, so an unknown
+        // opcode is refused here — never discovered mid-execution,
+        // where it could desync instruction boundaries (or NOP on a
+        // backend that skips unknown bytes).
+        {
+            let mut pc = 0usize;
+            while pc < code.len() {
+                let size = instruction_size(code[pc])
+                    .ok_or(crate::Error::UnknownOpcode(code[pc], pc))?;
+                pc += size;
+            }
+            if pc != code.len() {
+                return Err(crate::Error::Truncated);
+            }
+        }
         let cosm = if version >= VERSION_KIND_TABLE {
             if off >= blob.len() {
                 return Err(crate::Error::Truncated);

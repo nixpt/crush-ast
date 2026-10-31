@@ -3,9 +3,7 @@
 # this crate exists precisely to keep a `cdylib` out of the main build graph,
 # so it should not be in that graph at all. Excluding it also means a plain
 # `cargo test --workspace` never builds pyo3, which needs a libpython the
-# runner may not have (and which currently cannot build on a Python 3.14 box
-# at all — pyo3 0.23's max supported is 3.13; pre-existing, see
-# .jagent/planning/TASKS.md).
+# runner may not have.
 #
 # An empty [workspace] table (not just the `exclude` on the crush-ast side) is
 # needed to stop Cargo's ancestor search here — otherwise it walks further up
@@ -45,8 +43,14 @@ crate-type = ["cdylib"]
 # Plain-lib dependency: crush-vm is `crate-type = ["lib"]` and must stay so.
 # `no-default-features` mirrors what crush-vm/pyproject.toml used to pass —
 # the wheel never wanted ort/libloading/crush-ffi.
-crush-vm = { path = "../crush-vm", version = "0.6.0", default-features = false }
-pyo3 = { version = "0.23" }
+crush-vm = { path = "../crush-vm", version = "0.8.0", default-features = false }
+# `abi3` + `abi3-py311` (the same pair crush-python uses) build the wheel
+# against the stable ABI, so one wheel serves every interpreter from 3.11 up
+# and pyo3 stops gating the build on its own maximum-supported version.
+# Without it, pyo3 0.23 refuses to build on a Python 3.14 interpreter
+# ("configured Python interpreter version (3.14) is newer than PyO3's maximum
+# supported version (3.13)") — see .jagent/planning/archive/TASKS-2026-10-14.md.
+pyo3 = { version = "0.23", features = ["abi3", "abi3-py311"] }
 
 [features]
 # NOTE: `extension-module` is intentionally NOT in default — same rationale

@@ -47,6 +47,15 @@ pub struct Program {
     /// Set for each type listed in `manifest.exhaustive_types`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exhaustive_sites: Vec<manifest::ExhaustiveMatchSite>,
+    /// COSM declarations a walker lowered alongside the code (CRUSH-277):
+    /// the object-side sibling of `functions`, merged by crush-frontend
+    /// with anything it derives itself and carried into
+    /// `casm::Program::cosm`. `None` for a program that declares no kinds,
+    /// and for CAST written before the field existed (it is omitted when
+    /// `None`, so such a program serializes exactly as before).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(skip))]
+    pub cosm: Option<crush_cosm::CosmModule>,
     /// Work-in-progress node, if a `@wip { ... }` block was declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wip: Option<manifest::WipNode>,
@@ -348,6 +357,16 @@ pub enum Expression {
         args: Vec<Expression>,
         meta: HashMap<String, serde_json::Value>,
     },
+    /// A method call on a computed receiver (`new P(4).get2()`,
+    /// `f().m(x)`): the member is resolved on the receiver's Kind at
+    /// run time (`call_member`). CRUSH-277 S5.
+    MethodCall {
+        target: Box<Expression>,
+        method: String,
+        args: Vec<Expression>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
     VectorMath {
         operator: String,
         args: Vec<Expression>,
@@ -377,6 +396,17 @@ pub enum Expression {
     },
     NewStruct {
         name: String,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
+    /// Construct an instance of the COSM Kind `kind` with `args`
+    /// (CRUSH-277 D3): JS `new C(…)` — distinct from `Call`, which a
+    /// class must refuse (a class called without `new` is an error, so
+    /// the two are never interchangeable). The compiler emits the CASM
+    /// `construct` op; the Kind's `construct` strategy decides what runs.
+    Construct {
+        kind: String,
+        args: Vec<Expression>,
         #[serde(default)]
         meta: HashMap<String, serde_json::Value>,
     },

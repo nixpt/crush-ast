@@ -846,7 +846,7 @@ pub fn lower_bytecode_program(
                 sealed_new(program.kind_table(), kind, &mut symbols).unwrap_or(FastInstr::simple(FastOp::NewObj))
             }
             GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | CALL_MEMBER | CONSTRUCT | GET_SLOT
-            | SET_SLOT | IS_KIND | COPY => {
+            | SET_SLOT | IS_KIND | COPY | LOAD_KIND => {
                 return Err(LowerError::UnknownOpcode(format!(
                     "bytecode 0x{opcode:02X} at offset {pc}: COSM member ops need Kinds, \
                      which FastVM and the JIT don't implement (they run on the scheduler VM and the portable VM)"
@@ -989,6 +989,16 @@ fn lower_instruction(
                 func_start,
             );
         }
+
+        "make_closure" => Err(LowerError::UnknownOpcode(
+            "make_closure: function values aren't supported on FastVM or the JIT yet (CRUSH-251)".into(),
+        )),
+        "call_value" => Err(LowerError::UnknownOpcode(
+            "call_value: function values aren't supported on FastVM or the JIT yet (CRUSH-251)".into(),
+        )),
+        "call_value_apply" => Err(LowerError::UnknownOpcode(
+            "call_value_apply: dynamic array-splat calls aren't supported on FastVM or the JIT yet (CRUSH-293 D3)".into(),
+        )),
 
         "call" => {
             let name = instr

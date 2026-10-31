@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-180 |
 | **Priority** | P0 |
-| **Status** | Done (pending merge) |
+| **Status** | Done — PR #172 merged 2026-10-14 |
 | **Phase** | M7 |
 | **Assignee** | gorkhali |
 | **Dependencies** | none |
@@ -121,3 +121,7 @@ The existing sandbox tests pass unchanged:
 `sandbox_follows_symlinks_for_new_files`, and the `text_tools` tests.
 
 CRUSH-183 (`stack underflow` after `fs.write`) did not reproduce on this base.
+
+## Survey 2026-10-31 (status)
+
+PR #172 (`agent/gorkhali/CRUSH-180`) merged 2026-10-14. Previous status: `Done (pending merge)`.

@@ -1,6 +1,6 @@
 # CRUSHSDK-1: crush-lang-sdk P0 — `--all-features` Value::Bool deref-fix in db + stdlib
 
-**Status**: open
+**Status**: Done — fixed by `02aa482` ("Fix --all-features build…", via `agent/buffy/CRUSHSDK-1` → `feat/p2-walkers-maturation`); CI's blocking `Feature gates` job runs `--all-features`
 **Branch**: `agent/buffy/CRUSHSDK-1` — created off `ac1ca0f` (= PR #4's tip /
 `agent/buffy/CRUSHVM-1-PORTABLE-PARITY`'s head, merged / open via PR #4).
 **Priority**: high (the only 🔴 P0 left in `TASKS.md` after CRUSHVM-1
@@ -257,3 +257,7 @@ more shows up, fix them in the same commit.
 - Once CRUSHSDK-1 is closed, the only remaining 🔴 P0 in TASKS.md
   (if any) gets a fresh audit. Run `grep -n '^## 🔴' TASKS.md` to
   enumerate after this lands.
+
+## Survey 2026-10-31 (status)
+
+`02aa482` is on origin/main and touches `crates/crush-lang-sdk/src/db.rs` (the `Value::Bool` arm now derefs: `if *b`). `.github/workflows/ci.yml` runs a blocking `feature-gates` matrix with `--all-features`. PR #16 was closed; the branch was merged via `57802bf`. Previous status: `open`.

@@ -111,6 +111,11 @@ rewrite_internal_reqs() {
             line=$0
             if (line ~ /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*=[[:space:]]*\{/ && line ~ /path[[:space:]]*=/ && line ~ /version[[:space:]]*=[[:space:]]*"[^"]*"/) {
               name=line; sub(/^[[:space:]]*/,"",name); sub(/[[:space:]]*=.*/,"",name)
+              # A renamed dependency (`alias = { package = "member", ... }`) is keyed by its alias;
+              # match on the package name instead (v0.7.0 missed crush-walker-core-no-tree-sitter).
+              if (match(line, /package[[:space:]]*=[[:space:]]*"[^"]*"/)) {
+                pkg=substr(line, RSTART, RLENGTH); sub(/^package[[:space:]]*=[[:space:]]*"/,"",pkg); sub(/"$/,"",pkg); name=pkg
+              }
               if (name in want) sub(/version[[:space:]]*=[[:space:]]*"[^"]*"/, "version = \"" nextver "\"", line)
             }
             print line
@@ -181,6 +186,24 @@ fi
 
 write_version "$NEXT"
 rewrite_internal_reqs "$NEXT"
+# Guard: no workspace-member dependency may still require the old version — it would fail `cargo package` at
+# publish time, after the tag already exists (v0.7.0: an aliased `package = "crush-walker-core"` entry was missed).
+# Same matching as rewrite_internal_reqs (key, or `package = "..."` for a renamed dep); fail before tagging.
+stale="$(find . -name Cargo.toml -not -path '*/target/*' -not -path './.git/*' -not -path './.jagent/*' -not -path '*/node_modules/*' \
+  | while IFS= read -r f; do
+      awk -v cur="$CUR" -v members="$(workspace_member_names)" -v f="$f" '
+        BEGIN { n=split(members, m, "\n"); for (i=1;i<=n;i++) if (m[i]!="") want[m[i]]=1 }
+        /path[[:space:]]*=/ && $0 ~ ("version[[:space:]]*=[[:space:]]*\"" cur "\"") {
+          name=$0; sub(/^[[:space:]]*/,"",name); sub(/[[:space:]]*=.*/,"",name)
+          if (match($0, /package[[:space:]]*=[[:space:]]*"[^"]*"/)) { pkg=substr($0,RSTART,RLENGTH); sub(/^package[[:space:]]*=[[:space:]]*"/,"",pkg); sub(/"$/,"",pkg); name=pkg }
+          if (name in want) print f ":" FNR ": " $0
+        }' "$f"
+    done)"
+if [ -n "$stale" ]; then
+  log "workspace-member dependencies still require $CUR after the rewrite — refusing to tag v$NEXT:"
+  printf '%s\n' "$stale" >&2
+  exit 1
+fi
 
 if [ -f Cargo.toml ] && command -v cargo >/dev/null 2>&1; then
   log "refreshing Cargo.lock (cargo update --workspace)…"
@@ -302,25 +325,26 @@ if git remote get-url origin >/dev/null 2>&1; then
   git push origin "v${NEXT}"
   log "pushed ${MAIN_BRANCH} + v${NEXT} to origin"
   # A pushed tag is not a GitHub Release — the Releases page / `gh release
-  # list` only shows actual Release objects. Pre-1.0, stay tag-only on
-  # purpose (captain: "cut a release once it hits 1.0, don't need release
-  # for every tag, but tag is important" — matches checkstand's own state:
-  # 13 tags, zero Releases, by design). Once a repo crosses 1.0, every bump
-  # gets a real Release. Non-fatal: a missing `gh` or an already-existing
-  # release (re-run, race) must not fail the bump — the tag+push already
-  # succeeded and is the source of truth either way.
-  if [ "$MA" -ge 1 ] 2>/dev/null; then
-    if command -v gh >/dev/null 2>&1; then
-      if gh release create "v${NEXT}" --title "v${NEXT}" --generate-notes --target "${MAIN_BRANCH}"; then
-        log "created GitHub Release v${NEXT}"
-      else
-        log "gh release create failed (non-fatal) — tag+push already succeeded"
-      fi
+  # list` only shows actual Release objects. Policy (captain, 2026-10-31,
+  # CRUSH-342; supersedes the earlier "pre-1.0 stay tag-only, cut a release at
+  # 1.0" rule): every tag gets a GitHub Release. Pre-1.0 it is marked
+  # PRE-RELEASE and not "latest" (`--prerelease --latest=false`); from 1.0 it
+  # is a normal release. release.yml then dispatches artifacts.yml, which
+  # builds the tag's binaries + crush-web pkg and attaches them to this
+  # Release (creating it first if this step did not). Non-fatal: a missing
+  # `gh` or an already-existing release (re-run, race) must not fail the
+  # bump — the tag+push already succeeded and is the source of truth.
+  if command -v gh >/dev/null 2>&1; then
+    rel_flags="--prerelease --latest=false"
+    if [ "$MA" -ge 1 ] 2>/dev/null; then rel_flags=""; fi
+    # shellcheck disable=SC2086 # rel_flags is a deliberate word-split flag list
+    if gh release create "v${NEXT}" --title "v${NEXT}" --generate-notes --verify-tag ${rel_flags}; then
+      log "created GitHub Release v${NEXT} ${rel_flags:-(normal release, >= 1.0)}"
     else
-      log "gh CLI not available — tag pushed, no GitHub Release object created"
+      log "gh release create failed (non-fatal) — tag+push already succeeded"
     fi
   else
-    log "v${NEXT} is pre-1.0 — tag only, no GitHub Release (cut one by hand once this repo hits 1.0)"
+    log "gh CLI not available — tag pushed, no GitHub Release object created"
   fi
 else
   log "no 'origin' remote — commit+tag are local only."

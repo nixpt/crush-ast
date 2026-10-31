@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # dispatch release-artifacts.yml for the new tag (CRUSH-342)
 
 jobs:
   bump:
@@ -39,3 +40,17 @@ jobs:
           BUMPVER_GIT_EMAIL: release@crush-ast.local
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # so `gh release create` inside the script authenticates
         run: ./scripts/bump-version.sh
+      # Prebuilt artifacts for the tag just pushed (CRUSH-342). A tag pushed with
+      # GITHUB_TOKEN starts no `on: push: tags` workflow, but workflow_dispatch
+      # from GITHUB_TOKEN is allowed, so start it explicitly. Only when HEAD is
+      # actually tagged (the script exits early with nothing to release).
+      - name: dispatch release-artifacts for the new tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if tag=$(git describe --tags --exact-match HEAD 2>/dev/null) && [[ "$tag" == v* ]]; then
+            gh workflow run artifacts.yml --ref main -f tag="$tag"
+            echo "dispatched release-artifacts for $tag"
+          else
+            echo "HEAD is not a release tag — nothing to build"
+          fi

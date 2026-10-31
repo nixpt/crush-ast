@@ -123,10 +123,22 @@ pub(crate) const OP_MAP_KEYS: i64 = 41;
 /// A checked local load found its slot unassigned (arg = slot index): set
 /// [`ERR_UNINIT`] with the VMs' message (CRUSH-zorro-55).
 pub(crate) const OP_UNINIT_LOAD: i64 = 42;
+/// Structural `==` / `!=` (arg = 0 for `==`, 1 for `!=`). Pops two values and
+/// pushes a bool, using the canonical equality shared with FastVM
+/// (`crush_vm::value::runtime_value_eq`) so strings/arrays/maps compare by
+/// value, not arena identity (CRUSH-215).
+pub(crate) const OP_CMP_EQUAL: i64 = 43;
 
 /// `ctx.error` for a load of an unassigned local; the message is in
 /// [`take_error_message`] (CRUSH-zorro-55).
 pub(crate) const ERR_UNINIT: i32 = 6;
+/// `ctx.error` for integer or float division/remainder by zero (CRUSH-213).
+/// The JIT must check the divisor itself: `sdiv`/`srem` trap in the hardware
+/// (SIGILL/SIGFPE), and `fdiv` by zero would silently yield `inf`.
+pub(crate) const ERR_DIV_ZERO: i32 = 7;
+/// `ctx.error` for an arithmetic overflow, e.g. the 48-bit int payload check
+/// on `i64::MIN / -1`'s analog (CRUSH-213).
+pub(crate) const ERR_ARITH_OVERFLOW: i32 = 8;
 
 /// Default no-op helper (used when no helper is registered).
 unsafe extern "C" fn jit_helper_noop(_ctx: *mut JitContext, _opcode: i64, _arg: i64) {}
@@ -145,6 +157,25 @@ fn jit_to_rtv(v: JitValue) -> RuntimeValue {
         RuntimeValue::Ref(idx)
     } else {
         RuntimeValue::Null
+    }
+}
+
+/// Equality of two JIT immediates without arena access (int, float, bool,
+/// null). Refs fall back to raw-bit identity. Only used by `OP_CMP_EQUAL`
+/// when no arena is present (which should not happen during a run).
+fn jit_immediate_eq(a: JitValue, b: JitValue) -> bool {
+    if let (Some(x), Some(y)) = (a.to_int(), b.to_int()) {
+        x == y
+    } else if let (Some(x), Some(y)) = (a.to_float(), b.to_float()) {
+        x == y
+    } else if let (Some(x), Some(y)) = (a.to_int(), b.to_float()) {
+        x as f64 == y
+    } else if let (Some(x), Some(y)) = (a.to_float(), b.to_int()) {
+        x == y as f64
+    } else if let (Some(x), Some(y)) = (a.to_bool(), b.to_bool()) {
+        x == y
+    } else {
+        a.is_null() && b.is_null()
     }
 }
 
@@ -1271,6 +1302,29 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 ctx.error = 1;
                 ctx.push(JitValue::null());
             }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // OP_CMP_EQUAL (43): structural `==` / `!=` (arg 0 = `==`, 1 = `!=`).
+        // Delegates to the canonical equality shared with FastVM
+        // (`crush_vm::value::runtime_value_eq`), so strings, arrays and maps
+        // compare by value rather than by arena identity, and `!=` is the
+        // exact negation of `==` for every kind (CRUSH-215).
+        // ════════════════════════════════════════════════════════════════════
+        OP_CMP_EQUAL => {
+            let b_val = ctx.pop().unwrap_or(JitValue::null());
+            let a_val = ctx.pop().unwrap_or(JitValue::null());
+            let eq = match arena_ref(ctx.arena) {
+                Some(arena) => {
+                    let a = jit_to_rtv(a_val);
+                    let b = jit_to_rtv(b_val);
+                    crush_vm::value::runtime_value_eq(&a, &b, arena)
+                }
+                // No arena (should not happen during a run): compare the
+                // immediate kinds only; refs fall back to identity.
+                None => jit_immediate_eq(a_val, b_val),
+            };
+            ctx.push(JitValue::bool(if arg == 0 { eq } else { !eq }));
         }
 
         // ════════════════════════════════════════════════════════════════════

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-257 |
 | **Priority** | P1 — the largest single lever on AOT compute speed |
-| **Status** | Backlog |
+| **Status** | In Progress — sound inference + typed locals landed in PR #165 (2026-10-12); the 1.5x-of-Node benchmark criterion is not met (no speed change; needs CRUSH-258) |
 | **Phase** | M2 |
 | **Assignee** | unassigned |
 | **Dependencies** | none (CRUSH-260 for JS number semantics) |
@@ -36,3 +36,7 @@ dispatch. Measured (CRUSH-261, Node v26.11.1): the 20M-iteration loop takes 747 
 - [ ] `examples_parity` (incl. `CRUSH_GC_STRESS=1`) and the differential harness stay green; a test pins that a
       local assigned an array somewhere stays `Value`.
 - [ ] CRUSH-261 benchmark: loop/fib/sieve on AOT-C within 1.5x of Node or better (report before/after).
+
+## Survey 2026-10-31 (status)
+
+PR #165 implements criteria 1–3. Its own table reports no speed change (fib 63→62 ms, loop 990→978 ms), so the benchmark criterion is not met. Previous status: `Backlog`.

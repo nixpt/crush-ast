@@ -43,6 +43,11 @@ pub extern "C" fn crush_vm_init() -> i32 {
 /// a CASM JSON program.
 ///
 /// Returns 0 on success, -1 on parse error, -2 on execution error.
+///
+/// # Safety
+///
+/// `casm_json` must point to a null-terminated C string that stays valid for
+/// the duration of the call, or be null (which is rejected with `-1`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn crush_vm_run_casm(casm_json: *const c_char) -> i32 {
     if casm_json.is_null() {
@@ -70,23 +75,72 @@ pub unsafe extern "C" fn crush_vm_run_casm(casm_json: *const c_char) -> i32 {
         }
     };
 
-    match crush_vm::vm::run_fastvm(&program) {
-        Ok(yield_state) => {
+    match run_casm_program(&program) {
+        Ok(rendered) => {
             let mut state = VM_STATE.lock().unwrap();
-            state.output.push(format!("{:?}", yield_state));
+            state.last_error = None;
+            state.output.push(rendered);
             0
         }
-        Err(e) => {
+        Err(msg) => {
             let mut state = VM_STATE.lock().unwrap();
-            state.last_error = Some(format!("VM execution error: {:?}", e));
+            state.last_error = Some(msg);
             -2
         }
+    }
+}
+
+/// A stdout `io.print` capability for the C API (the bare FastVM has none), so
+/// `cap_call io.print` in an embedded program actually prints.
+#[derive(Debug)]
+struct StdoutPrintCap;
+
+impl crush_vm::fastvm::Capability for StdoutPrintCap {
+    fn name(&self) -> &str {
+        "io.print"
+    }
+    fn call(
+        &self,
+        arena: &mut crush_vm::memory::Arena,
+        args: Vec<crush_vm::value::RuntimeValue>,
+        _hal: std::sync::Arc<dyn crush_vm::fastvm::Hal>,
+    ) -> anyhow::Result<crush_vm::value::RuntimeValue> {
+        let parts: Vec<String> = args
+            .iter()
+            .map(|v| crush_vm::io_print::runtime_value_to_text(v, arena))
+            .collect();
+        print!("{}", crush_vm::io_print::format_io_print_line(&parts));
+        Ok(crush_vm::value::RuntimeValue::Null)
+    }
+}
+
+/// Run `program` on the FastVM with an `io.print` capability, returning the
+/// finished value's text.
+///
+/// Only a run that *finished* is success. A runtime error, an exhausted budget,
+/// or a host request the C API cannot service is an error (CRUSH-205) — before,
+/// any `Ok(..)` was reported as success, so a program that raised a runtime
+/// error returned 0 and `last_error` stayed null.
+fn run_casm_program(program: &casm::Program) -> Result<String, String> {
+    use crush_vm::fastvm::{Capability, FastYield};
+    let caps: Vec<std::sync::Arc<dyn Capability>> = vec![std::sync::Arc::new(StdoutPrintCap)];
+    match crush_vm::vm::run_fastvm_with_caps(program, caps) {
+        Ok(FastYield::Finished(v)) => Ok(format!("{v:?}")),
+        Ok(FastYield::Value(v)) => Ok(format!("{v:?}")),
+        Ok(FastYield::Error(e)) => Err(format!("VM execution error: {e:?}")),
+        Ok(other) => Err(format!("VM did not complete: {other:?}")),
+        Err(e) => Err(format!("VM execution error: {e:?}")),
     }
 }
 
 /// Assemble a CASM text source (`.casm` text format) and execute it.
 ///
 /// Returns 0 on success, -1 on assembly error, -2 on execution error.
+///
+/// # Safety
+///
+/// `asm_source` must point to a null-terminated C string that stays valid for
+/// the duration of the call, or be null (which is rejected with `-1`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn crush_vm_run_asm(asm_source: *const c_char) -> i32 {
     if asm_source.is_null() {
@@ -119,6 +173,7 @@ pub unsafe extern "C" fn crush_vm_run_asm(asm_source: *const c_char) -> i32 {
     match crush_vm::vm::run(&program, &quotas) {
         Ok(result) => {
             let mut state = VM_STATE.lock().unwrap();
+            state.last_error = None;
             state.output.push(format!("{:?}", result));
             0
         }

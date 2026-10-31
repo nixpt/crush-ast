@@ -1,6 +1,6 @@
 # CRUSH-121: a kitchen-shaped garbage collector for `crush-vm` (and fix the root set first)
 
-**Status**: open — captured 2026-09-24 (captain), from the [main] foreman's
+**Status**: Backlog — captured 2026-09-24 (captain), from the [main] foreman's
 nanovm review
 **Priority**: high for step 1 (a suspected soundness bug); medium for the rest
 **Home**: `crates/crush-vm/src/memory.rs` + `fastvm` — the absorbing home for
@@ -64,3 +64,7 @@ Same shape as Antarikshya's kernel reclaim (every reaped task reports
   `ai_optimizer` twin (`VmOptimizer`, "predictive GC") is crush-vm's
   `ai_optimizer`. Both retire with exosphere once this lands.
 - CRUSH-122 (stdlib convergence) — the other crush-ast gap from the same review.
+
+## Survey 2026-10-31 (status)
+
+No GC / root-set commit on main since 2026-09-24 (`git log --since=2026-09-24` grep for gc/garbage/root set: only CRUSH-256 planning). Previous status: `open — captured 2026-09-24 (captain), from the [main] foreman's`.

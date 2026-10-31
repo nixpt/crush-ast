@@ -42,7 +42,12 @@ flags, all of it pure computation that never leaves the VM:
 - `caison.parse`.
 
 Nothing that reaches outside the VM (`fs`, `time`, `env`, `process`, `net`)
-is registered; calling one is a runtime error.
+is registered unless the page grants it (the `grants` option); calling an
+ungranted one is refused before the program runs. A page can grant `time` (the
+browser's clock), `env` (empty, as under `env -i`) and `fs`: the `fs.*` and
+`text.*` file caps over an empty in-memory directory of the run's own, with
+the same results and error messages as `crush-run --fs` in an empty
+`--fs-root`. `process`, `net` and `polyglot.bash` are never grantable.
 
 The standard library roughly doubles the module (about 0.5 MB to 0.95 MB
 gzipped after `wasm-bindgen`, mostly `regex`). A page that doesn't need it can
@@ -100,15 +105,45 @@ execute_with(source, { grants: ["polyglot.javascript"] });
   passes as environment variables. The marshaling prologue reads them as
   `process.env[name]`, so the sandbox must provide a `process.env` object.
 - **Typed values in and out** need the `polyglot-javascript` cargo feature
-  (free-variable analysis + guest rewrite via swc; ~1.2 MB more raw `.wasm`).
-  Without it a granted block still runs, but sees no Crush variables and its
-  result is its printed text.
+  (free-variable analysis + guest rewrite via `boa_parser`; about 1.2 MB more raw
+  `.wasm`, 0.4 MB gzipped). It does not link swc, which only lowers whole `.js`
+  files (the SDK's `polyglot-javascript-swc`). Without it a granted block still
+  runs, but sees no Crush variables and its result is its printed text.
 - Python works through the same hook (e.g. Pyodide in a Worker). Its typed
   marshaling needs the `polyglot-python` cargo feature (rustpython's parser,
-  pure Rust). Without it a variable *assigned* inside `@python` and used after
+  pure Rust; about 1.8 MB more raw `.wasm`, 0.66 MB gzipped, on top of
+  `polyglot-javascript`). Without it a variable *assigned* inside `@python` and used after
   it with no `->` declaring it (`@python { result = base ** 3 }` then
   `print(result)`) is a compile error here (`Undefined variable: result`),
   while native — which has the marshaling — prints `125`.
+
+### Blocks that run asynchronously (`deferLang`)
+
+The executor above is called synchronously, inside the VM's step, so a block
+can't wait for anything: no promises, `await` or timers. A `Session` created
+with `deferLang: true` hands each granted block to the page instead. The run
+pauses, the page runs the block however long that takes, and then continues
+the run:
+
+```js
+const s = new Session(source, { grants: ["polyglot.javascript"], deferLang: true });
+let r = s.run();
+while (r.status === "need_lang" || r.status === "need_input") {
+  if (r.status === "need_lang") {
+    const { lang, code, env } = r.lang;            // env: inputs as JSON text, by name
+    try { r = s.provide_lang(await runAsync(lang, code, env)); }  // everything it printed
+    catch (e) { r = s.fail_lang(String(e.message)); }              // what it would print on stderr
+  } else {
+    r = s.provide(await nextLine());
+  }
+}
+```
+
+`provide_lang` gives the block's output exactly as an executor returns it,
+with the result-sentinel line its marshaling prints, so outputs, `->` values
+and errors are the same as with `set_lang_executor`. The grant is checked
+before the pause, and an ungranted block is refused before anything runs.
+`execute_with` can't pause, so it reports an error for a deferred block.
 
 ### Lowered polyglot blocks (no interpreter)
 
@@ -134,6 +169,12 @@ and no `set_lang_executor`.
   be an output).
 - **The default is `"exec"`.** Native `crush-run` always runs blocks in an
   interpreter.
+- **Output and failure work as with an interpreter**
+  ([#312](https://github.com/nixpt/crush-ast/issues/312)). A block's output is
+  trimmed, so `print("one")`, `@python { print("two") }`, `print("three")` prints
+  `one` / `twothree` in both modes. A block that raises fails the program with the
+  same error (`@python block raised a runtime error: (at .crush line N) ValueError:
+  x`), even inside a Crush `try`, and what it printed before raising is dropped.
 
 ## What this is not (yet)
 
@@ -154,6 +195,22 @@ and no `set_lang_executor`.
 ```bash
 wasm-pack build --target web
 ```
+
+Or with cargo and `wasm-bindgen-cli` (at the version in `Cargo.lock`), which is
+how the size figures above were measured:
+
+```bash
+cargo build --release --target wasm32-unknown-unknown --features polyglot-javascript
+wasm-bindgen --target web --remove-name-section --out-dir pkg \
+    target/wasm32-unknown-unknown/release/crush_web.wasm
+```
+
+This crate is its own workspace root, so its `[profile.release]` (size-tuned:
+`opt-level = "s"`, LTO, one codegen unit) applies to both. The profile strips
+only debug info; `--remove-name-section` drops the ~1.3 MB `name` section. A full
+symbol strip would also remove `target_features`, and wasm-bindgen would then
+fall back from externref to its older glue. With `polyglot-javascript` this gives
+a 5.0 MB `.wasm`, 1.5 MB gzipped.
 
 ## Testing
 

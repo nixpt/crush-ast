@@ -8,7 +8,7 @@ project: {
   lifecycle: "active" @verified { at: "2026-10-14", by: "mile-seed" }
   home: "main"
   ticket_prefix: "CRUSH"
-  summary: "the Crush language toolchain (CAST, CVM/FastVM/JIT/AOT, polyglot walkers); v0.5.0 released and on crates.io 2026-10-12; M0 done, M1/M2/M5 and the publish lane still open in parallel, walker and stdlib work landing under the test-drive sweep"
+  summary: "the Crush language toolchain (CAST, CVM/FastVM/JIT/AOT, polyglot walkers); v0.8.0 tagged 2026-10-30 (e142a5c) and on crates.io; M0 and M1 done, M2/M5 and the publish lane still open in parallel, walker and stdlib work landing under the test-drive sweep"
   north_star: "write in your language, ship at C speed: AI-native, polyglot, capability-sandboxed"
   stewards: ["foreman"]
   stale_after_days: 14
@@ -81,7 +81,7 @@ milestones: [
       { claim: "crush-aot on crates.io (unblocks crush-aotc)", check: { kind: "published", registry: "crates.io", name: "crush-aot" } },
       "every crate uses version.workspace; walker-core published; the squatted 'walker' package renamed crush-walker",
     ]
-    notes: "v0.5.0 (2026-10-12): crush-vm, crush-frontend, crush-lang-sdk, crush-pkg, crush-lang-python/js are on crates.io at 0.5.0; walker-core, crush-walker and crush-aot are not"
+    notes: "checked 2026-10-31 against the crates.io API: crush-vm, crush-frontend, crush-lang-sdk, crush-pkg, crush-lang-python, crush-lang-js, crush-walker-core are at 0.8.0 (2026-10-30); crush-aot, walker-core and crush-walker do not exist on crates.io. CRUSH-104 (version.workspace sweep, walker-core publish lane) is Done (PR #90)."
   },
   {
     id: "M5"
@@ -93,19 +93,19 @@ milestones: [
       { claim: "all M5 tickets closed", check: { kind: "tickets", status: "Done" } },
       "annotations are CAST nodes, crush-index is live, AI opcodes execute",
     ]
-    notes: "ticket files: CRUSH-27/28/29/32 Done, CRUSH-31/33/34 Superseded, CRUSH-30 Backlog (needs a scope ruling). TASKS.md calls 31/33 done and 34 in progress. The VM-side AI opcode contract (CRUSH-1) is the main gap."
+    notes: "ticket files (2026-10-31 survey): CRUSH-27/28/29/31/32/33 Done (31/33/34 each also have an older superseded spec file under the same ID); CRUSH-30 Done by scope ruling 2026-10-16, residue CRUSH-30a; CRUSH-34 In Progress (Commits 2-3 open). CRUSH-1 is Done via CRUSH-32; the remaining silent-NOP AI statements are CRUSH-265."
   },
   {
     id: "M6"
     title: "walker parity & multi-language completeness"
     status: "planned" @verified { at: "2026-10-14", by: "mile-seed" }
-    tickets: ["CRUSH-21", "CRUSH-35", "CRUSH-36", "CRUSH-37", "CRUSH-38", "CRUSH-39"]
+    tickets: ["CRUSH-21", "CRUSH-35", "CRUSH-36", "CRUSH-37", "CRUSH-38", "CRUSH-103"]
     depends_on: ["M5"]
     done_when: [
       "the remaining walker-lowering gaps from VISION.md are closed",
       "the Frontend / LanguageAdapter trait families are unified",
     ]
-    notes: "ROADMAP/TASKS: Proposed. Walker fixes landed 2026-10-12 under the test-drive sweep tickets (CRUSH-197 rust, CRUSH-200 python, CRUSH-201 C, CRUSH-260 JS), not under M6's own tickets."
+    notes: "ROADMAP/TASKS: Proposed. Walker fixes landed 2026-10-12 under the test-drive sweep tickets (CRUSH-197 rust, CRUSH-201 C done; CRUSH-200 python, CRUSH-260 JS in progress), not under M6's own tickets. CRUSH-39 is a burned ID; its walker->AOT scope is CRUSH-103. 2026-10-31: CRUSH-36/37 In Progress, 21/35/38/103 Backlog."
   },
   {
     id: "M9"

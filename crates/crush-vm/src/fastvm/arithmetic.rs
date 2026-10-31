@@ -111,11 +111,15 @@ pub fn div_rtv(a: &RuntimeValue, b: &RuntimeValue) -> Result<RuntimeValue, FastE
         }
         Ok(RuntimeValue::Float(to_f64(a) / bf))
     } else {
+        let ai = to_i64(a);
         let bi = to_i64(b);
         if bi == 0 {
             return Err(FastError::DivisionByZero);
         }
-        Ok(RuntimeValue::Int(to_i64(a) / bi))
+        // `i64::MIN / -1` overflows; report it like the interpreter (CRUSH-213).
+        ai.checked_div(bi)
+            .map(RuntimeValue::Int)
+            .ok_or(FastError::ArithmeticOverflow)
     }
 }
 
@@ -128,11 +132,15 @@ pub fn mod_rtv(a: &RuntimeValue, b: &RuntimeValue) -> Result<RuntimeValue, FastE
         }
         Ok(RuntimeValue::Float(to_f64(a) % bf))
     } else {
+        let ai = to_i64(a);
         let bi = to_i64(b);
         if bi == 0 {
             return Err(FastError::DivisionByZero);
         }
-        Ok(RuntimeValue::Int(to_i64(a) % bi))
+        // `i64::MIN % -1` overflows, as on the AOT backends (CRUSH-213).
+        ai.checked_rem(bi)
+            .map(RuntimeValue::Int)
+            .ok_or(FastError::ArithmeticOverflow)
     }
 }
 

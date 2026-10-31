@@ -1,0 +1,73 @@
+# Todo list — an input, an Add button, and a Remove button per item.
+#
+#   crush-gui run examples/gui/todo.crush --ui
+#
+# `input` events only record what is typed: re-rendering on every keystroke
+# would replace the <input> and lose its focus. The page is redrawn when an
+# item is added or removed.
+
+fn row(i, text) {
+    return "<li>" + ui.escape(text) + " " + ui.button("rm-" + i, "Remove", "ghost") + "</li>";
+}
+
+fn page(items, draft) {
+    let list = "";
+    let i = 0;
+    for text in items {
+        list = list + row(i, text);
+        i = i + 1;
+    }
+    if len(items) == 0 {
+        list = "<li id=\"empty\">Nothing to do.</li>";
+    }
+    let html = "<h1>Todo</h1>";
+    html = html + ui.input("draft", draft, "What needs doing?");
+    html = html + ui.button("add", "Add", "accent");
+    html = html + "<ul id=\"items\">" + list + "</ul>";
+    html = html + "<p id=\"summary\">" + len(items) + " item(s)</p>";
+    return html;
+}
+
+fn without(items, index) {
+    let kept = [];
+    let i = 0;
+    for text in items {
+        if i != index { kept.push(text); }
+        i = i + 1;
+    }
+    return kept;
+}
+
+ui.title("Todo");
+let items = [];
+let draft = "";
+ui.render(page(items, draft));
+
+while true {
+    let ev = ui.next_event();
+    if ev.kind == "close" { break; }
+
+    if ev.kind == "input" {
+        if ev.id == "draft" { draft = ev.value; }
+    }
+
+    let add = false;
+    if ev.kind == "click" {
+        if ev.id == "add" { add = true; }
+    }
+    if ev.kind == "submit" { add = true; }
+    if add {
+        if len(draft) > 0 {
+            items.push(draft);
+            draft = "";
+            ui.render(page(items, draft));
+        }
+    }
+
+    if ev.kind == "click" {
+        if str.starts_with(ev.id, "rm-") {
+            items = without(items, conv.to_int(str.substring(ev.id, 3, len(ev.id))));
+            ui.render(page(items, draft));
+        }
+    }
+}

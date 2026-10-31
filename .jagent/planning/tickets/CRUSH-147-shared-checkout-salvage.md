@@ -1,6 +1,6 @@
 # CRUSH-147: salvage + triage of the dirty shared checkout
 
-**Agent:** panini · **Date:** 2026-10-05 · **Foreman session:** s473 · **Status:** done (triage only; nothing ported)
+**Agent:** panini · **Date:** 2026-10-05 · **Foreman session:** s473 · **Status:** Done (triage only; nothing ported)
 
 ## Salvage
 

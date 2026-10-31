@@ -20,6 +20,7 @@ members = [
     "crates/crush-index",
     "crates/crush-pkg",
     "crates/crush-installer",
+    "crates/crush-gui",
     "crates/crush-diagnostics",
     "crates/crush-python",
     "crates/crush-lang-python",
@@ -36,6 +37,11 @@ members = [
     "crates/crush-aot",
     "xtask"
     , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-caison", "crates/crush-cson-shim", "crates/crush-lang-custom", "crates/crush-tui", "crates/crush-ptx", "crates/crush-aotc"]
+
+# crush-gui (CRUSH-319) pulls arniko's font/GPU stack, which needs system
+# libraries (fontconfig) a plain `cargo build` shouldn't demand: it stays a
+# member but out of the default set. Build it with `-p crush-gui`.
+default-members = ["crates/crush-errors", "crates/crush-cast", "crates/crush-cosm", "crates/casm", "crates/tree-sitter-crush", "crates/crush-walker-core", "crates/crush-lang-wasm", "crates/crush-lang-dart", "crates/cli", "crates/crush-lang-go", "crates/crush-lang-c", "crates/crush-lang-zig", "crates/crush-vm", "crates/crush-vm-capi", "crates/crush-lang-sdk", "crates/crush-frontend", "crates/crush-index", "crates/crush-pkg", "crates/crush-installer", "crates/crush-diagnostics", "crates/crush-python", "crates/crush-lang-python", "crates/crush-lang-nepali", "crates/crush-lang-rust", "crates/crush-lang-js", "crates/crush-lang-bash", "crates/crush-lang-zsh", "crates/crush-lang-java", "crates/crush-net", "crates/crush-debugger", "crates/crush-jit", "crates/crush-macros", "crates/crush-aot", "xtask", "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-caison", "crates/crush-cson-shim", "crates/crush-lang-custom", "crates/crush-tui", "crates/crush-ptx", "crates/crush-aotc"]
 
 # crush-web is deliberately NOT a member: many members depend on crush-vm
 # with default features (native-plugins on), and Cargo unifies features for
@@ -56,7 +62,7 @@ members = [
 exclude = ["crates/crush-web", "crates/crush-vm-py"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.8.0"
 edition       = "2024"
 license       = "MIT OR Apache-2.0"
 homepage      = "https://github.com/nixpt/crush-ast"
@@ -64,30 +70,30 @@ repository    = "https://github.com/nixpt/crush-ast"
 rust-version  = "1.95.0"
 
 [workspace.dependencies]
-crush-errors      = { path = "crates/crush-errors",      version = "0.6.0" }
-crush-cast        = { path = "crates/crush-cast",        version = "0.6.0" }
-crush-cosm        = { path = "crates/crush-cosm",        version = "0.6.0" }
-crush-caison      = { path = "crates/crush-caison",      version = "0.6.0" }
+crush-errors      = { path = "crates/crush-errors",      version = "0.8.0" }
+crush-cast        = { path = "crates/crush-cast",        version = "0.8.0" }
+crush-cosm        = { path = "crates/crush-cosm",        version = "0.8.0" }
+crush-caison      = { path = "crates/crush-caison",      version = "0.8.0" }
 # CAISON (formerly CSON) canonical types/parser/printer — standalone crate,
 # https://github.com/nixpt/caison. NOT YET on crates.io as of CRUSH-CAISON-1;
 # this dep will not resolve until caison 0.1.0 publishes.
 caison            = { version = "0.1.0" }
-casm              = { path = "crates/casm",              version = "0.6.0" }
-crush-vm          = { path = "crates/crush-vm",          version = "0.6.0" }
-crush-frontend    = { path = "crates/crush-frontend",    version = "0.6.0" }
-crush-index       = { path = "crates/crush-index",       version = "0.6.0" }
-crush-lang-sdk    = { path = "crates/crush-lang-sdk",    version = "0.6.0" }
-crush-debugger            = { path = "crates/crush-debugger",            version = "0.6.0" }
-crush-jit         = { path = "crates/crush-jit",         version = "0.6.0" }
-crush-macros      = { path = "crates/crush-macros",      version = "0.6.0" }
-crush-aot         = { path = "crates/crush-aot",         version = "0.6.0" }
+casm              = { path = "crates/casm",              version = "0.8.0" }
+crush-vm          = { path = "crates/crush-vm",          version = "0.8.0" }
+crush-frontend    = { path = "crates/crush-frontend",    version = "0.8.0" }
+crush-index       = { path = "crates/crush-index",       version = "0.8.0" }
+crush-lang-sdk    = { path = "crates/crush-lang-sdk",    version = "0.8.0" }
+crush-debugger            = { path = "crates/crush-debugger",            version = "0.8.0" }
+crush-jit         = { path = "crates/crush-jit",         version = "0.8.0" }
+crush-macros      = { path = "crates/crush-macros",      version = "0.8.0" }
+crush-aot         = { path = "crates/crush-aot",         version = "0.8.0" }
 yansi            = { version = "1.0", default-features = false }
-crush-diagnostics = { path = "crates/crush-diagnostics", version = "0.6.0" }
-tree-sitter-crush = { path = "crates/tree-sitter-crush", version = "0.6.0" }
-crush-walker-core       = { path = "crates/crush-walker-core",       version = "0.6.0" }
+crush-diagnostics = { path = "crates/crush-diagnostics", version = "0.8.0" }
+tree-sitter-crush = { path = "crates/tree-sitter-crush", version = "0.8.0" }
+crush-walker-core       = { path = "crates/crush-walker-core",       version = "0.8.0" }
 # Native-parser frontends and the SDK registry need the common adapter traits,
 # but not the optional tree-sitter C parser support.
-crush-walker-core-no-tree-sitter = { package = "crush-walker-core", path = "crates/crush-walker-core", version = "0.6.0", default-features = false }
+crush-walker-core-no-tree-sitter = { package = "crush-walker-core", path = "crates/crush-walker-core", version = "0.8.0", default-features = false }
 serde       = { version = "1.0", features = ["derive"] }
 serde_json  = "1.0"
 anyhow      = "1.0"

@@ -215,12 +215,15 @@ fn probe(op: &OpCode) -> (usize, Instruction) {
         OpCode::SetSlot(_) => (117, ins("set_slot", json!({"slot": 0}))),
         OpCode::IsKind(_) => (118, ins("is_kind", json!({"kind": "P"}))),
         OpCode::Copy => (119, ins("copy", none())),
+        // CRUSH-277 D8: a class name as a value.
+        OpCode::LoadKind(_) => (120, ins("load_kind", json!({"kind": "P"}))),
+        OpCode::CallValueApply => (121, ins("call_value_apply", none())),
     }
 }
 
 /// One value per variant. Keep in step with `probe` (the ordinal check below
 /// fails if a variant is missing here or duplicated).
-const VARIANT_COUNT: usize = 120;
+const VARIANT_COUNT: usize = 122;
 
 fn all_opcodes() -> Vec<OpCode> {
     let v = || json!({});
@@ -363,6 +366,8 @@ fn all_opcodes() -> Vec<OpCode> {
         OpCode::SetSlot(0),
         OpCode::IsKind(String::new()),
         OpCode::Copy,
+        OpCode::LoadKind(String::new()),
+        OpCode::CallValueApply,
     ]
 }
 

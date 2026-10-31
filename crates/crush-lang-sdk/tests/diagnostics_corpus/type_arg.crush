@@ -1,0 +1,5 @@
+fn f(x: int) {
+  return x
+}
+let r = f("s")
+print(r)

@@ -16,6 +16,11 @@ requires-python = ">=3.9"
 # go back to `crate-type = ["lib"]`; see src/lib.rs for why that matters.
 #
 # Was: `features = ["python"]` against crates/crush-vm.
-features = ["extension-module"]
+#
+# `pyo3/abi3` + `pyo3/abi3-py311` mirror the Cargo.toml dependency and
+# crush-python's pyproject: the wheel is built against the stable ABI, so it
+# imports on every interpreter from 3.11 up — including 3.14, which pyo3
+# 0.23 otherwise refuses to build against.
+features = ["extension-module", "pyo3/abi3", "pyo3/abi3-py311"]
 no-default-features = true
 module-name = "crush_vm"

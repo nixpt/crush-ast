@@ -20,6 +20,59 @@ mod walker_intrinsics;
 
 use anyhow::Result;
 
+/// A semantic (type-check) error, with its source position when the checker
+/// knows one. `Display` is the bare message — identical to the plain error it
+/// replaces — so text consumers are unaffected; CLIs recover the class and the
+/// position with `err.downcast_ref::<SemanticError>()` (CRUSH-315).
+#[derive(Debug, Clone)]
+pub struct SemanticError {
+    /// 1-based source line and column of the offending construct, if known.
+    pub pos: Option<(usize, usize)>,
+    /// The error text, without any position prefix.
+    pub message: String,
+}
+
+impl std::fmt::Display for SemanticError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for SemanticError {}
+
+/// Mark `err` as a semantic error (position-less if it has none yet). Errors
+/// the checker already located pass through unchanged.
+pub fn semantic_error(err: anyhow::Error) -> anyhow::Error {
+    if err.downcast_ref::<SemanticError>().is_some() {
+        return err;
+    }
+    anyhow::Error::new(SemanticError {
+        pos: None,
+        message: err.to_string(),
+    })
+}
+
+/// Every syntax error of a source that failed to parse, kept structured so a
+/// CLI can report each with its own position and code. `Display` is the text
+/// `parse_source` has always produced (`Parse errors: a, b`) (CRUSH-315).
+#[derive(Debug, Clone)]
+pub struct ParseErrors(pub Vec<parser::ParseError>);
+
+impl std::fmt::Display for ParseErrors {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Parse errors: ")?;
+        for (i, e) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "{e}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ParseErrors {}
+
 /// Parse Crush source code into an enriched CAST Program.
 ///
 /// Runs the parser then the CAST enrichment pass which populates
@@ -30,16 +83,7 @@ use anyhow::Result;
 ///
 /// For warnings (e.g. exhaustiveness), use [`check_source`] instead.
 pub fn parse_source(source: &str) -> Result<crush_cast::Program> {
-    let mut program = parser::Parser::parse(source).map_err(|errors| {
-        anyhow::anyhow!(
-            "Parse errors: {}",
-            errors
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    })?;
+    let mut program = parser::Parser::parse(source).map_err(ParseErrors)?;
     cast_enrich::enrich_cast(&mut program);
     Ok(program)
 }
@@ -81,25 +125,43 @@ pub fn compile_cast_owned(program: crush_cast::Program) -> Result<casm::Program>
 
 /// Compile a CAST Program and also return its COSM module (COSM K1.2,
 /// CRUSH-zorro-41): the `KindDecl`s / `InterfaceDecl`s its `struct` /
-/// `impl` / `trait` / `@kind(…)` declarations lower to, validated. `None` for
-/// a program that declares none of them.
+/// `impl` / `trait` / `@kind(…)` declarations lower to, validated — merged
+/// with any module the walker supplied in `Program::cosm` (CRUSH-277 S1;
+/// a name both sides declare is an error). `None` for a program that
+/// declares none of them.
 ///
 /// The CASM program carries the same module as its kind table
 /// (`casm::Program::cosm`, COSM K1.3, CRUSH-zorro-42); its functions include
 /// the lifted methods (`Point::norm2`, …).
 pub fn compile_cast_with_cosm(
-    mut program: crush_cast::Program,
+    program: crush_cast::Program,
 ) -> Result<(casm::Program, Option<crush_cosm::CosmModule>)> {
-    let cosm = cosm_lower::lower(&mut program)?;
-    let mut sema = semantics::SemanticAnalyzer::new();
-    if let Some(module) = &cosm {
-        sema.declare_constructors(module, &program);
-    }
-    sema.check(&program)?;
+    let (mut program, cosm) = lower_and_check(program)?;
     optimizer::Optimizer::optimize(&mut program);
     let mut comp = compiler::Compiler::new();
     let casm = comp.compile_lowered(program, cosm.clone())?;
     Ok((casm, cosm))
+}
+
+/// The front half every compile path shares: lower the program's `struct` /
+/// `impl` / `trait` / `@kind(…)` declarations (merging a walker-supplied COSM
+/// module), then semantic-check it with the constructors of constructed Kinds
+/// declared, so `Acc(10)` of a `@kind(construct: ctor(…))` Kind checks
+/// (#260: `crushc` used to check without them). Returns the lowered program
+/// and its module, ready for `Compiler::compile_lowered`.
+pub fn lower_and_check(
+    mut program: crush_cast::Program,
+) -> Result<(crush_cast::Program, Option<crush_cosm::CosmModule>)> {
+    let walker_cosm = program.cosm.take();
+    let derived_cosm = cosm_lower::lower(&mut program).map_err(semantic_error)?;
+    let cosm =
+        cosm_lower::merge_walker_module(walker_cosm, derived_cosm).map_err(semantic_error)?;
+    let mut sema = semantics::SemanticAnalyzer::new();
+    if let Some(module) = &cosm {
+        sema.declare_constructors(module, &program);
+    }
+    sema.check(&program).map_err(semantic_error)?;
+    Ok((program, cosm))
 }
 
 /// Parse Crush source and compile directly to CASM bytecode.

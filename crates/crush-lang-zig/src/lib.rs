@@ -131,7 +131,8 @@ impl<'a> Visitor<'a> {
             "ForExpr" | "for_expression" | "for_statement" => {
                 let iterable_node = node.child_by_field_name("iterable")
                     .or_else(|| node.child_by_field_name("inputs"))
-                    .unwrap_or_else(|| node.child(1).unwrap());
+                    .or_else(|| node.named_child(0))
+                    .ok_or_else(|| anyhow::anyhow!("zig: `for` without an iterable"))?;
                 let iterable = self.visit_expression(iterable_node)?;
                 
                 let variable = extract_payload_variable(node, self.base.source)
@@ -150,6 +151,23 @@ impl<'a> Visitor<'a> {
             }
             "Block" | "block" => {
                 self.visit_block(node)
+            }
+            // A Zig label wrapper around a loop or block: lower the inner node.
+            "labeled_statement" => match node.named_child(0) {
+                Some(inner) => self.visit_statement(inner),
+                None => Ok(vec![]),
+            },
+            // `{ … }` used as an expression / loop body wrapper: lower the block.
+            "block_expression" => match node.named_child(0) {
+                Some(inner) => self.visit_block_or_statement(inner),
+                None => Ok(vec![]),
+            },
+            "expression_statement" => {
+                let inner = node.named_child(0).ok_or_else(|| {
+                    anyhow::anyhow!("zig: empty `expression_statement`")
+                })?;
+                let expr = self.visit_expression(inner)?;
+                Ok(vec![Statement::ExprStmt { expr, meta }])
             }
             _ if node.kind() == "AssignmentExpr" || node.kind() == "assignment_expression" => {
                 let left_node = node.child_by_field_name("left")
@@ -192,10 +210,20 @@ impl<'a> Visitor<'a> {
                 Ok(vec![Statement::ExprStmt { expr, meta }])
             }
             _ => {
-                if let Ok(expr) = self.visit_expression(node) {
-                    Ok(vec![Statement::ExprStmt { expr, meta }])
-                } else {
-                    Ok(vec![])
+                // A bare expression statement — or a node the walker does not
+                // lower. Refuse the latter rather than drop it (CRUSH-203).
+                match self.visit_expression(node) {
+                    Ok(expr) => Ok(vec![Statement::ExprStmt { expr, meta }]),
+                    Err(_) => {
+                        let p = node.start_position();
+                        anyhow::bail!(
+                            "zig: `{}` is not supported by the Crush Zig walker ({}:{}:{})",
+                            node.kind(),
+                            self.file_name,
+                            p.row + 1,
+                            p.column + 1,
+                        )
+                    }
                 }
             }
         }
@@ -273,17 +301,68 @@ impl<'a> Visitor<'a> {
                 name: self.base.text(node)?.to_string(),
                 meta,
             }),
-            "IntegerLiteral" | "integer_literal" => Ok(Expression::IntLiteral {
-                value: self.base.text(node)?.parse().unwrap_or(0),
+            // tree-sitter-zig's literal nodes are `integer`/`float`/`string`/
+            // `boolean`, not `*_literal`; the old names never matched, so every
+            // literal silently became `null` (CRUSH-203).
+            "integer" | "IntegerLiteral" | "integer_literal" => Ok(Expression::IntLiteral {
+                value: self.base.text(node)?.replace('_', "").parse().unwrap_or(0),
                 meta,
             }),
-            "StringLiteral" | "string_literal" => Ok(Expression::StringLiteral {
+            "float" | "FloatLiteral" | "float_literal" => Ok(Expression::FloatLiteral {
+                value: self
+                    .base
+                    .text(node)?
+                    .replace('_', "")
+                    .parse()
+                    .unwrap_or(0.0),
+                meta,
+            }),
+            "string" | "StringLiteral" | "string_literal" => Ok(Expression::StringLiteral {
                 value: self.base.text(node)?.trim_matches('"').to_string(),
+                meta,
+            }),
+            "boolean" => Ok(Expression::BoolLiteral {
+                value: self.base.text(node)? == "true",
                 meta,
             }),
             "true" => Ok(Expression::BoolLiteral { value: true, meta }),
             "false" => Ok(Expression::BoolLiteral { value: false, meta }),
             "null" => Ok(Expression::NullLiteral { meta }),
+            // `. { a, b }` — a Zig anonymous struct (its tuple-ish literal).
+            "anonymous_struct_initializer" | "initializer_list" => {
+                let elements = node
+                    .children(&mut node.walk())
+                    .filter(|c| !matches!(c.kind(), "." | "{" | "}" | ","))
+                    .map(|c| self.visit_expression(c))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Expression::ArrayLiteral { elements, meta })
+            }
+            "binary_expression" => {
+                let left = Box::new(self.visit_expression(
+                    node.child_by_field_name("left")
+                        .or_else(|| node.child(0))
+                        .ok_or_else(|| anyhow::anyhow!("zig: `binary_expression` without a left operand"))?,
+                )?);
+                let operator = self
+                    .base
+                    .text(
+                        node.child_by_field_name("operator")
+                            .or_else(|| node.child(1))
+                            .ok_or_else(|| anyhow::anyhow!("zig: `binary_expression` without an operator"))?,
+                    )?
+                    .to_string();
+                let right = Box::new(self.visit_expression(
+                    node.child_by_field_name("right")
+                        .or_else(|| node.child(2))
+                        .ok_or_else(|| anyhow::anyhow!("zig: `binary_expression` without a right operand"))?,
+                )?);
+                Ok(Expression::BinaryOp {
+                    operator,
+                    left,
+                    right,
+                    meta,
+                })
+            }
             "BinaryExpr" | "binary_expr" if node.child_count() >= 3 => {
                 let left = Box::new(self.visit_expression(node.child(0).unwrap())?);
                 let operator = self.base.text(node.child(1).unwrap())?.to_string();
@@ -336,7 +415,7 @@ impl<'a> Visitor<'a> {
                     meta,
                 })
             }
-            "CallExpr" | "call_expr" => {
+            "CallExpr" | "call_expr" | "call_expression" => {
                 let func_node = node
                     .child_by_field_name("function")
                     .or(node.child(0))
@@ -344,12 +423,27 @@ impl<'a> Visitor<'a> {
                 let func_name = self.base.text(func_node)?.to_string();
 
                 let mut args = Vec::new();
-                if let Some(args_node) = node.child_by_field_name("args") {
-                    for arg in args_node.children(&mut args_node.walk()) {
-                        if !matches!(arg.kind(), "(" | ")" | ",") {
-                            if let Ok(expr) = self.visit_expression(arg) {
-                                args.push(expr);
+                match node
+                    .child_by_field_name("args")
+                    .or_else(|| node.child_by_field_name("arguments"))
+                {
+                    Some(args_node) => {
+                        for arg in args_node.children(&mut args_node.walk()) {
+                            if !matches!(arg.kind(), "(" | ")" | ",") {
+                                args.push(self.visit_expression(arg)?);
                             }
+                        }
+                    }
+                    None => {
+                        // tree-sitter-zig keeps the arguments as direct children
+                        // after the function expression (there is no `arguments`
+                        // field), so walk past the function node.
+                        let func_id = func_node.id();
+                        for arg in node.children(&mut node.walk()) {
+                            if arg.id() == func_id || matches!(arg.kind(), "(" | ")" | ",") {
+                                continue;
+                            }
+                            args.push(self.visit_expression(arg)?);
                         }
                     }
                 }
@@ -381,7 +475,15 @@ impl<'a> Visitor<'a> {
                 if node.child_count() == 1 {
                     self.visit_expression(node.child(0).unwrap())
                 } else {
-                    Ok(Expression::NullLiteral { meta })
+                    // Refuse rather than fabricate `null` (CRUSH-203).
+                    let p = node.start_position();
+                    anyhow::bail!(
+                        "zig: `{}` is not supported by the Crush Zig walker ({}:{}:{})",
+                        node.kind(),
+                        self.file_name,
+                        p.row + 1,
+                        p.column + 1,
+                    )
                 }
             }
         }
@@ -427,11 +529,17 @@ mod tests {
         let program = parse_and_walk("const x = 42;");
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 1);
-        if let Statement::VarDecl { name, value, .. } = &main_func.body[0] {
-            assert_eq!(name, "x");
-            if let Expression::IntLiteral { value: val, .. } = value {
-                assert_eq!(*val, 42);
+        match &main_func.body[0] {
+            Statement::VarDecl { name, value, .. } => {
+                assert_eq!(name, "x");
+                // CRUSH-203: the literal must be an `IntLiteral`, not the `null`
+                // the old (wrong-node-name) walker produced.
+                match value {
+                    Expression::IntLiteral { value: v, .. } => assert_eq!(*v, 42),
+                    _ => panic!("expected IntLiteral(42)"),
+                }
             }
+            _ => panic!("expected a VarDecl"),
         }
     }
 

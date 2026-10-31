@@ -81,6 +81,20 @@ fn old_blobs_without_the_section_still_load() {
 }
 
 #[test]
+fn an_unknown_opcode_is_refused_at_load() {
+    // CRUSH-285 review #8: code bytes are validated while loading, so a
+    // byte that isn't an opcode never reaches an executor (where it
+    // could desync instruction boundaries, or NOP on a backend that
+    // skips unknown bytes).
+    let mut blob = old_blob(2);
+    let code_at = blob.len() - 10; // the `old_blob` code section
+    blob[code_at] = 0xFE;
+    assert!(crate::bytecode::instruction_size(0xFE).is_none());
+    let e = Program::from_blob(&blob).unwrap_err().to_string();
+    assert!(e.contains("unknown opcode"), "{e}");
+}
+
+#[test]
 fn a_v3_blob_must_carry_a_well_formed_section() {
     let good = program_with(Some(point_module())).to_blob();
     let v2_len = program_with(None).to_blob().len();
@@ -184,9 +198,13 @@ fn the_scheduler_vm_runs_kinds_and_refuses_only_what_it_cant() {
     assert!(matches!(e, VmError::Unsupported(_)), "{e:?}");
     let e = e.to_string();
     assert!(e.contains("COSM strategies not supported on this VM yet: `Point` declares"), "{e}");
-    for want in ["resolution: prototype_chain", "accessor `len`", "hooks eq"] {
+    for want in ["hooks eq"] {
         assert!(e.contains(want), "missing {want:?}: {e}");
     }
+    // Accessors run since CRUSH-277 S4: one isn't named either.
+    assert!(!e.contains("accessor"), "{e}");
+    // `prototype_chain` runs since CRUSH-277 S2: it isn't named either.
+    assert!(!e.contains("prototype_chain"), "{e}");
     // `str` is implemented: it isn't named.
     assert!(!e.contains("eq, str"), "{e}");
 }

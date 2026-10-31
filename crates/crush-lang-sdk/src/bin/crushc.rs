@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use clap::Parser as ClapParser;
 
 use crush_lang_sdk::MessageFormat;
+use crush_lang_sdk::theme::JsonDiagnosticExt as _;
 
 #[derive(ClapParser)]
 #[command(name = "crushc")]
@@ -122,11 +123,17 @@ fn main() {
                 eprintln!("crushc: {e:#}");
             }
             MessageFormat::Json => {
-                let diag = crush_lang_sdk::theme::JsonDiagnostic::generic_error(
-                    &e.to_string(),
-                    crush_lang_sdk::theme::JsonDiagnostic::CODE_IO,
+                let file = cli.input.display().to_string();
+                eprint!(
+                    "{}",
+                    crush_lang_sdk::theme::render_diagnostics_ndjson(
+                        &crush_lang_sdk::theme::diagnostics_for_error(
+                            &e,
+                            Some(&file),
+                            crush_lang_sdk::theme::JsonDiagnostic::CODE_IO,
+                        )
+                    )
                 );
-                eprint!("{}\n", diag.to_line());
             }
         }
         std::process::exit(1);
@@ -211,29 +218,40 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     }
 
     // ── Step 2: Semantic analysis + type-checking ───────────────────
-    let mut semantics = crush_frontend::semantics::SemanticAnalyzer::new();
-    if let Err(e) = semantics.check(&program) {
-        // Semantic errors don't carry source coordinates; render the
-        // underlying message under a `[type]` badge so the interface still
-        // feels consistent with parse errors. Exit immediately so we don't
-        // double-print at the main() error arm.
-        let body = e.to_string();
-        let file = cli.input.display().to_string();
-        match cli.message_format {
-            MessageFormat::Text => {
-                eprint!(
-                    "{badge} type error: {body}\n",
-                    badge = crush_lang_sdk::theme::paint_error_badge("type"),
-                    body = body,
-                );
+    // Lowered first, as every library compile path does, so the
+    // constructors of constructed Kinds are declared (#260).
+    let (mut lowered, cosm) = match crush_frontend::lower_and_check(program.clone()) {
+        Ok(checked) => checked,
+        Err(e) => {
+            // Render the underlying message under a `[type]` badge so the
+            // interface still feels consistent with parse errors. Exit
+            // immediately so we don't double-print at the main() error arm.
+            let body = e.to_string();
+            let file = cli.input.display().to_string();
+            match cli.message_format {
+                MessageFormat::Text => {
+                    eprint!(
+                        "{badge} type error: {body}\n",
+                        badge = crush_lang_sdk::theme::paint_error_badge("type"),
+                        body = body,
+                    );
+                }
+                MessageFormat::Json => {
+                    eprint!(
+                        "{}",
+                        crush_lang_sdk::theme::render_diagnostics_ndjson(
+                            &crush_lang_sdk::theme::diagnostics_for_error(
+                                &e,
+                                Some(&file),
+                                crush_lang_sdk::theme::JsonDiagnostic::CODE_TYPE,
+                            )
+                        )
+                    );
+                }
             }
-            MessageFormat::Json => {
-                let diag = crush_lang_sdk::theme::JsonDiagnostic::type_error(&body, Some(&file));
-                eprint!("{}\n", diag.to_line());
-            }
+            std::process::exit(1);
         }
-        std::process::exit(1);
-    }
+    };
 
     if cli.emit == EmitKind::Types {
         let rendered = crush_frontend::render::render_program(&program);
@@ -256,9 +274,9 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         if cli.verbose {
             eprintln!("crushc: optimizing...");
         }
-        crush_frontend::optimizer::Optimizer::optimize(&mut program);
+        crush_frontend::optimizer::Optimizer::optimize(&mut lowered);
         if cli.verbose {
-            let fn_count = program.functions.len();
+            let fn_count = lowered.functions.len();
             eprintln!("crushc: optimization done ({fn_count} functions)");
         }
     }
@@ -271,7 +289,7 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         EmitKind::Casm => {
             let mut compiler = crush_frontend::compiler::Compiler::new()
                 .with_invariant_runtime(cli.invariant_runtime);
-            let casm_prog = compiler.compile(program)?;
+            let casm_prog = compiler.compile_lowered(lowered, cosm)?;
             // Convert CASM IR to VM bytecode and disassemble back to text.
             // This produces the canonical VM assembly format that
             // crush_vm::assemble() (and `crush-vm asm`) can consume.
@@ -283,7 +301,7 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         EmitKind::Vm => {
             let mut compiler = crush_frontend::compiler::Compiler::new()
                 .with_invariant_runtime(cli.invariant_runtime);
-            let casm_prog = compiler.compile(program)?;
+            let casm_prog = compiler.compile_lowered(lowered, cosm)?;
             let vm_program = crush_lang_sdk::compile::casm_to_vm(&casm_prog)?;
 
             if cli.verbose {

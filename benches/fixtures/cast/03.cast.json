@@ -14,20 +14,34 @@
             "left": {
               "type": "StringLiteral",
               "value": "hello",
-              "meta": {}
+              "meta": {
+                "col": 9,
+                "line": 1
+              }
             },
             "right": {
               "type": "StringLiteral",
               "value": " world",
-              "meta": {}
+              "meta": {
+                "col": 19,
+                "line": 1
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 1,
+              "col": 19
+            }
           },
-          "meta": {}
+          "meta": {
+            "line": 1,
+            "col": 19
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "col": 1,
+        "line": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }

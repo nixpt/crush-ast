@@ -157,6 +157,7 @@ mod tests {
             ai_meta: None,
             manifest: None,
             exhaustive_sites: vec![],
+            cosm: None,
             wip: None,
             temporaries: vec![],
             decisions: vec![],

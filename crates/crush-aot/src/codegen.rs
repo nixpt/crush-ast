@@ -53,7 +53,7 @@ pub(crate) fn sorted_functions(program: &casm::Program) -> Vec<(&String, &casm::
 fn uses_js_core(program: &casm::Program) -> bool {
     program.functions.values().flat_map(|f| &f.body).any(|i| {
         i.op == "cap_call"
-            && i.args.get("name").and_then(|v| v.as_str()).is_some_and(|n| matches!(n, "js.add" | "js.truthy" | "js.loose_eq" | "js.format"))
+            && i.args.get("name").and_then(|v| v.as_str()).is_some_and(|n| matches!(n, "js.add" | "js.truthy" | "js.loose_eq" | "js.strict_eq" | "js.format"))
     })
 }
 
@@ -113,6 +113,13 @@ fn js_add(a: &RuntimeValue, b: &RuntimeValue) -> RuntimeValue {
 
 fn js_loose_eq(a: &RuntimeValue, b: &RuntimeValue) -> RuntimeValue {
     match js_core::loose_eq(&js_node(a, 0), &js_node(b, 0)) {
+        Ok(r) => RuntimeValue::Bool(r),
+        Err(e) => js_fail(e),
+    }
+}
+
+fn js_strict_eq(a: &RuntimeValue, b: &RuntimeValue) -> RuntimeValue {
+    match js_core::strict_eq(&js_node(a, 0), &js_node(b, 0)) {
         Ok(r) => RuntimeValue::Bool(r),
         Err(e) => js_fail(e),
     }
@@ -1002,6 +1009,12 @@ fn emit_body(
             out.push_str(&format!("{ind}return stack.pop().unwrap_or(RuntimeValue::Null);\n"));
         }
 
+        // CRUSH-293 D3 is VM-only, so never let a function-value array call
+        // reach an AOT stub or fall through silently.
+        "call_value_apply" => {
+            unsupported = Some("`call_value_apply` (function values, CRUSH-293 D3)".to_string());
+        }
+
         // ── Call ──
         "call" => {
             let target = args["function"].as_str().unwrap_or("");
@@ -1161,6 +1174,10 @@ fn emit_body(
                 }
                 "js.loose_eq" => {
                     out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); stack.push(js_loose_eq(&__a,&__b)); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
+                "js.strict_eq" => {
+                    out.push_str(&format!("{ind}{{ let (__a,__b)=pop2(&mut stack); stack.push(js_strict_eq(&__a,&__b)); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "js.format" => {

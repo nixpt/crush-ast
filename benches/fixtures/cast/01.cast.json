@@ -11,13 +11,21 @@
           "expr": {
             "type": "IntLiteral",
             "value": 42,
-            "meta": {}
+            "meta": {
+              "line": 1,
+              "col": 3
+            }
           },
-          "meta": {}
+          "meta": {
+            "line": 1,
+            "col": 3
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "col": 1,
+        "line": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }

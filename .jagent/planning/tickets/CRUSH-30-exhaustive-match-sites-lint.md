@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-30 |
 | **Priority** | P1 — depends on CRUSH-27 (annotation must parse/compile-emit); M5 milestone; the compile-time arm of the coverage story |
-| **Status** | Backlog |
+| **Status** | Done — closed by scope ruling 2026-10-16 (`5b51021`); residue in CRUSH-30a |
 | **Phase** | M5 |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-27 (parse + compiler emit for `@exhaustive-match-sites TypeName`); the lint reads build-time data only (does not depend on CRUSH-28) |
@@ -142,3 +142,7 @@ populated `missing_arms`, workspace-wide cross-file tracking +
 closure; they move to follow-up ticket **CRUSH-30a**. Note the spec's test (c)
 ("new variant, no new match site → warn") is unreachable without type
 inference; it is re-homed in CRUSH-30a alongside the variant registry.
+
+## Survey 2026-10-31 (status)
+
+The Resolution section above (buffy, 2026-10-16, commit `5b51021`) closes this ticket and moves the residue to CRUSH-30a, but the Status row was never flipped. Previous status: `Backlog`.

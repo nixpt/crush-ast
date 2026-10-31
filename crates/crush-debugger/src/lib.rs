@@ -14,6 +14,8 @@
 //! - NDJSON diagnostics: [`OwnedDiagRecord`] / [`parse_record`] /
 //!   [`consume_stream`], re-exported from `crush_diagnostics::wire_consumer`.
 //!
+//! - [`ndjson`]: debug events as one JSON object per line, for an editor or
+//!   agent on a pipe (`DebugSession::run_ndjson`).
 //! - [`events`]: [`DebugEvent`]s for embedding hosts, through a
 //!   [`DebugEventSink`] (a channel sender, or [`CollectingSink`]).
 //!
@@ -28,10 +30,14 @@
 //! current function returns, all by call depth; `watch <slot>` stops after
 //! an instruction changes a local slot. Line-level stepping and watching by
 //! variable name need a source map from `crush-frontend` (today only the
-//! assembler produces one, for breakpoints in `.crush` assembly).
+//! assembler produces one, for breakpoints in `.crush` assembly). A host that
+//! compiles Crush source (`crush debug`, in `crush-lang-sdk`) passes source-line
+//! maps and local names via `DebugSession::set_source_name` / `set_local_names` /
+//! `set_line_stepping`, which gives line-level `step`/`next` and `print <name>`.
 
 pub mod breakpoint;
 pub mod events;
+pub mod ndjson;
 pub mod repl;
 pub mod session;
 pub mod vm_driver;
@@ -45,6 +51,4 @@ pub use vm_driver::{PortableVmDriver, StepOutcome, VmDriver, VmError, VmRunResul
 // ParseRecordError) now lives canonically in `crush_diagnostics::wire_consumer`.
 // Re-export from here for back-compat with existing `crush_debugger::*`
 // call sites.
-pub use crush_diagnostics::{
-    consume_stream, parse_record, OwnedDiagRecord, ParseRecordError,
-};
+pub use crush_diagnostics::{OwnedDiagRecord, ParseRecordError, consume_stream, parse_record};

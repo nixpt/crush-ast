@@ -73,7 +73,7 @@ pub struct TcpConnection {
 impl TcpConnection {
     /// Clone the underlying `std::net::TcpStream`.
     ///
-    /// Used by `NetTlsWrapCap` to hand an independent owned stream to
+    /// Used by `TcpTlsWrapCap` to hand an independent owned stream to
     /// `rustls::StreamOwned` without disturbing the reactor-registered
     /// original. The cloned stream is set to blocking so
     /// `rustls::ClientConnection::complete_io` blocks until the handshake
