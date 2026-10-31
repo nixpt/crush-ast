@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **JS/TS dialect handling: unknown extensions are refused, `cts` is TypeScript
+  (CRUSH-zorro-8):** `JsLowering::for_ext` treated every unrecognised extension
+  as plain JS, so a `.ts` file reached as `.tmp` (or a typo like `typescript`)
+  parsed TypeScript as ES. It now accepts exactly
+  `js mjs cjs jsx ts tsx mts cts` and refuses anything else, naming the set;
+  `cts` is TypeScript; and `SubprocessWalker` names its temp file
+  `walker_N.<ext>` so a walked `.ts` keeps its dialect.
+
 - **Stub walkers no longer produce empty programs (CRUSH-203):** the Zig walker
   matched the wrong tree-sitter node names (`IntegerLiteral` vs the real
   `integer`/`float`/`string`/`boolean`, `BinaryExpr` vs `binary_expression`, …),
