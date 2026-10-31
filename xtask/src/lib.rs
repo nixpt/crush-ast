@@ -12,3 +12,4 @@
 //! re-emerging.
 
 pub mod diag;
+pub mod ticket_ids;

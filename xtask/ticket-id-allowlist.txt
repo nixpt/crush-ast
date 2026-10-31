@@ -1,0 +1,15 @@
+# Grandfathered duplicate ticket IDs (CRUSH-286).
+#
+# One ID per line; `#` starts a comment. These duplicates already
+# existed on main when the uniqueness check landed — renumbering them
+# would break every reference in docs, commit messages, and dejavue,
+# so they are allowed to stay. Do NOT add new entries to silence a
+# fresh clash: renumber the newer ticket instead (get a free number
+# with `cargo run -p xtask --bin ticket-id -- next`).
+#
+# Note: CRUSH-266a is not listed — a letter suffix is a distinct ID,
+# so CRUSH-266 and CRUSH-266a never clashed.
+
+CRUSH-31  # CRUSH-31-dejavue-integration.md + CRUSH-31-dejavue-crush-index-integration.md (both pre-check)
+CRUSH-33  # CRUSH-33-dom-opcodes.md + CRUSH-33-dom-opcodes-vm-wire-up.md (both pre-check)
+CRUSH-34  # CRUSH-34-spawn-await-yield-vm-execution.md + CRUSH-34-spawn-await-yield-vm-wire-up.md (both pre-check)
