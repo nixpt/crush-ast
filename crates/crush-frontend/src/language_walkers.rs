@@ -126,17 +126,26 @@ impl LanguageWalker for SubprocessWalker {
     fn parse(
         &self,
         source: &str,
-        _filename: Option<&str>,
+        filename: Option<&str>,
     ) -> Result<Box<dyn std::any::Any>, WalkerError> {
-        Ok(Box::new(source.to_string()))
+        // Carry the filename to `walk` so the temp file keeps the real
+        // extension (CRUSH-zorro-8).
+        Ok(Box::new((source.to_string(), filename.map(str::to_string))))
     }
 
     fn walk(&self, ast: Box<dyn std::any::Any>) -> Result<Program, WalkerError> {
-        let source = ast
-            .downcast_ref::<String>()
+        let (source, filename) = ast
+            .downcast_ref::<(String, Option<String>)>()
             .ok_or_else(|| WalkerError::ParseError("Invalid AST type".to_string()))?;
 
-        let temp_filename = format!("walker_{}.tmp", next_walker_id());
+        // Keep the source file's extension: a `.tmp` name made the walker parse
+        // TypeScript as ES (CRUSH-zorro-8).
+        let ext = filename
+            .as_deref()
+            .and_then(|f| std::path::Path::new(f).extension())
+            .and_then(|e| e.to_str())
+            .unwrap_or("tmp");
+        let temp_filename = format!("walker_{}.{}", next_walker_id(), ext);
         let temp_path = std::env::temp_dir().join(&temp_filename);
 
         std::fs::write(&temp_path, source).map_err(WalkerError::IoError)?;

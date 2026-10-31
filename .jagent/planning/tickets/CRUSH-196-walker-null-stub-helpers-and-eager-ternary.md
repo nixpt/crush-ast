@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-196 |
 | **Priority** | P0 |
-| **Status** | Partial — ternary/if-expression done (2026-10-14); slice / `in` / `is` now fail loudly, not implemented |
+| **Status** | In Progress — ternary/if-expression done (#180, 2026-10-14); slicing landed in `2b45593` (seq.slice); `in` / `is` still open |
 | **Phase** | M6 |
 | **Assignee** | vega |
 | **Dependencies** | none |
@@ -51,3 +51,7 @@
   with `unknown capability: __crush_slice__` (etc.) instead of printing `None` — **criterion 2
   (real implementations) is still open**. The two Python SDK tests that asserted the stubs
   "don't crash" now assert the loud failure.
+
+## Survey 2026-10-31 (status)
+
+`2b45593` (2026-10-14, `**` and Python slicing via `seq.slice` in every engine) implements the slice part of criterion 2. No evidence was found for `in` / `is`. Previous status: `` Partial — ternary/if-expression done (2026-10-14); slice / `in` / `is` now fail loudly, not implemented ``.

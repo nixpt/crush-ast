@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-18 |
 | **Priority** | P1 |
-| **Status** | In Progress |
+| **Status** | In Progress — function declarations done (#242, #243, merged 2026-10-15) and class members (CRUSH-280, #286); defaults/rest on arrow functions and function expressions are open |
 | **Phase** | JS/TS parity spike |
 | **Assignee** | vega |
 | **Dependencies** | CRUSH-250 |
@@ -62,3 +62,7 @@ The swc lowering is unchanged: still loud on the VM, and still `fn_default_param
 - Reference implementation: `node` on PATH (v26; TypeScript runs with built-in type stripping). Never hand-write a `.out`.
 - `crates/crush-lang-js/src/lower_swc.rs` is shared by most tickets. Until CRUSH-zorro-11 lands, keep edits local to the area you own and merge `origin/main` often; after it lands, add entries to the builtin/method table instead of new match arms.
 - Gates before the PR: `cargo test -p crush-lang-js -p crush-lang-sdk -p crush-aot`, the walker set, and clippy. A new loud error must say what isn't supported, never "load from uninitialised slot".
+
+## Survey 2026-10-31 (status)
+
+PR #242 lists "defaults and rest on arrow functions and function expressions" as a follow-up. Previous status: `In Progress`.

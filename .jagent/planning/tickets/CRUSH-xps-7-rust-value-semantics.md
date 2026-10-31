@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-7 |
 | **Priority** | P1 |
-| **Status** | In review |
+| **Status** | Done — PR #233 merged 2026-10-15 |
 | **Phase** | M2 / Rust parity |
 | **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5, CRUSH-xps-6 |
@@ -78,3 +78,7 @@ Validation uses this worktree's dedicated Cargo target.
   Assignment-as-unit plus subsequent clones matched rustc (`1 1 2`).
   Implicit owned transfer failed at `3:17`. A `.crush` program printed
   `crush sdk unchanged` and returned `Int(42)` through the same host API.
+
+## Survey 2026-10-31 (status)
+
+PR #233 merged 2026-10-15; all criteria ticked. Previous status: `In review`.

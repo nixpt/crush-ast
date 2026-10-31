@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-289 |
 | **Priority** | P1 |
-| **Status** | In PR (stacked on CRUSH-288) |
+| **Status** | Done — PR #294 merged 2026-10-29 |
 | **Phase** | COSM K3 follow-up (boa walker) |
 | **Assignee** | muse |
 | **Filed by** | muse — 2026-10-21, follow-on to CRUSH-288 |
@@ -99,3 +99,7 @@ assignment targets (not valid JS).
 - An optional call of a method that exists nowhere
   (`this.onAttach?.()` with no definition in the module)
   compiles-refuses like a plain call; JS would skip it.
+
+## Survey 2026-10-31 (status)
+
+PR #294 (`agent/muse/CRUSH-289`) merged 2026-10-29. Previous status: `In PR (stacked on CRUSH-288)`.

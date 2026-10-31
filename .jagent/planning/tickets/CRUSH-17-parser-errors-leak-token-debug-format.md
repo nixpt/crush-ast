@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-17 |
 | **Priority** | P2 |
-| **Status** | **Done** — fixed s388 (2026-07-16) |
+| **Status** | Done — fixed s388 (2026-07-16) |
 | **Phase** | M1 |
 | **Assignee** | foreman/Kai, fixed same-session as filed |
 | **Dependencies** | none |

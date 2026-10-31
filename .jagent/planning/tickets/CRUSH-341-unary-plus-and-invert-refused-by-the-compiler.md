@@ -1,8 +1,11 @@
-# CRUSH-271 — Python/JS walker unary `+` and `~` are refused by the compiler (`Unsupported op`)
+# CRUSH-341 — Python/JS walker unary `+` and `~` are refused by the compiler (`Unsupported op`)
+
+> **Renumbered** 2026-10-31 (planning survey) from `CRUSH-271`, which collided with the older
+> `CRUSH-271-scheduler-polyglot-executor-seam.md` (commit `4e03ed9`, 2026-10-16 05:13; this one `64a4669`, 06:12 the same day).
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-271 |
+| **ID** | CRUSH-341 |
 | **Priority** | P3 |
 | **Status** | Backlog |
 | **Phase** | M6 |
@@ -116,7 +119,7 @@ The Crush parser only accepts `-` and `not`/`!` in prefix position
 
 Not yet dispatched. When it is:
 
-- Branch: `agent/<horse>/CRUSH-271`
+- Branch: `agent/<horse>/CRUSH-341`
 - Repo: `crush-ast`
 - Turns: `30`
 - Runner: `claude`

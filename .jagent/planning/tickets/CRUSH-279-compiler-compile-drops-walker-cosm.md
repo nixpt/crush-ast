@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-279 |
 | **Priority** | P2 |
-| **Status** | Fixed on `agent/muse/CRUSH-277-s5` — awaiting merge |
+| **Status** | Done — fix commit `c9f349f` (CRUSH-277 S5) merged in PR #285 (2026-10-21) |
 | **Phase** | COSM K3 — frontend transport |
 | **Assignee** | unassigned |
 | **Filed by** | muse — 2026-10-20, found by CRUSH-277 S5's corpus run |
@@ -34,3 +34,7 @@ Cosm-less programs are unchanged.
 Evidence: node corpus `class_basic`/`class_extends` run node-exact
 through the harness's `Compiler::compile` path; the corpus's class
 area on boa is 5 match / 0 loud / 0 silent (CRUSH-277 S5).
+
+## Survey 2026-10-31 (status)
+
+Commit `c9f349f` (its message names CRUSH-279) is an ancestor of origin/main via PR #285. Previous status: `` Fixed on `agent/muse/CRUSH-277-s5` — awaiting merge ``.

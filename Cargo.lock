@@ -1282,12 +1282,15 @@ dependencies = [
  "crush-caison",
  "crush-cast",
  "crush-cosm",
+ "crush-debugger",
+ "crush-diagnostics",
  "crush-errors",
  "crush-frontend",
  "crush-index",
  "crush-lang-js",
  "crush-lang-python",
  "crush-lang-rust",
+ "crush-net",
  "crush-ptx",
  "crush-vm",
  "crush-walker-core",
@@ -1360,8 +1363,10 @@ name = "crush-lint"
 version = "0.8.0"
 dependencies = [
  "crush-diagnostics",
+ "crush-frontend",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -1381,7 +1386,7 @@ dependencies = [
 name = "crush-net"
 version = "0.8.0"
 dependencies = [
- "crush-lang-sdk",
+ "crush-vm",
  "rcgen",
  "rustls",
  "serde",

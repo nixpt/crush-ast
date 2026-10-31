@@ -15,7 +15,10 @@ impl Frontend for NepaliFrontend {
     }
 
     fn parse(&self, source: &str) -> anyhow::Result<Box<dyn Any>> {
-        // Our updated lexer natively parses Nepali keywords into standard AST.
+        // `.np` / `.nepali` are parsed with the **standard Crush parser**: there
+        // is no separate Nepali keyword set. (An earlier comment claimed a lexer
+        // that "natively parses Nepali keywords"; no such keyword exists —
+        // CRUSH-203.) The only difference is the reported language name.
         let mut program = parse_source(source)?;
         program.lang = Some("nepcode".to_string());
         Ok(Box::new(program))

@@ -620,3 +620,36 @@ fn strict_downgrade_returns_borrowed_str_zero_alloc() {
         "passthrough arm must return a re-borrow of the input (zero-alloc)"
     );
 }
+
+// ----------------------------------------------------------------
+// Diagnostic (owned) vs DiagRecord (borrowed) — one wire shape (CRUSH-315)
+// ----------------------------------------------------------------
+
+#[test]
+fn owned_diagnostic_serializes_byte_identically_to_diag_record() {
+    use crush_diagnostics::Diagnostic;
+
+    let d = Diagnostic::error(Diagnostic::CODE_TYPE, "Undefined variable: x")
+        .in_file(Some("a.crush"))
+        .at(2, 7)
+        .with_hint("declare it first");
+    let rec = DiagRecord {
+        code: "E-TP01",
+        level: "error",
+        file: Some("a.crush"),
+        line: Some(2),
+        col: Some(7),
+        message: "Undefined variable: x",
+        hint: Some("declare it first"),
+    };
+    assert_eq!(d.to_line() + "\n", diag_line(&rec));
+    assert_eq!(
+        d.to_line(),
+        r#"{"code":"E-TP01","level":"error","file":"a.crush","line":2,"col":7,"message":"Undefined variable: x","hint":"declare it first"}"#
+    );
+    // No position, no file, no hint: nulls, same order.
+    assert_eq!(
+        Diagnostic::generic_error("boom", Diagnostic::CODE_IO).to_line(),
+        r#"{"code":"E-IO","level":"error","file":null,"line":null,"col":null,"message":"boom","hint":null}"#
+    );
+}

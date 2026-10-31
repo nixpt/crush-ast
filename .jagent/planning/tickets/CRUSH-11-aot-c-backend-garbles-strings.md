@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-11 |
 | **Priority** | P1 |
-| **Status** | **Done** — verified on current main (2026-08-07) |
+| **Status** | Done — verified on current main (2026-08-07) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |

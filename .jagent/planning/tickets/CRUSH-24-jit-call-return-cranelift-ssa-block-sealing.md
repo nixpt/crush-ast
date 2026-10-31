@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-24 |
 | **Priority** | P1 |
-| **Status** | **Superseded — not fixed, closed by a different branch** (s391, 2026-07-20) |
+| **Status** | Superseded — not fixed, closed by a different branch (s391, 2026-07-20) |
 | **Phase** | M2 (JIT backend) |
 | **Assignee** | unassigned |
 | **Dependencies** | none |

@@ -52,7 +52,7 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
                 // one Export per name. The old Option path returned after the first
                 // declarator (clippy::never_loop), silently dropping the rest.
                 // Exported `function` declarations additionally return a hoisted
-                // `Function` (CRUSH-266), exactly like bare `function` decls.
+                // `Function` (CRUSH-340), exactly like bare `function` decls.
                 let (stmts, fns) = lower_module_decl(module_decl, ctx)?;
                 main_body.extend(stmts);
                 functions.extend(fns);
@@ -241,7 +241,7 @@ fn lower_fn_decl(fn_decl: &FnDecl, ctx: &LowerCtx) -> anyhow::Result<Statement> 
 
 /// Hoist a `function` declaration into a CAST `Function` (the
 /// `Program.functions` entry), as `lower_module` does for bare declarations.
-/// Shared by the bare and `export`ed paths so both keep the body (CRUSH-266).
+/// Shared by the bare and `export`ed paths so both keep the body (CRUSH-340).
 fn fn_decl_to_function(fn_decl: &FnDecl, ctx: &LowerCtx) -> anyhow::Result<(String, Function)> {
     let name = fn_decl.ident.sym.to_string();
     let is_async = fn_decl.function.is_async;
@@ -331,7 +331,7 @@ fn lower_class(class: &Class, ctx: &LowerCtx) -> anyhow::Result<Expression> {
 ///
 /// The statements go into `main`'s body; hoisted functions (exported
 /// `function` declarations) go into `Program.functions`, exactly like bare
-/// `function` declarations in `lower_module`. Before CRUSH-266 the `export`
+/// `function` declarations in `lower_module`. Before CRUSH-340 the `export`
 /// arms emitted only `Statement::Export { value: Var(name) }` and dropped
 /// the declaration itself, so every exported function/class/variable was an
 /// uninitialised slot at runtime.
@@ -372,7 +372,7 @@ fn lower_module_decl(
             }])
         }
         ModuleDecl::ExportDecl(export) => match &export.decl {
-            // CRUSH-266: emit the declaration itself, then the Export.
+            // CRUSH-340: emit the declaration itself, then the Export.
             // Previously only the Export was emitted and the body/initialiser
             // was silently dropped.
             Decl::Fn(fn_decl) => {
@@ -472,7 +472,7 @@ fn lower_module_decl(
                 }
             }
             DefaultDecl::Class(class) => {
-                // CRUSH-266: emit the class itself before exporting it. An
+                // CRUSH-340: emit the class itself before exporting it. An
                 // anonymous default class is bound as `default`.
                 let name = class
                     .ident

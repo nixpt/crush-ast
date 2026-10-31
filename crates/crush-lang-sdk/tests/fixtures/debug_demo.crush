@@ -1,0 +1,31 @@
+let k = 3
+
+fn apply(f, v) {
+    return f(v)
+}
+
+struct Point { x: int, y: int }
+
+impl Point {
+    fn total(self) {
+        let sum = self.x + self.y
+        return sum * 2
+    }
+}
+
+fn main() {
+    let scale = |n| {
+        let scaled = n * k
+        return scaled
+    }
+    let p = Point { x: 4, y: 5 }
+    let acc = 0
+    for i in 1..3 {
+        acc = acc + apply(scale, i)
+    }
+    let t = p.total()
+    print(acc)
+    print(t)
+}
+
+main()

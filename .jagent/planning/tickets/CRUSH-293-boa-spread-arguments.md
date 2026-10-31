@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-293 |
 | **Priority** | P1 (maya blocker — the next item in the CRUSH-276 queue) |
-| **Status** | Partially resolved (D2 #299 and D3 #300 merged; variadic function-value ABI follow-up open) |
+| **Status** | In Progress — D2 (#299) and D3 (#300) merged 2026-10-29; the variadic function-value ABI follow-up is open |
 | **Phase** | COSM K3 follow-up (boa walker) |
 | **Assignee** | freebuff (dispatched by muse) |
 | **Dependencies** | CRUSH-276 (queue), CRUSH-zorro-18 (the rest/default ABI), CRUSH-251 (function values — only for design D3), CRUSH-111 (intrinsic table contract) |

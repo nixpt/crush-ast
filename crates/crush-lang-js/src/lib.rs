@@ -43,7 +43,7 @@ impl JsLowering {
     /// does) changes nothing until CRUSH-250 flips the default.
     pub fn for_ext(ext: &str) -> anyhow::Result<Self> {
         match ext {
-            "ts" | "tsx" | "mts" => {
+            "ts" | "tsx" | "mts" | "cts" => {
                 if cfg!(feature = "ts") {
                     Ok(JsLowering::Swc)
                 } else {
@@ -57,7 +57,7 @@ impl JsLowering {
                     anyhow::bail!("`.jsx` needs crush-lang-js's `swc-backend` feature (boa has no JSX)")
                 }
             }
-            _ => {
+            "js" | "mjs" | "cjs" => {
                 if cfg!(feature = "swc-backend") {
                     Ok(JsLowering::Swc)
                 } else if cfg!(feature = "js-boa") {
@@ -66,6 +66,14 @@ impl JsLowering {
                     anyhow::bail!("crush-lang-js was built without a JS parser: enable `js-boa` or `swc-backend`")
                 }
             }
+            // An unknown extension used to be treated as plain JS, so a `.ts`
+            // file walked through a `.tmp` path (or a typo like `typescript`)
+            // parsed TypeScript as ES and produced a `null` program. Refuse it
+            // and name the accepted set (CRUSH-zorro-8).
+            other => anyhow::bail!(
+                "unknown JavaScript/TypeScript extension `{other}` \
+                 (accepted: js, mjs, cjs, jsx, ts, tsx, mts, cts)"
+            ),
         }
     }
 }
@@ -109,7 +117,7 @@ impl Frontend for JsFrontend {
     }
 
     fn file_extensions(&self) -> &[&'static str] {
-        &[".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts"]
+        &[".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts", ".cts"]
     }
 
     fn parse(&self, source: &str) -> anyhow::Result<Box<dyn Any>> {
@@ -205,7 +213,7 @@ pub struct JsAdapter;
 
 impl LanguageAdapter for JsAdapter {
     fn language_name(&self) -> &'static str { "javascript" }
-    fn file_extensions(&self) -> &[&'static str] { &["js", "mjs", "cjs", "ts", "tsx", "mts"] }
+    fn file_extensions(&self) -> &[&'static str] { &["js", "mjs", "cjs", "jsx", "ts", "tsx", "mts", "cts"] }
     fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(FeatureReport, Program)> {
         let ext = std::path::Path::new(filename).extension()
             .and_then(|e| e.to_str()).unwrap_or("js");
@@ -234,6 +242,25 @@ mod tests {
             assert_eq!(ts.unwrap(), JsLowering::Swc);
         } else {
             assert!(format!("{:#}", ts.unwrap_err()).contains("`ts` feature"));
+        }
+    }
+
+    // CRUSH-zorro-8: an unknown extension is refused, not silently treated as
+    // JS; `cts` is TypeScript.
+    #[test]
+    fn unknown_extension_is_refused_and_cts_is_typescript() {
+        let err = JsLowering::for_ext("typescript").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("unknown"), "got: {msg}");
+        assert!(msg.contains("cts"), "the accepted set must be named: {msg}");
+        assert!(JsLowering::for_ext("").is_err());
+        assert!(JsLowering::for_ext("jsx2").is_err());
+
+        let cts = JsLowering::for_ext("cts");
+        if cfg!(feature = "ts") {
+            assert_eq!(cts.unwrap(), JsLowering::Swc);
+        } else {
+            assert!(format!("{:#}", cts.unwrap_err()).contains("`cts` needs"));
         }
     }
 }

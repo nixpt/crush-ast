@@ -2391,6 +2391,11 @@ const SHELL_HELPERS: &[&str] = &[
     "__sh_glob",
     "__sh_globmap",
     "__sh_globexp",
+    "__sh_meta",
+    "__sh_dstar",
+    "__sh_join",
+    "__sh_sort",
+    "__sh_dironly",
     "__sh_unglob",
     "__sh_quote_pat",
     "__sh_read_line",
@@ -2613,18 +2618,13 @@ fn helper_fn(name: &str) -> Function {
                 ret(var("out")),
             ],
         ),
-        // __sh_globexp(field, at): the pathnames one word expands to, or the
-        // word itself when the pattern matches nothing (bash's default). The
-        // pattern is only the last path component: `*` never matches a leading
-        // `.`, the matches are sorted (`fs.list` sorts), and a glob in a
-        // directory component is refused rather than half-expanded.
-        "__sh_globexp" => func(
-            &["field", "at", "nomatch"],
+        // __sh_meta(s): does `s` hold an unescaped `*`, `?` or `[`?
+        "__sh_meta" => func(
+            &["s"],
             vec![
-                decl("cs", chars(var("field"))),
+                decl("cs", chars(var("s"))),
                 decl("n", len(var("cs"))),
                 decl("i", int(0)),
-                decl("meta", boolean(false)),
                 while_(bin("<", var("i"), var("n")), vec![
                     decl("c", index(var("cs"), var("i"))),
                     if_(
@@ -2637,117 +2637,346 @@ fn helper_fn(name: &str) -> Function {
                                     bin("or", bin("==", var("c"), s("*")), bin("==", var("c"), s("?"))),
                                     bin("==", var("c"), s("[")),
                                 ),
-                                vec![set("meta", boolean(true))],
+                                vec![ret(boolean(true))],
                                 None,
                             ),
                             set("i", bin("+", var("i"), int(1))),
                         ]),
                     ),
                 ]),
-                decl("lit", call("__sh_unglob", vec![var("field")])),
-                if_(not(var("meta")), vec![ret(array(vec![var("lit")]))], None),
-                // Split at the last `/`: everything before it is the directory.
-                decl("k", int(-1)),
-                decl("j", int(0)),
-                while_(bin("<", var("j"), var("n")), vec![
+                ret(boolean(false)),
+            ],
+        ),
+        // __sh_dstar(s): does `s` hold an unescaped `**`? bash reads it as `*`
+        // without `globstar`, zsh recurses by default, so it is refused rather
+        // than guessed at in either dialect.
+        "__sh_dstar" => func(
+            &["s"],
+            vec![
+                decl("cs", chars(var("s"))),
+                decl("n", len(var("cs"))),
+                decl("i", int(0)),
+                while_(bin("<", var("i"), var("n")), vec![
+                    decl("c", index(var("cs"), var("i"))),
                     if_(
-                        bin("==", index(var("cs"), var("j")), s("/")),
-                        vec![set("k", var("j"))],
+                        bin("==", var("c"), s("\\")),
+                        vec![set("i", bin("+", var("i"), int(2)))],
+                        Some(vec![
+                            if_(
+                                bin(
+                                    "and",
+                                    bin("==", var("c"), s("*")),
+                                    bin(
+                                        "and",
+                                        bin("<", bin("+", var("i"), int(1)), var("n")),
+                                        bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("*")),
+                                    ),
+                                ),
+                                vec![ret(boolean(true))],
+                                None,
+                            ),
+                            set("i", bin("+", var("i"), int(1))),
+                        ]),
+                    ),
+                ]),
+                ret(boolean(false)),
+            ],
+        ),
+        // __sh_join(dir, name): `dir/name`, where "" is the working directory and
+        // "/" is the root the pattern started from.
+        "__sh_join" => func(
+            &["dir", "name"],
+            vec![
+                if_(bin("==", var("dir"), s("")), vec![ret(var("name"))], None),
+                if_(bin("==", var("dir"), s("/")), vec![ret(bin("+", s("/"), var("name")))], None),
+                ret(bin("+", bin("+", var("dir"), s("/")), var("name"))),
+            ],
+        ),
+        // __sh_sort(a): `a` in byte order, the order both shells print glob
+        // matches in. Insertion sort, so a word matching hundreds of names
+        // costs O(n²) string comparisons and can reach the step quota — loudly,
+        // never by printing a different order.
+        "__sh_sort" => func(
+            &["a"],
+            vec![
+                decl("out", array(vec![])),
+                for_("v", var("a"), vec![
+                    decl("j", len(var("out"))),
+                    while_(
+                        bin(
+                            "and",
+                            bin(">", var("j"), int(0)),
+                            bin(
+                                ">",
+                                call(
+                                    "__sh_strcmp",
+                                    vec![index(var("out"), bin("-", var("j"), int(1))), var("v")],
+                                ),
+                                int(0),
+                            ),
+                        ),
+                        vec![set("j", bin("-", var("j"), int(1)))],
+                    ),
+                    decl("kept", array(vec![])),
+                    decl("k", int(0)),
+                    while_(bin("<", var("k"), var("j")), vec![
+                        set("kept", bin("+", var("kept"), array(vec![index(var("out"), var("k"))]))),
+                        set("k", bin("+", var("k"), int(1))),
+                    ]),
+                    set("kept", bin("+", var("kept"), array(vec![var("v")]))),
+                    while_(bin("<", var("k"), len(var("out"))), vec![
+                        set("kept", bin("+", var("kept"), array(vec![index(var("out"), var("k"))]))),
+                        set("k", bin("+", var("k"), int(1))),
+                    ]),
+                    set("out", var("kept")),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_dironly(a): the matches that are directories, each keeping the
+        // `/` the word asked for (`echo */` lists directories only).
+        "__sh_dironly" => func(
+            &["a"],
+            vec![
+                decl("out", array(vec![])),
+                for_("p", var("a"), vec![
+                    if_(
+                        bin("==", cap("fs.is_dir", vec![var("p")]), int(1)),
+                        vec![set("out", bin("+", var("out"), array(vec![bin("+", var("p"), s("/"))])))],
                         None,
                     ),
-                    set("j", bin("+", var("j"), int(1))),
                 ]),
-                decl("dir", s(".")),
-                decl("pre", s("")),
-                decl("base", var("field")),
-                if_(bin(">=", var("k"), int(0)), vec![
-                    decl("dmeta", boolean(false)),
-                    decl("q", int(0)),
-                    while_(bin("<", var("q"), var("k")), vec![
-                        decl("dc", index(var("cs"), var("q"))),
-                        if_(
-                            bin("==", var("dc"), s("\\")),
-                            vec![set("q", bin("+", var("q"), int(2)))],
-                            Some(vec![
-                                if_(
-                                    bin(
-                                        "or",
-                                        bin("or", bin("==", var("dc"), s("*")), bin("==", var("dc"), s("?"))),
-                                        bin("==", var("dc"), s("[")),
-                                    ),
-                                    vec![set("dmeta", boolean(true))],
-                                    None,
-                                ),
-                                set("q", bin("+", var("q"), int(1))),
-                            ]),
-                        ),
-                    ]),
-                    if_(var("dmeta"), vec![throw(concat(vec![
-                        s("unsupported: a glob in a directory component of `"),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_globexp(field, at, nomatch): the pathnames one word expands to, or
+        // the word itself when the pattern matches nothing (bash's default; zsh
+        // gets `no matches found` instead, via `nomatch`).
+        //
+        // Every path component is matched on its own against the directories
+        // built so far, so `*/*.txt`, `sub/*.log` and `a?/*/[xy]*` all work:
+        //
+        // - a component with no metacharacter is appended as written, but it has
+        //   to exist, so `a*/missing` stays one word instead of inventing paths;
+        // - a component is only listed when it is a directory (`fs.is_dir`), so
+        //   a file matched by `*` does not turn into a "not a directory" error;
+        // - a leading `.` in the component is what lets `.`-names match, as in
+        //   both shells;
+        // - a trailing `/` keeps the slash and keeps only directories;
+        // - the result is sorted in byte order, and an absolute pattern is
+        //   refused: the filesystem sandbox is relative to the script's
+        //   directory, so `/usr/*` could not be answered honestly.
+        "__sh_globexp" => func(
+            &["field", "at", "nomatch"],
+            vec![
+                // No metacharacter at all: quote removal only, and no filesystem
+                // access — `echo /etc/hosts` must not need a granted capability.
+                if_(
+                    not(call("__sh_meta", vec![var("field")])),
+                    vec![ret(array(vec![call("__sh_unglob", vec![var("field")])]))],
+                    None,
+                ),
+                if_(
+                    call("__sh_dstar", vec![var("field")]),
+                    vec![throw(concat(vec![
+                        s("unsupported: `**` in `"),
                         var("field"),
                         s("` at "),
                         var("at"),
-                    ]))], None),
-                    set("pre", call("__sh_join_range", vec![var("cs"), int(0), bin("+", var("k"), int(1))])),
-                    set("base", call("__sh_join_range", vec![var("cs"), bin("+", var("k"), int(1)), var("n")])),
-                    set("dir", call("__sh_join_range", vec![var("cs"), int(0), var("k")])),
-                    // `/x*` lists the root, not a directory named "".
-                    if_(bin("==", var("dir"), s("")), vec![set("dir", s("/"))], None),
-                ], None),
-                decl("dirp", call("__sh_unglob", vec![var("dir")])),
-                decl("prep", call("__sh_unglob", vec![var("pre")])),
-                // Nothing to match in, or a trailing `/`: leave the word alone.
-                if_(bin("==", var("base"), s("")), vec![ret(array(vec![var("lit")]))], None),
-                if_(
-                    bin("==", cap("fs.exists", vec![var("dirp")]), int(0)),
-                    vec![ret(array(vec![var("lit")]))],
+                        s("` — `**` is `*` in bash and recursive in zsh"),
+                    ]))],
                     None,
                 ),
-                // A leading `.` in the pattern is what lets `.`-files match.
-                decl("hidden", bin(
-                    "or",
+                decl("lit", call("__sh_unglob", vec![var("field")])),
+                // A trailing `/` asks for directories; strip one, remember it.
+                decl("w", var("field")),
+                decl(
+                    "slash",
                     bin(
                         "==",
-                        call("__sh_substr", vec![var("base"), int(0), int(1), boolean(true)]),
-                        s("."),
+                        call("__sh_substr", vec![var("field"), int(-1), int(1), boolean(true)]),
+                        s("/"),
                     ),
-                    bin(
-                        "==",
-                        call("__sh_substr", vec![var("base"), int(0), int(2), boolean(true)]),
-                        s("\\."),
-                    ),
-                )),
-                decl("out", array(vec![])),
-                for_("nm", cap("fs.list", vec![var("dirp")]), vec![
+                ),
+                if_(
+                    var("slash"),
+                    vec![set("w", call("__sh_substr", vec![var("field"), int(0), int(-1), boolean(true)]))],
+                    None,
+                ),
+                // Split into components on unescaped `/`, keeping the escapes.
+                decl("cs", chars(var("w"))),
+                decl("n", len(var("cs"))),
+                decl("comps", array(vec![])),
+                decl("cur", s("")),
+                decl("i", int(0)),
+                decl("rooted", boolean(false)),
+                while_(bin("<", var("i"), var("n")), vec![
+                    decl("c", index(var("cs"), var("i"))),
                     if_(
-                        bin(
-                            "and",
-                            bin(
-                                "==",
-                                call("__sh_substr", vec![var("nm"), int(0), int(1), boolean(true)]),
-                                s("."),
+                        bin("==", var("c"), s("\\")),
+                        vec![
+                            set("cur", bin("+", var("cur"), var("c"))),
+                            if_(
+                                bin("<", bin("+", var("i"), int(1)), var("n")),
+                                vec![
+                                    set(
+                                        "cur",
+                                        bin("+", var("cur"), index(var("cs"), bin("+", var("i"), int(1)))),
+                                    ),
+                                    set("i", bin("+", var("i"), int(1))),
+                                ],
+                                None,
                             ),
-                            not(var("hidden")),
-                        ),
-                        vec![S::Continue { meta: m() }],
-                        None,
-                    ),
-                    if_(
-                        bin(
-                            "==",
-                            call("__sh_glob", vec![var("base"), var("nm")]),
-                            boolean(true),
-                        ),
-                        vec![set(
-                            "out",
-                            bin("+", var("out"), array(vec![bin("+", var("prep"), var("nm"))])),
-                        )],
-                        None,
+                            set("i", bin("+", var("i"), int(1))),
+                        ],
+                        Some(vec![
+                            if_(
+                                bin("==", var("c"), s("/")),
+                                vec![if_(
+                                    bin("and", bin("==", var("i"), int(0)), bin("==", var("cur"), s(""))),
+                                    vec![set("rooted", boolean(true))],
+                                    Some(vec![
+                                        set("comps", bin("+", var("comps"), array(vec![var("cur")]))),
+                                        set("cur", s("")),
+                                    ]),
+                                )],
+                                Some(vec![set("cur", bin("+", var("cur"), var("c")))]),
+                            ),
+                            set("i", bin("+", var("i"), int(1))),
+                        ]),
                     ),
                 ]),
-                // No match: bash keeps the word as written; zsh fails the
+                set("comps", bin("+", var("comps"), array(vec![var("cur")]))),
+                if_(
+                    var("rooted"),
+                    vec![throw(concat(vec![
+                        s("unsupported: an absolute path with a glob in it `"),
+                        var("field"),
+                        s("` at "),
+                        var("at"),
+                        s("` — the filesystem sandbox is relative to the script's directory"),
+                    ]))],
+                    None,
+                ),
+                // Walk the components left to right. `cands` holds the paths built
+                // so far: "" is the working directory, "/" only appears for a
+                // rooted pattern (refused above).
+                decl("cands", array(vec![s("")])),
+                decl("j", int(0)),
+                while_(bin("<", var("j"), len(var("comps"))), vec![
+                    decl("comp", index(var("comps"), var("j"))),
+                    decl("next", array(vec![])),
+                    for_("cand", var("cands"), vec![
+                        if_(
+                            bin("==", var("comp"), s("")),
+                            // `a//b`, or the empty component a trailing `/` leaves.
+                            vec![set("next", bin("+", var("next"), array(vec![var("cand")])))],
+                            Some(vec![if_(
+                                not(call("__sh_meta", vec![var("comp")])),
+                                vec![
+                                    decl(
+                                        "q",
+                                        call(
+                                            "__sh_join",
+                                            vec![var("cand"), call("__sh_unglob", vec![var("comp")])],
+                                        ),
+                                    ),
+                                    if_(
+                                        bin("==", cap("fs.exists", vec![var("q")]), int(1)),
+                                        vec![set("next", bin("+", var("next"), array(vec![var("q")])))],
+                                        None,
+                                    ),
+                                ],
+                                Some(vec![
+                                    decl(
+                                        "dirp",
+                                        tern(bin("==", var("cand"), s("")), s("."), var("cand")),
+                                    ),
+                                    if_(
+                                        bin(
+                                            "and",
+                                            bin("==", cap("fs.exists", vec![var("dirp")]), int(1)),
+                                            bin("==", cap("fs.is_dir", vec![var("dirp")]), int(1)),
+                                        ),
+                                        vec![
+                                            // A leading `.` in the pattern is what lets
+                                            // `.`-names match; otherwise they are skipped.
+                                            decl(
+                                                "hidden",
+                                                bin(
+                                                    "or",
+                                                    bin(
+                                                        "==",
+                                                        call(
+                                                            "__sh_substr",
+                                                            vec![var("comp"), int(0), int(1), boolean(true)],
+                                                        ),
+                                                        s("."),
+                                                    ),
+                                                    bin(
+                                                        "==",
+                                                        call(
+                                                            "__sh_substr",
+                                                            vec![var("comp"), int(0), int(2), boolean(true)],
+                                                        ),
+                                                        s("\\."),
+                                                    ),
+                                                ),
+                                            ),
+                                            for_("nm", cap("fs.list", vec![var("dirp")]), vec![
+                                                if_(
+                                                    bin(
+                                                        "and",
+                                                        bin(
+                                                            "==",
+                                                            call(
+                                                                "__sh_substr",
+                                                                vec![var("nm"), int(0), int(1), boolean(true)],
+                                                            ),
+                                                            s("."),
+                                                        ),
+                                                        not(var("hidden")),
+                                                    ),
+                                                    vec![S::Continue { meta: m() }],
+                                                    None,
+                                                ),
+                                                if_(
+                                                    bin(
+                                                        "==",
+                                                        call("__sh_glob", vec![var("comp"), var("nm")]),
+                                                        boolean(true),
+                                                    ),
+                                                    vec![set(
+                                                        "next",
+                                                        bin(
+                                                            "+",
+                                                            var("next"),
+                                                            array(vec![call(
+                                                                "__sh_join",
+                                                                vec![var("cand"), var("nm")],
+                                                            )]),
+                                                        ),
+                                                    )],
+                                                    None,
+                                                ),
+                                            ]),
+                                        ],
+                                        None,
+                                    ),
+                                ]),
+                            )]),
+                        ),
+                    ]),
+                    set("cands", var("next")),
+                    set("j", bin("+", var("j"), int(1))),
+                ]),
+                decl(
+                    "shown",
+                    tern(var("slash"), call("__sh_dironly", vec![var("cands")]), var("cands")),
+                ),
+                // Nothing matched: bash keeps the word as written; zsh fails the
                 // command (here the whole run) with `no matches found`.
-                if_(bin("==", len(var("out")), int(0)), vec![
+                if_(bin("==", len(var("shown")), int(0)), vec![
                     if_(var("nomatch"), vec![throw(concat(vec![
                         s("no matches found: "),
                         var("field"),
@@ -2757,9 +2986,10 @@ fn helper_fn(name: &str) -> Function {
                     ]))], None),
                     ret(array(vec![var("lit")])),
                 ], None),
-                ret(var("out")),
+                ret(call("__sh_sort", vec![var("shown")])),
             ],
         ),
+
         // __sh_glob(pat, s): does the whole of `s` match the shell pattern
         // `pat`? `*`, `?`, `[…]` (ranges, POSIX classes, `!`/`^` negation) and
         // `\` for a literal character; greedy match with backtracking.

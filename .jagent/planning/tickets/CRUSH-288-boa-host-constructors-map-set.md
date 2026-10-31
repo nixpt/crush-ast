@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-288 |
 | **Priority** | P1 |
-| **Status** | In PR (stacked on CRUSH-287) |
+| **Status** | Done — PR #293 merged 2026-10-29 |
 | **Phase** | COSM K3 follow-up (boa walker) |
 | **Assignee** | muse |
 | **Filed by** | muse — 2026-10-21, follow-on to CRUSH-287 |
@@ -115,3 +115,7 @@ keys would merge; `NaN` as a key/value never matches itself;
   called from a constructor before the field's assignment line
   would read the field as its pre-assignment value where the
   walker trusts the proof.
+
+## Survey 2026-10-31 (status)
+
+PR #293 (`agent/muse/CRUSH-288`) merged 2026-10-29. Previous status: `In PR (stacked on CRUSH-287)`.

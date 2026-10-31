@@ -28,7 +28,7 @@ fixtures in `tests/fixtures/` are real CVM1 blobs assembled by crush-ast's
 own assembler (`crush_vm::assemble(...).to_blob()`), not mocks.
 
 **CI does not run this yet** — no workflow job builds the wheel. Tracked as
-[CRUSH-285](../.jagent/planning/tickets/CRUSH-285-wheel-ci-smoke-test.md).
+[CRUSH-285](../../.jagent/planning/tickets/CRUSH-285-wheel-ci-smoke-test.md).
 Until then, run it by hand after any change to `src/lib.rs` or to the
 `crush-vm` API it binds.
 
