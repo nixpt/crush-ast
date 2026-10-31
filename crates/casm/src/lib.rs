@@ -627,6 +627,11 @@ impl Instruction {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Manifest {
     pub permissions: Vec<String>,
+    /// The program's `@capabilities [...]` declaration, kept verbatim so a
+    /// compiled artifact still carries the reviewable contract it was checked
+    /// against (#258). `None` = no declaration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared: Option<Vec<String>>,
 }
 
 /// Serialization format for CASM programs

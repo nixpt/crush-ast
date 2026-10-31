@@ -393,6 +393,11 @@ pub struct Manifest {
     pub runtime: String,
     #[serde(default)]
     pub permissions: Vec<String>,
+    /// The source's `@capabilities [...]` declaration (#258), kept so
+    /// `crush-run caps` can report it for a compiled `.cvm1`. Informational:
+    /// what the VM enforces is `permissions` plus the host's grants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_capabilities: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Serialized in name order (`sorted_functions`), so the same program

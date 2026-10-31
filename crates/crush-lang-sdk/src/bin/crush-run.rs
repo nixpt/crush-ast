@@ -334,7 +334,9 @@ fn load_program(
         InputFormat::CasmJson | InputFormat::CasmBinary => {
             // Gated load (`version` major); the CASM manifest declares the caps.
             let casm = formats::load_casm(path, format)?;
-            Ok((crush_lang_sdk::compile::casm_to_vm(&casm)?, None))
+            let program = crush_lang_sdk::compile::casm_to_vm(&casm)?;
+            let declared = program.manifest.declared_capabilities.clone();
+            Ok((program, declared))
         }
         InputFormat::Cvms => {
             let source = std::fs::read_to_string(path)?;
@@ -348,7 +350,11 @@ fn load_program(
             }
             Ok((crush_lang_sdk::assemble(&source, Some(&permissions), None)?, None))
         }
-        InputFormat::Cvm1 => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
+        InputFormat::Cvm1 => {
+            let program = crush_vm::Program::from_blob(&std::fs::read(path)?)?;
+            let declared = program.manifest.declared_capabilities.clone();
+            Ok((program, declared))
+        }
     }
 }
 

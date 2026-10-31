@@ -420,6 +420,7 @@ mod tests {
             },
             manifest: casm::Manifest {
                 permissions: vec!["io.print".to_string()],
+                declared: None,
             },
             lang: None,
             cosm: None,
