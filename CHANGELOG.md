@@ -14,6 +14,22 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`crush debug FILE` / `crush-debug`: the debugger is runnable (CRUSH-317):**
+  `crush-debugger` had breakpoints, step/next/finish, watchpoints and
+  grant-gated inspection but no front end that compiled Crush source, so it could
+  only debug hand-written CASM. `crush debug prog.crush --step --inspect` now
+  compiles through `crush run`'s pipeline and opens the REPL; `break FILE:LINE`
+  resolves in the *source's* lines (the compiler's source map, which used to be
+  the generated assembly's), `print total` / `print p.x` / `watch total` /
+  `locals` use variable names, `step`/`next` go by source line, and stops show
+  the line. Debugging grants nothing by default: `--step` to run and step,
+  `--inspect=redacted` / `--inspect` to see values; a refused command names the
+  flag. `--message-format json` emits the `DebugEvent`s as NDJSON for an editor or
+  agent. `crush-installer` now installs `crush` and `crush-debug`. Fixes found on
+  the way: hashing a closure that captures itself (`let f = |n| f(n - 1)`)
+  overflowed the stack under `--inspect=redacted`, and `BreakpointSet::remove`
+  used `IndexMap::remove`, now a deprecation error under `-D warnings`.
+
 - **`crush-walk-run` keeps output before a runtime error and exits non-zero
   (CRUSH-184):** it buffered the first run's output and replaced it with
   `Error: …` on failure, and returned `Ok`, so a failing script exited 0 and
