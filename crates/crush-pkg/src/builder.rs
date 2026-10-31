@@ -602,6 +602,12 @@ impl PackageBuilder {
         opts
     }
 
+    /// Resolve the dependencies (fetching git ones not yet cached, unless
+    /// offline) and refresh `capsule.lock`, without compiling anything.
+    pub fn resolve(&self) -> anyhow::Result<Vec<DepResolution>> {
+        self.resolve_deps()
+    }
+
     fn resolve_deps(&self) -> anyhow::Result<Vec<DepResolution>> {
         let mut resolved = Vec::new();
         let lock = crate::gitdep::read_lock(&self.root_dir)?;
