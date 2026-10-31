@@ -2179,7 +2179,8 @@ impl Compiler {
                         "ai_semantic_match",
                         serde_json::json!({
                             "concept": concept,
-                            "confidence_threshold": threshold
+                            "confidence_threshold": threshold,
+                            "stack_args": 1
                         }),
                         &meta,
                     ));
