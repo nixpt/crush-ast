@@ -1279,6 +1279,10 @@ hand-editing versions.
 Artifacts: crates/crush-vm-py/Cargo.toml,crates/crush-vm-py/pyproject.toml,crates/crush-vm-py/src/lib.rs
 
 
+## 2026-10-30T18:36:26-05:00 — [ARCHITECTURAL] Stdlib caps reject negative lengths and bound every allocation (CRUSH-181)
+
+Reason:
+Default-on stdlib caps had unchecked casts and no size bound, so a program could abort the host: str.repeat/pad_left/pad_right/collections.chunk cast a negative length to usize (wrapping huge -> capacity overflow), conv.parse_int panicked on a radix outside 2..=36, and str.repeat/buffer.alloc/str.join could request an unbounded allocation. Fix: a shared MAX_STDLIB_ALLOC_BYTES (64 MiB) bound plus a get_bounded_len helper; repeat checks the product with checked_mul, parse_int validates the radix, buffer.alloc bounds size*size_of::<Value>, join sums the lengths before allocating. The bound is fixed, not configurable per run: HostCap::call(&self, args) has no run context, so a --max-memory quota needs an ABI change (follow-up).
 ## 2026-10-30T18:04:54-05:00 — [ARCHITECTURAL] The FastVM/JIT print formatter resolves every heap kind through the arena (CRUSH-294, GitHub #267)
 
 Reason:
@@ -1295,4 +1299,14 @@ FastVM's compare_op was arena-blind: it fell through to _ => false for every non
 
 Reason:
 The JIT emulates frames in one flat 64-slot locals array, addressed as locals[call_stack_top * FRAME_LOCALS + idx] with FRAME_LOCALS fixed at 8, and LoadLocal/StoreLocal did not bounds-check idx. A function using local 8+ spilled into the next frame, so a callee clobbered the caller's locals and the JIT finished with wrong values while every other engine was correct. Fix: program_frame_locals computes the max local slot used anywhere (LoadLocal/StoreLocal/LoadLocalChecked) + 1 and threads it through build_fn/emit_one/lload/lstore/unassign_frame as the stride; a program whose frame exceeds the 64-slot array is refused (FastVM fallback) and the call-depth guard becomes JIT_MAX_LOCALS / frame_locals. This also removes the need for the old LoadLocalChecked-past-8 refusal (CRUSH-zorro-55).
+
+
+## 2026-10-30T19:07:57-05:00 — [ARCHITECTURAL] Function layout is name-ordered, so the same source assembles byte-identically (CRUSH-188)
+
+Reason:
+crushc --emit casm changed between runs: the compiler sorted functions by name for compilation, but crush_lang_sdk::compile::casm_to_vm laid them into the code buffer by iterating casm::Program.functions, a HashMap, so the code layout, the disassembly order and the unique-label numbering all varied per process (Rust HashMap iteration order is seed-randomized). Fix: collect the functions and sort by name before emitting. Verified: crushc --emit casm on a three-function program 12 times now gives one unique output (was four). Reproducible builds and the AOT build cache depend on this.
+## 2026-10-30T18:52:17-05:00 — [ARCHITECTURAL] A walker never silently drops: unsupported statements/expressions are loud errors (CRUSH-198)
+
+Reason:
+The Go walker matched tree-sitter-go's node `short_variable_declaration`, which does not exist (it is `short_var_declaration`), so `a := 7` fell through the `_ => Ok(None)` catch-all and `a` read as uninitialised; var/assignment/inc/for/block were dropped the same way, and unknown expressions became NullLiteral. Fix: visit_statement -> visit_statements returning Vec (one node can yield several statements, e.g. a C-style for -> init + while), implement var/assignment/inc/dec/for(all shapes)/block, and make the catch-all a loud error. The same rule as the rest of the repo: exact or loud, never silently wrong. A multi-value return and unknown expressions also error now. Known divergence left as a follow-up: fmt.Println(a, b) maps to io.print which concatenates, while Go joins with spaces.
 
