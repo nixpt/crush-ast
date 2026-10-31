@@ -8,7 +8,7 @@
 //!   * A `std::net::TcpListener` accepts on 127.0.0.1:0; an acceptor thread drives a
 //!     `rustls::ServerConnection` handshake over the accepted socket, reads a 4-byte
 //!     "ping", writes a 4-byte "pong", then drops.
-//!   * The main thread builds a `NetState`, constructs `NetTlsWrapCap` via
+//!   * The main thread builds a `NetState`, constructs `TcpTlsWrapCap` via
 //!     `with_extra_roots(state.clone(), vec![self_signed_der])` so the client's
 //!     `RootCertStore` includes the test cert as an extra trust anchor, calls
 //!     `HostCap::call(&args)`, asserts the wrap returned a fresh `ConnId` AND that
@@ -25,8 +25,9 @@ use std::{
     time::Duration,
 };
 
-use crush_lang_sdk::{HostCap, Value};
-use crush_net::caps::{NetState, NetTlsWrapCap};
+use crush_vm::vm::Value;
+use crush_vm::HostCap;
+use crush_net::caps::{NetState, TcpTlsWrapCap};
 
 #[test]
 fn net_tls_wrap_performs_handshake_and_probe() {
@@ -80,13 +81,13 @@ fn net_tls_wrap_performs_handshake_and_probe() {
         transport,
         conns: [(pre_id, Arc::new(Mutex::new(conn)))].into_iter().collect(),
         listeners: Default::default(),
-        next_id: pre_id,
+        next_id: pre_id + 1, // next free id (NetState::next post-increments)
         #[cfg(feature = "tls")]
         tls_client_conns: Default::default(),
     }));
 
     // ---- construct cap WITH the test cert as an extra trust anchor ----
-    let cap = NetTlsWrapCap::with_extra_roots(state.clone(), vec![cert_der_for_store]);
+    let cap = TcpTlsWrapCap::with_extra_roots(state.clone(), vec![cert_der_for_store]);
     let result = cap.call(vec![
         Value::Int(pre_id),
         Value::Str("localhost".to_string()),
@@ -95,8 +96,8 @@ fn net_tls_wrap_performs_handshake_and_probe() {
     let new_id = match result {
         Ok(Some(Value::Int(id))) => id,
         Ok(Some(other)) => panic!("expected Value::Int, got {other:?}"),
-        Ok(None) => panic!("net.tls_wrap returned None — should be Some(Int)"),
-        Err(e) => panic!("net.tls_wrap errored: {e}"),
+        Ok(None) => panic!("tcp.tls_wrap returned None — should be Some(Int)"),
+        Err(e) => panic!("tcp.tls_wrap errored: {e}"),
     };
 
     assert_ne!(new_id, pre_id, "tls_wrap must return a fresh ConnId");

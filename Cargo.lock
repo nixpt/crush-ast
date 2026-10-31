@@ -1381,7 +1381,7 @@ dependencies = [
 name = "crush-net"
 version = "0.8.0"
 dependencies = [
- "crush-lang-sdk",
+ "crush-vm",
  "rcgen",
  "rustls",
  "serde",

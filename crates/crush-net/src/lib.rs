@@ -4,11 +4,25 @@
 //! Replaces the libp2p / rcgen / time / tokio stack of `exo-mesh` with a
 //! deterministic reactor that compiles in seconds.
 //!
-//! ## Phase 3 contents (this commit)
+//! ## Capabilities: `tcp.*`, three independently granted groups
 //!
-//! - [`caps`] — `register()` actually wires `net.connect` / `net.listen` /
-//!   `net.accept` / `net.send` / `net.recv` / `net.close` / `net.ping` HostCaps
-//!   backed by [`TcpTransport`].
+//! The caps are named `tcp.*`, not `net.*`: `net.*` is the HTTP-client family
+//! that `crush-run --net` grants wholesale (and that `@capabilities net` /
+//! `capsule.toml` `net` would cover), and raw sockets must never ride along
+//! with it (CRUSH-318). Hosts register them in groups:
+//!
+//! | register fn | caps | `crush-run` flag |
+//! |---|---|---|
+//! | [`register_client`] | `tcp.connect`, `tcp.tls_wrap` | `--tcp` |
+//! | [`register_listen`] | `tcp.listen`, `tcp.accept` (being a server) | `--tcp-listen` |
+//! | [`register_io`] | `tcp.send`, `tcp.recv`, `tcp.close`, `tcp.ping` | either of the above |
+//!
+//! Addresses are `tcp://<ip>:<port>` (a literal IP; there is no DNS lookup).
+//! Connection ids are `Int`s; `tcp.send`/`tcp.recv` move UTF-8 `Str`s.
+//!
+//! ## Contents
+//!
+//! - [`caps`] — the `HostCap` implementations backed by [`TcpTransport`].
 //! - [`transport`] — `AsyncRead` / `AsyncWrite` / `AsyncAccept` / `Transport`
 //!   traits + a `parse_uri("tcp://host:port")` helper.
 //! - [`codec`] — fixed-header TLV frame format with a 16 MiB hard ceiling +
@@ -28,8 +42,8 @@ pub mod tcp;
 pub mod transport;
 
 pub use caps::{
-    build_state, NetAcceptCap, NetCloseCap, NetConnectCap, NetListenCap, NetPingCap,
-    NetRecvCap, NetSendCap, NetState, SharedConn, ConnId,
+    build_state, TcpAcceptCap, TcpCloseCap, TcpConnectCap, TcpListenCap, TcpPingCap,
+    TcpRecvCap, TcpSendCap, NetState, SharedConn, ConnId,
 };
 pub use codec::{
     decode_request, encode_frame, encode_request, try_decode_frame, Frame, NetError,
@@ -41,16 +55,18 @@ pub use transport::{
     parse_uri, AsyncAccept, AsyncRead, AsyncWrite, Endpoint, Transport,
 };
 
-use crush_lang_sdk::HostCaps;
+use crush_vm::HostCaps;
 
-/// Register the `net.*` HostCaps on the given [`HostCaps`] registry.
-///
-/// Constructs a default `Reactor` + `NetState` internally; if your host already
-/// owns a `Reactor` and wants to share it across callbacks, use
-/// [`caps::register`] directly with a state built via [`caps::build_state`].
+/// Register **every** `tcp.*` HostCap (client, listen and io) on `caps`,
+/// with no gating. Constructs a default `Reactor` + `NetState` internally; to
+/// share a `Reactor`, or to grant only some groups, use [`caps::build_state`]
+/// with [`register_client`] / [`register_listen`] / [`register_io`].
 pub fn register(caps: &mut HostCaps) {
-    use std::sync::Arc;
-    let reactor = Arc::new(crate::reactor::Reactor::new());
-    let state = crate::caps::build_state(reactor);
-    crate::caps::register(caps, state);
+    caps::register(caps, new_state());
+}
+
+/// A fresh shared connection table for the `register_*` functions: the three
+/// groups of one program must share one so `tcp.accept`'s ids work in `tcp.recv`.
+pub fn new_state() -> std::sync::Arc<std::sync::Mutex<NetState>> {
+    build_state(std::sync::Arc::new(Reactor::new()))
 }
