@@ -24,6 +24,10 @@ pub struct ReplConfig {
     /// so editors / LSP bridges can ingest the stream uniformly with the
     /// other Crush binaries.
     pub message_format: MessageFormat,
+    /// Import search path after the working directory (`-L`, then
+    /// `CRUSH_PATH`): an `import a.b` line loads `a/b.crush` from the first of
+    /// them that has it (CRUSH-110).
+    pub import_paths: Vec<std::path::PathBuf>,
 }
 
 impl Default for ReplConfig {
@@ -39,6 +43,7 @@ impl Default for ReplConfig {
             // On whenever the build has it (CRUSH-113).
             stdlib: cfg!(feature = "stdlib"),
             message_format: MessageFormat::Text,
+            import_paths: Vec::new(),
         }
     }
 }
@@ -46,6 +51,9 @@ impl Default for ReplConfig {
 pub struct ReplState {
     pub functions: HashMap<String, Function>,
     pub main_statements: Vec<Statement>,
+    /// The `import` lines entered so far: each later line is resolved with
+    /// them in scope, so `import facet` then `facet.facet_help(s)` works.
+    pub imports: Vec<Statement>,
 }
 
 impl ReplState {
@@ -53,6 +61,7 @@ impl ReplState {
         Self {
             functions: HashMap::new(),
             main_statements: Vec::new(),
+            imports: Vec::new(),
         }
     }
 
@@ -275,6 +284,42 @@ fn parse_single_expr(source: &str) -> Result<Expression, MetaCommandError> {
     }
 }
 
+/// Resolve a snippet's imports, with every earlier `import` line in scope
+/// (CRUSH-110), from the working directory and `config.import_paths`. The
+/// snippet's own imports are remembered once they resolve.
+fn resolve_snippet_imports(
+    mut snippet: Program,
+    state: &mut ReplState,
+    config: &ReplConfig,
+) -> anyhow::Result<Program> {
+    let is_module_import = |s: &Statement| {
+        matches!(
+            s,
+            Statement::Import { import: crush_cast::ImportStatement::CrushModule { .. }, .. }
+        )
+    };
+    let new: Vec<Statement> = snippet
+        .functions
+        .get("main")
+        .map(|m| m.body.iter().filter(|s| is_module_import(s)).cloned().collect())
+        .unwrap_or_default();
+    if new.is_empty() && state.imports.is_empty() {
+        return Ok(snippet);
+    }
+    let main = snippet.functions.entry("main".to_string()).or_default();
+    let mut body = state.imports.clone();
+    body.append(&mut main.body);
+    main.body = body;
+    let origin = std::env::current_dir().unwrap_or_else(|_| ".".into()).join("<repl>");
+    let opts = crush_frontend::import_system::ImportOptions {
+        search_paths: config.import_paths.clone(),
+        ..Default::default()
+    };
+    crush_frontend::import_system::resolve_imports(&mut snippet, &origin, &opts)?;
+    state.imports.extend(new);
+    Ok(snippet)
+}
+
 fn compile_pipeline(program: Program) -> anyhow::Result<casm::Program> {
     let mut analyzer = SemanticAnalyzer::new();
     analyzer.check(&program)?;
@@ -409,11 +454,20 @@ pub fn evaluate_silent(source: &str, state: &mut ReplState, config: &ReplConfig)
         }
     };
 
+    let snippet = match resolve_snippet_imports(snippet, state, config) {
+        Ok(s) => s,
+        Err(e) => {
+            eval_result.error = Some(e.to_string());
+            return eval_result;
+        }
+    };
+
+    // Functions merged from imported modules are not the line's own.
     let mut defined: Vec<String> = snippet
         .functions
-        .keys()
-        .filter(|k| *k != "main")
-        .cloned()
+        .iter()
+        .filter(|(k, f)| *k != "main" && !f.meta.contains_key("source_file"))
+        .map(|(k, _)| k.clone())
         .collect();
     eval_result.defined = defined;
 
@@ -493,11 +547,13 @@ fn evaluate_input(source: &str, state: &mut ReplState, config: &ReplConfig) -> a
         let rendered = crate::theme::render_parse_errors(&errors, None, source);
         anyhow::anyhow!("{rendered}")
     })?;
+    let snippet = resolve_snippet_imports(snippet, state, config)?;
+    // Functions merged from imported modules are not the line's own.
     let mut defined: Vec<String> = snippet
         .functions
-        .keys()
-        .filter(|k| *k != "main")
-        .cloned()
+        .iter()
+        .filter(|(k, f)| *k != "main" && !f.meta.contains_key("source_file"))
+        .map(|(k, _)| k.clone())
         .collect();
     let had_main_statements = state.merge_snippet(snippet);
     let (compiled_program, show_result) = state.to_exec_program();

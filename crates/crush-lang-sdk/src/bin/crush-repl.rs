@@ -39,6 +39,12 @@ struct Args {
     /// Mirrors `crushc` / `crush-run` / `crush-compile`.
     #[arg(long = "message-format", value_name = "FORMAT", default_value = "text")]
     message_format: MessageFormat,
+
+    /// Add a directory to the import search path (repeatable). An `import
+    /// a.b` line looks for `a/b.crush` in the working directory, then each
+    /// `-L` directory, then each `CRUSH_PATH` directory (CRUSH-110).
+    #[arg(short = 'L', long = "lib-path", value_name = "DIR")]
+    lib_paths: Vec<std::path::PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -55,6 +61,8 @@ fn main() -> anyhow::Result<()> {
         },
         stdlib: !args.no_stdlib && (args.stdlib || cfg!(feature = "stdlib")),
         message_format: args.message_format,
+        import_paths: crush_frontend::import_system::ImportOptions::with_crush_path(args.lib_paths)
+            .search_paths,
     };
 
     // Errors during REPL eval are dispatched *inside* `run()` against

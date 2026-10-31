@@ -44,6 +44,7 @@
 //! | Runtime VM    | `E-RT05`     | `JsonDiagnostic::CODE_RT_VM`                |
 //! | CLI assembler | `E-ASM`      | `JsonDiagnostic::CODE_ASSEMBLER`            |
 //! | Generic I/O   | `E-IO`       | `JsonDiagnostic::CODE_IO`                   |
+//! | Import        | `E-IM01`     | `JsonDiagnostic::CODE_IMPORT`               |
 //!
 //! Unlike the runtime-side codes (`E-RT*`, `E-TP*`, `E-IO`,
 //! `E-ASM`) which live as `pub const CODE_*` on `JsonDiagnostic`,
@@ -180,6 +181,10 @@ pub trait JsonDiagnosticExt: Sized {
     /// `RuntimeError::Vm` arm used to leave it empty and put the text in
     /// `hint`).
     fn runtime_error(err: &crate::RuntimeError) -> Self;
+
+    /// Build an `E-IM01` record from an unresolved import, in the file the
+    /// problem is in (CRUSH-110).
+    fn import_error(err: &crush_frontend::import_system::ImportError) -> Self;
 }
 
 impl JsonDiagnosticExt for JsonDiagnostic {
@@ -190,6 +195,15 @@ impl JsonDiagnosticExt for JsonDiagnostic {
 
     fn semantic_error(err: &crush_frontend::SemanticError, file: Option<&str>) -> Self {
         let d = JsonDiagnostic::type_error(&err.message, file);
+        match err.pos {
+            Some((line, col)) => d.at(line, col),
+            None => d,
+        }
+    }
+
+    fn import_error(err: &crush_frontend::import_system::ImportError) -> Self {
+        let d = JsonDiagnostic::error(JsonDiagnostic::CODE_IMPORT, &err.message)
+            .in_file(Some(&err.file));
         match err.pos {
             Some((line, col)) => d.at(line, col),
             None => d,
@@ -233,7 +247,11 @@ pub fn diagnostics_for_error(
             .collect();
     }
     if let Some(sema) = err.downcast_ref::<crush_frontend::SemanticError>() {
-        return vec![JsonDiagnostic::semantic_error(sema, file)];
+        // An error inside an imported module names that module's file.
+        return vec![JsonDiagnostic::semantic_error(sema, sema.file.as_deref().or(file))];
+    }
+    if let Some(imp) = err.downcast_ref::<crush_frontend::import_system::ImportError>() {
+        return vec![JsonDiagnostic::import_error(imp)];
     }
     if let Some(rt) = err.downcast_ref::<crate::RuntimeError>() {
         return vec![JsonDiagnostic::runtime_error(rt).in_file(file)];

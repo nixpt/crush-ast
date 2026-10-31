@@ -12,7 +12,7 @@
 //! crushc program.crush --emit ast
 //! crushc program.crush --check
 //! crushc program.crush -O --cap io.print --cap str.concat
-//! crushc program.crush -L ./modules -L /usr/lib/crush
+//! crushc program.crush -L ./modules -L /usr/lib/crush   # import search path (CRUSH-110)
 //! ```
 
 use std::path::PathBuf;
@@ -65,7 +65,9 @@ struct Cli {
     #[arg(long = "cap", value_name = "CAP")]
     caps: Vec<String>,
 
-    /// Add a directory to the library search path (for import resolution).
+    /// Add a directory to the import search path (repeatable). `import a.b`
+    /// looks for `a/b.crush` in the input file's directory, then each `-L`
+    /// directory in order, then each `CRUSH_PATH` directory.
     #[arg(short = 'L', long = "lib-path", value_name = "DIR")]
     lib_paths: Vec<PathBuf>,
 
@@ -197,6 +199,18 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
             std::process::exit(1);
         }
     };
+
+    // `--emit ast` dumps the file as written; everything else compiles the
+    // program with its imports resolved and merged (CRUSH-110).
+    if cli.emit != EmitKind::Ast {
+        let imports =
+            crush_frontend::import_system::ImportOptions::with_crush_path(cli.lib_paths.clone());
+        if let Err(e) =
+            crush_frontend::import_system::resolve_imports(&mut program, &cli.input, &imports)
+        {
+            report_import_error(cli, &e);
+        }
+    }
 
     // Same pass `compile_crush_source` (the `crush-run x.crush` path) runs:
     // without it `@lang` blocks get no variable marshaling (CRUSH-130).
@@ -340,6 +354,33 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         }
         _ => unreachable!(),
     }
+}
+
+/// Print an import-resolution failure (text: `[import] error: file:line:col:
+/// …`; json: an `E-IM01` record in the file the problem is in) and exit 1.
+fn report_import_error(cli: &Cli, e: &anyhow::Error) -> ! {
+    match cli.message_format {
+        MessageFormat::Text => {
+            eprintln!(
+                "{badge} error: {e}",
+                badge = crush_lang_sdk::theme::paint_error_badge("import"),
+            );
+        }
+        MessageFormat::Json => {
+            let file = cli.input.display().to_string();
+            eprint!(
+                "{}",
+                crush_lang_sdk::theme::render_diagnostics_ndjson(
+                    &crush_lang_sdk::theme::diagnostics_for_error(
+                        e,
+                        Some(&file),
+                        crush_lang_sdk::theme::JsonDiagnostic::CODE_IMPORT,
+                    )
+                )
+            );
+        }
+    }
+    std::process::exit(1);
 }
 
 /// Emit text to stdout (no -o) or to a file.

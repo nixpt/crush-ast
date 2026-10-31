@@ -142,7 +142,51 @@ pub fn compile_crush_to_casm_with_options(
     source: &str,
     options: &CompileOptions,
 ) -> anyhow::Result<(casm::Program, Vec<String>)> {
-    let mut program = crush_frontend::parse_source(source)?;
+    compile_program_to_casm(crush_frontend::parse_source(source)?, options)
+}
+
+/// Compile the Crush file at `path`, resolving its imports (CRUSH-110) from
+/// its directory and then `imports`' search path; the CASM plus the polyglot
+/// pass's warnings. What `crushc` / `crush-run` compile a `.crush` file with.
+/// The string entry points ([`compile_crush_to_casm_with_options`], …) resolve
+/// no imports: a program with `import a.b` compiled through them is refused
+/// with an error saying it needs a file path.
+pub fn compile_crush_file_to_casm(
+    path: &std::path::Path,
+    imports: &crush_frontend::import_system::ImportOptions,
+    options: &CompileOptions,
+) -> anyhow::Result<(casm::Program, Vec<String>)> {
+    compile_program_to_casm(crush_frontend::parse_file(path, imports)?, options)
+}
+
+/// [`compile_crush_file_to_casm`] to a CVM1 program (warnings attached).
+pub fn compile_crush_file(
+    path: &std::path::Path,
+    imports: &crush_frontend::import_system::ImportOptions,
+    options: &CompileOptions,
+) -> anyhow::Result<crush_vm::Program> {
+    let (casm, warnings) = compile_crush_file_to_casm(path, imports, options)?;
+    let mut program = casm_to_vm(&casm)?;
+    program.warnings = warnings;
+    Ok(program)
+}
+
+/// [`compile_crush_source_for_debug`] for a file, resolving its imports.
+pub fn compile_crush_file_for_debug(
+    path: &std::path::Path,
+    imports: &crush_frontend::import_system::ImportOptions,
+) -> anyhow::Result<(crush_vm::Program, LocalNames)> {
+    let (casm, warnings) = compile_crush_file_to_casm(path, imports, &CompileOptions::default())?;
+    let (mut program, names) = casm_to_vm_named(&casm)?;
+    program.warnings = warnings;
+    Ok((program, names))
+}
+
+/// The shared back half of the source and file entry points.
+fn compile_program_to_casm(
+    mut program: crush_cast::Program,
+    options: &CompileOptions,
+) -> anyhow::Result<(casm::Program, Vec<String>)> {
     let declared = program.manifest.as_ref().and_then(|m| m.capabilities.clone());
     let (casm, warnings) = match options.polyglot {
         PolyglotMode::Exec => {

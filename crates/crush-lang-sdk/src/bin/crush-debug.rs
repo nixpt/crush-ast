@@ -74,6 +74,10 @@ struct Args {
     #[arg(long = "cap", value_name = "CAP")]
     caps: Vec<String>,
 
+    /// Add a directory to the import search path (repeatable), as `crush run -L`.
+    #[arg(short = 'L', long = "lib-path", value_name = "DIR")]
+    lib_paths: Vec<PathBuf>,
+
     /// Enable filesystem host capabilities, confined to --fs-root.
     #[arg(long)]
     fs: bool,
@@ -250,8 +254,10 @@ fn load(args: &Args) -> anyhow::Result<(crush_vm::Program, crush_lang_sdk::compi
     let ext = args.path.extension().and_then(|s| s.to_str()).unwrap_or("");
     match ext {
         "crush" => {
-            let source = std::fs::read_to_string(&args.path)?;
-            crush_lang_sdk::compile::compile_crush_source_for_debug(&source)
+            let imports = crush_frontend::import_system::ImportOptions::with_crush_path(
+                args.lib_paths.iter().cloned(),
+            );
+            crush_lang_sdk::compile::compile_crush_file_for_debug(&args.path, &imports)
                 .map_err(|e| anyhow::Error::new(CompileFailed(e)))
         }
         "casm" => {

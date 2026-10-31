@@ -176,10 +176,15 @@ fn discover_corpus(workspace_root: &Path, dirs: &[&str]) -> Vec<PathBuf> {
 /// Uses a reduced step quota (50k) so a slow program fails fast rather than
 /// blocking the corpus run. A program legitimately needing more steps should
 /// declare `// expect-xstep: N` (not yet implemented).
-fn run_crush(source: &str, workspace_root: &Path) -> Result<String, String> {
+/// Compiled as a file, so its imports resolve from its directory (CRUSH-110).
+fn run_crush(path: &Path, source: &str, workspace_root: &Path) -> Result<String, String> {
     let host_caps = parse_caps_annotation(source, workspace_root)?;
-    let program = crush_lang_sdk::compile::compile_crush_source(source)
-        .map_err(|e| format!("compile error: {e}"))?;
+    let program = crush_lang_sdk::compile::compile_crush_file(
+        path,
+        &crush_frontend::import_system::ImportOptions::default(),
+        &crush_lang_sdk::compile::CompileOptions::default(),
+    )
+    .map_err(|e| format!("compile error: {e}"))?;
     // Use a modest default (1K steps); heavy programs can annotate // budget: N.
     let budget: usize = parse_budget_annotation(&source).unwrap_or(1_000) as usize;
     let quotas = crush_vm::Quotas {
@@ -212,7 +217,7 @@ fn evaluate_file(path: &Path, workspace_root: &Path, verbose: bool) -> Outcome {
     }
 
     // Run the program.
-    let result = run_crush(&source, workspace_root);
+    let result = run_crush(path, &source, workspace_root);
 
     // xfail mode: expectation is inverted.
     if let Some(ref xfail_reason) = ann.xfail {
