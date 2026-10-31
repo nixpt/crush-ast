@@ -1191,17 +1191,30 @@ impl HostCap for ProcessExecCap {
             v => vec![crate::caps::value_as_text(v)],
         };
 
-        let output = std::process::Command::new(&cmd)
-            .args(&exec_args)
-            .output()
-            .map_err(|e| format!("process.exec {cmd}: {e}"))?;
+        // A command that can't start (missing, not executable, …) is part of
+        // the result, not a run-ending error: no process ran, so there is no
+        // exit status and `exit_code` carries the `-1` "no status" sentinel
+        // the signal-killed path below uses, with the reason on `stderr`
+        // (CRUSH-242). A catchable error would be the better shape, but cap
+        // failures aren't catchable yet (CRUSH-219); when that lands this can
+        // move to `Err` without breaking the success path.
+        let (exit_code, stdout, stderr) =
+            match std::process::Command::new(&cmd).args(&exec_args).output() {
+                Ok(output) => (
+                    i64::from(output.status.code().unwrap_or(-1)),
+                    String::from_utf8_lossy(&output.stdout).into_owned(),
+                    String::from_utf8_lossy(&output.stderr).into_owned(),
+                ),
+                Err(e) => (-1, String::new(), format!("process.exec {cmd}: {e}")),
+            };
 
-        let result = serde_json::json!({
-            "stdout": String::from_utf8_lossy(&output.stdout),
-            "stderr": String::from_utf8_lossy(&output.stderr),
-            "exit_code": output.status.code().unwrap_or(-1),
-        });
-        Ok(Some(Value::Str(result.to_string())))
+        // Key order (exit_code, stdout, stderr) is insertion-ordered, so the
+        // printed form is deterministic.
+        Ok(Some(Value::new_map(vec![
+            ("exit_code".to_string(), Value::Int(exit_code)),
+            ("stdout".to_string(), Value::Str(stdout)),
+            ("stderr".to_string(), Value::Str(stderr)),
+        ])))
     }
 }
 
@@ -1547,7 +1560,7 @@ mod tests {
     }
 
     #[test]
-    fn process_exec_runs_echo() {
+    fn process_exec_returns_result_map() {
         let cap = ProcessExecCap;
         let result = cap
             .call(vec![
@@ -1555,9 +1568,48 @@ mod tests {
                 Value::new_array(vec![Value::Str("hello".to_string())]),
             ])
             .unwrap();
-        let text = crate::caps::value_as_text(&result.unwrap());
-        assert!(text.contains("\"stdout\":\"hello"));
-        assert!(text.contains("\"exit_code\":0"));
+        let Some(Value::Map(m)) = result else {
+            panic!("process.exec must return a map, got {result:?}");
+        };
+        let map = m.borrow();
+        // Field order is pinned so the printed form is deterministic.
+        let keys: Vec<&String> = map.keys().collect();
+        assert_eq!(keys, ["exit_code", "stdout", "stderr"]);
+        assert_eq!(map.get("exit_code"), Some(&Value::Int(0)));
+        let stdout = match map.get("stdout") {
+            Some(Value::Str(s)) => s.clone(),
+            other => panic!("stdout must be a string, got {other:?}"),
+        };
+        assert!(stdout.starts_with("hello"), "stdout: {stdout:?}");
+        assert_eq!(map.get("stderr"), Some(&Value::Str(String::new())));
+    }
+
+    #[test]
+    fn process_exec_missing_command_is_a_result_not_an_error() {
+        let cap = ProcessExecCap;
+        let result = cap
+            .call(vec![
+                Value::Str("definitely-not-a-command-crush-242".to_string()),
+                Value::new_array(vec![]),
+            ])
+            .unwrap();
+        let Some(Value::Map(m)) = result else {
+            panic!("process.exec must return a map, got {result:?}");
+        };
+        let map = m.borrow();
+        // No process ran, so there is no exit status: -1, the same sentinel
+        // the signal-killed path uses, with the reason on stderr.
+        assert_eq!(map.get("exit_code"), Some(&Value::Int(-1)));
+        assert_eq!(map.get("stdout"), Some(&Value::Str(String::new())));
+        match map.get("stderr") {
+            Some(Value::Str(s)) => {
+                assert!(
+                    s.contains("definitely-not-a-command-crush-242"),
+                    "stderr names the command: {s:?}"
+                );
+            }
+            other => panic!("stderr must be a string, got {other:?}"),
+        }
     }
 
     #[test]

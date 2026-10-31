@@ -138,7 +138,7 @@ fn host_process_capabilities() {
         .expect("run");
 
     assert!(result.output.contains("crush-process"));
-    assert!(result.output.contains("\"exit_code\":0"));
+    assert!(result.output.contains("exit_code: 0"));
 }
 
 #[test]

@@ -525,7 +525,7 @@ fn list_caps() {
     println!("  codebase.exhaustive_sites NAME / .uncovered_paths NAME / .wip / .temporaries");
     println!("  codebase.stale_temporaries / .decisions / .annotation_history NAME");
     println!("Process capabilities (enable with --process):");
-    println!("  process.exec CMD [ARGS...]  run subprocess, return JSON stdout/stderr/exit_code");
+    println!("  process.exec CMD [ARGS...]  run subprocess, return {{exit_code, stdout, stderr}}");
     println!("Cryptography capabilities (enable with --crypto):");
     println!("  crypto.sha256 DATA          return hex SHA-256 digest");
     println!("  crypto.random N             return N random bytes as base64 (max 4096)");
