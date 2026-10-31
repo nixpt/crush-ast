@@ -1,5 +1,11 @@
 # Crush AI-Native Annotations × Notebook Cells
 
+> **Status (CRUSH-371).** The annotation taxonomy and the AI expression/statement
+> tables below describe CAST types that exist and parse. Nothing here calls a
+> model. The "Notebook Cell Integration" section and the implementation plan are a
+> **design proposal**, not shipped behaviour. What actually works, per surface:
+> [`ai-native-status.md`](ai-native-status.md).
+
 ## The Full Annotation Taxonomy (from crush-ast codebase)
 
 crush has **7 annotation types** that turn code into a queryable, agent-friendly knowledge graph:
@@ -7,10 +13,10 @@ crush has **7 annotation types** that turn code into a queryable, agent-friendly
 | Annotation | CAST type | File | Purpose |
 |-----------|-----------|------|---------|
 | `@module { purpose, exports, invariants, related }` | `ModuleManifest` | `manifest.rs:25` | Self-describing module — what it does, what it exports |
-| `@wip { intent, done[], todo[], unresolved[] }` | `WipNode` | `manifest.rs:140` | Work-in-progress tracking — agents query `codebase.wips()` |
+| `@wip { intent, done[], todo[], unresolved[] }` | `WipNode` | `manifest.rs:140` | Work-in-progress tracking — agents query `codebase.wip()` |
 | `@temporary { reason, expires-when, added }` | `TemporaryNode` | `manifest.rs:161` | Technical debt with expiry — compiler warns W-TMP-001 after STALE_DAYS |
 | `@decision { chose, over[], because, revisit-if[] }` | `Decision` | `manifest.rs:185` | Architectural decision record — queryable rationale |
-| `@invariant { description, applies_to[], check }` | `Invariant` | `manifest.rs:50` | Contracts — check expressions fire in debug mode |
+| `@invariant { description, applies_to[], check }` | `Invariant` | `manifest.rs:50` | Contracts — `check` is stored on the node; nothing evaluates it (CRUSH-370) |
 | `@errors { Variant: likely\|possible\|rare }` | `WeightedError` | `manifest.rs:129` | Probabilistic error declarations |
 | `@covers { target, percentage }` | `CoverageClaim` | `manifest.rs:80` | Test coverage declarations |
 
@@ -21,26 +27,31 @@ From `crush-cast/src/ai.rs`:
 | Expression | What it does |
 |-----------|-------------|
 | `Query { query, result_type, context }` | Natural language query with expected return type |
-| `ToolChain { tools[], strategy, error_handling }` | Chained tool calls (sequential/parallel/conditional) |
+| `ToolChain { tools[], strategy, error_handling }` | Chained tool calls (sequential/parallel/conditional/retry) run by the local toolchain engine against registered tools |
 | `AgentDelegation { task, agents[], delegation_strategy }` | Dispatch to sub-agents by pattern or ID |
 | `LearningLoop { learning_target, strategy, adaptations[] }` | Self-improving loop with adaptation actions |
 | `ContextAware { expression, requires_context[], provides_context[] }` | Context-scoped expression |
-| `SemanticMatch { target, concept, confidence_threshold }` | Vector-similarity matching |
+| `SemanticMatch { target, concept, confidence_threshold }` | Calls the `ai_native.semantic_match` host capability with the target and concept. There is no vector similarity in Crush: the shipped cap is an echo stub, a real one is whatever the host registers |
 | `Synthesize { output_type, constraints[], context_refs[], examples[] }` | AI code generation with constraints |
 
 ## AI-Native Statement Types
 
-| Statement | What it does |
-|-----------|-------------|
-| `GoalDeclaration { goal, deadline, milestones, dependencies }` | Define a task to be completed |
-| `ProgressUpdate { task, status, completed, blocked }` | Update task progress |
-| `KnowledgeSharing { topic, summary, source, confidence }` | Share knowledge with agents |
+Field names are those of `crush-cast/src/ai.rs` (`AIStatement`):
+
+| Statement | Fields | State |
+|-----------|--------|-------|
+| `GoalDeclaration` | `goal_id, description, success_criteria, priority, deadline` | runs (echo stub) |
+| `ProgressUpdate` | `goal_id, progress, status_message, metrics` | runs (echo stub) |
+| `KnowledgeSharing` | `knowledge_type, content, recipients, retention_policy` | runs (echo stub) |
+| `CapabilityDiscovery` | `domain, requirements, discovery_strategy` | compile error (CRUSH-265) |
+| `AdaptationRequest` | `adaptation_type, reason, parameters` | compile error (CRUSH-265) |
+| `SemanticSwitch` | `target, cases, fallback` | compile error (CRUSH-265) |
 
 ## Compiler Warning Passes
 
 | Warning | What triggers it |
 |---------|-----------------|
-| **W-WIP-001** | `@wip` with non-empty `todo` or `unresolved` — blocks shipping |
+| **W-WIP-001** | `@wip` with non-empty `todo` or `unresolved` — a warning only; it blocks nothing (`crushc --deny-warnings`, CRUSH-369, can make it fail a build) |
 | **W-TMP-001** | `@temporary` that has exceeded STALE_DAYS — stale technical debt |
 | **W-WIP-002** (planned) | `@wip` without `started_by` or `intent` |
 
@@ -145,17 +156,16 @@ The notebook format (.crush-nb) becomes a first-class codebase citizen:
 
 ```crush
 // Crush program queries the notebook as a codebase
-let wip_cells = @codebase.wips()
+let wip_cells = codebase.wip()
 // → [{ cell: "Cell 5", intent: "Build ETL pipeline", todo: 2, unresolved: 1 }, ...]
 
-let stale_cells = @codebase.stale_temporary()
+let stale_cells = codebase.stale_temporaries()
 // → [{ cell: "Cell 5", reason: "hardcoded API key", added: "2026-07-10" }]
 
-let decisions = @codebase.decisions("notebook.crush-nb")
+let decisions = codebase.decisions("notebook.crush-nb")
 // → [{ name: "use-parallel-map-not-for-loop", chose: "arr.par_map(fn)", ... }]
 
-let related = @codebase.modules_related_to("ETL pipeline")
-// → finds cells by semantic title match, invariant keyword, or @module.purpose
+// (proposal) codebase.modules_related_to(query) does not exist; see codebase.modules()
 ```
 
 ### CSON-Native Notebook Config
@@ -196,7 +206,7 @@ quality: "working" ~0.85  # AI estimates 85% confidence cell is correct
 | Step | What |
 |------|------|
 | 2a | `crush-index` registers .crush-nb files as indexable codebase modules |
-| 2b | `codebase.wips()`, `codebase.stale_temporary()`, `codebase.decisions()` work on notebooks |
+| 2b | `codebase.wip()`, `codebase.stale_temporaries()`, `codebase.decisions()` work on notebooks |
 | 2c | `codebase.modules_related_to(query)` searches across all indexed notebooks |
 
 ### Phase 3 ��� AI-Native Cell Generation (1 session)
