@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-23 |
 | **Priority** | Aspirational (not scheduled) |
-| **Status** | Captured |
+| **Status** | Backlog (captured idea) |
 | **Phase** | none — post-M1 idea, overlaps existing M4 "cross-project integration" milestone |
 | **Assignee** | unassigned |
 | **Dependencies** | `exosphere/.jagent/planning/specs/EXO-194-crush-engine-convergence.md` (DECIDED, 2026-07-05) is the authoritative map for the exosphere half — read it first, don't re-derive |

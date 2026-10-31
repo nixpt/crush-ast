@@ -1,6 +1,6 @@
 # CRUSHRUNNERS-1: crush-pkg runner subsystem gaps — ContainerRunner stub, ScriptRuntime 4-cap, `Unknown → CrushRunner` silent fallback
 
-**Status**: open (registration only — no implementation commits on this branch)
+**Status**: Done — all three gaps closed on main: Gap 1 `ce855a9` (CRUSHCN-1), Gap 2 `2af5d4a` (CRUSHRUN-S2), Gap 3 `d1cb503`
 **Branch**: `agent/buffy/CRUSHRUNNERS-1` — created off `2f2b2f5` (= `agent/buffy/network`'s tip; the surface area referenced in this ticket lives here, not on plain `main` where `TICKETS/` doesn't exist yet).
 **Priority**: 🟡 P1 — runner-subsystem gaps aren't correctness blockers (each gap fails loudly or silently in narrow paths) but they are clear surface debt that future contributors will trip on.
 **Goal**: catalogue the 3 actual runner-subsystem gaps so a future contributor (e.g., implementing `Container` capsules, adding a 5th language runtime, or wiring `--strict` into the `run` path) has the locus + migration path laid out instead of rediscovering it. **Cross-link** to CRUSHPKG-1 (commit `2f2b2f5`, PR #6) which registered the byte-exact NDJSON contract + the `scan_entry_file_references` URL-fragment fix in `builder.rs`.
@@ -99,3 +99,7 @@ This ticket is finished when ALL of:
 - Companion ticket **CRUSHPKG-1** (PR #6 on this repo, branch `agent/buffy/CRUSHPKG-1` off `2f2b2f5`): byte-exact NDJSON registration in `STATE.md` + `TASKS.md`.
 - Format reference written earlier on this branch: `TICKETS/CRUSHSDK-1.md` (crush-lang-sdk `--all-features` deref-fix ticket sketch, same template shape).
 - Format reference existing on a sister branch: `TICKETS/CRUSHVM-2-EXEC-LANG-POP-NAMED.md` (crush-vm EXEC_LANG pop-on-name followup).
+
+## Survey 2026-10-31 (status)
+
+Gap 1: `ce855a9` dropped the ContainerRunner stub (`runners.rs` now cites CRUSHCN-1). Gap 2: `2af5d4a` documents the ScriptRuntime cap as intent-aware. Gap 3: `d1cb503` implements the strict run bail on unknown payload format. All three are on origin/main (PRs #7, #9, #10). Previous status: `open (registration only — no implementation commits on this branch)`.

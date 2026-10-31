@@ -5,7 +5,7 @@ use swc_ecma_parser::{EsSyntax, Parser, StringInput, Syntax, TsSyntax};
 
 pub fn parse(source: &str, ext: &str) -> Result<Module> {
     let is_tsx = ext == "tsx";
-    let is_ts = ext == "ts" || ext == "tsx" || ext == "mts";
+    let is_ts = ext == "ts" || ext == "tsx" || ext == "mts" || ext == "cts";
     let is_jsx = ext == "jsx" || ext == "tsx";
 
     let syntax = if is_ts {

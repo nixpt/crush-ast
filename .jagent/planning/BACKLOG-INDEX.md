@@ -13,6 +13,8 @@
 > summary corrections below incorporate the later CRUSH-66 resolution, CRUSH-80,
 > CRUSH-115/116/117, and the CRUSH-119/120 FastVM/compiler fixes. `RULES.md` still applies at dispatch time:
 > **verify the repro before fixing.**
+> **2026-10-31 survey:** statuses below were reconciled with the ticket files (the ticket `Status` row is the
+> source of truth since `70a34d7`; `TASKS.md` is a rendered, untracked view). See `SURVEY-2026-10-31.md`.
 > Sources: `ROADMAP.md` (M5–M11 specs), `research/2026-07-14-crush-ast-opportunities.md`
 > (ranked findings), CRUSH-71 audit (in flight, panini), dejavue timeline captures.
 
@@ -26,10 +28,10 @@ These existing IDs belong to this box's `CRUSH-xps` lane, separate from the
 |---|---|---|
 | CRUSH-xps-8 | In progress; proven dynamic casts, lengths and bounded unsigned values | [Integer facts, casts and overflow](tickets/CRUSH-xps-8-rust-integer-widths.md) |
 | CRUSH-xps-9 | In progress; shared Debug kernel and conservative descriptors | [Typed Debug and macro evaluation](tickets/CRUSH-xps-9-rust-debug-format.md) |
-| CRUSH-xps-10 | In review in #213; preserve implementation/evidence | [Shared helpers and loop scopes](tickets/CRUSH-xps-10-walker-intrinsics-and-for-loop-semantics.md) |
-| CRUSH-xps-11 | In review in #213; preserve implementation/evidence | [Scalar closure boundary](tickets/CRUSH-xps-11-rust-closures-exact-or-loud.md) |
-| CRUSH-xps-12 | In review in #213; preserve implementation/evidence | [Complete bodies and safe value-block refusal](tickets/CRUSH-xps-12-rust-expression-block-lowering.md) |
-| CRUSH-xps-13 | In review; all slices folded; shared kernels, typed dispatch, private C bridge; 820 scoped tests passed | [Named capability parity on AOT](tickets/CRUSH-xps-13-aot-rust-mapped-capabilities.md) |
+| CRUSH-xps-10 | In Progress — implementation merged in #213 (2026-10-15); review-exit criteria open | [Shared helpers and loop scopes](tickets/CRUSH-xps-10-walker-intrinsics-and-for-loop-semantics.md) |
+| CRUSH-xps-11 | In Progress — implementation merged in #213 (2026-10-15); review-exit criteria open | [Scalar closure boundary](tickets/CRUSH-xps-11-rust-closures-exact-or-loud.md) |
+| CRUSH-xps-12 | In Progress — implementation merged in #213 (2026-10-15); review-exit criteria open | [Complete bodies and safe value-block refusal](tickets/CRUSH-xps-12-rust-expression-block-lowering.md) |
+| CRUSH-xps-13 | Done — combined PR #272 merged 2026-10-16 (shared kernels, typed dispatch, private C bridge) | [Named capability parity on AOT](tickets/CRUSH-xps-13-aot-rust-mapped-capabilities.md) |
 
 Implementation base: 2026-10-15 main `ca5c662`; the SDK stack through #233
 and design #237 are merged. The xps-10–12 review entries above retain their
@@ -42,13 +44,13 @@ new review-exit matrices automatically.
 |-------|-----------|
 | 1–26  | M1-era sweep + platform (done except: 1 near-closeable, 11 verify+close, 21 partially, 22→M8, 23→M4/58) |
 | 17    | ⚠ was a COLLISION — parser-errors ticket owns the ID (Done s388); the jit-phase-2-4 file renumbered → **CRUSH-87** |
-| 27–34 | M5 (27/28/29/31/32/33 DONE on HEAD; 30 partial-ambiguous; 34 in progress). 31/33/34 each had a superseded s394 spec stub — marked Superseded, kept per RULES |
+| 27–34 | M5 (27/28/29/31/32/33 DONE on HEAD; 30 Done by scope ruling 2026-10-16, residue CRUSH-30a; 34 in progress). 31/33/34 each had a superseded s394 spec stub — marked Superseded, kept per RULES |
 | 35–58 | M6–M9 (36–38 filed; rest minted s412) |
 | 39    | ⚠ ID BURNED — branch `agent/panini-crush/CRUSH-39` holds unrelated Math.* WIP stash; walker→AOT renumbered → **CRUSH-103** |
 | 59–63 | M10 (minted s412) |
 | 64    | reserved-free (ROADMAP's stale "M11 = 64+" claim) |
 | 65–70 | s403–s411 bug tickets (65/67/68/69/70 done; 66 done 2026-08-01) |
-| 71    | Design audit + client survey campaign (panini persona-session, IN FLIGHT s412) |
+| 71    | Design audit + client survey campaign (panini persona-session s412) — **Done 2026-08-02** (merge `787e34e`) |
 | 72–78 | Correctness spine: research-doc ranked findings (minted s412) |
 | 79–86 | CRUSH-71 opening-survey captures (minted s412) |
 | 87    | JIT Phase 2–4 residue (renumbered ex-17; mostly Closed — item #7 + Cranelift GVN/LICM note at crush-jit/src/lib.rs:2452) |
@@ -65,7 +67,7 @@ new review-exit matrices automatically.
 | 115   | `io.read` — interactive stdin input capability | **Done 2026-08-21** — canonical implementation merged in #52 and released in v0.3.5; verified across CVM1, PortableVM, Rust AOT, C AOT, AOT-C, and the piped `crush-run` source pipeline. |
 | 116   | `math.random`/`math.seed` — real numeric RNG | **Done 2026-08-24** — deterministic SplitMix64 stdlib caps, native source pipeline, and JS `Math.random()` lowering merged in v0.3.6. |
 | 117   | `conv.chr`/`conv.ord` — character ↔ codepoint | **Done 2026-08-24** — implemented across VM, PortableVM, Rust AOT, C AOT, and AOT-C in v0.3.6. |
-| 118   | Prove `io.read` end-to-end with a real interactive demo. Gates: 115 | **Open** — gate is now clear. |
+| 118   | Prove `io.read` end-to-end with a real interactive demo. Gates: 115 | **Done 2026-10-07** (per ticket). |
 | 119   | FastVM array mutation return-value parity | **Done 2026-08-24** — merged via `agent/buffy/CRUSH-119-for-loop` in v0.3.6. |
 | 120   | Optimizer self-referential assignment preservation | **Done 2026-08-24** — merged via `agent/buffy/CRUSH-119-for-loop` in v0.3.6. |
 | 121–123 | Captured 2026-09-24/25: kitchen GC (121), stdlib convergence W10 (122), conformance per-file timeout (123) |
@@ -85,11 +87,13 @@ new review-exit matrices automatically.
 | 232–238 | 2026-10-09 use-case review (claude): agent capabilities — declare + preflight (232), pause-to-approve (233), AI-native fail closed (234), memory quota (235); polyglot — sandbox default (236), marshaling gaps (237), walker stubs + doc overclaims (238) |
 | 239–242 | 2026-10-09 scripting test drive (claude): stdin EOF vs blank line (239), fs.stat/append (240), stderr + run-summary noise (241), process.exec result type (242) |
 | 244–249 | 2026-10-09 CASM↔WASM test drive (claude): crush-web stdlib (244, done), crush-web grant preflight (245), WASM walker keeps only calls (246), .wasm read as UTF-8 (247), export-name mismatch (248), crush-walk-run exit status (249) |
-| 266   | Rust ↔ Crush interop audit and Rust crate access (user-directed, gates native extensions on CRUSH-179) |
-| 271   | Python/JS walker unary `+` and `~` refused by the compiler: `Unsupported op` on **both** entry points (buffy, 2026-10-16, from PR #263 review; distinct from CRUSH-111 — there the doors disagree, here both refuse; C walker's `__crush_pos__`/`__crush_bit_not__` route already works) |
-| xps  | Box-scoped Rust ↔ Crush pipeline: xps-1 manual host-approved plugins; xps-2 phased design; xps-3 shared SDK walker registry; xps-5 exact-or-loud harness (in review in #220, based on #213); xps-13 AOT mapped-capability parity; xps-6 lexical bindings in review in #224 (based on #220); xps-6..12 Rust parity, semantic-analysis, closure, and expression-lowering fixes; xps-4 gated shared-registry CLI dispatch; xps-3/10..12 in review in #213 |
+| 266   | Rust ↔ Crush interop audit and Rust crate access (user-directed, gates native extensions on CRUSH-179). The JS exported-declarations ticket that also took 266 (PR #283) is now **CRUSH-340** |
+| 271   | Scheduler VM takes an embedder-supplied polyglot executor (PR #269, the first to take the number). The unary ticket below also took 271 and is now **CRUSH-341** |
+| 341   | (ex-271) Python/JS walker unary `+` and `~` refused by the compiler: `Unsupported op` on **both** entry points (buffy, 2026-10-16, from PR #263 review; distinct from CRUSH-111 — there the doors disagree, here both refuse; C walker's `__crush_pos__`/`__crush_bit_not__` route already works) |
+| xps  | Box-scoped Rust ↔ Crush pipeline: xps-1 manual host-approved plugins; xps-2 phased design; xps-3 shared SDK walker registry; xps-5 exact-or-loud harness (merged #220); xps-13 AOT mapped-capability parity; xps-6 lexical bindings (merged #224); xps-6..12 Rust parity, semantic-analysis, closure, and expression-lowering fixes; xps-4 gated shared-registry CLI dispatch; #213 merged (xps-3 Done; xps-10..12 In Progress on their review-exit criteria) |
 | 231 | s476 (kai): CI toolchain pin dead + 24 crates never run tests in CI |
-| 121+  | free (CRUSH-57 superseded by CRUSH-169 — no per-cap rewrite tickets will be minted) |
+| 340   | (ex-266) JS walker drops the bodies of exported declarations — Done, PR #283 (renumbered by the 2026-10-31 survey) |
+| 342+  | Free above the highest allocated ID as of 2026-10-31. Gaps below 341 are **not** guaranteed free: agents allocate in 29x–31x concurrently, so check branches and PR titles first (PR #291 proposes a `ticket-id` allocator). No per-cap stdlib rewrite tickets will be minted (CRUSH-57 superseded by CRUSH-169) |
 
 ## How to dispatch from this index
 
@@ -109,7 +113,7 @@ new review-exit matrices automatically.
 | ID | What to verify | Note |
 |----|----------------|------|
 | ~~CRUSH-11~~ | AOT-C string garbling repro | **DONE** — ticket marked Done 2026-08-07; repro independently re-verified 2026-10-16 (differential_aot ok) |
-| CRUSH-1 | AI opcodes end-to-end | close automatically when CRUSH-34 commits 2–3 land |
+| ~~CRUSH-1~~ | AI opcodes end-to-end | **DONE** — ticket Done (superseded by CRUSH-32, closed `07f64ee`; the 3 NOP AI statements are CRUSH-265) |
 | ~~CRUSH-30~~ | exhaustive-match-sites lint | **DONE** (scope ruling 2026-10-16): opt-in wildcard lint E-EXH-001 satisfies intent; residue (narrowing/missing_arms/workspace tracking) minted as CRUSH-30a |
 | CRUSH-35 | VISION.md walker table refresh | **Table refreshed 2026-10-16** with per-row *runtime* evidence — corrected after PR #263 review: 4/7 ✅, 1 partial (comprehensions: RHS/`return`/call-arg only), 2 🔴 (tuple unpacking, Uint8Array); ticket stays open, residual now includes tuple-unpacking lowering + the `compile_cast` vs `Compiler` entry-point divergence |
 
@@ -117,7 +121,7 @@ new review-exit matrices automatically.
 
 | ID | Title | Who | Status |
 |----|-------|-----|--------|
-| CRUSH-71 | Design audit + client survey + top-win implementation | panini (persona-session s412) | branch `agent/panini-crush/CRUSH-71` |
+| CRUSH-71 | Design audit + client survey + top-win implementation | panini (persona-session s412) | **Done 2026-08-02** — merge `787e34e` |
 | CRUSH-66 | `@lang[pypi:/npm:]` deps via buckets | **Done 2026-08-01**; BUCKETS-15 merged and sandbox path verified | no gate |
 
 ## Correctness spine (72–78) — dispatch these first
@@ -128,9 +132,9 @@ the spine; most later work is gated on 73/77 existing.
 
 | ID | Title | Rank | Gate | Dispatch |
 |----|-------|------|------|--------|
-| CRUSH-72 | crush-jit silent TAG_NULL catch-all → Unsupported + FastVm fallback | #1 (spec re-verifies vs post-M2 state) | — | ticket `## Dispatch` |
-| CRUSH-73 | Conformance corpus + one black-box runner across all four engines | #2 — meta-finding killer | — | ticket `## Dispatch` |
-| CRUSH-74 | Source locations wired through AST → casm debug_info | #3 | pairs with CRUSH-79 | ticket `## Dispatch` |
+| CRUSH-72 | ✅ DONE (s417) — crush-jit silent TAG_NULL catch-all → Unsupported + FastVm fallback | #1 (spec re-verifies vs post-M2 state) | — | ticket `## Dispatch` |
+| CRUSH-73 | ✅ DONE (MVP, s417; needs release build for CI) — Conformance corpus + one black-box runner across all four engines | #2 — meta-finding killer | — | ticket `## Dispatch` |
+| CRUSH-74 | ✅ DONE (s418) — Source locations wired through AST → casm debug_info | #3 | pairs with CRUSH-79 | ticket `## Dispatch` |
 | CRUSH-75 | Lambda syntax unreachable (lexer bare-`\|` shortcut) + lex-error on unknown operator chars | #4 | before CRUSH-82 | ticket `## Dispatch` |
 | CRUSH-76 | Parser/lexer/cson fuzz targets | #5 | — | ticket `## Dispatch` |
 | CRUSH-77 | Differential harness: all four engines, assert identical | #6 | extends existing crush-diff | ticket `## Dispatch` |
@@ -140,7 +144,7 @@ the spine; most later work is gated on 73/77 existing.
 
 | ID | Title | Kind | Repo | Dispatch |
 |----|-------|------|------|--------|
-| CRUSH-79 | casm source_map flat-vector: wrong location for multi-fn programs | correctness | crush-ast | ticket `## Dispatch` |
+| CRUSH-79 | ✅ DONE — casm source_map flat-vector: wrong location for multi-fn programs | correctness | crush-ast | ticket `## Dispatch` |
 | CRUSH-80 | ✅ DONE — deleted dead `CachedProgram`/`to_cached` remnants and `ecasm.rs`; future real caching remains CRUSH-83 | hygiene | crush-ast | — |
 | CRUSH-81 | ✅ DONE — landed via CRUSH-71 (`11f7a1c` + seed-fix `97bd7c4`; 3.4–3.9x on chain shapes) | design/perf | crush-ast | — |
 | CRUSH-106 | Typed OpCode emission — kill serde_json on the emit path (audit #1) | design/perf | crush-ast | ticket `## Dispatch` |
@@ -155,7 +159,7 @@ the spine; most later work is gated on 73/77 existing.
 
 | ID | Title | Status | Gate | Dispatch |
 |----|-------|--------|------|--------|
-| CRUSH-87 | JIT Phase 2–4 residue (item #7 + unsolved Cranelift GVN/LICM, lib.rs:2452) — ex-17 | open (residue only) | CRUSH-72 | ticket `## Dispatch` |
+| CRUSH-87 | JIT Phase 2–4 residue (item #7 + unsolved Cranelift GVN/LICM, lib.rs:2452) — ex-17 | Closed (items 1–6, 8 closed; 7 minor) | CRUSH-72 | ticket `## Dispatch` |
 | — | Phases 3–5 tracked in TASKS.md; Phase 6/7 = CRUSH-60/61 (M10) | | | |
 
 ## M5 — AI-native compiler layer (NEARLY COMPLETE)
@@ -187,7 +191,7 @@ the spine; most later work is gated on 73/77 existing.
 | CRUSH-44 | Snapshot/replay | CRUSH-42 |
 | CRUSH-45 | V8 fallback (off-by-default, build-weight analysis required) | — |
 | CRUSH-46 | Node.js compat shim | — |
-| CRUSH-47 | Embedded RustPython lane | — |
+| CRUSH-47 | ~~Embedded RustPython lane~~ — **Declined** 2026-10-15 (owner: parser-only frontends) | — |
 | CRUSH-48 | exo.* capability modules | — |
 
 ## M8 — Platform (49–53) — GATE CLEARED (CRUSH-26 verified done s412)
@@ -205,7 +209,7 @@ the spine; most later work is gated on 73/77 existing.
 | ID | Title | Gate |
 |----|-------|------|
 | CRUSH-54 | Surfer migration waves 1+2 | M5–M7 surface stable |
-| CRUSH-55 | Exosphere divergence reconcile | coordinate w/ exo [main]/buffy + EXO-194 |
+| CRUSH-55 | ~~Exosphere divergence reconcile~~ — **Closed** 2026-10-12 (ast ⊇ exo; exosphere runtimes retired) | — |
 | CRUSH-56 | ~~STDLIB clean-restore tracker~~ — **superseded** (CRUSH-122 + MIGRATION-INVENTORY §2.5) | — |
 | CRUSH-57 | ~~STDLIB mock-rewrite tracker~~ — **superseded** (mock families are dead/out, §2.2) | — |
 | CRUSH-58 | Nakshatra artifact canonicalization | — |
@@ -254,6 +258,10 @@ with bozo); swc only strips TS types.
 | 4 | CRUSH-zorro-20, 21 | closures + callbacks; TypeScript constructs | CRUSH-251 step 3; z-8 |
 | — | ~~CRUSH-zorro-11~~ | superseded by CRUSH-250 | — |
 
+Status from the ticket files (2026-10-31 survey): **Done** — zorro-4, 5, 7, 9, 10, 22, 23, 37, 38. **In Progress** —
+CRUSH-250, zorro-18. **Backlog** — zorro-6 (loud on boa, decision pending), 8 (open PR #337), 12–17, 19–21, 26 (#243: stays
+open for the AOT backend class).
+
 ## COSM — the Crush Object Semantic Model, phase K1 (2026-10-15 — CRUSH-zorro-40..44)
 
 Design: `docs/design/object-model.md` (#206). Objects are lowered to declarative Kinds, like code to CAST.
@@ -267,11 +275,14 @@ Tickets zorro-40..49 are reserved for COSM.
 | CRUSH-zorro-43 | K1.4 VM: Records, Kinds, member ops, CONSTRUCT, receivers; struct patterns test the Kind (closes zorro-37) | zorro-42 |
 | CRUSH-zorro-44 | K1.5 `o.m(x)` resolves on the receiver | zorro-43, zorro-41 |
 
+Status from the ticket files (2026-10-31 survey): zorro-40, 41, 42, 43 **Done** (PRs #211, #214, #219, #222);
+zorro-44 Backlog (design PR #290 open).
+
 ## Publish lane
 
 | ID | Title | Gate |
 |----|-------|------|
-| CRUSH-104 | version.workspace sweep + walker-core publish + `walker`→`crush-walker` rename | CRUSH-36 |
+| CRUSH-104 | version.workspace sweep + walker-core publish + `walker`→`crush-walker` rename — **Done**, PR #90 merged 2026-10-07; `crush-lang-sdk`, `crush-vm`, `crush-cast` are on crates.io at 0.8.0 (2026-10-30; others not checked) | — |
 
 ## CRUSH-71 audit fold-in (s412 — settled)
 

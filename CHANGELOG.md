@@ -14,6 +14,86 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Raw TCP/TLS sockets as `tcp.*` capabilities, behind their own grants
+  (CRUSH-318):** `crush-net` is now wired into `crush-lang-sdk` (cargo features
+  `tcp`, `tcp-tls`, on by default; grants are never on by default). `crush-run
+  --tcp` grants outbound client sockets (`tcp.connect`, `tcp.tls_wrap`,
+  `tcp.send`/`recv`/`close`/`ping`); `crush-run --tcp-listen` is a separate,
+  stronger grant for being a server (`tcp.listen`, `tcp.accept`, plus
+  send/recv/close/ping on the connections they return, but not `tcp.connect`).
+  `--net` stays HTTP-client-only and grants neither. The caps were renamed
+  from `net.*` to `tcp.*` so the `net` family can never cover them, and
+  `crush-net` now depends on `crush-vm` instead of `crush-lang-sdk` (the old
+  edge was a cycle). Also fixed in `crush-net`: `tcp.send`/`recv`/`close` did
+  not work on a `tcp.tls_wrap`ped connection, `tls_wrap` could hand out an id
+  that collided with a later plain connection, and `tcp.accept` held the
+  shared state lock while blocking.
+
+- **JS/TS dialect handling: unknown extensions are refused, `cts` is TypeScript
+  (CRUSH-zorro-8):** `JsLowering::for_ext` treated every unrecognised extension
+  as plain JS, so a `.ts` file reached as `.tmp` (or a typo like `typescript`)
+  parsed TypeScript as ES. It now accepts exactly
+  `js mjs cjs jsx ts tsx mts cts` and refuses anything else, naming the set;
+  `cts` is TypeScript; and `SubprocessWalker` names its temp file
+  `walker_N.<ext>` so a walked `.ts` keeps its dialect.
+
+- **Stub walkers no longer produce empty programs (CRUSH-203):** the Zig walker
+  matched the wrong tree-sitter node names (`IntegerLiteral` vs the real
+  `integer`/`float`/`string`/`boolean`, `BinaryExpr` vs `binary_expression`, …),
+  so every literal silently became `null` and every program printed nothing; the
+  names and wrappers are fixed and unhandled nodes now error with the node kind
+  and position. Dart and Java (which returned an empty program / panicked with a
+  bare `unreachable!`) fail with "not implemented". The Wasm walker no longer
+  drops every non-`call` operator or lowers `fd_write` to an arg-less
+  `io.print`; it errors loudly. `crush-walk-run` reads a `.wasm` file as bytes.
+  The Nepali walker's false "native Nepali keywords" comment is corrected.
+
+- **`crush debug FILE` / `crush-debug`: the debugger is runnable (CRUSH-317):**
+  `crush-debugger` had breakpoints, step/next/finish, watchpoints and
+  grant-gated inspection but no front end that compiled Crush source, so it could
+  only debug hand-written CASM. `crush debug prog.crush --step --inspect` now
+  compiles through `crush run`'s pipeline and opens the REPL; `break FILE:LINE`
+  resolves in the *source's* lines (the compiler's source map, which used to be
+  the generated assembly's), `print total` / `print p.x` / `watch total` /
+  `locals` use variable names, `step`/`next` go by source line, and stops show
+  the line. Debugging grants nothing by default: `--step` to run and step,
+  `--inspect=redacted` / `--inspect` to see values; a refused command names the
+  flag. `--message-format json` emits the `DebugEvent`s as NDJSON for an editor or
+  agent. `crush-installer` now installs `crush` and `crush-debug`. Fixes found on
+  the way: hashing a closure that captures itself (`let f = |n| f(n - 1)`)
+  overflowed the stack under `--inspect=redacted`, and `BreakpointSet::remove`
+  used `IndexMap::remove`, now a deprecation error under `-D warnings`.
+
+- **`net` on by default, `http.*` refused with its replacement, `time.now` unit
+  documented (CRUSH-264):** `crush-lang-sdk`'s `default` features now include
+  `net`, so `crush-run --net` grants `net.http_get/post/put/delete/request` out of
+  the box (still refused up front without `--net`); `db` stays opt-in
+  (`--features db`) and `crush-run caps` says so. exosphere's `http.get/…` have no
+  alias: a program calling one is refused before it runs with `http.get was
+  renamed to net.http_get (grant it with --net)` (`effects::RENAMED_CAPS`, shared
+  by every runner that preflights). `time.now` is seconds, `time.now_ms`
+  milliseconds (exosphere's `time.now` was ms) — now stated in `crush-run caps`,
+  the SDK README and MIGRATION-INVENTORY. `examples/crush/httpclient.crush` uses
+  `net.http_get` and `str.format` and compiles. Embedders that don't want the
+  HTTP client: `default-features = false`.
+
+- **Consistent `--message-format json` diagnostics across `crushc` and `crush-run`
+  (CRUSH-315):** the same broken program now yields the same NDJSON records
+  from both. `crush-run` used to flatten every compile failure to `E-IO` with no
+  position; it now emits `E-PP0n` (syntax, with line/col) and `E-TP01`
+  (semantic), exactly as `crushc` does. Semantic errors carry line/col for
+  undefined variables/functions and type errors (the analyzer now reads the
+  AST locations, and the parser stamps `Var`/`Call`/`BinaryOp`/statement
+  locations at the construct instead of the token after it). A runtime error's
+  text is now in `message` (`E-RT05` used to leave it empty and put it in
+  `hint`); a program needing an ungranted capability is reported as `E-CAPS`
+  (hint: the grant flag) instead of `E-IO`. `file` is filled on every
+  `crushc`/`crush-run` record. The wire struct is defined once, in
+  `crush-diagnostics` (`Diagnostic`); `crush_lang_sdk::theme::JsonDiagnostic` is
+  an alias, and its `parse_error` / `runtime_error` constructors moved to the
+  `JsonDiagnosticExt` trait. New in `crush-frontend`: `ParseErrors`,
+  `SemanticError` (typed `anyhow` payloads, `Display` unchanged).
+
 - **`crush-walk-run` keeps output before a runtime error and exits non-zero
   (CRUSH-184):** it buffered the first run's output and replaced it with
   `Error: …` on failure, and returned `Ok`, so a failing script exited 0 and

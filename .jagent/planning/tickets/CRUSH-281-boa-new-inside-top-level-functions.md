@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-281 |
 | **Priority** | P2 |
-| **Status** | Done (PR pending) |
+| **Status** | Done — PR #289 merged 2026-10-22 |
 | **Phase** | COSM K3 follow-up (boa class slice) |
 | **Assignee** | muse |
 | **Filed by** | muse — 2026-10-20, found while testing CRUSH-285 review #5 |
@@ -86,3 +86,7 @@ constructible outside the class. Now:
   kind names are the real fix, future work).
 
 Covered by `test_boa_new_pending_class_scope_rules`.
+
+## Survey 2026-10-31 (status)
+
+PR #289 (`agent/muse/CRUSH-281`) merged 2026-10-22. Previous status: `Done (PR pending)`.

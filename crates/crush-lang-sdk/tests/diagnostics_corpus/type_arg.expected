@@ -1,0 +1,1 @@
+{"code":"E-TP01","level":"error","file":"type_arg.crush","line":4,"col":9,"message":"Argument 0 to 'f' has wrong type: expected int, found string","hint":null}

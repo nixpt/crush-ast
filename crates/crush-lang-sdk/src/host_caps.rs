@@ -33,6 +33,10 @@ pub struct HostCapsBuilder {
     graphics: bool,
     #[cfg(feature = "net")]
     net: bool,
+    #[cfg(feature = "tcp")]
+    tcp: bool,
+    #[cfg(feature = "tcp")]
+    tcp_listen: bool,
     #[cfg(feature = "net")]
     net_max_response_bytes: usize,
     #[cfg(feature = "db")]
@@ -195,6 +199,25 @@ impl HostCapsBuilder {
         self
     }
 
+    /// Enable raw TCP client sockets: `tcp.connect`, `tcp.tls_wrap` and the
+    /// `tcp.send`/`tcp.recv`/`tcp.close`/`tcp.ping` that act on a connection
+    /// (CRUSH-318). Not implied by [`net`](Self::net), which is HTTP only.
+    #[cfg(feature = "tcp")]
+    pub fn tcp(mut self, enable: bool) -> Self {
+        self.tcp = enable;
+        self
+    }
+
+    /// Enable raw TCP *server* sockets: `tcp.listen` and `tcp.accept` (plus
+    /// `tcp.send`/`tcp.recv`/`tcp.close`/`tcp.ping` for the connections they
+    /// hand out). A stronger grant than [`tcp`](Self::tcp): the program becomes
+    /// reachable from other hosts. Does not grant outbound `tcp.connect`.
+    #[cfg(feature = "tcp")]
+    pub fn tcp_listen(mut self, enable: bool) -> Self {
+        self.tcp_listen = enable;
+        self
+    }
+
     /// Set the maximum HTTP response size in bytes.
     #[cfg(feature = "net")]
     pub fn net_max_response_bytes(mut self, n: usize) -> Self {
@@ -330,6 +353,18 @@ impl HostCapsBuilder {
         #[cfg(feature = "net")]
         if self.net {
             crate::net::register(&mut caps, self.net_max_response_bytes.max(1));
+        }
+        #[cfg(feature = "tcp")]
+        if self.tcp || self.tcp_listen {
+            // One connection table, so an id from `tcp.accept` works in `tcp.recv`.
+            let state = crush_net::new_state();
+            crush_net::register_io(&mut caps, std::sync::Arc::clone(&state));
+            if self.tcp {
+                crush_net::register_client(&mut caps, std::sync::Arc::clone(&state));
+            }
+            if self.tcp_listen {
+                crush_net::register_listen(&mut caps, state);
+            }
         }
         #[cfg(feature = "db")]
         if let Some(path) = self.db_path {

@@ -10,10 +10,10 @@
 //! Field positions are pinned by [`DiagRecord`]'s struct-declaration
 //! order (serde-derived `Serialize` preserves declaration order) AND
 //! by [`diag_line`]'s byte-exact output. The canonical wire contract
-//! also lives in `crush_lang_sdk::theme::JsonDiagnostic` (used by the
-//! four CLI binaries `crush`, `crushc`, `crush-run`, `crush-compile`,
-//! `crush-repl`); [`DiagRecord`] mirrors that shape so editors see one
-//! schema across the entire CLI surface.
+//! is defined once, here: [`DiagRecord`] (borrowed) and [`Diagnostic`]
+//! (owned, what `crush_lang_sdk::theme::JsonDiagnostic` aliases) serialize
+//! identically, so the four CLI binaries `crush`, `crushc`, `crush-run`,
+//! `crush-compile`, `crush-repl` and the rest share one schema.
 //!
 //! # Helpers
 //!
@@ -91,8 +91,7 @@ pub use wire_consumer::{
     BorrowedDiagRecord, OwnedDiagRecord, ParseRecordError,
 };
 
-/// Seven-field wire-shape mirror of
-/// `crush_lang_sdk::theme::JsonDiagnostic`. The field ORDER is the
+/// Seven-field wire shape (owned form: [`Diagnostic`]). The field ORDER is the
 /// load-bearing invariant: every binary calls `serde_json::to_string`
 /// on a `DiagRecord` so the JSON object key order matches the
 /// canonical declaration order, and the lockdown tests in
@@ -113,6 +112,124 @@ pub struct DiagRecord<'a> {
     pub col: Option<u32>,
     pub message: &'a str,
     pub hint: Option<&'a str>,
+}
+
+/// Owned counterpart of [`DiagRecord`]: the same seven wire fields, for
+/// emitters that build a record before they know where it goes (CRUSH-315).
+///
+/// This is the one definition the Crush CLIs share. `crush_lang_sdk`'s
+/// `JsonDiagnostic` is a type alias for it, so `crushc`, `crush-run`,
+/// `crush-compile` and `crush-repl` all serialize through [`diag_line`] and
+/// cannot drift from the `DiagRecord` wire shape (a lockdown test pins the
+/// two byte-for-byte).
+///
+/// Codes are the routing field; the table lives in
+/// `crush_lang_sdk::theme`'s module docs.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Diagnostic {
+    pub code: &'static str,
+    pub level: &'static str,
+    pub file: Option<String>,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+    pub message: String,
+    pub hint: Option<String>,
+}
+
+impl Diagnostic {
+    // Parse errors are `E-PP01..06`, chosen per error variant; they are built
+    // by `crush_lang_sdk::theme`, which knows the parser's types.
+    /// Stable code for type / semantic analyzer failures.
+    pub const CODE_TYPE: &'static str = "E-TP01";
+    /// Stable code for non-themed I/O / generic failures (file open,
+    /// output write, unknown emit kind, etc.).
+    pub const CODE_IO: &'static str = "E-IO";
+    /// `RuntimeError::LoadBlob`.
+    pub const CODE_RT_LOAD_BLOB: &'static str = "E-RT01";
+    /// `RuntimeError::Assembly`.
+    pub const CODE_RT_ASSEMBLY: &'static str = "E-RT02";
+    /// Standalone assembler failure (`crush-compile`).
+    pub const CODE_ASSEMBLER: &'static str = "E-ASM";
+    /// `RuntimeError::IndexParse`.
+    pub const CODE_RT_INDEX_PARSE: &'static str = "E-RT03";
+    /// `RuntimeError::IndexRead`.
+    pub const CODE_RT_INDEX_READ: &'static str = "E-RT04";
+    /// `RuntimeError::Vm`: an error raised while the program ran.
+    pub const CODE_RT_VM: &'static str = "E-RT05";
+    /// Capability findings. `crush-pkg check` uses it for declared-vs-used
+    /// mismatches in `capsule.toml`; `crush-run` uses it when a program needs
+    /// a capability the run does not grant (CRUSH-315).
+    pub const CODE_CAPS: &'static str = "E-CAPS";
+
+    /// An `error`-level record with no file, position or hint.
+    pub fn error(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            level: "error",
+            file: None,
+            line: None,
+            col: None,
+            message: message.into(),
+            hint: None,
+        }
+    }
+
+    /// A failure with no source position (see [`Self::CODE_IO`]).
+    pub fn generic_error(message: &str, code: &'static str) -> Self {
+        Self::error(code, message)
+    }
+
+    /// A semantic / type-check failure; give it a position with
+    /// [`Self::at`] when the analyzer knows one.
+    pub fn type_error(message: &str, file: Option<&str>) -> Self {
+        Self::error(Self::CODE_TYPE, message).in_file(file)
+    }
+
+    /// A standalone assembler failure.
+    pub fn assembler_error(message: &str, file: Option<&str>) -> Self {
+        Self::error(Self::CODE_ASSEMBLER, message).in_file(file)
+    }
+
+    /// Set the file (no-op for `None`).
+    pub fn in_file(mut self, file: Option<&str>) -> Self {
+        if let Some(f) = file {
+            self.file = Some(f.to_string());
+        }
+        self
+    }
+
+    /// Set the 1-based source position.
+    pub fn at(mut self, line: usize, col: usize) -> Self {
+        self.line = Some(u32::try_from(line).unwrap_or(u32::MAX));
+        self.col = Some(u32::try_from(col).unwrap_or(u32::MAX));
+        self
+    }
+
+    /// Set the hint.
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+
+    /// Borrow as the wire struct.
+    pub fn as_record(&self) -> DiagRecord<'_> {
+        DiagRecord {
+            code: self.code,
+            level: self.level,
+            file: self.file.as_deref(),
+            line: self.line,
+            col: self.col,
+            message: &self.message,
+            hint: self.hint.as_deref(),
+        }
+    }
+
+    /// One line of JSON, no trailing newline (use [`diag_line`] for NDJSON).
+    pub fn to_line(&self) -> String {
+        let mut s = diag_line(&self.as_record());
+        s.pop();
+        s
+    }
 }
 
 /// Render one NDJSON line (newline-terminated). Wraps

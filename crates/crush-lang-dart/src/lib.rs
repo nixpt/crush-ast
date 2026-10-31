@@ -4,9 +4,8 @@
 //! adding a new language took ~30 lines of code.
 
 use anyhow::Result;
-use crush_cast::{self as ast, Program};
-use std::collections::HashMap;
-use crush_walker_core::{BaseWalker, Walker};
+use crush_cast::Program;
+use crush_walker_core::Walker;
 
 pub struct DartWalker {
     pub file_name: String,
@@ -17,34 +16,11 @@ impl Walker for DartWalker {
         tree_sitter_dart::LANGUAGE.into()
     }
 
-    fn walk(&self, tree: &tree_sitter::Tree, source: &[u8]) -> Result<Program> {
-        let base = BaseWalker::new(source);
-        let root = tree.root_node();
-        let mut functions = HashMap::new();
-        let mut main_body = Vec::new();
-
-        // Minimal walk: treat top-level nodes as main body stmts.
-        // A full walker would recurse into class_declaration, function_signature, etc.
-        for child in root.children(&mut root.walk()) {
-            let _meta = base.create_meta(child, "dart", &self.file_name);
-            // Stub: real walker would visit child nodes and produce CAST Statements
-            let _ = child;
-        }
-
-        if !main_body.is_empty() {
-            functions.entry("main".to_string())
-                .or_insert_with(|| ast::Function { params: vec![], body: Vec::new(), meta: HashMap::new(), ..Default::default() })
-                .body.extend(main_body);
-        }
-
-        Ok(Program {
-            cast_version: "0.2".to_string(),
-            entry: "main".to_string(),
-            lang: Some("dart".to_string()),
-            functions,
-            ai_meta: None,
-            ..Default::default()
-        })
+    fn walk(&self, _tree: &tree_sitter::Tree, _source: &[u8]) -> Result<Program> {
+        // This walker is a stub: it used to discard every node and return an
+        // empty program, which then "ran" successfully with no output
+        // (CRUSH-203). Refuse loudly instead.
+        anyhow::bail!("dart: the Crush Dart walker is not implemented (CRUSH-203)")
     }
 }
 
@@ -99,18 +75,19 @@ mod sdk {
     }
 
     #[test]
-    fn test_dart_walk_no_crash() {
+    fn test_dart_walk_fails_loudly() {
+        // CRUSH-203: a stub walker must not return an empty program.
         let src = "void main() { var x = 42; }";
-        let r = run_dart(src);
-        assert!(r.is_ok(), "dart walk should not crash: {r:?}");
+        let err = run_dart(src).unwrap_err().to_string();
+        assert!(err.contains("not implemented"), "dart must fail loudly, got: {err}");
     }
 
     #[test]
     fn test_dart_adapter_in_registry() {
         let mut registry = AdapterRegistry::new();
         registry.register(Box::new(DartAdapter));
-        let result = registry.walk("void main() {}", "test.dart");
-        assert!(result.is_ok(), "dart adapter should walk via registry: {result:?}");
+        let err = registry.walk("void main() {}", "test.dart").unwrap_err().to_string();
+        assert!(err.contains("not implemented"), "dart must fail loudly, got: {err}");
     }
 
     #[test]

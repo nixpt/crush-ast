@@ -59,6 +59,12 @@ pub fn effects_of(name: &str) -> Option<&'static [&'static str]> {
         "gpu.launch" => &["gpu/launch"],
         // --graphics: an in-memory canvas
         n if n.starts_with("graphics.") => &[],
+        // --tcp / --tcp-listen: raw sockets (CRUSH-318). Deliberately not
+        // `net/*`, so nothing that allows HTTP allows these.
+        "tcp.connect" | "tcp.tls_wrap" => &["tcp/connect"],
+        "tcp.listen" | "tcp.accept" => &["tcp/listen"],
+        "tcp.send" | "tcp.recv" | "tcp.close" => &["tcp/io"],
+        "tcp.ping" => &[],
         // --net
         n if n.starts_with("net.") => &["net/http"],
         // --db
@@ -89,6 +95,9 @@ pub struct CapInfo {
 
 /// The `grant` of the pure standard library in [`catalog`].
 pub const STDLIB_GRANT: &str = "stdlib (default; --no-stdlib)";
+
+/// The `grant` of `tcp.send`/`recv`/`close`/`ping` in [`catalog`]: either flag.
+pub const TCP_IO_GRANT: &str = "--tcp or --tcp-listen";
 
 impl CapInfo {
     /// Available without any grant: a VM built-in, always registered, or the
@@ -128,6 +137,11 @@ pub fn catalog() -> Vec<CapInfo> {
     grants.push(("--graphics", new().graphics(true)));
     #[cfg(feature = "net")]
     grants.push(("--net", new().net(true)));
+    #[cfg(feature = "tcp")]
+    grants.extend([
+        ("--tcp", new().tcp(true)),
+        ("--tcp-listen", new().tcp_listen(true)),
+    ]);
     #[cfg(feature = "db")]
     grants.push(("--db PATH", new().db(":memory:")));
 
@@ -155,6 +169,12 @@ pub fn catalog() -> Vec<CapInfo> {
             if out.contains_key(name) {
                 continue;
             }
+            // Either tcp grant unlocks the connection-id operations.
+            let grant = if matches!(name, "tcp.send" | "tcp.recv" | "tcp.close" | "tcp.ping") {
+                TCP_IO_GRANT
+            } else {
+                grant
+            };
             let cap = caps.get(name).expect("listed name");
             let spec = cap.spec();
             out.insert(
@@ -211,6 +231,30 @@ pub struct MissingGrant {
     /// What grants it in `crush run` terms (`"--fs"`, `"--time"`, …), or
     /// `None` when no grant in this build provides it.
     pub grant: Option<&'static str>,
+    /// Set when `capability` is a name from another runtime that this one
+    /// renamed (CRUSH-264): the replacement, e.g. `net.http_get` for
+    /// `http.get`. Such a program can never run as written, whatever is granted.
+    pub renamed_to: Option<&'static str>,
+}
+
+/// Capability names from exosphere's stdlib that crush-ast renamed, with no
+/// alias (CRUSH-264): `(old, new)`. A program that calls the old name is
+/// refused up front, naming the replacement, by every runner that preflights
+/// with [`missing_grants`].
+pub const RENAMED_CAPS: &[(&str, &str)] = &[
+    ("http.get", "net.http_get"),
+    ("http.post", "net.http_post"),
+    ("http.put", "net.http_put"),
+    ("http.delete", "net.http_delete"),
+    ("http.request", "net.http_request"),
+];
+
+/// The replacement for a renamed capability, if `cap` is one.
+pub fn renamed_to(cap: &str) -> Option<&'static str> {
+    RENAMED_CAPS
+        .iter()
+        .find(|(old, _)| *old == cap)
+        .map(|(_, new)| *new)
 }
 
 /// Every capability `program` can request that is neither a VM built-in nor
@@ -236,7 +280,12 @@ pub fn missing_grants(program: &crush_vm::Program, host_caps: Option<&HostCaps>)
         .into_iter()
         .map(|capability| {
             let grant = catalog.iter().find(|c| c.name == capability).map(|c| c.grant);
-            MissingGrant { capability, grant }
+            let renamed_to = renamed_to(&capability);
+            MissingGrant {
+                capability,
+                grant,
+                renamed_to,
+            }
         })
         .collect())
 }
@@ -245,17 +294,41 @@ pub fn missing_grants(program: &crush_vm::Program, host_caps: Option<&HostCaps>)
 /// `--fs: fs.cat, fs.list`.
 pub fn describe_missing(missing: &[MissingGrant]) -> String {
     let mut groups: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
+    let mut renamed = Vec::new();
     for m in missing {
+        if let Some(new) = m.renamed_to {
+            renamed.push(format!(
+                "  {} was renamed to {new}{}",
+                m.capability,
+                grant_hint(new)
+            ));
+            continue;
+        }
         groups
             .entry(m.grant.unwrap_or("not available in this host"))
             .or_default()
             .push(&m.capability);
     }
-    groups
-        .iter()
-        .map(|(grant, caps)| format!("  {grant}: {}", caps.join(", ")))
+    renamed
+        .into_iter()
+        .chain(
+            groups
+                .iter()
+                .map(|(grant, caps)| format!("  {grant}: {}", caps.join(", "))),
+        )
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// ` (grant it with --net)` for a replacement name, or `""` when this build
+/// has no grant for it.
+fn grant_hint(cap: &str) -> String {
+    match catalog().iter().find(|c| c.name == cap) {
+        Some(c) => format!(" (grant it with {})", c.grant),
+        // Built without the feature that provides it: `net` is a default
+        // feature, so this is a `default-features = false` embedder.
+        None => " (not available in this build)".to_string(),
+    }
 }
 
 /// A handler plus its declared effects; everything else is delegated.
@@ -333,6 +406,21 @@ mod tests {
     use crate::HostCapsBuilder;
 
     #[test]
+    fn renamed_caps_are_refused_with_their_replacement() {
+        assert_eq!(super::renamed_to("http.get"), Some("net.http_get"));
+        assert_eq!(super::renamed_to("net.http_get"), None);
+        let renamed = super::MissingGrant {
+            capability: "http.get".into(),
+            grant: None,
+            renamed_to: Some("net.http_get"),
+        };
+        let text = super::describe_missing(&[renamed]);
+        assert!(text.starts_with("  http.get was renamed to net.http_get"), "{text}");
+        #[cfg(feature = "net")]
+        assert!(text.ends_with("(grant it with --net)"), "{text}");
+    }
+
+    #[test]
     fn undeclared_ignores_ambient_and_honours_families() {
         use std::collections::BTreeSet;
         let used: BTreeSet<String> =
@@ -384,6 +472,10 @@ mod tests {
         #[cfg(feature = "net")]
         {
             b = b.net(true);
+        }
+        #[cfg(feature = "tcp")]
+        {
+            b = b.tcp(true).tcp_listen(true);
         }
         #[cfg(feature = "db")]
         {
