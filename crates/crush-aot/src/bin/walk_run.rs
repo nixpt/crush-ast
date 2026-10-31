@@ -94,6 +94,16 @@ fn main() -> anyhow::Result<()> {
     // and `exit N` lowers to it directly (CRUSH-266). Without this the whole
     // run failed with "unknown capability: sys.exit".
     host_caps.register(Box::new(crush_lang_sdk::host_caps::SysExitCap));
+    // Pathname expansion (`echo *.txt`, `for f in *`, `echo */*.log`) is the
+    // shell's one look at the filesystem: `fs.exists` + `fs.list` +
+    // `fs.is_dir` (a walk into `*/*.txt` has to know which matches it may
+    // descend into), confined to the directory the script was started in.
+    // Hosts that embed walker output can leave them out and a glob is then
+    // refused loudly ("unknown capability: fs.list").
+    let root = std::env::current_dir()?.display().to_string();
+    host_caps.register(Box::new(crush_lang_sdk::host_caps::FsExistsCap::new(&root)));
+    host_caps.register(Box::new(crush_lang_sdk::host_caps::FsIsDirCap::new(&root)));
+    host_caps.register(Box::new(crush_lang_sdk::host_caps::FsListCap::new(&root)));
     for name in &[
         "append", "push", "make_range", "arr_set", "arr_get", "str.concat",
         "__crush_deref__", "__crush_addr_of__", "__crush_unary__",
@@ -106,10 +116,12 @@ fn main() -> anyhow::Result<()> {
     let mut exec_times = Vec::with_capacity(cli.runs);
     let mut output = String::new();
     let mut exit_code = None;
+    let mut failed: Option<String> = None;
 
     for run_i in 0..cli.runs {
         let t2 = Instant::now();
-        // Streaming, so output printed before a `sys.exit` is kept.
+        // Streaming, so output printed before a `sys.exit` or a runtime error
+        // is kept (CRUSH-184).
         let mut run_out = String::new();
         let result = crush_vm::vm::run_with_caps_streaming(&vm_prog, &quotas, Some(&host_caps), &mut |s: &str| {
             run_out.push_str(s)
@@ -118,15 +130,21 @@ fn main() -> anyhow::Result<()> {
         if run_i == 0 {
             // Program output verbatim — trimming hid trailing spaces and
             // newline-free `io.write` output (C printf, Rust print!).
-            match result {
-                Ok(_) => output = run_out,
-                // `sys.exit(N)` is a requested stop, not a failure: keep the
-                // output and hand the status to the caller.
-                Err(crush_vm::VmError::Exit(code)) => {
-                    exit_code = Some(code);
-                    output = run_out;
-                }
-                Err(e) => output = format!("{run_out}Error: {e}\n"),
+            output = run_out;
+        }
+        match result {
+            Ok(_) => {}
+            // `sys.exit(N)` is a requested stop, not a failure: keep the
+            // output and hand the status to the caller.
+            Err(crush_vm::VmError::Exit(code)) => {
+                exit_code = Some(code);
+                break;
+            }
+            // A runtime error is a failure: reported after the output, and a
+            // non-zero exit (CRUSH-184).
+            Err(e) => {
+                failed = Some(format!("{e}"));
+                break;
             }
         }
     }
@@ -144,6 +162,11 @@ fn main() -> anyhow::Result<()> {
         eprintln!("  Compile {:>10.1} s", c);
         eprintln!("  Execute {:>10.1} s", e);
         eprintln!("  Total   {:>10.1} s", w + c + e);
+    }
+    // A runtime error: reported after the streamed output, and a non-zero exit
+    // (CRUSH-184).
+    if let Some(e) = failed {
+        return Err(anyhow::anyhow!("{e}"));
     }
     Ok(())
 }

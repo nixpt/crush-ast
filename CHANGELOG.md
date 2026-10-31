@@ -25,6 +25,74 @@ add its entry after yours.
   `io.print`; it errors loudly. `crush-walk-run` reads a `.wasm` file as bytes.
   The Nepali walker's false "native Nepali keywords" comment is corrected.
 
+- **`crush debug FILE` / `crush-debug`: the debugger is runnable (CRUSH-317):**
+  `crush-debugger` had breakpoints, step/next/finish, watchpoints and
+  grant-gated inspection but no front end that compiled Crush source, so it could
+  only debug hand-written CASM. `crush debug prog.crush --step --inspect` now
+  compiles through `crush run`'s pipeline and opens the REPL; `break FILE:LINE`
+  resolves in the *source's* lines (the compiler's source map, which used to be
+  the generated assembly's), `print total` / `print p.x` / `watch total` /
+  `locals` use variable names, `step`/`next` go by source line, and stops show
+  the line. Debugging grants nothing by default: `--step` to run and step,
+  `--inspect=redacted` / `--inspect` to see values; a refused command names the
+  flag. `--message-format json` emits the `DebugEvent`s as NDJSON for an editor or
+  agent. `crush-installer` now installs `crush` and `crush-debug`. Fixes found on
+  the way: hashing a closure that captures itself (`let f = |n| f(n - 1)`)
+  overflowed the stack under `--inspect=redacted`, and `BreakpointSet::remove`
+  used `IndexMap::remove`, now a deprecation error under `-D warnings`.
+
+- **`net` on by default, `http.*` refused with its replacement, `time.now` unit
+  documented (CRUSH-264):** `crush-lang-sdk`'s `default` features now include
+  `net`, so `crush-run --net` grants `net.http_get/post/put/delete/request` out of
+  the box (still refused up front without `--net`); `db` stays opt-in
+  (`--features db`) and `crush-run caps` says so. exosphere's `http.get/…` have no
+  alias: a program calling one is refused before it runs with `http.get was
+  renamed to net.http_get (grant it with --net)` (`effects::RENAMED_CAPS`, shared
+  by every runner that preflights). `time.now` is seconds, `time.now_ms`
+  milliseconds (exosphere's `time.now` was ms) — now stated in `crush-run caps`,
+  the SDK README and MIGRATION-INVENTORY. `examples/crush/httpclient.crush` uses
+  `net.http_get` and `str.format` and compiles. Embedders that don't want the
+  HTTP client: `default-features = false`.
+
+- **Consistent `--message-format json` diagnostics across `crushc` and `crush-run`
+  (CRUSH-315):** the same broken program now yields the same NDJSON records
+  from both. `crush-run` used to flatten every compile failure to `E-IO` with no
+  position; it now emits `E-PP0n` (syntax, with line/col) and `E-TP01`
+  (semantic), exactly as `crushc` does. Semantic errors carry line/col for
+  undefined variables/functions and type errors (the analyzer now reads the
+  AST locations, and the parser stamps `Var`/`Call`/`BinaryOp`/statement
+  locations at the construct instead of the token after it). A runtime error's
+  text is now in `message` (`E-RT05` used to leave it empty and put it in
+  `hint`); a program needing an ungranted capability is reported as `E-CAPS`
+  (hint: the grant flag) instead of `E-IO`. `file` is filled on every
+  `crushc`/`crush-run` record. The wire struct is defined once, in
+  `crush-diagnostics` (`Diagnostic`); `crush_lang_sdk::theme::JsonDiagnostic` is
+  an alias, and its `parse_error` / `runtime_error` constructors moved to the
+  `JsonDiagnosticExt` trait. New in `crush-frontend`: `ParseErrors`,
+  `SemanticError` (typed `anyhow` payloads, `Display` unchanged).
+
+- **`crush-walk-run` keeps output before a runtime error and exits non-zero
+  (CRUSH-184):** it buffered the first run's output and replaced it with
+  `Error: …` on failure, and returned `Ok`, so a failing script exited 0 and
+  everything printed before the error was lost. It now streams the first run's
+  output (so nothing is lost) and fails with a non-zero exit. `crush-run` (and
+  `crush run`, which delegates to it) already streamed and exited non-zero.
+
+- **C API reports runtime errors and routes `io.print` to stdout (CRUSH-205):**
+  `crush_vm_run_casm` treated any `Ok(FastYield)` as success, so a program that
+  raised a runtime error (a stack underflow, a bad jump, an unsupported
+  capability) returned `0` with `last_error` null; it now returns `-2` with a
+  message for a run that did not finish, and clears `last_error` on success.
+  The bare FastVM has no capabilities, so the embedded `cap_call io.print` went
+  nowhere and `examples/embed.c` printed nothing — `run_casm` now runs with a
+  stdout `io.print` capability, so the example prints `42`.
+
+- **Spawned tasks no longer outlive the VM (CRUSH-182):** `TaskState` now
+  implements `Drop`, killing and reaping every still-running task when the
+  capability registry is dropped at the end of a run — a spawned `sleep 333`
+  no longer survives `crush-run`. `--task` spawns host processes, so its help
+  text now says plainly that it grants `process/spawn`.
+
 - **Deterministic CASM function layout (CRUSH-188):** `crushc --emit casm` laid
   the functions out into the code buffer by iterating a `HashMap`, so the same
   source compiled to different CASM (and different label numbering) from run to

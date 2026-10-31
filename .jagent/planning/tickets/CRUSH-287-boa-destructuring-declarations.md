@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-287 |
 | **Priority** | P1 |
-| **Status** | In PR (stacked on CRUSH-284) |
+| **Status** | Done — PR #292 merged 2026-10-29 (branch `agent/muse/CRUSH-286`, commit `e3308f8`) |
 | **Phase** | COSM K3 follow-up (boa walker) |
 | **Assignee** | muse |
 | **Filed by** | muse — 2026-10-21, follow-on to CRUSH-284 |
@@ -68,3 +68,7 @@ rest elements (as in CRUSH-284).
   destructuring declaration to `new Set` (CRUSH-zorro-17 host
   constructors). No file's first blocker is a destructuring
   declaration anymore.
+
+## Survey 2026-10-31 (status)
+
+Commit `e3308f8` (CRUSH-287: destructuring declarations) merged via PR #292 on 2026-10-29. Previous status: `In PR (stacked on CRUSH-284)`.

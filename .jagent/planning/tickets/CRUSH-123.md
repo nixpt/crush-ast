@@ -1,6 +1,6 @@
 # CRUSH-123: the conformance runner has no per-file timeout, and one file hangs the frontend
 
-**Status**: open, filed 2026-09-25 (captain, from the [main] foreman's review of #61)
+**Status**: Backlog — filed 2026-09-25 (captain, from the [main] foreman's review of #61)
 **Priority**: high. The full conformance corpus never finishes, so it cannot gate CI.
 **Relates to**: CRUSH-122 (#61 made the runner accept `// caps:` and file selection),
 M2 conformance closure.
@@ -35,3 +35,7 @@ triage item.
   mutation check for part 1.
 - Runtime and the outcome counts are recorded here. The 24 known failures are triaged into
   follow-up tickets or expected-failure annotations.
+
+## Survey 2026-10-31 (status)
+
+`xtask/src/conformance.rs` still has no timeout / subprocess / thread on main. Previous status: `open, filed 2026-09-25 (captain, from the [main] foreman's review of #61)`.

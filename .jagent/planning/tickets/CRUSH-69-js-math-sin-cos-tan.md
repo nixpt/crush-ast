@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-69 |
 | **Priority** | P1 — same silent-wrong-answer class as CRUSH-65 |
-| **Status** | Done (PR pending) |
+| **Status** | Done — PR #26 merged 2026-07-26 |
 | **Phase** | Correctness / JS walker |
 | **Assignee** | nixp |
 | **Dependencies** | CRUSH-65 ✅ (Math.* case mapping + CapabilityCall path) |
@@ -39,3 +39,7 @@ Flagged in CRUSH-65 Findings §4 / TASKS.md Done-session gap.
 Shipped on `agent/nixp/CRUSH-69`: extended the CRUSH-65 `CapabilityCall` arm in
 `lower_swc.rs` with `Math.sin` / `Math.cos` / `Math.tan` (via existing
 `math_builtin()`), plus four e2e numeric tests and CAST-name pins.
+
+## Survey 2026-10-31 (status)
+
+PR #26 (`agent/nixp/CRUSH-69`) merged 2026-07-26. Previous status: `Done (PR pending)`.

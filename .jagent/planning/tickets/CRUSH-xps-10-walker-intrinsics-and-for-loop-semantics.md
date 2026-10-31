@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-10 |
 | **Priority** | P1 |
-| **Status** | In review |
+| **Status** | In Progress — implementation merged in PR #213 (2026-10-15); the matrix-to-regression and refresh criteria are unticked |
 | **Phase** | M1 / SDK correctness |
 | **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-2, CRUSH-197 |
@@ -129,3 +129,7 @@ Inspect `crush-frontend/src/{walker_intrinsics,semantics,optimizer,compiler}`,
 Use the existing implementation branch or a focused dependent correction
 worktree. Validate one missing row at a time; preserve all previous proof and
 leave unrelated language changes with their owning tickets.
+
+## Survey 2026-10-31 (status)
+
+The ticket's own gate "merge PR #213 before marking Done" is satisfied (merged 2026-10-15). Two other criteria are still unticked. Previous status: `In review`.

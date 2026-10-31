@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-37 |
 | **Priority** | P0 |
-| **Status** | Done (fixed by CRUSH-zorro-43, PR: agent/vega/CRUSH-zorro-43) |
+| **Status** | Done (fixed by CRUSH-zorro-43, PR #222 merged 2026-10-15) |
 | **Phase** | M9 |
 | **Assignee** | vega |
 | **Dependencies** | none (the full fix arrives with COSM K1, `docs/design/object-model.md`; this ticket is the interim fix) |

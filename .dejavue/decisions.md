@@ -1301,6 +1301,10 @@ Reason:
 The JIT emulates frames in one flat 64-slot locals array, addressed as locals[call_stack_top * FRAME_LOCALS + idx] with FRAME_LOCALS fixed at 8, and LoadLocal/StoreLocal did not bounds-check idx. A function using local 8+ spilled into the next frame, so a callee clobbered the caller's locals and the JIT finished with wrong values while every other engine was correct. Fix: program_frame_locals computes the max local slot used anywhere (LoadLocal/StoreLocal/LoadLocalChecked) + 1 and threads it through build_fn/emit_one/lload/lstore/unassign_frame as the stride; a program whose frame exceeds the 64-slot array is refused (FastVM fallback) and the call-depth guard becomes JIT_MAX_LOCALS / frame_locals. This also removes the need for the old LoadLocalChecked-past-8 refusal (CRUSH-zorro-55).
 
 
+## 2026-10-30T19:19:49-05:00 — [ARCHITECTURAL] A CLI reports a runtime error after the output it produced, and exits non-zero (CRUSH-184)
+
+Reason:
+crush-walk-run buffered the first run's output and, on a runtime error, replaced it with the error text and returned Ok - so a failing walked program exited 0 and lost everything it had printed. Fix: stream the first run's output through run_with_caps_streaming so it reaches stdout as the program runs, and return an error (non-zero exit) when the run fails. crush-run already streamed via Runtime::run_streaming and exited non-zero, and crush run delegates to crush-run, so only crush-walk-run needed the change. Pinned by a CLI test that spawns the binary.
 ## 2026-10-30T19:07:57-05:00 — [ARCHITECTURAL] Function layout is name-ordered, so the same source assembles byte-identically (CRUSH-188)
 
 Reason:
@@ -1315,4 +1319,18 @@ The Go walker matched tree-sitter-go's node `short_variable_declaration`, which 
 
 Reason:
 Several walkers silently produced wrong or empty programs: the Zig walker matched tree-sitter-zig node names that do not exist (IntegerLiteral instead of integer, BinaryExpr instead of binary_expression, CallExpr instead of call_expression), so every literal became null and programs printed nothing; the Dart walker discarded every node and returned an empty program; the Java walker returned Program::default() and panicked with a bare unreachable! in language()/parse(); the Wasm walker dropped every non-call operator and lowered fd_write to an arg-less io.print. Fix: Zig node names and wrappers corrected and its null/empty fallbacks made loud errors naming the node kind and position; Dart and Java fail with not implemented; Wasm errors on unhandled operators and imported calls; crush-walk-run reads .wasm as bytes; the Nepali walker's false native-keyword comment corrected. Same rule as CRUSH-198: exact or loud.
+## 2026-10-30T19:31:21-05:00 — [ARCHITECTURAL] A run that did not finish is not success, and an embedded io.print reaches stdout (CRUSH-205)
+
+Reason:
+crush_vm_run_casm matched any Ok(FastYield) as success, so a runtime error (stack underflow, bad jump, unsupported capability) returned rc 0 with last_error null - the C embedder could not tell a crashed program from a successful one. It now maps FastYield::Error, BudgetExhausted and unserviceable host requests to rc -2 with a message, and clears last_error on success (run_asm too). Separately, the bare FastVM has no capabilities, so cap_call io.print in an embedded program went nowhere; run_casm now uses run_fastvm_with_caps with a stdout io.print capability that formats through the shared crush_vm::io_print::runtime_value_to_text (made pub), so examples/embed.c prints 42. The FastVM still does not enforce the CASM manifest permissions - a follow-up.
+## 2026-10-30T19:40:05-05:00 — [ARCHITECTURAL] A spawned task is killed when the run ends, and --task states its process grant (CRUSH-182)
+
+Reason:
+task.start spawned a std::process::Command child that was tracked in a TaskState but never killed on drop, so a program that ran task.start and exited left the child running (sleep 333 outlived crush-run; touch created files). TaskState now implements Drop, killing and reaping every still-running task when the capability registry drops at the end of the run - a host that wants a detached task can stop tracking it first. Also, --task spawns host processes but its help never said so; the help text now states that --task grants process/spawn, which the effects catalog already listed for task.start.
+
+
+## 2026-10-30T20:54:05-05:00 — net on by default, db opt-in; http.* renamed with no alias; time.now is seconds
+
+Reason:
+CRUSH-264 (owner, 2026-10-31): net joins crush-lang-sdk default features (grant-gated, still needs --net; per-package features mean bins can't take it alone, so library default-feature consumers get ureq too); db stays --features db. exosphere http.* is refused up front via effects::RENAMED_CAPS naming net.http_* rather than aliased, so a rename is explicit and one table feeds every runner. time.now stays seconds, time.now_ms is ms, documented because exosphere's was ms.
 

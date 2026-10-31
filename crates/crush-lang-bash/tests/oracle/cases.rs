@@ -23,18 +23,29 @@ pub enum X {
 pub struct Case {
     pub name: &'static str,
     pub src: &'static str,
+    /// Files (and directories, written with a trailing `/`) the case's working
+    /// directory is populated with before either the shell or crush runs.
+    pub files: &'static [&'static str],
     pub bash: X,
     pub zsh: X,
 }
 
 const fn ok(name: &'static str, src: &'static str) -> Case {
-    Case { name, src, bash: X::Match, zsh: X::Match }
+    Case { name, src, files: &[], bash: X::Match, zsh: X::Match }
+}
+/// A case whose working directory holds these files (`dir/` = a directory).
+const fn okf(name: &'static str, src: &'static str, files: &'static [&'static str]) -> Case {
+    Case { name, src, files, bash: X::Match, zsh: X::Match }
 }
 const fn loud(name: &'static str, src: &'static str, needle: &'static str) -> Case {
-    Case { name, src, bash: X::Loud(needle), zsh: X::Loud(needle) }
+    Case { name, src, files: &[], bash: X::Loud(needle), zsh: X::Loud(needle) }
 }
 const fn per(name: &'static str, src: &'static str, bash: X, zsh: X) -> Case {
-    Case { name, src, bash, zsh }
+    Case { name, src, files: &[], bash, zsh }
+}
+/// `per`, with fixture files in the working directory.
+const fn perf(name: &'static str, src: &'static str, files: &'static [&'static str], bash: X, zsh: X) -> Case {
+    Case { name, src, files, bash, zsh }
 }
 
 pub const CASES: &[Case] = &[
@@ -54,9 +65,54 @@ pub const CASES: &[Case] = &[
     ok("append_assign", "s=ab\ns+=cd\necho $s\n"),
     ok("unset_var", "x=1\nunset x\necho \"[$x]\"\n"),
     per("mixed_quote_split", "x=\"1 2\"\necho \"a\"$x\n", X::Loud("mixing quoted text"), X::Match),
-    per("glob_from_variable", "x='*'\necho $x\n", X::Loud("unsupported: pathname expansion"), X::Match),
+    // ── pathname expansion ──
+    okf("glob_star", "echo *\n", &["a.txt", "b.txt", "c.md", "sub/"]),
+    okf("glob_star_suffix", "echo *.txt\n", &["a.txt", "b.txt", "c.md"]),
+    okf("glob_question", "echo a?.txt\n", &["a1.txt", "a22.txt", "b1.txt"]),
+    okf("glob_class", "echo [ab]*.md\n", &["a.md", "b.md", "c.md"]),
+    okf("glob_directory_component", "echo sub/*.log\n", &["sub/x.log", "sub/y.txt", "z.log"]),
+    okf("glob_hidden_needs_dot", "echo *\necho .h*\n", &[".hidden", "seen.txt"]),
+    okf("glob_sorted", "echo z*.txt\n", &["z2.txt", "z1.txt", "z10.txt"]),
+    okf("glob_several_words", "echo *.md *.txt\n", &["a.md", "b.txt"]),
+    okf("glob_prefix_text", "echo pre*\n", &["pre1", "pre2", "other"]),
+    okf("glob_for_loop", "for f in *.txt; do echo \"[$f]\"; done\n", &["a.txt", "b.txt", "c.md"]),
+    okf("glob_quoted_metachar", "echo \"*.txt\"; echo 'a*'\n", &["a.txt", "b.txt"]),
+    okf("glob_quoted_inside_word", "echo a\"*\"b*\n", &["a*bx.txt", "ax.txt"]),
+    okf("glob_escaped_metachar", "echo \\*.txt\n", &["a.txt"]),
+    // bash expands an unmatched pattern to itself; zsh fails the command.
+    perf("glob_no_match", "echo *.nope\n", &["a.txt"], X::Match, X::Loud("no matches found")),
+    perf("glob_empty_dir", "echo *\n", &[], X::Match, X::Loud("no matches found")),
+    // bash globs the text an expansion contributes; zsh does not.
+    perf("glob_from_variable", "x='*'\necho $x\n", &["a.txt", "b.txt"], X::Match, X::Match),
+    // Every component may glob. The walk only descends into directories, sorts
+    // the whole result (not just each directory's names), and a literal
+    // component after a glob has to exist or the word stays as written.
+    okf(
+        "glob_two_levels",
+        "echo */*.txt\n",
+        &["a1/one.txt", "a2/two.txt", "sub/three.md", "top.txt"],
+    ),
+    okf("glob_two_levels_sorted", "echo */*\n", &["b/z", "a/y", "a.b/x"]),
+    okf("glob_three_levels", "echo */*/*.txt\n", &["a/b/x.txt", "a/c/y.txt", "a/z.md"]),
+    okf("glob_dir_star_skips_files", "echo */bar\n", &["a1/bar", "afile"]),
+    okf("glob_dir_star_from_variable_prefix", "p=a\necho $p*/*.txt\n", &["a1/x.txt", "b1/y.txt"]),
+    okf("glob_hidden_dir_needs_dot", "echo */*.txt\necho .h*/*.txt\n", &[".hid/z.txt", "seen/a.txt"]),
+    okf("glob_trailing_slash", "echo */\n", &["a/", "b/", "f.txt"]),
+    // Byte order puts `.` before `/`, so the whole pathname is the sort key
+    // (`a.b/` before `a/`); a collation locale orders these differently.
+    okf("glob_trailing_slash_sorted", "echo */\n", &["a/", "a.b/", "b/"]),
+    okf("glob_trailing_slash_two_levels", "echo */*/\n", &["a/x/", "a.b/y/", "b/z/"]),
+    okf("glob_dir_component_for_loop", "for f in */*.txt; do echo \"[$f]\"; done\n", &["a/x.txt", "b/y.txt"]),
+    okf("glob_two_levels_brace_free", "echo sub/*/[ab]*\n", &["sub/one/a1", "sub/one/b2", "sub/two/c3"]),
+    // A glob that matches files where the next component needs directories
+    // matches nothing at all (never "not a directory").
+    perf("glob_two_levels_no_match", "echo */*/*\n", &["a/one.txt", "b/two.txt"], X::Match, X::Loud("no matches found")),
+    perf("glob_literal_after_glob_missing", "echo a*/missing\n", &["a1/one.txt"], X::Match, X::Loud("no matches found")),
+    // The sandbox is relative to the script's directory: `/usr/*` could only be
+    // answered by guessing, so it is refused rather than half-expanded.
+    loud("glob_absolute_path", "echo /usr/*\n", "an absolute path with a glob"),
+    loud("glob_double_star", "echo **/*.txt\n", "`**`"),
     per("zsh_echo_backslash", "echo 'a\\nb'\n", X::Match, X::Match),
-    loud("glob_literal", "echo *\n", "pathname expansion"),
     loud("tilde", "echo ~\n", "tilde expansion"),
     loud("brace_expansion", "echo {a,b}\n", "brace expansion"),
     ok("echo_e_escapes", "echo -e 'a\\tb'\necho -e 'x\\ny'\necho -e '\\x41\\0101'\n"),
@@ -292,9 +348,14 @@ fn expected(case: &Case, dialect: &str) -> X {
 
 /// Run the script through crush, on a thread with a wall-clock limit so a
 /// lowering that loops forever fails the test instead of hanging it.
-fn run_crush(src: &str, to_cast: fn(&str) -> anyhow::Result<crush_cast::Program>) -> Result<(String, i32), String> {
+fn run_crush(
+    src: &str,
+    to_cast: fn(&str) -> anyhow::Result<crush_cast::Program>,
+    cwd: &std::path::Path,
+) -> Result<(String, i32), String> {
     let (tx, rx) = mpsc::channel();
     let src = src.to_string();
+    let root = cwd.display().to_string();
     std::thread::spawn(move || {
         let r = (|| -> Result<(String, i32), String> {
             let cast = to_cast(&src).map_err(|e| format!("{e:#}"))?;
@@ -302,7 +363,12 @@ fn run_crush(src: &str, to_cast: fn(&str) -> anyhow::Result<crush_cast::Program>
             // `.crush` semantic pass, which knows only user-defined functions).
             let casm = crush_frontend::compiler::Compiler::new().compile(cast).map_err(|e| format!("CAST→CASM: {e:#}"))?;
             let vm = crush_lang_sdk::compile::casm_to_vm(&casm).map_err(|e| format!("CASM→CVM1: {e:#}"))?;
-            let caps = crush_lang_sdk::HostCapsBuilder::new().build();
+            // Pathname expansion reads the same directory the real shell runs
+            // in, confined to it.
+            let caps = crush_lang_sdk::HostCapsBuilder::new()
+                .fs(true)
+                .fs_root(root.clone())
+                .build();
             let quotas = crush_vm::Quotas { max_steps: 5_000_000, ..Default::default() };
             let mut out = String::new();
             let r = crush_vm::vm::run_with_caps_streaming(&vm, &quotas, Some(&caps), &mut |s: &str| out.push_str(s));
@@ -317,12 +383,10 @@ fn run_crush(src: &str, to_cast: fn(&str) -> anyhow::Result<crush_cast::Program>
     rx.recv_timeout(Duration::from_secs(30)).unwrap_or_else(|_| Err("TIMEOUT: crush run did not finish in 30 s".into()))
 }
 
-fn run_shell(o: &Oracle, name: &str, src: &str) -> (String, i32) {
+fn run_shell(o: &Oracle, name: &str, src: &str, cwd: &std::path::Path) -> (String, i32) {
     let dir = std::env::temp_dir().join(format!("crush-shell-oracle-{}-{}", o.dialect, std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{name}.sh"));
-    let cwd = dir.join("cwd");
-    std::fs::create_dir_all(&cwd).unwrap();
     std::fs::File::create(&path).unwrap().write_all(src.as_bytes()).unwrap();
     let mut child = Command::new(o.shell)
         .args(o.shell_args)
@@ -354,6 +418,28 @@ fn show(s: &str) -> String {
     if t.chars().count() > 60 { format!("{}…", t.chars().take(60).collect::<String>()) } else { t }
 }
 
+/// A fresh working directory holding the case's fixture files, so the shell and
+/// crush see the same files when a word expands (`echo *.txt`).
+fn fixture_dir(o: &Oracle, name: &str, files: &[&str]) -> std::path::PathBuf {
+    let dir = std::env::temp_dir()
+        .join(format!("crush-shell-oracle-{}-{}", o.dialect, std::process::id()))
+        .join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for f in files {
+        let path = dir.join(f);
+        if f.ends_with('/') {
+            std::fs::create_dir_all(&path).unwrap();
+        } else {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::File::create(&path).unwrap();
+        }
+    }
+    dir
+}
+
 /// Run a whole script file through crush and the real shell, requiring the
 /// same stdout and exit status. Used as a broad end-to-end check that the
 /// constructs work together, not just one case at a time.
@@ -364,8 +450,9 @@ pub fn check_script_file(o: &Oracle, path: &std::path::Path) {
     }
     let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-    let (sh_out, sh_code) = run_shell(o, &name, &src);
-    match run_crush(&src, o.to_cast) {
+    let cwd = fixture_dir(o, &name, &[]);
+    let (sh_out, sh_code) = run_shell(o, &name, &src, &cwd);
+    match run_crush(&src, o.to_cast, &cwd) {
         Ok((out, code)) if out == sh_out && code == sh_code => {
             eprintln!("{}: {} matches ({} bytes of output)", o.dialect, name, out.len());
         }
@@ -387,8 +474,9 @@ pub fn run_corpus(o: &Oracle) {
     eprintln!("| case | {} out (exit) | crush out (exit) | verdict |", o.dialect);
     eprintln!("|---|---|---|---|");
     for case in CASES {
-        let (sh_out, sh_code) = run_shell(o, case.name, case.src);
-        let crush = run_crush(case.src, o.to_cast);
+        let cwd = fixture_dir(o, case.name, case.files);
+        let (sh_out, sh_code) = run_shell(o, case.name, case.src, &cwd);
+        let crush = run_crush(case.src, o.to_cast, &cwd);
         let crush_cell = match &crush {
             Ok((out, code)) => format!("`{}` ({code})", show(out)),
             Err(e) => format!("error: {}", show(e)),

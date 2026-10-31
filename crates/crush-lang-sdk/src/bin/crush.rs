@@ -8,6 +8,7 @@
 //!     crush repl [ARGS]      -> REPL       (crush-repl [ARGS])
 //!     crush run FILE [ARGS]  -> run        (crush-run run FILE [ARGS])
 //!     crush build FILE [ARGS]-> compile    (crushc FILE [ARGS])
+//!     crush debug FILE [ARGS]-> debugger   (crush-debug FILE [ARGS])
 //!     crush doctor [--json]  -> report which polyglot runtimes are on PATH
 //!
 //! Each subcommand's [ARGS] are forwarded verbatim to the underlying binary,
@@ -38,6 +39,9 @@ fn exec(name: &str, args: impl IntoIterator<Item = String>) -> ExitCode {
         },
         Err(e) => {
             eprintln!("crush: failed to launch '{}': {e}", bin.display());
+            if name == "crush-debug" {
+                eprintln!("(crush-debug is built with the `debug` feature of crush-lang-sdk)");
+            }
             ExitCode::FAILURE
         }
     }
@@ -51,10 +55,11 @@ fn usage() {
     eprintln!("    crush repl [ARGS]        start the interactive REPL");
     eprintln!("    crush run FILE [ARGS]    run a .crush/.casm/.cvm1 program");
     eprintln!("    crush build FILE [ARGS]  compile a .crush source file to .cvm1");
+    eprintln!("    crush debug FILE [ARGS]  debug a .crush program: break, step, watch, print");
     eprintln!("    crush doctor [--json]    check the host runtimes polyglot blocks need");
     eprintln!();
     eprintln!("Pass --help after a subcommand for that tool's full flag reference");
-    eprintln!("(crush repl --help / crush run --help / crush build --help).");
+    eprintln!("(crush repl --help / crush run --help / crush build --help / crush debug --help).");
 }
 
 fn main() -> ExitCode {
@@ -73,6 +78,10 @@ fn main() -> ExitCode {
         Some("build") => {
             args.next();
             exec("crushc", args)
+        }
+        Some("debug") => {
+            args.next();
+            exec("crush-debug", args)
         }
         Some("doctor") => {
             args.next();

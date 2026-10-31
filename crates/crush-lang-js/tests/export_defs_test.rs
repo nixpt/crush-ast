@@ -1,4 +1,4 @@
-//! Exported *definitions* must survive lowering (CRUSH-266).
+//! Exported *definitions* must survive lowering (CRUSH-340).
 //!
 //! `export function/const/class` used to lower to a bare
 //! `Statement::Export { value: Var(name) }` with the declaration itself
