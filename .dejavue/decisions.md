@@ -1329,6 +1329,10 @@ Reason:
 task.start spawned a std::process::Command child that was tracked in a TaskState but never killed on drop, so a program that ran task.start and exited left the child running (sleep 333 outlived crush-run; touch created files). TaskState now implements Drop, killing and reaping every still-running task when the capability registry drops at the end of the run - a host that wants a detached task can stop tracking it first. Also, --task spawns host processes but its help never said so; the help text now states that --task grants process/spawn, which the effects catalog already listed for task.start.
 
 
+## 2026-10-30T21:14:22-05:00 — [ARCHITECTURAL] tree-sitter-crush is a published grammar with no in-repo consumer; it must be checked by cargo test, not only by the tree-sitter CLI (CRUSH-207)
+
+Reason:
+tree-sitter-crush parsed 1 of 51 examples/crush/*.crush without ERROR nodes, and CI could not see it: the crate had zero Rust tests and its grammar corpus (test/corpus/*.txt) only runs under the tree-sitter CLI, which no CI job invokes. Meanwhile crush-frontend does NOT use the grammar - it has its own hand-written lexer/parser - so nothing in-repo would ever have caught the drift; the consumers are external (crush-symbols, and exosphere's path-dependency, CRUSH-23). Fix: (1) crates/tree-sitter-crush/tests/grammar_examples.rs parses every examples/crush/*.crush plus the crate's test_*.crush fixtures with the bundled parser and fails on ERROR/MISSING nodes, running in the existing test-rest CI job; the KNOWN_BAD allowlist may only shrink, so a fixed file forces its entry's removal. (2) The grammar was brought back to the frontend's syntax: // and block comments (the rule knew only #, so almost every file died at line 1), general assignment targets, fn return types, pub/async, string escapes, && || ! not and unary minus, chained field access, object and struct literals, null, capability declarations, the @-annotation family (keyed off the lexer's IMPORT_KEYWORDS list), semantic_switch, named arguments, and brace-balanced polyglot bodies. Result: 1/51 -> 49/51. Two design notes: object/struct literals live in a new _value_expression (after =, return, in arguments) rather than in expression, because allowing a statement to start with { is what made 'if x { }' and '@module { }' ambiguous; and capability_call's optional('@') became a distinct alternative because it went ambiguous once binary operators could follow. Regenerating parser.c needs tree-sitter CLI >= 0.25 (ABI 15); 0.24 refuses the committed parser. Remaining: the differential test against crushc --check, which would catch the grammar being MORE permissive than the frontend - the current check cannot.
 ## 2026-10-30T21:16:19-05:00 — Shell pipelines and redirections run in-VM: no process, fs caps only (CRUSH-311)
 
 Reason:
@@ -1370,4 +1374,18 @@ Rejected alternatives:
 
 Outcome:
 artifacts.yml + binstall metadata; ci.yml release build on PR becomes cargo check --release
+## 2026-10-30T22:20:14-05:00 — [STRATEGIC] [ADOPTED] ui.* is pull-based (render + blocking next_event) behind a UiBackend seam; crush-gui is its own crate on arniko from crates.io
+
+Reason:
+The VM cannot be re-entered from winit and Value is !Send, so the program runs on its own thread and events are pulled like io.read; one API lets desktop, tui-easy terminal and the crush-web browser Session share programs. arniko pulls Stylo/vello/winit so it stays out of crush-lang-sdk's default build; the whole ui.* family is one --ui grant.
+
+Artifacts: docs/design/ui-api.md
+
+Rejected alternatives:
+- **host-to-VM callbacks (needs VM re-entry)**
+- **arniko-crush as a dependency (yanked crush-lang-sdk, nixpt/arniko#27)**
+- **ui.* in crush-lang-sdk default features**
+
+Outcome:
+CRUSH-319 phase 1: desktop+headless backends, headless-verified; window not run on a screen
 

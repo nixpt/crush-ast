@@ -22,9 +22,34 @@ called out.
    reading the code alone.
 4. If what you're about to do isn't covered by an existing ticket, mint one
    (`.jagent/planning/tickets/CRUSH-N-*.md`, next free ID from
-   `BACKLOG-INDEX.md`) or open a GitHub issue before writing code, especially
+   `ticket-id next` — see [Ticket numbers](#ticket-numbers)) or open a GitHub issue before writing code, especially
    for anything that adds a new capability, a new backend, or touches more
    than one crate.
+
+## Ticket numbers
+
+Get a number before minting a ticket — don't guess the next one:
+
+```bash
+cargo run -p xtask --bin ticket-id -- next   # prints e.g. CRUSH-287
+```
+
+`next` considers ticket files in your working tree, on `origin/main`, on
+every `refs/remotes/origin/*` branch, and (when `gh` works) in open PR
+titles; if `gh` is unavailable it warns on stderr and falls back to git
+only. Create the ticket file with that number right away so other agents
+and boxes can see the claim.
+
+Uniqueness is enforced, not just suggested: `cargo test --tests -p xtask`
+(already run in CI) refuses duplicate ticket IDs under
+`.jagent/planning/tickets/` and `.jagent/planning/archive/`, listing each
+clash with both file names. An ID is the whole prefix before the slug —
+`CRUSH-<digits>` with an optional letter suffix (`CRUSH-30a` is distinct
+from `CRUSH-30`), plus the namespaced `CRUSH-zorro-<N>` / `CRUSH-xps-<N>`
+series. A handful of duplicates that predate the check are grandfathered
+in `xtask/ticket-id-allowlist.txt`; never add a new entry there — renumber
+the newer ticket instead. `cargo run -p xtask --bin ticket-id -- check`
+runs the same check locally.
 
 ## The rules that actually matter (enforced, not just suggested)
 
@@ -100,7 +125,7 @@ builds *from the tag* and attaches:
 
 - `crush-<ver>-x86_64-unknown-linux-gnu.tar.gz` — `crush`, `crushc`, `crush-run`,
   `crush-compile`, `crush-repl`, `crush-debug`, `crush-pkg` (what `crush-installer`
-  installs) in a top-level `crush-<ver>-x86_64-unknown-linux-gnu/` directory
+  installs) and `crush-gui` in a top-level `crush-<ver>-x86_64-unknown-linux-gnu/` directory
 - `crush-web-<ver>-pkg.tar.gz` — the browser build of `crates/crush-web`
   (`wasm-bindgen --target web`, features `polyglot-javascript` + `polyglot-python`)
 - `SHA256SUMS`

@@ -19,9 +19,12 @@ module.exports = grammar({
             $.return_statement,
             $.try_statement,
             $.throw_statement,
-            $.field_assignment,
+            $.assignment,
             $.expr_stmt,
             $.lang_block,
+            $.annotation,
+            $.capability_decl,
+            $.semantic_switch_statement,
             $.break_statement,
             $.continue_statement,
             $.import_statement,
@@ -35,13 +38,15 @@ module.exports = grammar({
             $.external_import
         ),
 
-        module_import: $ => seq(
+        // `prec.right` because `import foo { bar }` is otherwise ambiguous with
+        // the `{ … }`-starting expressions added below (object/struct literals).
+        module_import: $ => prec.right(2, seq(
             'import',
             field('path', $.import_path),
             optional(seq('as', field('alias', $.identifier))),
             optional(seq('{', sepBy(',', field('selective', $.identifier)), '}')),
             optional(';')
-        ),
+        )),
 
         import_path: $ => sepBy1('.', $.identifier),
 
@@ -81,22 +86,37 @@ module.exports = grammar({
             optional(';')
         ),
 
-        comment: $ => /#.*/,
+        // The frontend lexer reads `//` as the primary line comment, `#` as an
+        // alias for it, and `/* … */` as a block comment (lexer.rs `read_comment`).
+        // The grammar previously knew only `#`, so almost every real `.crush`
+        // file (which opens with `//`) produced an ERROR node at line 1.
+        comment: $ => token(choice(
+            /\/\/[^\n]*/,
+            /\/\*[^*]*\*+([^/*][^*]*\*+)*\//,
+            /#[^\n]*/,
+        )),
 
         var_decl: $ => seq(
             'let',
             field('name', $.identifier),
             '=',
-            field('value', $.expression),
+            field('value', $._value_expression),
             optional(';'),
         ),
 
         fn_def: $ => seq(
+            optional('pub'),
+            optional('async'),
             'fn',
             field('name', $.identifier),
             field('parameters', $.parameter_list),
+            // `fn fib(n: Int) -> Int { … }` — the return type was absent from
+            // the grammar entirely (parser/mod.rs `parse_function`).
+            optional(seq('->', field('return_type', $.type))),
             field('body', $.block),
         ),
+
+        type: $ => $.identifier,
 
         lambda: $ => prec(20, seq(
             '|',
@@ -150,7 +170,7 @@ module.exports = grammar({
 
         return_statement: $ => seq(
             'return',
-            optional(field('value', $.expression)),
+            optional(field('value', $._value_expression)),
             optional(';'),
         ),
 
@@ -182,10 +202,18 @@ module.exports = grammar({
             '}',
         ),
 
-        field_assignment: $ => seq(
-            field('target', $.field_access),
+        // `x = 1`, `p.x = 10`, `xs[0] = 9` — one rule for all three targets
+        // (parser/mod.rs `parse_expression_statement`). This used to be
+        // `field_assignment`, which only accepted `a.b = c`, so plain
+        // reassignment was an ERROR in ~a dozen examples.
+        assignment: $ => seq(
+            field('target', choice(
+                $.field_access,
+                $.index_expression,
+                $.identifier,
+            )),
             '=',
-            field('value', $.expression),
+            field('value', $._value_expression),
             optional(';'),
         ),
 
@@ -199,6 +227,16 @@ module.exports = grammar({
             $._primary_expression,
         ),
 
+        // A `{`-opening literal may only appear where a value is expected —
+        // after `=`, `return`, in arguments and array elements. Keeping it out
+        // of `expression` proper is what stops a statement from beginning with
+        // `{`, which is what made `if x { … }` and `@module { … }` ambiguous.
+        _value_expression: $ => choice(
+            $.object_literal,
+            $.struct_literal,
+            $.expression,
+        ),
+
         pipeline: $ => prec.left(1, seq(
             $._primary_expression,
             repeat1(seq('|', $._primary_expression)),
@@ -206,6 +244,7 @@ module.exports = grammar({
 
         _primary_expression: $ => choice(
             $.binary_op,
+            $.unary_op,
             $.capability_call,
             $.spawn_expr,
             $.yield_expr,
@@ -224,8 +263,9 @@ module.exports = grammar({
 
         binary_op: $ => choice(
             ...[
-                ['==', 1], ['!=', 1], ['<', 2], ['<=', 2], ['>', 2], ['>=', 2],
-                ['+', 3], ['-', 3], ['*', 4], ['/', 4], ['%', 4],
+                ['||', 1], ['&&', 2],
+                ['==', 3], ['!=', 3], ['<', 4], ['<=', 4], ['>', 4], ['>=', 4],
+                ['+', 5], ['-', 5], ['*', 6], ['/', 6], ['%', 6],
             ].map(([op, precedence]) => prec.left(precedence, seq(
                 field('left', $._primary_expression),
                 field('operator', op),
@@ -233,10 +273,27 @@ module.exports = grammar({
             ))),
         ),
 
+        // `!ok`, `not ok`, `-x` — the word forms are documented as identical to
+        // the punctuation ones (lexer.rs keyword table). `-x` matters: negation
+        // of a variable (`if -x == 5`) was an ERROR (arith_stress.crush).
+        unary_op: $ => prec(7, seq(
+            field('operator', choice('!', 'not', '-')),
+            field('operand', $._primary_expression),
+        )),
+
         capability_call: $ => choice(
-            // Standard call: @ns.method(args) or method(args)
+            // Standard call: @ns.method(args) or method(args). The `@` form is
+            // its own alternative so the token binds unambiguously — with
+            // `optional('@')` a following binary operator left two parses.
+            prec(3, seq(
+                '@',
+                field('name', choice(
+                    $.identifier,
+                    $.field_access,
+                )),
+                field('arguments', $.argument_list),
+            )),
             prec(2, seq(
-                optional('@'),
                 field('name', choice(
                     $.identifier,
                     $.field_access,
@@ -255,8 +312,17 @@ module.exports = grammar({
 
         argument_list: $ => seq(
             '(',
-            sepBy(',', $.expression),
+            sepBy(',', choice($.named_argument, $._value_expression)),
             ')',
+        ),
+
+        // `ai_synthesize("X", constraints=["polite"])` — the frontend strips a
+        // named-argument key and uses only the value (parser/mod.rs
+        // `parse_arguments`).
+        named_argument: $ => seq(
+            field('name', $.identifier),
+            '=',
+            field('value', $._value_expression),
         ),
 
         spawn_expr: $ => prec(3, seq(
@@ -284,8 +350,13 @@ module.exports = grammar({
             field('end', $._primary_expression),
         )),
 
+        // `r.origin.x` — a chain, not just one hop (struct_literals.crush).
         field_access: $ => prec.left(10, seq(
-            field('target', $.identifier),
+            field('target', choice(
+                $.field_access,
+                $.index_expression,
+                $.identifier,
+            )),
             '.',
             field('field', $.identifier),
         )),
@@ -298,7 +369,91 @@ module.exports = grammar({
             '}',
         ),
 
-        block_content: $ => /[^}]*/,
+        // `capability system readonly` (parser/mod.rs) — a top-level
+        // declaration of a capability the program uses.
+        capability_decl: $ => seq(
+            'capability',
+            field('name', $.identifier),
+            field('access', $.identifier),
+            optional(';'),
+        ),
+
+        // `semantic_switch <expr> { case "concept": … fallback: … }` — a soft
+        // keyword, lexed as an identifier (parser/mod.rs
+        // `parse_semantic_switch_statement`).
+        semantic_switch_statement: $ => seq(
+            'semantic_switch',
+            field('value', $.expression),
+            '{',
+            repeat(choice($.semantic_case, $.semantic_fallback)),
+            '}',
+        ),
+
+        semantic_case: $ => seq(
+            'case',
+            field('concept', $.string_literal),
+            ':',
+            repeat($._statement),
+        ),
+
+        semantic_fallback: $ => seq(
+            'fallback',
+            ':',
+            repeat($._statement),
+        ),
+
+        // The AI-native annotation family: `@module { … }`, `@invariant "id"
+        // { … }`, `@decision "id" { … }`, `@errors { … }`, `@wip { … }`. The
+        // lexer treats exactly these `@`-names as annotations and every other
+        // `@name { … }` as a polyglot block (lexer.rs `IMPORT_KEYWORDS`), so
+        // the grammar mirrors that list rather than guessing from shape.
+        annotation: $ => seq(
+            '@',
+            field('name', choice(
+                'module', 'invariant',
+                'errors', 'reads', 'writes', 'does-not-write',
+                'covers', 'relies-on', 'complexity',
+                'wip', 'temporary', 'decision',
+                'invalidates', 'must-call-before', 'must-call-after',
+            )),
+            optional(field('id', $.string_literal)),
+            field('body', $.annotation_body),
+        ),
+
+        annotation_body: $ => seq('{', repeat($.annotation_entry), '}'),
+
+        // Line-oriented `key: value` entries; keys may contain `-`
+        // (`expires-when`, `revisit-if`).
+        annotation_entry: $ => seq(
+            field('key', $.annotation_key),
+            optional(seq(':', field('value', $.annotation_value))),
+            optional(','),
+        ),
+
+        annotation_key: $ => /[a-zA-Z_][a-zA-Z0-9_-]*/,
+
+        annotation_value: $ => choice(
+            $.string_literal,
+            $.float_literal,
+            $.int_literal,
+            $.bool_literal,
+            $.null_literal,
+            $.array_literal,
+            $.identifier,
+            $.annotation_body,
+        ),
+
+        null_literal: $ => 'null',
+
+        // A polyglot body is opaque text, but its braces must balance:
+        // `@javascript { const o = {a: 1, b: {c: 2}}; }` ends at the *outer*
+        // `}` (polyglot_braces.crush). The old `/[^}]*/` stopped at the first
+        // one. Quoted strings containing bare braces are still beyond a
+        // context-free grammar (see that example's case 4).
+        block_content: $ => repeat1(choice(
+            /[^{}]+/,
+            seq('{', optional($.block_content), '}'),
+        )),
 
         match_expression: $ => seq(
             'match',
@@ -354,9 +509,41 @@ module.exports = grammar({
 
         array_literal: $ => seq(
             '[',
-            sepBy(',', $.expression),
+            sepBy(',', $._value_expression),
             optional(','),
             ']',
+        ),
+
+        // `{ "k": 1, name: v }` — object/map literal (parser/mod.rs
+        // `parse_object_literal`).
+        object_literal: $ => seq(
+            '{',
+            sepBy(',', $.object_property),
+            optional(','),
+            '}',
+        ),
+
+        object_property: $ => seq(
+            field('key', choice($.string_literal, $.identifier)),
+            ':',
+            field('value', $._value_expression),
+        ),
+
+        // `Point { x: 2, y: 3 }` and `new Point { x: 7, y: 8 }`
+        // (struct_literals.crush) — struct-literal construction.
+        struct_literal: $ => prec(5, seq(
+            optional('new'),
+            field('name', $.identifier),
+            '{',
+            sepBy(',', $.struct_field_init),
+            optional(','),
+            '}',
+        )),
+
+        struct_field_init: $ => seq(
+            field('name', $.identifier),
+            ':',
+            field('value', $._value_expression),
         ),
 
         index_expression: $ => prec(11, seq(
@@ -371,13 +558,16 @@ module.exports = grammar({
             $.float_literal,
             $.string_literal,
             $.bool_literal,
+            $.null_literal,
         ),
 
         int_literal: $ => /-?\d+/,
         float_literal: $ => /-?\d+\.\d+/,
+        // Escapes matter: `"a\"b"` and `"a\nb"` are ordinary in the corpus, and
+        // the old `/[^"]*/` stopped at the escaped quote (CRUSH-207).
         string_literal: $ => choice(
-            seq('"', /[^"]*/, '"'),
-            seq("'", /[^']*/, "'"),
+            token(seq('"', /([^"\\]|\\.)*/, '"')),
+            token(seq("'", /([^'\\]|\\.)*/, "'")),
         ),
         bool_literal: $ => choice('true', 'false'),
 

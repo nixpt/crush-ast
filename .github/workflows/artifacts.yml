@@ -103,17 +103,23 @@ jobs:
       # The user-facing CLIs `crush-installer` installs: crush-lang-sdk's six
       # (crush, crushc, crush-run, crush-compile, crush-repl, crush-debug —
       # crush-debug needs the default `debug` feature) and crush-pkg.
+      # Plus crush-gui (CRUSH-319; outside default-members, so named with -p).
+      # It needs pkg-config + libfontconfig1-dev — plain apt-get, NOT
+      # awalsh128/cache-apt-pkgs-action (its restored cache broke bliss-engine CI).
       # Deliberately NOT shipped: the AOT toolchain (crush-aotc & co., needs
-      # rustc on the user's machine), the *_walker dev binaries, and the
-      # crush-gui binary (follow-up: needs pkg-config + libfontconfig1-dev).
+      # rustc on the user's machine) and the *_walker dev binaries.
+      - name: System libraries for crush-gui
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libfontconfig1-dev
       - name: Build
-        run: cargo build --release --locked -p crush-lang-sdk -p crush-pkg
+        run: cargo build --release --locked -p crush-lang-sdk -p crush-pkg -p crush-gui
       - name: Package
         run: |
           set -euo pipefail
           name="crush-${VERSION}-${TARGET}"
           mkdir -p "dist/${name}"
-          for b in crush crushc crush-run crush-compile crush-repl crush-debug crush-pkg; do
+          for b in crush crushc crush-run crush-compile crush-repl crush-debug crush-pkg crush-gui; do
             cp "target/release/$b" "dist/${name}/"
           done
           cp README.md LICENSE-APACHE LICENSE-MIT "dist/${name}/"

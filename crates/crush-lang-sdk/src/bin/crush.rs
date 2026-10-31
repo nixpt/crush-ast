@@ -9,6 +9,7 @@
 //!     crush run FILE [ARGS]  -> run        (crush-run run FILE [ARGS])
 //!     crush build FILE [ARGS]-> compile    (crushc FILE [ARGS])
 //!     crush debug FILE [ARGS]-> debugger   (crush-debug FILE [ARGS])
+//!     crush gui run FILE --ui-> GUI runner (crush-gui run FILE --ui; CRUSH-319)
 //!     crush doctor [--json]  -> report which polyglot runtimes are on PATH
 //!
 //! Each subcommand's [ARGS] are forwarded verbatim to the underlying binary,
@@ -42,6 +43,9 @@ fn exec(name: &str, args: impl IntoIterator<Item = String>) -> ExitCode {
             if name == "crush-debug" {
                 eprintln!("(crush-debug is built with the `debug` feature of crush-lang-sdk)");
             }
+            if name == "crush-gui" {
+                eprintln!("(crush-gui is its own package: `cargo install crush-gui`, or build the workspace)");
+            }
             ExitCode::FAILURE
         }
     }
@@ -56,6 +60,7 @@ fn usage() {
     eprintln!("    crush run FILE [ARGS]    run a .crush/.casm/.cvm1 program");
     eprintln!("    crush build FILE [ARGS]  compile a .crush source file to .cvm1");
     eprintln!("    crush debug FILE [ARGS]  debug a .crush program: break, step, watch, print");
+    eprintln!("    crush gui run FILE --ui  run a program that draws a window with ui.* (needs crush-gui)");
     eprintln!("    crush doctor [--json]    check the host runtimes polyglot blocks need");
     eprintln!();
     eprintln!("Pass --help after a subcommand for that tool's full flag reference");
@@ -82,6 +87,10 @@ fn main() -> ExitCode {
         Some("debug") => {
             args.next();
             exec("crush-debug", args)
+        }
+        Some("gui") => {
+            args.next();
+            exec("crush-gui", args)
         }
         Some("doctor") => {
             args.next();

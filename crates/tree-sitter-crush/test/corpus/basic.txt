@@ -9,10 +9,12 @@ let message = "hello";
 (program
   (var_decl
     name: (identifier)
-    value: (expression (int_literal)))
+    value: (expression
+      (int_literal)))
   (var_decl
     name: (identifier)
-    value: (expression (string_literal))))
+    value: (expression
+      (string_literal))))
 
 ==================
 Function Definition
@@ -26,7 +28,11 @@ fn add(a, b) {
 (program
   (fn_def
     name: (identifier)
-    (parameter_list (identifier) (identifier))
+    parameters: (parameter_list
+      (lambda_parameter
+        name: (identifier))
+      (lambda_parameter
+        name: (identifier)))
     body: (block
       (return_statement
         value: (expression
@@ -56,13 +62,17 @@ if x > 0 {
         (expression
           (capability_call
             name: (identifier)
-            (argument_list (expression (string_literal)))))))
+            arguments: (argument_list
+              (expression
+                (string_literal)))))))
     alternative: (block
       (expr_stmt
         (expression
           (capability_call
             name: (identifier)
-            (argument_list (expression (string_literal)))))))))
+            arguments: (argument_list
+              (expression
+                (string_literal)))))))))
 
 ==================
 Concurrency
@@ -74,9 +84,13 @@ yield;
 
 (program
   (expr_stmt
-    (expression (spawn_expr function: (identifier) (argument_list))))
+    (expression
+      (spawn_expr
+        function: (identifier)
+        arguments: (argument_list))))
   (expr_stmt
-    (expression (yield_expr))))
+    (expression
+      (yield_expr))))
 
 ==================
 Structs
@@ -89,10 +103,16 @@ p.x = 10;
 (program
   (var_decl
     name: (identifier)
-    value: (expression (new_struct name: (identifier) (argument_list))))
-  (field_assignment
-    target: (field_access target: (identifier) field: (identifier))
-    value: (expression (int_literal))))
+    value: (expression
+      (new_struct
+        name: (identifier)
+        arguments: (argument_list))))
+  (assignment
+    target: (field_access
+      target: (identifier)
+      field: (identifier))
+    value: (expression
+      (int_literal))))
 
 ==================
 Embedded Language
@@ -103,4 +123,5 @@ Embedded Language
 
 (program
   (lang_block
-    language: (identifier)))
+    language: (identifier)
+    content: (block_content)))

@@ -22,6 +22,20 @@ add its entry after yours.
   marked pre-release and not latest. PR CI runs `cargo check --release` instead
   of the full release build (which still runs on `main`).
 
+- **`tree-sitter-crush` tracks the frontend again, and CI now checks it
+  (CRUSH-207):** the grammar parsed **1 of 51** `examples/crush/*.crush` without
+  ERROR nodes. The comment rule knew only `#`, so a file opening with `//` died
+  at line 1; assignment accepted only `a.b = c`; there were no return types,
+  string escapes, logical operators, object/struct literals, `@`-annotations or
+  `semantic_switch`. All of those are now handled — **49 of 51** parse clean.
+  A new `crates/tree-sitter-crush/tests/grammar_examples.rs` parses the corpus
+  and the crate's fixtures on every `cargo test`, failing on ERROR nodes with a
+  `KNOWN_BAD` allowlist that may only shrink (it runs in the existing `test-rest`
+  CI job; the grammar corpus still needs the tree-sitter CLI). Note for
+  consumers: the `field_assignment` node is now `assignment` (it covers
+  identifier/index targets too), and regenerating `parser.c` needs tree-sitter
+  CLI ≥ 0.25.
+
 - **Raw TCP/TLS sockets as `tcp.*` capabilities, behind their own grants
   (CRUSH-318):** `crush-net` is now wired into `crush-lang-sdk` (cargo features
   `tcp`, `tcp-tls`, on by default; grants are never on by default). `crush-run
@@ -55,6 +69,23 @@ add its entry after yours.
   drops every non-`call` operator or lowers `fd_write` to an arg-less
   `io.print`; it errors loudly. `crush-walk-run` reads a `.wasm` file as bytes.
   The Nepali walker's false "native Nepali keywords" comment is corrected.
+
+- **`crush-gui`: Crush programs can draw a window (CRUSH-319, phase 1):** a new
+  crate with a grant-gated `ui.*` capability API and a desktop backend on
+  [arniko](https://crates.io/crates/arniko) 0.3.1 (from crates.io; it is not in
+  `crush-lang-sdk`'s default build, since arniko pulls Stylo/vello/winit). A
+  program renders HTML with `ui.render(markup)` and *pulls* events in a loop with
+  a blocking `ui.next_event()` (a map `{kind, id, value, key}`: `click`, `input`,
+  `submit`, `key`, `close`), like `io.read` - no callbacks into the VM. Component
+  helpers: `ui.button/input/card/alert/badge/escape`. Run with
+  `crush-gui run app.crush --ui` or `crush gui run app.crush --ui`; `--ui` is
+  the grant (a program using `ui.*` without it is refused before it runs, naming
+  the flag; no other flag grants it), and `crush-run` now points such a program
+  at `crush gui`. `crush-installer` installs `crush-gui` when it is built. Tests
+  run the examples (`examples/gui/`) headlessly against a real bliss DOM. The
+  desktop window itself has not been run on a screen. Design:
+  `docs/design/ui-api.md`; the terminal (tui-easy) and browser backends are
+  follow-ups behind the same `UiBackend` seam.
 
 - **`crush debug FILE` / `crush-debug`: the debugger is runnable (CRUSH-317):**
   `crush-debugger` had breakpoints, step/next/finish, watchpoints and
