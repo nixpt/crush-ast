@@ -91,7 +91,8 @@ struct RunArgs {
     #[arg(long)]
     bus: bool,
 
-    /// Enable task-management capabilities (task.start/stop/list).
+    /// Enable task-management capabilities (task.start/stop/list). `task.start`
+    /// spawns a host process, so `--task` also grants `process/spawn`.
     #[arg(long)]
     task: bool,
 
@@ -395,7 +396,7 @@ fn list_caps() {
     println!("  message_bus.publish TOPIC PAYLOAD");
     println!("  message_bus.subscribe TOPIC");
     println!("  message_bus.recv       blocking receive");
-    println!("Task capabilities (enable with --task):");
+    println!("Task capabilities (enable with --task; task.start spawns a host process, granting process/spawn):");
     println!("  task.start NAME COMMAND [ARGS...]");
     println!("  task.stop TASK_ID");
     println!("  task.list");
