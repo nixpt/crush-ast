@@ -481,8 +481,8 @@ fn run_from(
     // before anything runs.
     let kinds = crate::cosm_rt::KindTable::load(program)?;
     // CRUSH-186: one wall-clock deadline for the whole run.
-    let wall_deadline = std::time::Instant::now() + std::time::Duration::from_millis(quotas.max_wall_time_ms);
-    let _wall_guard = crate::wall::enter(wall_deadline, quotas.max_wall_time_ms);
+    let wall_deadline = crate::wall::deadline_in(quotas.max_wall_time_ms);
+    let _wall_guard = wall_deadline.map(|d| crate::wall::enter(d, quotas.max_wall_time_ms));
     let mut wall_ticks: usize = 0;
     let code = &program.code;
     let n = code.len();
@@ -607,8 +607,10 @@ fn run_from(
             return Err(VmError::StepQuota(quotas.max_steps));
         }
         wall_ticks += 1;
-        if wall_ticks.is_multiple_of(crate::wall::CHECK_EVERY) {
-            crate::wall::check(wall_deadline, quotas.max_wall_time_ms)?;
+        if let Some(deadline) = wall_deadline
+            && wall_ticks.is_multiple_of(crate::wall::CHECK_EVERY)
+        {
+            crate::wall::check(deadline, quotas.max_wall_time_ms)?;
         }
         // CRUSH-165 hook: the scheduler's one instruction-dispatch point.
         #[cfg(feature = "transcript")]

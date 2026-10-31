@@ -662,10 +662,12 @@ impl PortableVm {
 
         self.check_step_quota()?;
         let limit_ms = self.quotas.max_wall_time_ms;
-        let deadline = *self.wall_deadline.get_or_insert_with(|| {
-            std::time::Instant::now() + std::time::Duration::from_millis(limit_ms)
-        });
-        if self.steps.is_multiple_of(crate::wall::CHECK_EVERY) {
+        if self.wall_deadline.is_none() && self.steps == 0 {
+            self.wall_deadline = crate::wall::deadline_in(limit_ms);
+        }
+        if let Some(deadline) = self.wall_deadline
+            && self.steps.is_multiple_of(crate::wall::CHECK_EVERY)
+        {
             crate::wall::check(deadline, limit_ms)?;
         }
         self.check_stack_quota()?;

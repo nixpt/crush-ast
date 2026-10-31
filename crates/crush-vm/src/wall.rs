@@ -59,6 +59,21 @@ pub fn remaining_ms(limit_ms: u64) -> u64 {
     remaining().map_or(limit_ms, |r| (r.as_millis() as u64).max(1))
 }
 
+/// A deadline `limit_ms` from now, or `None` on `wasm32-unknown-unknown`, where
+/// `Instant::now()` panics: there the run has no wall-clock deadline and the
+/// browser host bounds runtime itself (CRUSH-186).
+pub fn deadline_in(limit_ms: u64) -> Option<Instant> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = limit_ms;
+        None
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Some(Instant::now() + Duration::from_millis(limit_ms))
+    }
+}
+
 /// Error for a run that outlived `Quotas::max_wall_time_ms`.
 pub fn expired(limit_ms: u64) -> VmError {
     VmError::WallTimeQuota(limit_ms)
