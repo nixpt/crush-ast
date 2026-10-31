@@ -168,6 +168,20 @@ jobs:
       # profile (opt-level s, lto). The CLI must match the wasm-bindgen crate
       # version locked there. No wasm-opt pass (same recipe the language guide
       # uses for its src/play/pkg), --target web, polyglot features on.
+      # bump-version refreshes only the root Cargo.lock, so crush-web's own lock
+      # still pins crush-ast's path crates at an older version (v0.9.0 shipped
+      # it at 0.7.1) and `--locked` refuses to build. Let cargo rewrite those
+      # path entries, and fail if that touched any registry package: a registry
+      # entry carries `source`/`checksum` lines, a path crate carries neither.
+      - name: Refresh crush-web's lock for this release's path crates
+        working-directory: crates/crush-web
+        run: |
+          cargo fetch
+          git diff --stat -- Cargo.lock
+          if git diff -- Cargo.lock | grep -E '^[-+](source|checksum) '; then
+            echo "::error::refreshing crates/crush-web/Cargo.lock changed registry packages; update it on main instead"
+            exit 1
+          fi
       - name: Install the matching wasm-bindgen CLI
         run: |
           v=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/"/, "", $3); print $3 }' crates/crush-web/Cargo.lock)
