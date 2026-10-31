@@ -59,7 +59,7 @@ def main():
 
     # Assemble the Program
     program = Program(
-        cast_version="0.2.0",
+        cast_version="0.1.0",
         entry="process_user_intent",
         lang="crush",
         functions={

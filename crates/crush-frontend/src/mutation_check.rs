@@ -150,7 +150,7 @@ mod tests {
             },
         );
         Program {
-            cast_version: "1".into(),
+            cast_version: crush_cast::CAST_VERSION.into(),
             entry: "caller".into(),
             lang: None,
             functions,

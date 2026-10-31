@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 fn program_with_manifest(purpose: &str, exports: &[&str]) -> Program {
     Program {
-        cast_version: "1.0.0".to_string(),
+        cast_version: crush_cast::CAST_VERSION.to_string(),
         entry: "main".to_string(),
         lang: Some("crush".to_string()),
         manifest: Some(ModuleManifest {
@@ -35,7 +35,7 @@ fn program_with_fn(fn_name: &str, annotations: Option<FunctionAnnotations>) -> P
         },
     );
     Program {
-        cast_version: "1.0.0".to_string(),
+        cast_version: crush_cast::CAST_VERSION.to_string(),
         entry: "main".to_string(),
         functions,
         ..Default::default()
@@ -101,7 +101,7 @@ fn test_callers_query() {
         },
     );
     let prog = Program {
-        cast_version: "1.0.0".to_string(),
+        cast_version: crush_cast::CAST_VERSION.to_string(),
         entry: "main".to_string(),
         functions,
         ..Default::default()

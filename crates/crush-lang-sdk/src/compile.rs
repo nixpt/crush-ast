@@ -277,7 +277,7 @@ pub fn compile_lowered_script(
     let mut functions: HashMap<String, crush_cast::Function> = helpers.into_iter().collect();
     functions.insert("main".to_string(), main);
     let program = crush_cast::Program {
-        cast_version: "0.2".to_string(),
+        cast_version: crush_cast::CAST_VERSION.to_string(),
         entry: "main".to_string(),
         lang: Some(lang.to_string()),
         functions,

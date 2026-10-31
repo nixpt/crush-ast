@@ -271,7 +271,7 @@ pub fn lower_script(dialect: Dialect, script: &List) -> Result<Program> {
         functions.insert(helper.to_string(), helper_fn(helper));
     }
     Ok(Program {
-        cast_version: "0.2".to_string(),
+        cast_version: crush_cast::CAST_VERSION.to_string(),
         entry: "main".to_string(),
         lang: Some(dialect.name().to_string()),
         functions,

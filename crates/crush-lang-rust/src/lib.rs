@@ -176,7 +176,7 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
     }
 
     let mut program = Program {
-        cast_version: "0.2".to_string(),
+        cast_version: crush_cast::CAST_VERSION.to_string(),
         entry: "main".to_string(),
         lang: Some("rust".to_string()),
         functions,

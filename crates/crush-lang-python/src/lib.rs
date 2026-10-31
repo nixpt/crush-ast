@@ -161,7 +161,7 @@ fn stmts_to_cast(stmts: Vec<py_ast::Stmt>, source: &str) -> anyhow::Result<Progr
     }
 
     Ok(Program {
-        cast_version: "0.2".to_string(),
+        cast_version: crush_cast::CAST_VERSION.to_string(),
         entry: "main".to_string(),
         lang: Some("python".to_string()),
         functions,

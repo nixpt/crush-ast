@@ -682,7 +682,7 @@ mod tests {
         let mut index = CrushIndex::new();
 
         let mut prog = Program {
-            cast_version: "1".to_string(),
+            cast_version: crush_cast::CAST_VERSION.to_string(),
             entry: "main".to_string(),
             manifest: Some(ModuleManifest {
                 purpose: "test module".to_string(),
@@ -832,7 +832,7 @@ mod tests {
     fn uncovered_paths_cap_detects_gap() {
         let mut index = CrushIndex::new();
         let mut prog = Program {
-            cast_version: "1".to_string(),
+            cast_version: crush_cast::CAST_VERSION.to_string(),
             entry: "f".to_string(),
             ..Default::default()
         };
@@ -889,7 +889,7 @@ mod tests {
     /// even if the parser shifts.
     fn index_with_temporary(added: Option<&str>) -> CrushIndex {
         let mut prog = Program {
-            cast_version: "1".to_string(),
+            cast_version: crush_cast::CAST_VERSION.to_string(),
             entry: "f".to_string(),
             temporaries: vec![TemporaryNode {
                 reason: "canary".to_string(),
@@ -913,7 +913,7 @@ mod tests {
     #[test]
     fn stale_temporaries_cap_returns_empty_when_no_temporaries() {
         let mut prog = Program {
-            cast_version: "1".to_string(),
+            cast_version: crush_cast::CAST_VERSION.to_string(),
             entry: "f".to_string(),
             ..Default::default()
         };
