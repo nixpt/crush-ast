@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-2 |
 | **Priority** | P1 |
-| **Status** | In Review |
+| **Status** | Done — design PR #204 merged 2026-10-15 |
 | **Phase** | M0 / design |
 | **Assignee** | nixp |
 | **Dependencies** | CRUSH-266 |
@@ -40,3 +40,7 @@ make package code responsible for native-code grants.
 
 - Implementing any runtime or compiler changes in this design PR.
 - Enabling arbitrary Rust or Cargo execution from Crush.
+
+## Survey 2026-10-31 (status)
+
+PR #204 (`agent/nixp/CRUSH-xps-2`) merged 2026-10-15, which is the one unticked box ("design PR is reviewed and merged"). Previous status: `In Review`.

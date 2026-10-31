@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-292 |
 | **Priority** | P2 |
-| **Status** | Done (PR pending) |
+| **Status** | Done — PR #297 merged 2026-10-29 |
 | **Phase** | COSM K3 follow-up (boa walker) |
 | **Assignee** | freebuff (dispatched by muse) |
 | **Filed by** | muse — 2026-10-22, from the boa refusal inventory |
@@ -58,3 +58,7 @@ targets, value-as-expression, rhs laziness), the loud
 computed-target test, and `node_corpus/ops_logical_assign.js`
 (.out from node), allow-listed as swc-loud/boa-fixed in the corpus
 and AOT parity harnesses (swc is frozen and still refuses).
+
+## Survey 2026-10-31 (status)
+
+PR #297 (`agent/muse/CRUSH-292`) merged 2026-10-29. Previous status: `Done (PR pending)`.

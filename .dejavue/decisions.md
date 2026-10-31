@@ -1324,3 +1324,9 @@ crush_vm_run_casm matched any Ok(FastYield) as success, so a runtime error (stac
 Reason:
 task.start spawned a std::process::Command child that was tracked in a TaskState but never killed on drop, so a program that ran task.start and exited left the child running (sleep 333 outlived crush-run; touch created files). TaskState now implements Drop, killing and reaping every still-running task when the capability registry drops at the end of the run - a host that wants a detached task can stop tracking it first. Also, --task spawns host processes but its help never said so; the help text now states that --task grants process/spawn, which the effects catalog already listed for task.start.
 
+
+## 2026-10-30T20:54:05-05:00 — net on by default, db opt-in; http.* renamed with no alias; time.now is seconds
+
+Reason:
+CRUSH-264 (owner, 2026-10-31): net joins crush-lang-sdk default features (grant-gated, still needs --net; per-package features mean bins can't take it alone, so library default-feature consumers get ureq too); db stays --features db. exosphere http.* is refused up front via effects::RENAMED_CAPS naming net.http_* rather than aliased, so a rename is explicit and one table feeds every runner. time.now stays seconds, time.now_ms is ms, documented because exosphere's was ms.
+

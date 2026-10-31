@@ -19,7 +19,7 @@
 //!
 //! # `JsonDiagnostic` NDJSON wire format
 //!
-//! The four CLI binaries (`crushc`, `crush-run`, `crush-compile`,
+//! The CLI binaries (`crushc`, `crush-run`, `crush-compile`,
 //! `crush-repl`) emit error and warning events as **one NDJSON
 //! line per record** on stderr when invoked with
 //! `--message-format json`. This section is the stable contract
@@ -36,6 +36,7 @@
 //! |---------------|--------------|---------------------------------------------|
 //! | Parse errors  | `E-PP01..05` | `parse_error_triple` (inline `&'static str`; not on `JsonDiagnostic::CODE_*`) |
 //! | Type / sema   | `E-TP01`     | `JsonDiagnostic::CODE_TYPE`                 |
+//! | Capability    | `E-CAPS`     | `JsonDiagnostic::CODE_CAPS` (`crush-run`: program needs a capability the run does not grant; `crush-pkg check`: declared-vs-used findings) |
 //! | Runtime load  | `E-RT01`     | `JsonDiagnostic::CODE_RT_LOAD_BLOB`         |
 //! | Runtime asm   | `E-RT02`     | `JsonDiagnostic::CODE_RT_ASSEMBLY`         |
 //! | Runtime idx-p | `E-RT03`     | `JsonDiagnostic::CODE_RT_INDEX_PARSE`       |
@@ -91,32 +92,38 @@
 //! - `level` — always present, one of `{"error", "warning", "note"}`.
 //! - `message` — always present; non-empty for typed errors
 //!   EXCEPT the `RuntimeError::Vm` arm (see dedupe below).
-//! - `file` — `Some(path)` when the constructor accepts a path;
-//!   `None` for failures with no source location
-//!   (runtime load failures, fallback I/O, VM eval failures).
-//! - `line` / `col` — `Some(N)` only for `parse_error`; every
-//!   other constructor leaves them `None` so the "carries source
-//!   range" signal has a single shape across the stream.
-//! - `hint` — populated ONLY for the `RuntimeError::Vm` arm. The
-//!   inner `#[error(transparent)]` makes `RuntimeError::to_string()`
-//!   and `VmError::to_string()` byte-identical; the
-//!   `message=""` + `hint=Some(vm_err.to_string())` dedupe prevents
-//!   surfacing the same text in two fields. Editors should treat
-//!   `hint` as the headline for `E-RT05` records.
+//! - `file` — the source (or program) the record is about, whenever a CLI
+//!   knows it: every `crushc` and `crush-run` record carries it.
+//! - `line` / `col` — 1-based; `Some(N)` for syntax errors (always) and for
+//!   semantic errors (whenever the analyzer can name the construct:
+//!   undefined variable / function, type mismatches, arity). `None` for
+//!   failures that are not about a place in the source: I/O, a refused
+//!   capability, and runtime errors (the VM does not map a failing
+//!   instruction back to a source line yet).
+//! - `hint` — optional advice. Never the error text itself: that is always
+//!   `message`. (Before CRUSH-315 the `E-RT05` record left `message` empty and
+//!   put the text in `hint`.) `E-CAPS` from `crush-run` uses it for the grant
+//!   flag (`grant with --fs`).
+//!
+//! ## One input, one record
+//!
+//! `crushc` and `crush-run` produce byte-identical records for a program that
+//! fails to compile (syntax: `E-PP0n`, one per error; semantic: `E-TP01`), via
+//! [`diagnostics_for_error`]. `crush-run` additionally reports what only a run
+//! can see: `E-CAPS` (before anything runs) and `E-RT0n` (while it runs). The
+//! corpus in `tests/diagnostics_corpus/` and `tests/diagnostics_golden.rs`
+//! lock this.
 //!
 //! ## Attachability per constructor
 //!
 //! | Constructor                       | file       | line | col  | hint |
 //! |-----------------------------------|------------|------|------|------|
 //! | `parse_error`                     | caller-set | Some | Some | None |
+//! | `semantic_error`                  | caller-set | when known | when known | None |
 //! | `type_error`                      | caller-set | None | None | None |
-//! | `generic_error`                   | None       | None | None | None |
+//! | `generic_error`                   | caller-set (`in_file`) | None | None | None |
 //! | `assembler_error`                 | caller-set | None | None | None |
-//! | `runtime_error` LoadBlob          | None       | None | None | None |
-//! | `runtime_error` Assembly          | None       | None | None | None |
-//! | `runtime_error` IndexParse        | None       | None | None | None |
-//! | `runtime_error` IndexRead         | None       | None | None | None |
-//! | `runtime_error` Vm                | None       | None | None | Some |
+//! | `runtime_error` (all variants)    | caller-set (`in_file`) | None | None | None |
 //!
 //! ## Stability guarantees
 //!
@@ -144,159 +151,94 @@ use std::io::IsTerminal;
 use std::sync::Once;
 
 use crush_frontend::parser::ParseError;
-use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize)]
-pub struct JsonDiagnostic {
-    pub code: &'static str,
-    pub level: &'static str,
-    pub file: Option<String>,
-    pub line: Option<usize>,
-    pub col: Option<usize>,
-    pub message: String,
-    pub hint: Option<String>,
+/// The NDJSON diagnostic record. Defined once, in `crush-diagnostics`
+/// ([`crush_diagnostics::Diagnostic`]); this alias keeps the name the CLIs and
+/// embedders have always used. The constructors that need this crate's or the
+/// parser's types ([`parse_error`], [`runtime_error`], [`semantic_error`]) are
+/// on [`JsonDiagnosticExt`] (and exist as free functions here), which is
+/// implemented for the alias so `JsonDiagnostic::parse_error(..)` keeps
+/// working wherever the trait is in scope (CRUSH-315).
+///
+/// [`parse_error`]: JsonDiagnosticExt::parse_error
+/// [`runtime_error`]: JsonDiagnosticExt::runtime_error
+/// [`semantic_error`]: JsonDiagnosticExt::semantic_error
+pub type JsonDiagnostic = crush_diagnostics::Diagnostic;
+
+/// Constructors for [`JsonDiagnostic`] that depend on types this crate owns.
+pub trait JsonDiagnosticExt: Sized {
+    /// Build a record from a parse error. Coordinates are always present.
+    fn parse_error(err: &ParseError, file: Option<&str>) -> Self;
+
+    /// Build a record from a semantic / type-check error, with its position
+    /// when the analyzer attached one (`file` is attached either way).
+    fn semantic_error(err: &crush_frontend::SemanticError, file: Option<&str>) -> Self;
+
+    /// Map a [`crate::RuntimeError`] to a structured record. Each variant gets
+    /// a distinct stable code so editors can route on `code` without parsing
+    /// English. The error text is always in `message` (CRUSH-315: the
+    /// `RuntimeError::Vm` arm used to leave it empty and put the text in
+    /// `hint`).
+    fn runtime_error(err: &crate::RuntimeError) -> Self;
 }
 
-impl JsonDiagnostic {
-    /// Stable code for type / semantic analyzer failures.
-    pub const CODE_TYPE: &'static str = "E-TP01";
-    /// Stable code for non-themed I/O / generic failures (file open,
-    /// output write, unknown emit kind, etc.).
-    pub const CODE_IO: &'static str = "E-IO";
-    /// Stable code for `RuntimeError::LoadBlob`.
-    pub const CODE_RT_LOAD_BLOB: &'static str = "E-RT01";
-    /// Stable code for `RuntimeError::Assembly`.
-    pub const CODE_RT_ASSEMBLY: &'static str = "E-RT02";
-    /// Stable code for `crush_vm::AssemblyError` surfaced from
-    /// `crush-compile` (the CLI fallback path that calls
-    /// `crush_lang_sdk::assemble` directly rather than through
-    /// `Runtime::run_casm`). Parallels `CODE_RT_ASSEMBLY` but applies to
-    /// the standalone assembler surface so editors can route on the
-    /// same family of errors regardless of which binary produced them.
-    pub const CODE_ASSEMBLER: &'static str = "E-ASM";
-    /// Stable code for `RuntimeError::IndexParse`.
-    pub const CODE_RT_INDEX_PARSE: &'static str = "E-RT03";
-    /// Stable code for `RuntimeError::IndexRead`.
-    pub const CODE_RT_INDEX_READ: &'static str = "E-RT04";
-    /// Stable code for `RuntimeError::Vm`.
-    pub const CODE_RT_VM: &'static str = "E-RT05";
-
-    /// Build a `JsonDiagnostic` from a parse error. Coordinates are
-    /// always present for parse errors.
-    pub fn parse_error(err: &ParseError, file: Option<&str>) -> Self {
+impl JsonDiagnosticExt for JsonDiagnostic {
+    fn parse_error(err: &ParseError, file: Option<&str>) -> Self {
         let (line, col, msg, code) = parse_error_triple(err);
-        Self {
-            code,
-            level: "error",
-            file: file.map(|s| s.to_string()),
-            line: Some(line),
-            col: Some(col),
-            message: msg,
-            hint: None,
+        JsonDiagnostic::error(code, msg).in_file(file).at(line, col)
+    }
+
+    fn semantic_error(err: &crush_frontend::SemanticError, file: Option<&str>) -> Self {
+        let d = JsonDiagnostic::type_error(&err.message, file);
+        match err.pos {
+            Some((line, col)) => d.at(line, col),
+            None => d,
         }
     }
 
-    /// Build a `JsonDiagnostic` from a semantic / type-check error. The
-    /// analyzer does not yet attach source ranges, so line/col are `null`.
-    pub fn type_error(message: &str, file: Option<&str>) -> Self {
-        let mut d = Self::generic_error(message, Self::CODE_TYPE);
-        d.file = file.map(String::from);
-        d
+    fn runtime_error(err: &crate::RuntimeError) -> Self {
+        let code = match err {
+            crate::RuntimeError::LoadBlob(_) => JsonDiagnostic::CODE_RT_LOAD_BLOB,
+            crate::RuntimeError::Assembly(_) => JsonDiagnostic::CODE_RT_ASSEMBLY,
+            crate::RuntimeError::IndexParse { .. } => JsonDiagnostic::CODE_RT_INDEX_PARSE,
+            crate::RuntimeError::IndexRead { .. } => JsonDiagnostic::CODE_RT_INDEX_READ,
+            crate::RuntimeError::Vm(_) => JsonDiagnostic::CODE_RT_VM,
+        };
+        JsonDiagnostic::error(code, err.to_string())
     }
+}
 
-    /// Build a `JsonDiagnostic` for a standalone assembler failure (e.g.
-    /// `crush_lang_sdk::assemble` returning a `crush_vm::AssemblyError`
-    /// from `crush-compile`). Mirrors `type_error`'s shape — file is
-    /// attachable, source ranges are not surfaced here (callers that have
-    /// a `&crush_vm::AssemblyError` can prefix `line N:` into the message
-    /// themselves before invoking this constructor). Distinct stable code
-    /// so editors can branch on `code == "E-ASM"` independently from the
-    /// runtime-side `"E-RT02"` produced by `RuntimeError::Assembly`.
-    pub fn assembler_error(message: &str, file: Option<&str>) -> Self {
-        let mut d = Self::generic_error(message, Self::CODE_ASSEMBLER);
-        d.file = file.map(String::from);
-        d
+/// The records for a compile or run failure that is not a bare
+/// [`crate::RuntimeError`], shared by `crushc` and `crush-run` so the same
+/// broken program yields the same records from both (CRUSH-315):
+///
+/// - syntax errors ([`crush_frontend::ParseErrors`]): one `E-PP0n` record per
+///   error, with position;
+/// - semantic errors ([`crush_frontend::SemanticError`]): one `E-TP01` record,
+///   with position when the analyzer knows it;
+/// - a typed `RuntimeError`: its `E-RT0n` record;
+/// - anything else: `fallback`.
+///
+/// `file` is the source path, attached to every record.
+pub fn diagnostics_for_error(
+    err: &anyhow::Error,
+    file: Option<&str>,
+    fallback: &'static str,
+) -> Vec<JsonDiagnostic> {
+    if let Some(parse) = err.downcast_ref::<crush_frontend::ParseErrors>() {
+        return parse
+            .0
+            .iter()
+            .map(|e| JsonDiagnostic::parse_error(e, file))
+            .collect();
     }
-
-    /// Build a `JsonDiagnostic` for a non-themed failure (file I/O,
-    /// unknown emit kind, missing-stage errors, etc.) that doesn't carry
-    /// source coordinates. Use [`Self::CODE_IO`] for the common case.
-    pub fn generic_error(message: &str, code: &'static str) -> Self {
-        Self {
-            code,
-            level: "error",
-            file: None,
-            line: None,
-            col: None,
-            message: message.to_string(),
-            hint: None,
-        }
+    if let Some(sema) = err.downcast_ref::<crush_frontend::SemanticError>() {
+        return vec![JsonDiagnostic::semantic_error(sema, file)];
     }
-
-    /// Map a [`crate::RuntimeError`] to a structured `JsonDiagnostic`.
-    /// Each variant gets a distinct stable code so editors can route on the
-    /// `code` field without parsing English. For [`crate::RuntimeError::Vm`]
-    /// the variant uses `#[error(transparent)]`, so its `Display` text is
-    /// identical to the inner `VmError`. We drop `message` to empty and put
-    /// the full `VmError` display into `hint` so editors don't see the same
-    /// word-for-word text in both fields.
-    pub fn runtime_error(err: &crate::RuntimeError) -> Self {
-        match err {
-            crate::RuntimeError::LoadBlob(_) => Self {
-                code: Self::CODE_RT_LOAD_BLOB,
-                level: "error",
-                file: None,
-                line: None,
-                col: None,
-                message: err.to_string(),
-                hint: None,
-            },
-            crate::RuntimeError::Assembly(_) => Self {
-                code: Self::CODE_RT_ASSEMBLY,
-                level: "error",
-                file: None,
-                line: None,
-                col: None,
-                message: err.to_string(),
-                hint: None,
-            },
-            crate::RuntimeError::IndexParse { .. } => Self {
-                code: Self::CODE_RT_INDEX_PARSE,
-                level: "error",
-                file: None,
-                line: None,
-                col: None,
-                message: err.to_string(),
-                hint: None,
-            },
-            crate::RuntimeError::IndexRead { .. } => Self {
-                code: Self::CODE_RT_INDEX_READ,
-                level: "error",
-                file: None,
-                line: None,
-                col: None,
-                message: err.to_string(),
-                hint: None,
-            },
-            crate::RuntimeError::Vm(vm_err) => Self {
-                code: Self::CODE_RT_VM,
-                level: "error",
-                file: None,
-                line: None,
-                col: None,
-                // Empty to avoid duplicating `vm_err`'s display (the
-                // `#[error(transparent)]` annotation makes `err.to_string()`
-                // and `vm_err.to_string()` byte-identical).
-                message: String::new(),
-                hint: Some(vm_err.to_string()),
-            },
-        }
+    if let Some(rt) = err.downcast_ref::<crate::RuntimeError>() {
+        return vec![JsonDiagnostic::runtime_error(rt).in_file(file)];
     }
-
-    /// Serialize this diagnostic to a single line of JSON.
-    pub fn to_line(&self) -> String {
-        serde_json::to_string(self).unwrap_or_else(|_| String::from("{}"))
-    }
+    vec![JsonDiagnostic::generic_error(&err.to_string(), fallback).in_file(file)]
 }
 
 /// Render a slice of [`JsonDiagnostic`] as NDJSON (one complete JSON

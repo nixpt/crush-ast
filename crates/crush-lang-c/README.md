@@ -36,6 +36,6 @@ cargo run --bin walker input.c > output.cast
 
 ## See Also
 
-- [`walker-core`](../walker-core/README.md) - Base walker utilities
+- [`crush-walker-core`](../crush-walker-core/README.md) (formerly `walker-core`) - Base walker utilities
 - [`crush-cast`](../crush-cast/README.md) - CAST definitions
 - [The Crush Language Guide](https://github.com/nixpt/crush-language-guide) - Full language documentation

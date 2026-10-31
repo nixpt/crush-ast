@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-278 |
 | **Priority** | P2 |
-| **Status** | Fixed on `agent/muse/CRUSH-277-s3` (one-line stamp + S3 round-trip tests) — awaiting merge |
+| **Status** | Done — fix commit `9718d29` (CRUSH-277 S3) merged in PR #285 (2026-10-21) |
 | **Phase** | CASM load path |
 | **Assignee** | unassigned |
 | **Filed by** | muse — 2026-10-20, found by CRUSH-277 S3's end-to-end tests |
@@ -35,3 +35,7 @@ No test asserted `casm.version == cast_version`.
 Evidence: the CRUSH-277 S3 boa end-to-end tests round-trip a
 JS-compiled program through CASM JSON → `casm_to_vm` → CVM1 blob →
 scheduler VM and pass.
+
+## Survey 2026-10-31 (status)
+
+Commit `9718d29` is an ancestor of origin/main (via PR #285); `crates/crush-frontend/src/compiler.rs` cites CRUSH-278 at the stamp. Previous status: `` Fixed on `agent/muse/CRUSH-277-s3` (one-line stamp + S3 round-trip tests) — awaiting merge ``.

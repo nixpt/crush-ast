@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-256 |
 | **Priority** | P2 — dead weight on every default build; blocks the optimizer on wasm |
-| **Status** | Backlog |
+| **Status** | In Progress — core landed in PR #160 (2026-10-12: ort dropped from crush-vm and crush-lint); the fitted policy, real `alloc_rate`, and optional tract loader are open |
 | **Phase** | M8 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -70,3 +70,7 @@ float tensor → an `i64` label (`float_input` / `output_label`: a scikit-learn 
 
 crush-web / bozo-wasm (`default-features = false` on crush-vm); surfer-browser `SURF-BUILD-1`
 (heavy defaults pulled through crush-lang-sdk).
+
+## Survey 2026-10-31 (status)
+
+PR #160 says it "implements the core of CRUSH-256" and lists the fitted policy / `alloc_rate` / tract loader as follow-ups. Previous status: `Backlog`.

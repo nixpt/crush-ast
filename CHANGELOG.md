@@ -30,6 +30,36 @@ add its entry after yours.
   overflowed the stack under `--inspect=redacted`, and `BreakpointSet::remove`
   used `IndexMap::remove`, now a deprecation error under `-D warnings`.
 
+- **`net` on by default, `http.*` refused with its replacement, `time.now` unit
+  documented (CRUSH-264):** `crush-lang-sdk`'s `default` features now include
+  `net`, so `crush-run --net` grants `net.http_get/post/put/delete/request` out of
+  the box (still refused up front without `--net`); `db` stays opt-in
+  (`--features db`) and `crush-run caps` says so. exosphere's `http.get/…` have no
+  alias: a program calling one is refused before it runs with `http.get was
+  renamed to net.http_get (grant it with --net)` (`effects::RENAMED_CAPS`, shared
+  by every runner that preflights). `time.now` is seconds, `time.now_ms`
+  milliseconds (exosphere's `time.now` was ms) — now stated in `crush-run caps`,
+  the SDK README and MIGRATION-INVENTORY. `examples/crush/httpclient.crush` uses
+  `net.http_get` and `str.format` and compiles. Embedders that don't want the
+  HTTP client: `default-features = false`.
+
+- **Consistent `--message-format json` diagnostics across `crushc` and `crush-run`
+  (CRUSH-315):** the same broken program now yields the same NDJSON records
+  from both. `crush-run` used to flatten every compile failure to `E-IO` with no
+  position; it now emits `E-PP0n` (syntax, with line/col) and `E-TP01`
+  (semantic), exactly as `crushc` does. Semantic errors carry line/col for
+  undefined variables/functions and type errors (the analyzer now reads the
+  AST locations, and the parser stamps `Var`/`Call`/`BinaryOp`/statement
+  locations at the construct instead of the token after it). A runtime error's
+  text is now in `message` (`E-RT05` used to leave it empty and put it in
+  `hint`); a program needing an ungranted capability is reported as `E-CAPS`
+  (hint: the grant flag) instead of `E-IO`. `file` is filled on every
+  `crushc`/`crush-run` record. The wire struct is defined once, in
+  `crush-diagnostics` (`Diagnostic`); `crush_lang_sdk::theme::JsonDiagnostic` is
+  an alias, and its `parse_error` / `runtime_error` constructors moved to the
+  `JsonDiagnosticExt` trait. New in `crush-frontend`: `ParseErrors`,
+  `SemanticError` (typed `anyhow` payloads, `Display` unchanged).
+
 - **`crush-walk-run` keeps output before a runtime error and exits non-zero
   (CRUSH-184):** it buffered the first run's output and replaced it with
   `Error: …` on failure, and returned `Ok`, so a failing script exited 0 and

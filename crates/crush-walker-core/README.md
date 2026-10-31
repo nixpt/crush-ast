@@ -188,5 +188,5 @@ cargo doc --no-deps --open
 ## See Also
 
 - [`crush-cast`](../crush-cast/README.md) - CAST AST definitions
-- [`python_walker`](../python_walker/README.md) - Example walker implementation
+- [`crush-lang-python`](../crush-lang-python/) (formerly `python_walker`) - Example walker implementation
 - [The Crush Language Guide](https://github.com/nixpt/crush-language-guide) - Full language documentation

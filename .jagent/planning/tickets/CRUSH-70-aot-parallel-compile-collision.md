@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-70 |
 | **Priority** | P1 — AOT tier unusable on a cold cache under any parallelism |
-| **Status** | Done (PR pending) |
+| **Status** | Done — PR #27 merged 2026-07-26 |
 | **Phase** | AOT / build hygiene |
 | **Assignee** | nixp |
 | **Dependencies** | none |
@@ -53,3 +53,7 @@ Shipped on `agent/foreman/CRUSH-70-aot-parallel-compile`: added
 `unique_work_dir()` (pid + atomic sequence) and `publish_artifact()`
 (rename, falling back to copy across filesystems) in `crush-aot/src/compiler.rs`,
 and routed both the rustc and the C paths through them.
+
+## Survey 2026-10-31 (status)
+
+PR #27 (`agent/foreman/CRUSH-70-aot-parallel-compile`) merged 2026-07-26. Previous status: `Done (PR pending)`.

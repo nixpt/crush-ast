@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-197 |
 | **Priority** | P0 |
-| **Status** | In review |
+| **Status** | Done — PR #166 merged 2026-10-12 |
 | **Phase** | M6 |
 | **Assignee** | vega |
 | **Dependencies** | none |
@@ -40,3 +40,7 @@ patterns, structs/impls, iterator chains — fail with a named error. `tests/rus
 programs) is compared with real `rustc` output, and a second test re-derives the `.out` files
 with `rustc` so they can't drift. The supported subset is in the crate's rustdoc (the crate has
 no README of its own).
+
+## Survey 2026-10-31 (status)
+
+PR #166 (`agent/vega/CRUSH-197-rust-walker`) merged 2026-10-12; all criteria ticked. Previous status: `In review`.

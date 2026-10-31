@@ -1,0 +1,1 @@
+{"code":"E-TP01","level":"error","file":"type_binop.crush","line":2,"col":11,"message":"Invalid binary op - for types int and string","hint":null}

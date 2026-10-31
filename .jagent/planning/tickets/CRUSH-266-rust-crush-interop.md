@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-266 |
 | **Priority** | P1 |
-| **Status** | In progress |
+| **Status** | In Progress — MVP merged in PR #187 (2026-10-15); one criterion open (a diagnostic for every unsupported Rust item) |
 | **Phase** | M6 / interop |
 | **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-179 must gate native plugin loading before exposing Rust crates |
@@ -83,3 +83,7 @@ surfaces with explicit contracts.
 - Reimplementing all of `std` in Crush.
 - Treating a Rust crate's Rust ABI or unsafe internals as sandboxed code.
 - Reworking the Rust AOT performance gap (CRUSH-259).
+
+## Survey 2026-10-31 (status)
+
+PR #187 (`agent/nixp/CRUSH-266`) merged 2026-10-15; five of six criteria are ticked. PR #283 (`agent/muse/CRUSH-266`) belongs to the JS-exports ticket, renumbered CRUSH-340. Previous status: `In progress`.

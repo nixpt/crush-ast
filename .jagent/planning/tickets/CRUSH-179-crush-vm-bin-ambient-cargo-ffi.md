@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-179 |
 | **Priority** | P0 |
-| **Status** | In progress |
+| **Status** | Done — merged in PR #187 (`2483fbf`, 2026-10-15) |
 | **Phase** | M7 |
 | **Assignee** | nixp (user-directed prerequisite to CRUSH-266) |
 | **Dependencies** | none |
@@ -66,3 +66,7 @@ the missing `crush_plugin_init` symbol is reported).
 
 - `crates/crush-plugin-example/src/lib.rs` leaks a `CString` per call (`mem::forget`,
   never freed by the VM) — fix alongside.
+
+## Survey 2026-10-31 (status)
+
+All four criteria ticked. Commit `2483fbf` (PR #187) says it removes the ambient grants from standalone `crush-vm run` (CRUSH-179); regression test `crates/crush-vm/tests/no_ambient_caps.rs` is on main. Previous status: `In progress`.

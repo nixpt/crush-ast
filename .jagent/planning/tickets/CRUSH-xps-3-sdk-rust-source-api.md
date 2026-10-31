@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-3 |
 | **Priority** | P1 |
-| **Status** | In review |
+| **Status** | Done — PR #213 merged 2026-10-15 |
 | **Phase** | M1 / SDK |
 | **Assignee** | nixp |
 | **Dependencies** | CRUSH-xps-2, CRUSH-197, CRUSH-xps-10, CRUSH-xps-11 |
@@ -89,3 +89,7 @@ Merged main `3d512af` (COSM kind-table transport, PR #219) after the v0.6.0
 comparison. This adds the upstream VM/CASM table plumbing to the branch, so the
 older unchanged-core audit above describes its earlier head. The source API
 inherits SDK CASM-to-VM table propagation; it does not enable Rust object syntax.
+
+## Survey 2026-10-31 (status)
+
+PR #213 (`agent/nixp/CRUSH-xps-3`) merged 2026-10-15; all seven criteria ticked. Previous status: `In review`.

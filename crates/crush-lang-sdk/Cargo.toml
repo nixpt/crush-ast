@@ -40,8 +40,14 @@ required-features = ["debug"]
 # crush-debugger, whose crush-vm dependency has default features, so the wasm
 # build (crush-web) leaves it off along with the other defaults.
 debug = ["dep:crush-debugger"]
-default = ["native-plugins", "debug", "polyglot-python", "polyglot-javascript", "polyglot-javascript-swc", "polyglot-rust", "stdlib"]
+default = ["native-plugins", "debug", "polyglot-python", "polyglot-javascript", "polyglot-javascript-swc", "polyglot-rust", "stdlib", "net"]
+# `net.http_*` (ureq). On by default (CRUSH-264): still grant-gated, a program
+# using `net.*` is refused unless run with `--net`. Cargo features are
+# per-package, not per-binary, so the binaries cannot take it alone; embedders
+# that want no HTTP client opt out with `default-features = false`.
 net = ["dep:ureq"]
+# `db.query` / `db.execute` (rusqlite, bundled SQLite). Opt-in: build with
+# `--features db` (CRUSH-264).
 db = ["dep:rusqlite"]
 graphics = []
 # Pure-computation stdcaps (str/math/conv/collections/json/path/regex/...).
@@ -88,6 +94,7 @@ crush-cast.workspace = true
 casm.workspace = true
 crush-frontend.workspace = true
 crush-debugger = { path = "../crush-debugger", version = "0.8.0", optional = true }
+crush-diagnostics.workspace = true
 crush-lang-python = { path = "../crush-lang-python", version = "0.8.0", optional = true }
 crush-lang-rust = { path = "../crush-lang-rust", version = "0.8.0", optional = true }
 crush-lang-js = { path = "../crush-lang-js", version = "0.8.0", optional = true, default-features = false }

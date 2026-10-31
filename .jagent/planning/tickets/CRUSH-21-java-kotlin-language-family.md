@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-21 |
 | **Priority** | Aspirational (not scheduled) |
-| **Status** | Captured |
+| **Status** | Backlog (captured idea) |
 | **Phase** | none — post-M1 idea |
 | **Assignee** | unassigned |
 | **Dependencies** | none blocking capture; would sit alongside the existing `crush-lang-*` family |

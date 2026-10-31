@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-10 |
 | **Priority** | P0 |
-| **Status** | **Done** — verified s388 (2026-07-16) |
+| **Status** | Done — verified s388 (2026-07-16) |
 | **Phase** | M1 |
 | **Assignee** | fixed via `agent/kai/CRUSHAST-RELEASE-1`-era `RuntimeValue::Str`→`RuntimeValue::String` fix, `crush-ast` `5f30520`/`c27601e` |
 | **Dependencies** | none |
