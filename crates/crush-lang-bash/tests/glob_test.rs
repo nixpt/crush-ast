@@ -1,4 +1,6 @@
-//! Pathname expansion and the capability it needs (`fs.exists` + `fs.list`).
+//! Pathname expansion and the capabilities it needs (`fs.exists`, `fs.list` and
+//! `fs.is_dir` — a walk into `*/*.txt` has to know which matches it may descend
+//! into).
 //!
 //! The oracle corpus covers the matching rules against the real shells, each
 //! case in a directory of fixture files. These tests pin the contract instead:
@@ -64,16 +66,39 @@ fn glob_matches_files_through_the_grant() {
 }
 
 #[test]
-fn glob_in_a_directory_component_is_refused() {
+fn directory_components_glob_through_the_grant() {
     let dir = std::env::temp_dir().join(format!("crush-glob-test-dir-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("sub")).unwrap();
-    std::fs::File::create(dir.join("sub/x.txt")).unwrap();
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b")).unwrap();
+    std::fs::File::create(dir.join("a/one.txt")).unwrap();
+    std::fs::File::create(dir.join("b/two.txt")).unwrap();
+    // A *file* is matched by `*` too: the walk must skip it instead of failing
+    // with "not a directory" when it tries to list it.
+    std::fs::File::create(dir.join("c.txt")).unwrap();
     let caps = crush_lang_sdk::HostCapsBuilder::new()
         .fs(true)
         .fs_root(dir.display().to_string())
         .build();
-    let err = run("echo */*.txt\n", &caps).expect_err("a glob in a directory component");
-    assert!(err.contains("directory component"), "got: {err}");
+    let (out, code) = run("echo */*.txt\necho */\n", &caps).expect("glob through a directory component");
+    assert_eq!(out, "a/one.txt b/two.txt\na/ b/\n");
+    assert_eq!(code, 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn directory_glob_without_the_is_dir_probe_fails_loudly() {
+    let dir = std::env::temp_dir().join(format!("crush-glob-test-nodir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::File::create(dir.join("sub/x.txt")).unwrap();
+    // The two caps `walk_run` used to grant: enough for `*.txt`, not enough to
+    // know where a walk may descend.
+    let root = dir.display().to_string();
+    let mut caps = crush_vm::HostCaps::new();
+    caps.register(Box::new(crush_lang_sdk::host_caps::FsExistsCap::new(&root)));
+    caps.register(Box::new(crush_lang_sdk::host_caps::FsListCap::new(&root)));
+    let err = run("echo */*.txt\n", &caps).expect_err("a walk needs fs.is_dir");
+    assert!(err.contains("fs.is_dir"), "got: {err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
