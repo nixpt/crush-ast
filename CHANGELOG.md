@@ -14,6 +14,8 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(crush-aot): C AOT printed an exact tie at the last shortest float digit half-to-even (`1000000000000000.2`), the VM half-up (`...0.3`); float-to-text is now one shared function (`crush_vm::float_text`) embedded by Rust AOT, with a VM/Rust/C differential test (CRUSH-229)
+
 ## [0.10.0] - 2026-10-31
 
 - Merge pull request #377 from nixpt/agent/satya/CRUSH-squeeze-roots

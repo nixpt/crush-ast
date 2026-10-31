@@ -407,13 +407,7 @@ impl std::fmt::Display for Value {
             Value::Null => f.write_str("null"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::Int(i) => write!(f, "{i}"),
-            Value::Float(v) => {
-                if v.fract() == 0.0 && v.is_finite() {
-                    write!(f, "{v:.1}")
-                } else {
-                    write!(f, "{v}")
-                }
-            }
+            Value::Float(v) => f.write_str(&crate::float_text::crush_float_to_text(*v)),
             Value::Str(s) => f.write_str(s),
             Value::Array(a) => {
                 // `Rc<RefCell<...>>` reference semantics means a single
