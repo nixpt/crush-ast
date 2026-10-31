@@ -129,9 +129,12 @@ pub fn py_str_repr(s: &str) -> String {
     out
 }
 
-/// Render a [`RuntimeValue`] the same way `io.print` expects for its argument.
+/// Render a [`RuntimeValue`] the way `io.print` expects for its argument.
 ///
-/// Mirrors the canonical `Value` Display used by the scheduler/portable VM:
+/// This is the FastVM/JIT `io.print` formatter; a host that wires its own
+/// `io.print` capability (e.g. the C API) should use it so output matches the
+/// other engines. It mirrors the canonical `Value` Display used by the
+/// scheduler/portable VM:
 /// - `Null` → `"null"`
 /// - `Bool` → `"true""/""false""`
 /// - `Int` → bare digits
@@ -142,7 +145,7 @@ pub fn py_str_repr(s: &str) -> String {
 ///   equivalent `Value`: strings raw, arrays `[a, b]`, tuples `(a, b)`, maps and
 ///   structs `{k: v, …}`, `Vector[…]` / `Set{…}` / `List[…]`, bytes and handles
 ///   tagged. A dead slot still falls back to `"@<idx>"`.
-pub(crate) fn runtime_value_to_text(v: &RuntimeValue, arena: &crate::memory::Arena) -> String {
+pub fn runtime_value_to_text(v: &RuntimeValue, arena: &crate::memory::Arena) -> String {
     use crate::memory::Object;
     match v {
         RuntimeValue::Null => "null".to_string(),
