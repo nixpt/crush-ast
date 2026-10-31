@@ -1301,6 +1301,10 @@ Reason:
 The JIT emulates frames in one flat 64-slot locals array, addressed as locals[call_stack_top * FRAME_LOCALS + idx] with FRAME_LOCALS fixed at 8, and LoadLocal/StoreLocal did not bounds-check idx. A function using local 8+ spilled into the next frame, so a callee clobbered the caller's locals and the JIT finished with wrong values while every other engine was correct. Fix: program_frame_locals computes the max local slot used anywhere (LoadLocal/StoreLocal/LoadLocalChecked) + 1 and threads it through build_fn/emit_one/lload/lstore/unassign_frame as the stride; a program whose frame exceeds the 64-slot array is refused (FastVM fallback) and the call-depth guard becomes JIT_MAX_LOCALS / frame_locals. This also removes the need for the old LoadLocalChecked-past-8 refusal (CRUSH-zorro-55).
 
 
+## 2026-10-30T19:19:49-05:00 — [ARCHITECTURAL] A CLI reports a runtime error after the output it produced, and exits non-zero (CRUSH-184)
+
+Reason:
+crush-walk-run buffered the first run's output and, on a runtime error, replaced it with the error text and returned Ok - so a failing walked program exited 0 and lost everything it had printed. Fix: stream the first run's output through run_with_caps_streaming so it reaches stdout as the program runs, and return an error (non-zero exit) when the run fails. crush-run already streamed via Runtime::run_streaming and exited non-zero, and crush run delegates to crush-run, so only crush-walk-run needed the change. Pinned by a CLI test that spawns the binary.
 ## 2026-10-30T19:07:57-05:00 — [ARCHITECTURAL] Function layout is name-ordered, so the same source assembles byte-identically (CRUSH-188)
 
 Reason:

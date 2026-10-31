@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`crush-walk-run` keeps output before a runtime error and exits non-zero
+  (CRUSH-184):** it buffered the first run's output and replaced it with
+  `Error: …` on failure, and returned `Ok`, so a failing script exited 0 and
+  everything printed before the error was lost. It now streams the first run's
+  output (so nothing is lost) and fails with a non-zero exit. `crush-run` (and
+  `crush run`, which delegates to it) already streamed and exited non-zero.
+
 - **C API reports runtime errors and routes `io.print` to stdout (CRUSH-205):**
   `crush_vm_run_casm` treated any `Ok(FastYield)` as success, so a program that
   raised a runtime error (a stack underflow, a bad jump, an unsupported
