@@ -16,7 +16,7 @@
 - **1.0 is a compatibility promise, not a quality award.** After 1.0.0, anything in §1's
   "promised" list can only break in 2.0. So the question is not "is Crush good enough?"
   but "which surfaces are we willing to freeze?".
-- **Today (2026-10-31): 14 ✅ / 26 🟡 / 27 ❌** across 67 criteria (table in §2.9; was 11 / 22 / 34 on 2026-10-18). **First fix: R1** (an accidental 1.0 is one `feat!:` away; #348). The strengths are
+- **Today (2026-10-31): 15 ✅ / 26 🟡 / 26 ❌** across 67 criteria (table in §2.9; was 11 / 22 / 34 on 2026-10-18). R1 (no accidental 1.0) is fixed by #348. The strengths are
   real: load-time version gates on CVM1/CASM/CAST, a gated polyglot capability, an MSRV
   job, a cross-backend agreement suite and a CI-verified language guide. The gaps are a
   normative spec, semver tooling, a backward-compatibility corpus, and the class of
@@ -165,7 +165,7 @@ Each line: **criterion** — how to verify it — status — evidence.
 
 | ID | Criterion | Verify by | Status | Evidence |
 |---|---|---|---|---|
-| R1 | **No accidental 1.0.** While major = 0, a `feat!:` / `BREAKING CHANGE` commit bumps *minor*. 1.0.0 is minted only on purpose. | Read `bump-version.sh`. | ❌ | **Still the one that can mint 1.0 by accident:** `scripts/bump-version.sh` maps `feat!:` / `BREAKING CHANGE` → major. **Fixed by #348** (open): on 0.x a breaking change bumps minor; 1.0.0 needs `BUMPVER_ALLOW_MAJOR=1` (release.yml `allow_major`). → ✅ when #348 merges. The script is installed from squadron's `bump-version --install`, so squadron's template needs the same change. |
+| R1 | **No accidental 1.0.** While major = 0, a `feat!:` / `BREAKING CHANGE` commit bumps *minor*. 1.0.0 is minted only on purpose. | Read `bump-version.sh`. | ✅ | **Done (#348, merged 2026-10-31):** on 0.x a breaking change (`feat!:` / `BREAKING CHANGE`) bumps minor; 1.0.0 needs `BUMPVER_ALLOW_MAJOR=1` (release.yml `allow_major`). squadron's `bump-version` template still needs the same change, or `bump-version --install` reverts it. |
 | R2 | Versioning can **differ per crate** (needed for a partial 1.0). | Tooling. | ❌ | The workspace is lock-step (`version.workspace`, `Cargo.toml:59`), and `bump-version.sh` and `publish-crates.py` assume it. |
 | R3 | A pre-release (`1.0.0-rc.N`) can be cut and published. | Dry run. | 🟡 | From 0.9.0 every tag gets a GitHub **pre-release** (`--prerelease --latest=false`, #346). `1.0.0-rc.N` version suffixes are still untested in `bump-version.sh` and `publish-crates.py`. |
 | R4 | Every crate in the release is publishable by CI. No manual first publish. | `publish-crates.py` plan. | 🟡 | 27 crates publish from CI (Trusted Publishing; #320 lists every crate that needs a config instead of stopping at the first). 15 never-published crates each need a manual first `cargo publish`. |
@@ -183,8 +183,8 @@ Each line: **criterion** — how to verify it — status — evidence.
 | 2.5 Tooling | 0 | 6 | 0 | 6 |
 | 2.6 Docs | 1 | 3 | 2 | 6 |
 | 2.7 Quality gates | 5 | 2 | 3 | 10 |
-| 2.8 Release engineering | 1 | 3 | 3 | 7 |
-| **Total** | **14** | **26** | **27** | **67** |
+| 2.8 Release engineering | 2 | 3 | 2 | 7 |
+| **Total** | **15** | **26** | **26** | **67** |
 ---
 
 ## 3. Scope decision: full 1.0 vs partial 1.0
