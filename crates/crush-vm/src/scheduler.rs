@@ -442,7 +442,29 @@ pub fn run_scheduled_streaming(
     host_caps: Option<&HostCaps>,
     sink: Option<&mut dyn FnMut(&str)>,
 ) -> Result<VmResult, VmError> {
+    // A plain run inside a transcribed one (e.g. a host cap running a program
+    // of its own) records nothing into the outer transcript (CRUSH-165).
+    #[cfg(feature = "transcript")]
+    let _paused = crate::transcript::active::Scope::enter(None);
     run_from(program, quotas, host_caps, sink, None)
+}
+
+/// [`run_scheduled_streaming`], also hash-chaining every executed instruction
+/// and capability call into a transcript (CRUSH-165; encoding in
+/// [`crate::transcript`]). The digest is returned whether the run succeeded
+/// or failed: a failed run's transcript ends at the instruction (or cap
+/// error) that failed it.
+#[cfg(feature = "transcript")]
+pub fn run_scheduled_with_transcript(
+    program: &crate::bytecode::Program,
+    quotas: &Quotas,
+    host_caps: Option<&HostCaps>,
+    sink: Option<&mut dyn FnMut(&str)>,
+) -> (Result<VmResult, VmError>, crate::transcript::TranscriptDigest) {
+    let scope = crate::transcript::active::Scope::enter(Some(crate::transcript::Transcript::new(program)));
+    let result = run_from(program, quotas, host_caps, sink, None);
+    let transcript = scope.finish().expect("the run's transcript is still installed");
+    (result, transcript.digest())
 }
 
 /// The scheduler loop. `start`: run that function with that stack (bottom →
@@ -580,6 +602,9 @@ fn run_from(
         if threads[current].steps > quotas.max_steps {
             return Err(VmError::StepQuota(quotas.max_steps));
         }
+        // CRUSH-165 hook: the scheduler's one instruction-dispatch point.
+        #[cfg(feature = "transcript")]
+        crate::transcript::active::instruction(ip, &code[ip..next_ip]);
 
         // Borrow ends when execute_one returns — index access is safe in the match below.
         let action = execute_one(
@@ -1333,8 +1358,16 @@ fn execute_one(
                 }
             }
             if crate::cosm_rt::is_index_cap(&cap, &args) {
-                check_cap_permitted(&cap, declared.contains(cap.as_str()), quotas)?;
-                match crate::cosm_rt::index_cap(&cap, &args)? {
+                let access = check_cap_permitted(&cap, declared.contains(cap.as_str()), quotas)
+                    .and_then(|()| crate::cosm_rt::index_cap(&cap, &args));
+                // CRUSH-165 hook: an index cap's outcome.
+                #[cfg(feature = "transcript")]
+                crate::transcript::active::cap(&cap, &args, match &access {
+                    Ok(crate::cosm_rt::IndexAccess::Done(v)) => crate::transcript::CapOutcome::Value(v),
+                    Ok(crate::cosm_rt::IndexAccess::Call { .. }) => crate::transcript::CapOutcome::AccessorCall,
+                    Err(e) => crate::transcript::CapOutcome::Error(e),
+                });
+                match access? {
                     crate::cosm_rt::IndexAccess::Done(v) => push!(v),
                     crate::cosm_rt::IndexAccess::Call { call, after } => {
                         let on_ret = match after {
@@ -1349,8 +1382,15 @@ fn execute_one(
             let args = crate::cosm_rt::cap_args(&cap, args)?;
             if cap == "parallel_map" {
                 // Needs the program to start workers, so it isn't in dispatch_cap.
-                check_cap_permitted(&cap, declared.contains(cap.as_str()), quotas)?;
-                let (output, results) = parallel_map(program, quotas, &args)?;
+                let mapped = check_cap_permitted(&cap, declared.contains(cap.as_str()), quotas)
+                    .and_then(|()| parallel_map(program, quotas, &args));
+                // CRUSH-165 hook: parallel_map's results (its workers aren't transcribed).
+                #[cfg(feature = "transcript")]
+                crate::transcript::active::cap(&cap, &args, match &mapped {
+                    Ok((_, results)) => crate::transcript::CapOutcome::Value(results),
+                    Err(e) => crate::transcript::CapOutcome::Error(e),
+                });
+                let (output, results) = mapped?;
                 if !output.is_empty() {
                     *out_len += output.len();
                     if *out_len > quotas.max_output {
@@ -1360,10 +1400,16 @@ fn execute_one(
                 }
                 push!(results);
             } else {
+                // CRUSH-165: `dispatch_cap` consumes the args; keep a copy to hash.
+                #[cfg(feature = "transcript")]
+                let recorded_args = args.clone();
                 let result = dispatch_cap(
                     &cap, args, declared, quotas, out_parts, out_len, host_caps, captures, call_stack.len(),
-                )?;
-                if let Some(v) = result {
+                );
+                // CRUSH-165 hook: every other CAP_CALL (built-in and host caps).
+                #[cfg(feature = "transcript")]
+                crate::transcript::active::cap(&cap, &recorded_args, crate::transcript::CapOutcome::of(&result));
+                if let Some(v) = result? {
                     push!(v);
                 }
             }
@@ -1571,7 +1617,14 @@ fn execute_one(
                 crush_line,
             };
             let executor = host_caps.and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
-            let outcome = crate::lang_exec::run_block(executor, &request)?;
+            let outcome = crate::lang_exec::run_block(executor, &request);
+            // CRUSH-165 hook: the polyglot block, as cap `polyglot.<lang>`.
+            #[cfg(feature = "transcript")]
+            crate::transcript::record_exec_lang(
+                &mut |name, args, outcome| crate::transcript::active::cap(name, args, outcome),
+                &gate, lang, code_str, &env_vars, outcome.as_ref().map(|o| (o.visible.as_str(), &o.result_value)),
+            );
+            let outcome = outcome?;
             *out_len += outcome.visible.len();
             if *out_len > quotas.max_output {
                 return Err(VmError::OutputQuota(quotas.max_output));
@@ -1604,14 +1657,22 @@ fn execute_one(
                 return Err(VmError::StackUnderflow);
             }
             let operands = stack.split_off(stack.len() - n);
+            #[cfg(feature = "transcript")]
+            let recorded_args: Vec<Value> =
+                std::iter::once(Value::Str(raw.clone())).chain(operands.iter().cloned()).collect();
             let value = crate::ai_args::dispatch(
                 kind,
                 &payload,
                 operands,
                 host_caps,
                 quotas.max_wall_time_ms,
-            )?;
-            push!(value);
+            );
+            // CRUSH-165 hook: an AI opcode, as cap `ai_native.<kind>`.
+            #[cfg(feature = "transcript")]
+            crate::transcript::active::cap(
+                &format!("ai_native.{kind}"), &recorded_args, crate::transcript::CapOutcome::of_value(&value),
+            );
+            push!(value?);
         }
         // CRUSH-33 Commit 2: combined DOM arm mirroring the AI arm above.
         // Gates DOM opcodes through `host_caps.get("dom_native.<kind>")` and
@@ -1634,6 +1695,9 @@ fn execute_one(
                     .unwrap_or(Value::Null),
                 None => Value::Null,
             };
+            // CRUSH-165 hook: a DOM opcode, as cap `dom_native.<kind>`.
+            #[cfg(feature = "transcript")]
+            crate::transcript::active::cap(&gate, &[], crate::transcript::CapOutcome::Value(&value));
             push!(value);
         }
         ENTER_TRY => {
@@ -1999,7 +2063,14 @@ fn run_item(
     function: &str,
     i: usize,
 ) -> crate::parallel::ItemResult {
+    // A worker is share-nothing: its instructions are not part of the
+    // caller's transcript, only the `parallel_map` cap event is (CRUSH-165).
+    // This matters on the sequential (same-thread) path.
+    #[cfg(feature = "transcript")]
+    let paused = crate::transcript::active::Scope::enter(None);
     let result = run_from(program, quotas, None, None, Some((function, worker.stack(i))));
+    #[cfg(feature = "transcript")]
+    drop(paused);
     worker.check()?;
     let result = result?;
     let value = result.return_value.unwrap_or(Value::Null);

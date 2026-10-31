@@ -46,6 +46,9 @@ pub mod str_len;
 pub mod parallel;
 pub mod portable_vm;
 pub mod scheduler;
+// CRUSH-165: hash-chained execution transcript (scheduler VM + PortableVm).
+#[cfg(feature = "transcript")]
+pub mod transcript;
 pub mod vm;
 
 pub use assembler::{AssemblyError, assemble, disassemble};
@@ -62,6 +65,10 @@ pub use lang_exec::{
 pub use portable_vm::{Frame, LangExecutor, PortableVm, VmYield, value_to_text};
 pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
 pub use scheduler::{polyglot_gate_name, resolve_lang_binary};
+#[cfg(feature = "transcript")]
+pub use scheduler::run_scheduled_with_transcript;
+#[cfg(feature = "transcript")]
+pub use transcript::{TRANSCRIPT_VERSION, Transcript, TranscriptDigest};
 pub use cap_inference::capabilities_used;
 
 /// Whether this build runs `@lang[deps]` blocks in a buckets-provisioned bwrap
