@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-2 |
 | **Priority** | P0 |
-| **Status** | **Done** — verified s388 (2026-07-16) |
+| **Status** | Done — verified s388 (2026-07-16) |
 | **Phase** | M0 |
 | **Assignee** | fixed via `polyglot_gate()` (crush-vm `host.rs`), merged `agent/kai/CRUSHAST-RELEASE-1` |
 | **Dependencies** | none |

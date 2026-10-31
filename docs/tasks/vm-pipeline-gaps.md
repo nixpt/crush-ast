@@ -1,5 +1,9 @@
 # VM Pipeline Gap Analysis
 
+> **Not the live board.** Gap tracking moved to `.jagent/planning/tickets/` (canonical per
+> `.jagent/planning/README.md`); this file was last edited 2026-10-07 and is kept for its analysis.
+> Pointer added by the 2026-10-31 survey.
+
 Last updated: 2026-06-17
 
 ## Overview

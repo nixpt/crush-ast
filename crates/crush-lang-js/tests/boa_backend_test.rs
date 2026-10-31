@@ -1803,7 +1803,7 @@ fn test_boa_parameter_abi() {
     assert!(names[3].starts_with("__has_b_"), "{names:?}");
 }
 
-// CRUSH-266 (boa path): an exported `function` declaration hoists like a
+// CRUSH-340 (boa path): an exported `function` declaration hoists like a
 // bare one and keeps its body; the export itself refers to it. It used to be
 // refused outright ("exporting a function, class, generator or async
 // declaration"), so no ES module lowered through boa at all.
@@ -1851,7 +1851,7 @@ console.log(new Counter().bump());
     );
 }
 
-// CRUSH-266 (boa path, end-to-end): the exported function is callable from
+// CRUSH-340 (boa path, end-to-end): the exported function is callable from
 // the module body and computes the right value through CASM -> CVM1.
 #[test]
 fn test_boa_exported_function_runs_end_to_end() {

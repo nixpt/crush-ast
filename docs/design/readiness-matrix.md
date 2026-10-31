@@ -42,11 +42,13 @@
 | **Rust** | RustFrontend | syn | 11 | ~40% — functions, loops, field access, array literals, closures, ranges | 🟢 | No structs, enums, traits, match, macros, generics, modules |
 | **Go** | GoWalker | tree-sitter-go | 2 | ~20% — basic function/variable detection. Main body only. | 🟢 | No control flow, no types, no packages |
 | **Zig** | ZigWalker | tree-sitter-zig | 2 | ~20% — same as Go | 🟢 | Same gaps as Go |
-| **Bash** | BashFrontend | tree-sitter-bash | 2 | ~15% �� commands, variable assignment, if/while detection | 🟢 | No pipeline, no redirection, no subshell |
-| **Zsh** | ZshFrontend | tree-sitter-bash | 2 | ~15% — extends Bash, same coverage | 🟢 | Same as Bash |
+| **Bash** | BashFrontend | `brush_parser` (bash mode) | 220 (182-case shared oracle) | ~80% — control flow, functions, arrays, `[[ ]]`, `case`, `${…}` (`:- # ## % %% / //` and the `:off:len` forms), arithmetic (hex, octal, `base#n`, `**`), `printf` (`%s %d %x %o %b %f %e %g`), `read`, `echo -e`, pathname expansion in every path component (`echo *.txt`, `*/*.txt`, `*/`) | 🟡 (no shell AOT C test) | No external commands, `$(…)`/backticks, pipelines, redirections/heredocs, subshells, `&`; no `=~`, file tests, `declare`/associative arrays, `${!x}`; no POSIX `sh` dialect; no `**`, absolute-path globs, `nullglob`/`failglob`/`extglob`; `read` cannot tell a blank line from EOF |
+| **Zsh** | ZshFrontend | `zshrs_parse` | 197 (182-case shared oracle) | ~78% — same constructs as Bash through `crush_walker_core::shell`, with the real dialect splits (`$((010))` = 10, `base#n` > 36 rejected, `${x^^}` bad substitution, `$a` joins all elements, `${p}` literal in a pattern, `$x` not field-split, unmatched glob = error) | 🟡 (no shell AOT C test) | Same as Bash, plus zsh `$x[…]`, `$x:…`, `=cmd`; an unmatched glob aborts the run instead of failing just that command |
 | **Nepcode** | NepaliFrontend | crush-frontend (lexer) | 2 | ~10% — passes through Crush parser with Nepali keyword aliases | 🟢 | No dedicated lowering — delegates to crush parser |
 | **Wasm** | walk_wasm() | wasmparser | 2 | ~30% — module imports, exports, function signatures. No body lowering. | 🟢 | No instruction-body lowering. Types only. |
 | **Dart** | DartWalker | tree-sitter-dart | 3 | ~5% — stub only. Adapter + SDK tests prove the pattern. | 🟢 | No statement/expression lowering |
+
+> Bash and Zsh rows re-reviewed 2026-10-30 against the walkers themselves (CRUSH-202 + CRUSH-310, PRs #322/#327), not against the parsers: 182 shared oracle cases run vs real `/usr/bin/bash` and `/usr/bin/zsh -f` — bash 147 match / 35 loud-unsupported, zsh 141 / 41, **0 silently wrong** in both. Coverage percentages are that corpus, which deliberately over-samples hard constructs. Every other row in this document is as of 2026-07-14.
 
 ---
 
@@ -91,7 +93,7 @@
 | Lambda pipe collision | Medium | Certain | `|a,b|` syntax broken. Workaround: use `fn` syntax. Fix is in parser. |
 | V8 fallback not available | Low | N/A | Design complete. Not a regression — Boa is still available for surfer web content. |
 | No CI catches regressions | High | High | All testing is local. A bad commit on main breaks everyone. Add CI is P0. |
-| Walkers are stubs (Go/Zig/Bash/Zsh/Nepcode/Wasm/Dart) | Medium | Present | They walk but don't lower. OK for adapter pattern proof. Need lowering for production use. |
+| Walkers are stubs (Go/Zig/Nepcode/Wasm/Dart) | Medium | Present | They walk but don't lower. OK for adapter pattern proof. Need lowering for production use. (Bash/Zsh no longer belong here: they lower, but no external commands, `$(…)`, pipelines or redirections.) |
 
 ---
 
@@ -104,7 +106,7 @@ Based on this matrix, these items gate a v0.3.0 release:
 | 1 | Fix JIT silent miscompile | 🔴 55 ops → TAG_NULL | 🟢 honest errors | 8-16h |
 | 2 | Fix lambda pipe collision | 🔴 `|a,b|` broken | 🟢 | 1-2h |
 | 3 | Add CI (build + test) | 🔴 no CI | 🟡 build on push | 2-4h |
-| 4 | Complete 4 walker lowerings | 🟡 Go/Zig/Bash/Nepcode stubs | 🟡 40%+ coverage each | 8-12h |
+| 4 | Complete walker lowerings | 🟡 Go/Zig/Nepcode stubs (Bash/Zsh done) | 🟡 40%+ coverage each | 8-12h |
 | 5 | AI opcodes: at least 3/10 real | 🔴 10 NOPs | 🟡 Query + Synthesize + AgentDelegation | 4-8h |
 | 6 | Multi-file polyglot CLI | 🟡 merge works, no CLI | 🟢 `crush-aotc compile a.js b.py --emit c` | 1-2h |
 | 7 | Fill 18 zero-coverage VM error paths | 🔴 0 tests | 🟡 18 tests | 2-4h |

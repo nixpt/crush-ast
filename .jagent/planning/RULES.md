@@ -18,7 +18,8 @@ ticket:
 2. If it no longer reproduces: update the ticket's `Status` to `Done` with a
    one-paragraph `## Resolution` section (what you ran, what it printed,
    which commit likely fixed it if findable) and mark the corresponding
-   `TASKS.md` line `[x]`. Do not silently delete the ticket — the record that
+   `TASKS.md` line `[x]` (since 2026-10-14 `TASKS.md` is rendered from the
+   ticket files, so the ticket's `Status` is what you change). Do not silently delete the ticket — the record that
    it was checked and closed is worth as much as the record that it was
    found.
 3. If it does reproduce: proceed to fix it, and if the fix turns out
@@ -79,7 +80,8 @@ milestone branches plus a clearly-scoped 4th in progress.
 
 ## 4. Update `.jagent/planning/` as you go, not as an afterthought
 
-- Mark `TASKS.md` checkboxes `[x]` the moment something is verifiably done —
+- Mark the ticket's `Status` `Done` (`TASKS.md` is a rendered view of it,
+  `jagent-ticket render`) the moment something is verifiably done —
   not at session close, not "later."
 - Update the closed ticket's own `Status` field and add a `## Resolution`
   section (see §1) — future agents read the ticket file directly, they
@@ -92,6 +94,7 @@ milestone branches plus a clearly-scoped 4th in progress.
 ## Cross-references
 
 - `.jagent/planning/TASKS.md` — the current backlog these rules apply to
+  (rendered from `tickets/`, untracked)
 - `.jagent/planning/ROADMAP.md` — the milestone sequence
 - `.jagent/planning/tickets/` — one file per `CRUSH-N`
 - Workspace-level: `moms-kitchen` skill (worktree discipline generally),

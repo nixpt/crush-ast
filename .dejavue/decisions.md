@@ -1315,6 +1315,10 @@ Reason:
 The Go walker matched tree-sitter-go's node `short_variable_declaration`, which does not exist (it is `short_var_declaration`), so `a := 7` fell through the `_ => Ok(None)` catch-all and `a` read as uninitialised; var/assignment/inc/for/block were dropped the same way, and unknown expressions became NullLiteral. Fix: visit_statement -> visit_statements returning Vec (one node can yield several statements, e.g. a C-style for -> init + while), implement var/assignment/inc/dec/for(all shapes)/block, and make the catch-all a loud error. The same rule as the rest of the repo: exact or loud, never silently wrong. A multi-value return and unknown expressions also error now. Known divergence left as a follow-up: fmt.Println(a, b) maps to io.print which concatenates, while Go joins with spaces.
 
 
+## 2026-10-30T20:28:28-05:00 — [ARCHITECTURAL] A walker lowers a node or refuses it loudly; it never fabricates null or an empty program (CRUSH-203)
+
+Reason:
+Several walkers silently produced wrong or empty programs: the Zig walker matched tree-sitter-zig node names that do not exist (IntegerLiteral instead of integer, BinaryExpr instead of binary_expression, CallExpr instead of call_expression), so every literal became null and programs printed nothing; the Dart walker discarded every node and returned an empty program; the Java walker returned Program::default() and panicked with a bare unreachable! in language()/parse(); the Wasm walker dropped every non-call operator and lowered fd_write to an arg-less io.print. Fix: Zig node names and wrappers corrected and its null/empty fallbacks made loud errors naming the node kind and position; Dart and Java fail with not implemented; Wasm errors on unhandled operators and imported calls; crush-walk-run reads .wasm as bytes; the Nepali walker's false native-keyword comment corrected. Same rule as CRUSH-198: exact or loud.
 ## 2026-10-30T19:31:21-05:00 — [ARCHITECTURAL] A run that did not finish is not success, and an embedded io.print reaches stdout (CRUSH-205)
 
 Reason:
@@ -1339,4 +1343,12 @@ Rejected alternatives:
 
 Outcome:
 CRUSH-318 PR agent/nova/CRUSH-318
+## 2026-10-30T20:45:44-05:00 — [ARCHITECTURAL] A JS/TS dialect comes from the real file extension; an unknown one is refused, not treated as JS (CRUSH-zorro-8)
+
+Reason:
+JsLowering::for_ext mapped every unrecognised extension to plain JS, so a .ts file reached through a temp path (walker_N.tmp) or a typo like 'typescript' was parsed as ES - TypeScript syntax then either failed oddly or silently dropped types. Fix: for_ext accepts exactly js mjs cjs jsx ts tsx mts cts (cts is TypeScript) and refuses anything else naming that set; the JsFrontend/JsAdapter extension lists gained cts/jsx; swc parses cts as TypeScript; and SubprocessWalker::parse carries the filename so walk names its temp file walker_N.<ext>, keeping the dialect. Remaining: TS syntax under an ES extension is accepted (types stripped) by swc rather than a loud error - that needs the swc TS-mode strip-into-boa approach (the optional ts feature).
+## 2026-10-30T20:54:05-05:00 — net on by default, db opt-in; http.* renamed with no alias; time.now is seconds
+
+Reason:
+CRUSH-264 (owner, 2026-10-31): net joins crush-lang-sdk default features (grant-gated, still needs --net; per-package features mean bins can't take it alone, so library default-feature consumers get ureq too); db stays --features db. exosphere http.* is refused up front via effects::RENAMED_CAPS naming net.http_* rather than aliased, so a rename is explicit and one table feeds every runner. time.now stays seconds, time.now_ms is ms, documented because exosphere's was ms.
 

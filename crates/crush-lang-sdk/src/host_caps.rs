@@ -310,6 +310,7 @@ impl HostCapsBuilder {
             caps.register(Box::new(FsReadCap { fs: fs.clone() }));
             caps.register(Box::new(FsWriteCap { fs: fs.clone() }));
             caps.register(Box::new(FsExistsCap { fs: fs.clone() }));
+            caps.register(Box::new(FsIsDirCap { fs: fs.clone() }));
             caps.register(Box::new(FsListCap { fs: fs.clone() }));
             crate::fs_tools::register(&mut caps, &fs);
             crate::text_tools::register(&mut caps, &fs);
@@ -805,6 +806,41 @@ impl HostCap for FsExistsCap {
     }
 }
 
+/// `fs.is_dir(path)`: 1 when `path` is a directory *inside* the sandbox, else
+/// 0 (also 0 when it does not exist). Read-only metadata, like `fs.exists`, but
+/// it answers the one question a pathname walk needs before it descends into a
+/// match: does listing this path mean anything? `fs.list` on a file is an
+/// error, so a caller that globs `*/*.txt` cannot just try.
+pub struct FsIsDirCap {
+    fs: FsSandbox,
+}
+
+impl FsIsDirCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
+    pub fn new(root: &str) -> Self {
+        Self {
+            fs: FsSandbox::new(root),
+        }
+    }
+}
+
+impl HostCap for FsIsDirCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "fs.is_dir".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let path = self.fs.resolve(&args[0])?;
+        let is_dir = matches!(self.fs.backend().kind(&path), Ok(crate::fs_backend::Kind::Dir));
+        Ok(Some(Value::Int(if is_dir { 1 } else { 0 })))
+    }
+}
+
 pub struct FsListCap {
     fs: FsSandbox,
 }
@@ -1231,6 +1267,7 @@ mod tests {
             .build();
 
         assert!(caps.get("fs.read").is_some());
+        assert!(caps.get("fs.is_dir").is_some());
         assert!(caps.get("env.get").is_some());
         assert!(caps.get("time.now").is_some());
         assert!(caps.get("time.now_ms").is_some());

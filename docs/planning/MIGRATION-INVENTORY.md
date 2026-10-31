@@ -207,13 +207,13 @@ corecap(2) is a shell-utility layer and is **out** — its useful surface is the
 | `fs.read/write/exists/list` | corecap (fs grant) | `crush-lang-sdk/src/host_caps.rs` (`--fs`, `--fs-root` sandbox) | — |
 | `fs.ls/cat/pwd/mkdir/rm/cp/mv/touch/find` | corecap (fs grant) | **missing** | **CRUSH-151** (`fs.cd` declined: process-wide state; see decision C-5) |
 | `text.head/tail/wc/cut/grep` | corecap (fs grant) | `src/text_tools.rs` | none |
-| `time.now/now_ms/now_iso/elapsed/sleep` | corecap (time grant) | `host_caps.rs` (`--time`). ⚠ `time.now` = seconds in ast, ms in exo | none (document the unit) |
+| `time.now/now_ms/now_iso/elapsed/sleep` | corecap (time grant) | `host_caps.rs` (`--time`). ⚠ **`time.now` = seconds in ast, ms in exo** — ported programs silently get values 1000× smaller; use `time.now_ms` for milliseconds (CRUSH-264, documented in `crush-run caps` and the `crush-lang-sdk` README) | none |
 | `async.sleep` | corecap (time grant) | missing; `time.sleep` exists | **CRUSH-152** (alias) |
 | `env.get` | corecap (env grant) | `host_caps.rs` (`--env`) | — |
 | `env.all`, `env.home_dir` | corecap (env grant) | missing | **CRUSH-153** |
-| `http.get/post` ≈ `net.http_get/post` | corecap (net grant) | `src/net.rs` (`net` feature); raw TCP/TLS in `crates/crush-net` | — |
-| `http.put/delete/request` | corecap (net grant) | missing | **CRUSH-153** |
-| `storage.open/read/write/size/close` | corecap (store grant), handle-based | missing; ast has `db.query/execute` (`db` feature) | **CRUSH-154** — decision C-6 (port vs decline in favour of `db.*`) |
+| `http.get/post` → **`net.http_get/post`** (renamed, **no alias**) | corecap (net grant) | `src/net.rs` (`net` feature, **on by default** since CRUSH-264; still needs `--net`); raw TCP/TLS in `crates/crush-net`. A program calling `http.*` is refused before it runs: `http.get was renamed to net.http_get (grant it with --net)` (`effects::RENAMED_CAPS`) | — |
+| `http.put/delete/request` → `net.http_put/delete/request` (renamed, no alias) | corecap (net grant) | `src/net.rs`, same rule as above | CRUSH-153 (done), CRUSH-264 |
+| `storage.open/read/write/size/close` | corecap (store grant), handle-based | missing; ast has `db.query/execute` (`db` feature, **opt-in**: build with `--features db`, run with `--db PATH`; CRUSH-264) | **CRUSH-154** — decision C-6 (port vs decline in favour of `db.*`) |
 | `process.*`, `crypto.*` | corecap | ast-only (`host_caps.rs`) | — |
 | `ai.*`, `agent.*`, `learn.*`, `ai.embed/tokenize` | corecap → ai-core host | `ai_native.*` stubs | engine only: **CRUSH-156–158**; exo impls are mocks (`ai.embed` from char codes, `agent.spawn` mock id) → dead |
 | `dom.*` (21), `gfx.*` | corecap → UI host (surfer/arniko) | `dom_native.*` stubs, `graphics.*` (SVG) | **out** (exo impls are placeholders returning `Int(0)`/Null) |

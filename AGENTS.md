@@ -73,9 +73,11 @@ source.(crush|py|rs|go|c|js|sh|zig|wasm|...)
               | AOT C/Rust (crush-aot, crush-aotc) | PTX (crush-ptx)
 ```
 
-43 crates total as of 2026-08-21 (see `README.md`'s Repository Structure for
-the full annotated list). `crates/crush-bucketspike` is a throwaway spike,
-not release surface.
+43 workspace members as of 2026-10-31 (`cargo metadata --no-deps`: 42 under
+`crates/` plus `xtask`; see `README.md`'s Repository Structure for the full
+annotated list). Not members: `crates/crush-web` and `crates/crush-vm-py`
+(`exclude`d in the root `Cargo.toml`) and `crates/crush-bucketspike` (its own
+`[workspace]`; a throwaway spike, not release surface).
 
 ## Examples
 

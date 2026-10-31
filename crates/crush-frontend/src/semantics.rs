@@ -17,6 +17,56 @@ pub(crate) fn polyglot_outputs(meta: &HashMap<String, serde_json::Value>) -> Vec
         .unwrap_or_default()
 }
 
+/// Attach `meta`'s `line`/`col` to a semantic error as a
+/// [`crate::SemanticError`], unless the error already has a position. The
+/// checker recurses, so the first (innermost) node that can name a position
+/// wins: `print(undefined_name)` reports the `undefined_name` token, not the
+/// enclosing call or statement. The error's `Display` text is unchanged.
+fn locate(err: anyhow::Error, meta: Option<&HashMap<String, serde_json::Value>>) -> anyhow::Error {
+    if err.downcast_ref::<crate::SemanticError>().is_some() {
+        return err;
+    }
+    let pos = meta.and_then(|m| {
+        let line = m.get("line")?.as_u64()? as usize;
+        let col = m.get("col")?.as_u64()? as usize;
+        (line > 0).then_some((line, col))
+    });
+    match pos {
+        Some(pos) => anyhow::Error::new(crate::SemanticError {
+            pos: Some(pos),
+            message: err.to_string(),
+        }),
+        None => err,
+    }
+}
+
+/// The `meta` of the expression kinds the parser stamps with a position of
+/// the construct itself (CRUSH-74, CRUSH-315). Other kinds return `None`, so
+/// the error is located by the nearest enclosing node that has one.
+fn expression_meta(expr: &Expression) -> Option<&HashMap<String, serde_json::Value>> {
+    match expr {
+        Expression::Var { meta, .. }
+        | Expression::BinaryOp { meta, .. }
+        | Expression::Call { meta, .. }
+        | Expression::CapabilityCall { meta, .. } => Some(meta),
+        _ => None,
+    }
+}
+
+/// See [`expression_meta`].
+fn statement_meta(stmt: &Statement) -> Option<&HashMap<String, serde_json::Value>> {
+    match stmt {
+        Statement::VarDecl { meta, .. }
+        | Statement::Assign { meta, .. }
+        | Statement::ExprStmt { meta, .. }
+        | Statement::If { meta, .. }
+        | Statement::While { meta, .. }
+        | Statement::For { meta, .. }
+        | Statement::Return { meta, .. } => Some(meta),
+        _ => None,
+    }
+}
+
 pub struct SemanticAnalyzer {
     structs: HashMap<String, HashMap<String, Type>>,
     functions: HashMap<String, (Vec<Type>, Type)>,
@@ -284,6 +334,11 @@ impl SemanticAnalyzer {
     }
 
     fn check_stmt(&mut self, stmt: &Statement) -> Result<()> {
+        self.check_stmt_inner(stmt)
+            .map_err(|e| locate(e, statement_meta(stmt)))
+    }
+
+    fn check_stmt_inner(&mut self, stmt: &Statement) -> Result<()> {
         match stmt {
             Statement::VarDecl {
                 name,
@@ -376,6 +431,11 @@ impl SemanticAnalyzer {
     }
 
     fn check_expr(&mut self, expr: &Expression) -> Result<Type> {
+        self.check_expr_inner(expr)
+            .map_err(|e| locate(e, expression_meta(expr)))
+    }
+
+    fn check_expr_inner(&mut self, expr: &Expression) -> Result<Type> {
         match expr {
             Expression::IntLiteral { .. } => Ok(Type::Int),
             Expression::FloatLiteral { .. } => Ok(Type::Float),

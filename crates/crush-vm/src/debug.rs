@@ -307,7 +307,21 @@ pub fn deep_copy(v: &Value) -> Value {
 /// Type-exact rendering (`2` and `2.0` differ, unlike `Value`'s `==`) with
 /// map keys sorted, so equal contents always render the same.
 fn canonical(v: &Value, out: &mut String) {
+    canonical_at(v, out, 0)
+}
+
+/// How deep [`canonical`] follows nested values: a record can hold itself
+/// (or a closure can, through the cell it captures), and the hash only needs
+/// to tell values apart, not walk a cycle.
+const CANONICAL_DEPTH: usize = 16;
+
+fn canonical_at(v: &Value, out: &mut String, depth: usize) {
     use std::fmt::Write;
+    if depth > CANONICAL_DEPTH {
+        out.push('…');
+        return;
+    }
+    let canonical = |v: &Value, out: &mut String| canonical_at(v, out, depth + 1);
     let seq = |tag: &str, xs: &mut dyn Iterator<Item = &Value>, out: &mut String| {
         out.push_str(tag);
         out.push('[');
@@ -318,6 +332,21 @@ fn canonical(v: &Value, out: &mut String) {
         out.push(']');
     };
     match v {
+        // A function value is its target and what it captured; the captures
+        // can include the cell that holds the function itself, so they count
+        // but are not followed.
+        Value::Func(f) => {
+            let _ = write!(out, "F{:?}/{}+{}", f.name, f.arity, f.captured.len());
+        }
+        Value::Record(r) => {
+            let _ = write!(out, "R{:?}{{", r.kind.name());
+            for (name, field) in r.fields() {
+                let _ = write!(out, "{name:?}:");
+                canonical(&field, out);
+                out.push(',');
+            }
+            out.push('}');
+        }
         // A boxed variable (CRUSH-251): compare its value, so a write through
         // the cell is a change.
         Value::Cell(c) => canonical(&c.borrow(), out),
@@ -710,6 +739,30 @@ mod tests {
         assert_ne!(a.view(&v), b.view(&v));
         // Type-exact: 2 and 2.0 don't collide.
         assert_ne!(a.view(&Value::Int(2)), a.view(&Value::Float(2.0)));
+    }
+
+    /// A closure that captured the cell holding itself (`let f = |n| f(n - 1)`)
+    /// is a cycle; hashing it used to follow the cycle until the stack ran out.
+    #[test]
+    fn redacting_a_closure_that_captures_itself_terminates() {
+        use crate::vm::FuncValue;
+        use std::{cell::RefCell, rc::Rc};
+        let cell = Rc::new(RefCell::new(Value::Null));
+        let f = Value::Func(Rc::new(FuncValue {
+            name: "__lambda_0_f".into(),
+            arity: 1,
+            captured: vec![Value::Cell(cell.clone())],
+        }));
+        *cell.borrow_mut() = f.clone();
+        let r = Redactor::new(DebugVisibility::InspectRedacted);
+        assert!(matches!(
+            r.view(&f),
+            ValueView::Redacted {
+                type_name: "function",
+                ..
+            }
+        ));
+        assert_eq!(r.view(&f), r.view(&f));
     }
 
     #[test]

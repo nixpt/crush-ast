@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-271 |
 | **Priority** | P1 |
-| **Status** | In review |
+| **Status** | Done — PR #269 merged 2026-10-16 |
 | **Phase** | M6 |
 | **Assignee** | claude |
 | **Dependencies** | #91 (PortableVm `LangExecutor`), CRUSH-20, CRUSH-226, CRUSH-270 |
@@ -60,3 +60,7 @@ An embedder running Crush through crush-vm or crush-lang-sdk cannot route blocks
 - FastVM/JIT `HostRequest::ExecLang` already yields to the host; not touched.
 - Embedder-defined languages beyond the built-in allowlist (python/javascript/bash): the
   allowlist check still runs before the executor.
+
+## Survey 2026-10-31 (status)
+
+PR #269 (`agent/claude/CRUSH-271`) merged 2026-10-16; all seven criteria ticked. Previous status: `In review`.

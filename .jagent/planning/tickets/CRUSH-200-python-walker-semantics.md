@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-200 |
 | **Priority** | P0 |
-| **Status** | In Progress (semantics slice landed on `agent/nixp/CRUSH-200`) |
+| **Status** | In Progress — semantics slice merged in PR #167 (2026-10-12); five criteria still open |
 | **Phase** | M6 |
 | **Assignee** | nixp |
 | **Dependencies** | none |

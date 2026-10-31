@@ -1,5 +1,10 @@
 # TASK: CA-JS-1 — JavaScript/TypeScript frontend (`crush-lang-js`), dual-backend
 
+> **Historical (2026-06-17), not the live board.** Planning moved to `.jagent/planning/` (canonical per its
+> README; each ticket's `Status` row is the source of truth). The JS/TS frontend described here exists as
+> `crates/crush-lang-js`; the live work is CRUSH-250 (boa frontend) and CRUSH-zorro-4..23 (JS/TS parity).
+> The `Status: OPEN` line below is the June state and was not updated. Pointer added by the 2026-10-31 survey.
+
 **Status:** OPEN · **Repo:** `nixpt/crush-ast` · **Owner lane:** captain-driven
 **Supersedes:** the tree-sitter `crates/js_walker` (626-LOC scaffold, 0 tests)
 **Advances:** `TASKS.md` P2 "JavaScript/TypeScript frontend"

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-171 |
 | **Priority** | P4 |
-| **Status** | Done (PR open) |
+| **Status** | Done — landed via merge wave PR #116 (2026-10-07, `9f6ed4a`; commit `4d9e03b`); PR #111 itself was closed unmerged |
 | **Phase** | M4 |
 | **Assignee** | panini-d |
 | **Dependencies** | none |
@@ -70,3 +70,7 @@
   test -p crush-pkg` green, and clippy reports nothing in new code.
 - Not done: checking `platforms` against the capabilities a program uses.
   That belongs with CRUSH-170 (capability inference).
+
+## Survey 2026-10-31 (status)
+
+Commit `4d9e03b` reached main through PR #116 (merge `a762686` of `agent/panini-d/CRUSH-171`). PR #111 was closed without merging. Previous status: `Done (PR open)`.

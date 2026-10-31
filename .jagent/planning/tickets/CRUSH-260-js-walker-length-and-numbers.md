@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-260 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | In Progress — the `.length` half landed in PR #164 (2026-10-12); the number-policy half is open |
 | **Phase** | M6 |
 | **Assignee** | unassigned |
 | **Dependencies** | relates to CRUSH-199 (JS walker gaps: switch/finally/`/`) |
@@ -27,3 +27,7 @@
 - [ ] Number policy documented and implemented: integer arithmetic while results stay exact (|x| < 2^53), float
       otherwise; `/` is float division (CRUSH-199). Tests against Node for the edge cases.
 - [ ] `strings.js` from CRUSH-261 matches Node on every backend.
+
+## Survey 2026-10-31 (status)
+
+PR #164 says it "implements the `.length` half"; the number half is listed under "Not in this PR". Previous status: `Backlog`.

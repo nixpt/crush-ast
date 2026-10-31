@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-6 |
 | **Priority** | P1 |
-| **Status** | In review |
+| **Status** | Done — PR #224 merged 2026-10-15 |
 | **Phase** | M2 / Rust parity |
 | **Assignee** | nixp (user-directed) |
 | **Dependencies** | CRUSH-xps-3, CRUSH-xps-5 |
@@ -74,3 +74,7 @@ Review: [PR #224](https://github.com/nixpt/crush-ast/pull/224), based on
 CRUSH-xps-5 / PR #220.
 Rust value/copy/borrow semantics remain xps-7 work; this ticket does not alter
 Crush's local-storage representation.
+
+## Survey 2026-10-31 (status)
+
+PR #224 merged 2026-10-15; all criteria ticked. Previous status: `In review`.

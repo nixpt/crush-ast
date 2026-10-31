@@ -1,7 +1,8 @@
 //! `crush-installer` — installs and uninstalls the Crush language toolchain.
 //!
 //! Designed for end-users who want a one-command install of `crushc`,
-//! `crush-run`, `crush-compile`, `crush-repl`, and `crush-pkg`.
+//! `crush-run`, `crush-compile`, `crush-repl`, `crush-pkg`, the umbrella `crush`
+//! and the `crush-debug` debugger it runs for `crush debug`.
 //!
 //! # Examples
 //!
@@ -41,6 +42,10 @@ const BINARIES: &[&str] = &[
     "crush-compile",
     "crush-repl",
     "crush-pkg",
+    // The umbrella CLI and what it dispatches to that the list above did not
+    // cover: `crush debug FILE` execs the `crush-debug` next to it (CRUSH-317).
+    "crush",
+    "crush-debug",
 ];
 
 const MANIFEST_FILE: &str = "install.json";

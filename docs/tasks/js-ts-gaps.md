@@ -1,5 +1,9 @@
 # JS/TS Frontend Gap Map
 
+> **Historical snapshot (s289, 2026-06-17), not the live board.** Open JS/TS gaps are tracked as tickets in
+> `.jagent/planning/tickets/` (CRUSH-250, CRUSH-zorro-4..26); see `.jagent/planning/BACKLOG-INDEX.md`.
+> Pointer added by the 2026-10-31 survey.
+
 Status as of s289 (2026-06-17). All gaps identified via audit of
 `crates/crush-lang-js/`. 14+27 = 41 tests pass on both backends.
 

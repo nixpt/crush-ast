@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use clap::Parser as ClapParser;
 
 use crush_lang_sdk::MessageFormat;
+use crush_lang_sdk::theme::JsonDiagnosticExt as _;
 
 #[derive(ClapParser)]
 #[command(name = "crushc")]
@@ -122,11 +123,17 @@ fn main() {
                 eprintln!("crushc: {e:#}");
             }
             MessageFormat::Json => {
-                let diag = crush_lang_sdk::theme::JsonDiagnostic::generic_error(
-                    &e.to_string(),
-                    crush_lang_sdk::theme::JsonDiagnostic::CODE_IO,
+                let file = cli.input.display().to_string();
+                eprint!(
+                    "{}",
+                    crush_lang_sdk::theme::render_diagnostics_ndjson(
+                        &crush_lang_sdk::theme::diagnostics_for_error(
+                            &e,
+                            Some(&file),
+                            crush_lang_sdk::theme::JsonDiagnostic::CODE_IO,
+                        )
+                    )
                 );
-                eprint!("{}\n", diag.to_line());
             }
         }
         std::process::exit(1);
@@ -216,10 +223,9 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     let (mut lowered, cosm) = match crush_frontend::lower_and_check(program.clone()) {
         Ok(checked) => checked,
         Err(e) => {
-            // Semantic errors don't carry source coordinates; render the
-            // underlying message under a `[type]` badge so the interface still
-            // feels consistent with parse errors. Exit immediately so we don't
-            // double-print at the main() error arm.
+            // Render the underlying message under a `[type]` badge so the
+            // interface still feels consistent with parse errors. Exit
+            // immediately so we don't double-print at the main() error arm.
             let body = e.to_string();
             let file = cli.input.display().to_string();
             match cli.message_format {
@@ -231,8 +237,16 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
                     );
                 }
                 MessageFormat::Json => {
-                    let diag = crush_lang_sdk::theme::JsonDiagnostic::type_error(&body, Some(&file));
-                    eprint!("{}\n", diag.to_line());
+                    eprint!(
+                        "{}",
+                        crush_lang_sdk::theme::render_diagnostics_ndjson(
+                            &crush_lang_sdk::theme::diagnostics_for_error(
+                                &e,
+                                Some(&file),
+                                crush_lang_sdk::theme::JsonDiagnostic::CODE_TYPE,
+                            )
+                        )
+                    );
                 }
             }
             std::process::exit(1);

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-175 |
 | **Priority** | P4 |
-| **Status** | Done (PR pending review) |
+| **Status** | Done — landed via merge wave PR #116 (2026-10-07, `9f6ed4a`; commit `1e6397e`); PR #112 itself was closed unmerged |
 | **Phase** | M7 |
 | **Assignee** | panini-e |
 | **Dependencies** | none |
@@ -55,3 +55,7 @@ Polyglot needs host `python3`/`node`/`bash` (and `bwrap`/buckets for `sandboxed-
 - Live on the dev box: python3/node/bash/bwrap/buckets all found with versions, exit 0.
 - Not a capability: it runs on the host CLI before any program, grants nothing, so no cap-refusal test
   applies.
+
+## Survey 2026-10-31 (status)
+
+Commit `1e6397e` (feat(crush): crush doctor) reached main through PR #116 (merge `ac32db1`). PR #112 was closed without merging. Previous status: `Done (PR pending review)`.
