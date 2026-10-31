@@ -43,6 +43,19 @@ Linux x86_64 tarball (`crush`, `crushc`, `crush-run`, `crush-compile`, `crush-re
 `cargo binstall crush-lang-sdk` downloads instead of compiling. (Pre-releases until 1.0: see
 [`docs/planning/RELEASE-1.0-CRITERIA.md`](docs/planning/RELEASE-1.0-CRITERIA.md).)
 
+**Updating.** `crush update` (= `crush-installer update`; needs `cargo install crush-installer`)
+replaces the binaries of a tarball/`crush-installer` install with the newest release: it checks the
+download against the release's `SHA256SUMS` before extracting and swaps every binary in with an
+atomic rename (a failure leaves the old set), so it can replace the running `crush`. Linux x86_64
+only; a `cargo install` is refused — update that with `cargo install crush-lang-sdk`.
+
+```bash
+crush update --check            # exit 0 = up to date, 10 = update available; writes nothing
+crush update                    # newest release; never downgrades
+crush update --version 0.9.0    # pin (the only way to downgrade)
+crush update --dir ~/opt/crush  # default: crush's own dir if crush-installer manages it, else ~/.crush/bin
+```
+
 All crates are released together at the workspace version in `Cargo.toml`.
 
 | Command | What it does |
@@ -53,6 +66,7 @@ All crates are released together at the workspace version in `Cargo.toml`.
 | `crush debug FILE --step --inspect` | breakpoints by source line, step, watch, print (grant-gated) |
 | `crush gui run FILE --ui` | run a program that draws a window with `ui.*` (needs `crush-gui`) |
 | `crush doctor` | check the host runtimes polyglot blocks need |
+| `crush update [--check]` | update to the newest GitHub release (needs `crush-installer`) |
 
 ## 🏗️ Repository Structure
 

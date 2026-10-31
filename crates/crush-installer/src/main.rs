@@ -24,7 +24,17 @@
 //!
 //! # Uninstall
 //! crush-installer uninstall
+//!
+//! # Update to the newest GitHub release (also: `crush update`)
+//! crush-installer update            # exit 0; prints what it replaced
+//! crush-installer update --check    # exit 0 = up to date, 10 = update available
+//! crush-installer update --version 0.9.0 --dir ~/.crush/bin
 //! ```
+//!
+//! `update` downloads the release tarball for x86_64 Linux, verifies it against
+//! the release's `SHA256SUMS` before extracting, and swaps the binaries in with
+//! `rename(2)` (all or nothing). It refuses cargo-managed installs
+//! (`cargo install crush-lang-sdk` instead) unless `--force`. See `src/update.rs`.
 
 use std::fs;
 use std::io::Write;
@@ -35,6 +45,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use crush_diagnostics::diag_line_from;
 use serde::{Deserialize, Serialize};
+
+mod update;
 
 const BINARIES: &[&str] = &[
     "crushc",
@@ -81,6 +93,9 @@ enum Commands {
     Uninstall(UninstallArgs),
     /// Show installation status.
     Status(StatusArgs),
+    /// Update the installed toolchain from the GitHub release binaries.
+    /// `--check` exits 10 when an update is available, 0 when up to date.
+    Update(update::UpdateArgs),
 }
 
 #[derive(Parser)]
@@ -167,21 +182,28 @@ impl InstallManifest {
 fn main() {
     let cli = Cli::parse();
     let json_mode = cli.message_format.as_deref() == Some("json");
-    if let Err(e) = run(cli, json_mode) {
-        if json_mode {
-            emit_diag(CODE_INSTALL, "error", &format!("{e:#}"), None, None);
-        } else {
-            eprintln!("crush-installer: {e:#}");
+    match run(cli, json_mode) {
+        Ok(0) => {}
+        Ok(code) => std::process::exit(code),
+        Err(e) => {
+            if json_mode {
+                emit_diag(CODE_INSTALL, "error", &format!("{e:#}"), None, None);
+            } else {
+                eprintln!("crush-installer: {e:#}");
+            }
+            std::process::exit(1);
         }
-        std::process::exit(1);
     }
 }
 
-fn run(cli: Cli, json_mode: bool) -> Result<()> {
+/// The process exit status on success: 0, except `update --check` with an
+/// update available (`update::EXIT_UPDATE_AVAILABLE`).
+fn run(cli: Cli, json_mode: bool) -> Result<i32> {
     match cli.command {
-        Commands::Install(args) => install(args),
-        Commands::Uninstall(args) => uninstall(args),
-        Commands::Status(args) => status(args, &mut std::io::stdout(), json_mode),
+        Commands::Install(args) => install(args).map(|()| 0),
+        Commands::Uninstall(args) => uninstall(args).map(|()| 0),
+        Commands::Status(args) => status(args, &mut std::io::stdout(), json_mode).map(|()| 0),
+        Commands::Update(args) => update::update(args),
     }
 }
 
