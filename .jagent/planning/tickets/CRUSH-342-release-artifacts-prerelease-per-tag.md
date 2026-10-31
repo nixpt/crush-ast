@@ -25,6 +25,7 @@ job (~9.4 of ~12 min wall time) and its output is discarded.
 
 ## Success criteria
 
+- [x] The CLI tarball includes `crush-gui` (apt-get pkg-config libfontconfig1-dev before the build).
 - [x] `artifacts.yml` (workflow_dispatch, `tag` input): CLI tarball, crush-web pkg tarball, `SHA256SUMS`
       attached to the tag's pre-release; creates it if missing; idempotent (`--clobber`).
 - [x] `release.yml` dispatches it for the tag it just pushed.
@@ -35,6 +36,5 @@ job (~9.4 of ~12 min wall time) and its output is discarded.
 
 ## Follow-ups
 
-- Add the `crush-gui` binary once #344 (CRUSH-319) merges (needs `pkg-config libfontconfig1-dev`, plain apt-get).
 - The squadron-side `bump-version` template needs the same policy change, or `--install` overwrites it.
 - Other targets (aarch64, macOS) — Linux x86_64 only for now.
