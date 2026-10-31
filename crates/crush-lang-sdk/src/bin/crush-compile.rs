@@ -1,12 +1,18 @@
-//! `crush-compile` — compile CRUSH/CASM text to CVM1 binary bytecode.
+//! `crush-compile` — assemble CVM1 assembly (`.cvms`) to CVM1 bytecode
+//! (`.cvm1`). Also takes CASM JSON (`.casm`, `.sno`) and, for one release, a
+//! text `.casm` (with a note to rename it). Formats: `docs/FILE-FORMATS.md`.
 //!
 //! # Examples
 //!
 //! ```bash
-//! crush-compile hello.casm -o hello.cvm1
-//! crush-compile hello.casm -o hello.cvm1 --cap io.print --cap fs.read
-//! crush-compile hello.casm --name hello_world
+//! crush-compile hello.cvms                  # hello.cvm1 beside it
+//! crush-compile hello.cvms -o hello.cvm1 --cap fs.read
+//! crush-compile hello.cvms --name hello_world
+//! crush-compile hello.casm                  # CASM JSON → CVM1
 //! ```
+//!
+//! The `.cap` lines in the text declare its capabilities (`crushc --emit
+//! cvms` writes them); `--cap` adds more.
 
 use std::path::PathBuf;
 
@@ -16,12 +22,12 @@ use crush_lang_sdk::MessageFormat;
 
 #[derive(Parser)]
 #[command(name = "crush-compile")]
-#[command(about = "Compile CRUSH/CASM text to CVM1 bytecode")]
+#[command(about = "Assemble CVM1 assembly (.cvms) or CASM JSON (.casm) to CVM1 bytecode (.cvm1)")]
 struct Cli {
-    /// Input CASM text file.
+    /// Input: CVM1 assembly (`.cvms`) or CASM JSON (`.casm`, `.sno`).
     input: PathBuf,
 
-    /// Output CVM1 binary file.
+    /// Output CVM1 file (default: `<input stem>.cvm1` beside the input; `-` is stdout).
     #[arg(short, long, value_name = "FILE")]
     output: Option<PathBuf>,
 
@@ -44,7 +50,8 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
     crush_lang_sdk::theme::init_styling();
-    if let Err(e) = compile(&cli.input, cli.output, cli.name, cli.caps) {
+    let notes = matches!(cli.message_format, MessageFormat::Text);
+    if let Err(e) = compile(&cli.input, cli.output, cli.name, cli.caps, notes) {
         // Mirrors the wiring in `crushc` and `crush-run`. The CLI
         // fallback path calls `crush_lang_sdk::assemble` directly (not
         // `Runtime::run_casm`), so we downcast on the assembler's typed
@@ -88,25 +95,52 @@ fn compile(
     output: Option<PathBuf>,
     name: Option<String>,
     caps: Vec<String>,
+    notes: bool,
 ) -> anyhow::Result<()> {
-    let source = std::fs::read_to_string(input)?;
+    use crush_lang_sdk::formats::{self, InputFormat};
     let permissions: Vec<&str> = caps.iter().map(|s| s.as_str()).collect();
 
-    let program = crush_lang_sdk::assemble(&source, Some(&permissions), name.as_deref())?;
+    let program = match formats::detect_or_bail(input, notes)? {
+        InputFormat::Cvms => {
+            let source = std::fs::read_to_string(input)?;
+            crush_lang_sdk::assemble(&source, Some(&permissions), name.as_deref())?
+        }
+        format @ (InputFormat::CasmJson | InputFormat::CasmBinary) => {
+            let mut casm = formats::load_casm(input, format)?;
+            for cap in &caps {
+                if !casm.manifest.permissions.contains(cap) {
+                    casm.manifest.permissions.push(cap.clone());
+                }
+            }
+            let mut program = crush_lang_sdk::compile::casm_to_vm(&casm)?;
+            if name.is_some() {
+                program.manifest.name = name;
+            }
+            program
+        }
+        other => anyhow::bail!(
+            "crush-compile assembles CVM1 assembly (.cvms) or CASM JSON (.casm); '{}' is {other:?} \
+             — compile it with crushc",
+            input.display()
+        ),
+    };
     let blob = program.to_blob();
 
-    let out_path = output.unwrap_or_else(|| {
-        let mut p = input.clone();
-        p.set_extension("cvm1");
-        p
-    });
-
-    std::fs::write(&out_path, blob)?;
+    if output.as_deref() == Some(std::path::Path::new("-")) {
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        out.write_all(&blob)?;
+        out.flush()?;
+        return Ok(());
+    }
+    let out_path = output.unwrap_or_else(|| formats::artifact_path(input, "cvm1"));
+    std::fs::write(&out_path, &blob)?;
+    // The size written, not the code section's (it printed 15 for a 124-byte file).
     println!(
         "compiled {} → {} ({} bytes)",
         input.display(),
         out_path.display(),
-        program.code.len()
+        blob.len()
     );
     Ok(())
 }

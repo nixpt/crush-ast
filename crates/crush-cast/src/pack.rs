@@ -26,9 +26,11 @@ use crate::Program;
 ///
 /// Compatibility is gated on the **major** component: a program whose
 /// `cast_version` major differs (or is unparseable) is rejected at load time
-/// with [`PackError::Version`]. Minor bumps stay compatible — the existing
-/// corpus carries both `"0.1"` and `"0.1.0"`.
-pub const CAST_VERSION: &str = "0.1";
+/// with [`PackError::Version`]. Minor bumps stay compatible (CAST is 0.x, so
+/// `"0.1"`, `"0.1.0"` and `"0.2"` all load). Every producer in this repository
+/// — the Crush parser, the language walkers, the CLIs — writes exactly this
+/// value (#365); `docs/FILE-FORMATS.md` lists them.
+pub const CAST_VERSION: &str = "0.1.0";
 
 /// Serialization format for CAST programs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

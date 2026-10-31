@@ -48,7 +48,7 @@ def build_orchestration_ast():
     process_body = [fetch_data, delegate_analysis]
 
     program = Program(
-        cast_version="0.2.0",
+        cast_version="0.1.0",
         lang="crush",
         entry="incident_response_workflow",
         functions={

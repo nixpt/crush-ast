@@ -48,7 +48,10 @@ use std::collections::HashMap;
 
 pub const MAGIC: &[u8; 4] = b"CVM1";
 /// The newest container version this runtime reads (and writes, for a
-/// program with a kind table).
+/// program with a kind table). [`Program::to_blob`] writes
+/// [`VERSION_NO_KIND_TABLE`] (2) for a program without one — most programs —
+/// so a fresh compile's version byte is usually 2; readers accept
+/// [`MIN_VERSION`]..=[`VERSION`] (1..=3).
 pub const VERSION: u8 = VERSION_KIND_TABLE;
 pub const MIN_VERSION: u8 = 1;
 /// The version written for a program without a kind table (unchanged since
@@ -392,10 +395,21 @@ pub struct Manifest {
     pub permissions: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    /// Serialized in name order (`sorted_functions`), so the same program
+    /// writes the same `.cvm1` bytes every time (#365: `HashMap` order made
+    /// two compiles of one file differ).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty", serialize_with = "sorted_functions")]
     pub functions: HashMap<String, FunctionEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<String>,
+}
+
+fn sorted_functions<S: serde::Serializer>(
+    functions: &HashMap<String, FunctionEntry>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    let sorted: std::collections::BTreeMap<&String, &FunctionEntry> = functions.iter().collect();
+    serde::Serialize::serialize(&sorted, s)
 }
 
 /// A compiled CVM1 program: manifest + const pool + flat code section.

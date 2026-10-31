@@ -341,7 +341,7 @@ impl Compiler {
         let mut source_files: HashMap<String, usize> = HashMap::new();
         let mut casm_program = CasmProgram::new();
         // The CASM `version` is the CASM schema version, not the CAST one:
-        // a walker's CAST carries `cast_version` "0.2", which the CASM
+        // a CAST `cast_version` (0.x, `crush_cast::CAST_VERSION`), which the CASM
         // load gate (VER-02) would refuse on any round trip (CRUSH-278).
         casm_program.version = casm::CASM_VERSION.to_string();
         casm_program.lang = program.lang;
@@ -562,9 +562,10 @@ impl Compiler {
         }
 
         if !self.all_permissions.is_empty() {
-            casm_program.manifest = Manifest {
-                permissions: self.all_permissions.iter().cloned().collect(),
-            };
+            // Sorted, so the same source writes the same CASM JSON (#365).
+            let mut permissions: Vec<String> = self.all_permissions.iter().cloned().collect();
+            permissions.sort_unstable();
+            casm_program.manifest = Manifest { permissions };
         }
 
         self.last_debug_info = Some(debug_info);

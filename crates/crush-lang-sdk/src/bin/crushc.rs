@@ -1,15 +1,25 @@
 //! `crushc` — the Crush compiler, akin to `rustc`.
 //!
-//! Compiles `.crush` source files to CVM1 bytecode (`.cvm1`), with optional
-//! intermediate-representation emission (AST, CASM, type-annotated AST).
+//! Compiles `.crush` source — or CAST (`.cast.json`, `.cast`, `.castb`) — to
+//! CVM1 bytecode (`.cvm1`), or emits another representation of it. Every
+//! format is listed in `docs/FILE-FORMATS.md` (#365).
+//!
+//! Output files follow one rule: an artifact (`--emit vm|casm|cvms|cast`) is
+//! written beside the input as `<stem>.<ext>`; a view (`--emit ast`) goes to
+//! stdout; `-o FILE` overrides either, and `-o -` means stdout.
 //!
 //! # Examples
 //!
 //! ```bash
-//! crushc program.crush
+//! crushc program.crush                      # program.cvm1
 //! crushc program.crush -o output.cvm1
-//! crushc program.crush --emit casm
-//! crushc program.crush --emit ast
+//! crushc program.crush --emit casm          # program.casm (CASM JSON)
+//! crushc program.crush --emit casm -o - | jq .manifest
+//! crushc program.crush --emit cvms          # program.cvms (CVM1 assembly)
+//! crushc program.crush --emit cast          # program.cast.json (CAST JSON)
+//! crushc program.cast.json                  # compile CAST
+//! crushc program.crush --emit ast           # the program rendered as Crush source
+//! crushc cast validate|pack|unpack|diff …   # CAST file tools
 //! crushc program.crush --check
 //! crushc program.crush -O --cap io.print --cap str.concat
 //! crushc program.crush -L ./modules -L /usr/lib/crush   # import search path (CRUSH-110)
@@ -25,23 +35,33 @@ use crush_lang_sdk::theme::JsonDiagnosticExt as _;
 #[derive(ClapParser)]
 #[command(name = "crushc")]
 #[command(author, version = concat!("0.2.0"))]
-#[command(about = "Compile Crush source files to CVM1 bytecode")]
+#[command(about = "Compile Crush source (or CAST) to CVM1 bytecode")]
 #[command(long_about = "\
-crushc compiles `.crush` source files into executable CVM1 bytecode.\n\
-It can also emit intermediate representations for debugging.\n\
+crushc compiles `.crush` source files — or CAST IR (`.cast.json`, `.cast`,\n\
+`.castb`) — into executable CVM1 bytecode (`.cvm1`). It can also emit\n\
+CASM JSON (`.casm`), CVM1 assembly (`.cvms`) or CAST JSON (`.cast.json`).\n\
+\n\
+Artifacts are written beside the input as `<stem>.<ext>`; `--emit ast`\n\
+prints to stdout. `-o FILE` overrides, `-o -` writes to stdout.\n\
+\n\
+`crushc cast validate|pack|unpack|diff FILE…` are the CAST file tools.\n\
 \n\
 Supports Crush frontend features: functions, if/else, while loops,\n\
 variables, capability calls, string operations, and the standard library.")]
 struct Cli {
-    /// Path to the input `.crush` source file.
+    /// The input: `.crush` source, or CAST (`.cast.json`, `.cast`, `.castb`).
     input: PathBuf,
 
-    /// Write output to FILE (default: <input_stem>.cvm1).
+    /// Write output to FILE; `-` is stdout. Default: artifacts go to
+    /// `<input stem>.<ext>` beside the input (vm → .cvm1, casm → .casm,
+    /// cvms → .cvms, cast → .cast.json), `ast` goes to stdout.
     #[arg(short = 'o', long, value_name = "FILE")]
     output: Option<PathBuf>,
 
-    /// What to emit: vm (default), casm (assembly text), ast (CAST dump),
-    /// types (type-annotated AST).
+    /// What to emit: vm (CVM1 bytecode, default), casm (CASM JSON), cvms
+    /// (CVM1 assembly text, what crush-compile assembles), cast (CAST JSON;
+    /// CBOR with `-o x.castb`), ast (the parsed program rendered back as Crush
+    /// source — a view, not CAST). `types` is not implemented (#371).
     #[arg(long, value_name = "WHAT", default_value = "vm")]
     emit: EmitKind,
 
@@ -90,8 +110,23 @@ struct Cli {
 enum EmitKind {
     Vm,
     Casm,
+    Cvms,
+    Cast,
     Ast,
     Types,
+}
+
+impl EmitKind {
+    /// The default file extension of an artifact, `None` for a view.
+    fn artifact_ext(self) -> Option<&'static str> {
+        match self {
+            EmitKind::Vm => Some("cvm1"),
+            EmitKind::Casm => Some("casm"),
+            EmitKind::Cvms => Some("cvms"),
+            EmitKind::Cast => Some("cast.json"),
+            EmitKind::Ast | EmitKind::Types => None,
+        }
+    }
 }
 
 impl std::str::FromStr for EmitKind {
@@ -100,16 +135,26 @@ impl std::str::FromStr for EmitKind {
         match s {
             "vm" => Ok(EmitKind::Vm),
             "casm" => Ok(EmitKind::Casm),
+            "cvms" => Ok(EmitKind::Cvms),
+            "cast" => Ok(EmitKind::Cast),
             "ast" => Ok(EmitKind::Ast),
             "types" => Ok(EmitKind::Types),
             _ => Err(format!(
-                "unknown emit kind '{s}' (expected: vm, casm, ast, types)"
+                "unknown emit kind '{s}' (expected: vm, casm, cvms, cast, ast)"
             )),
         }
     }
 }
 
 fn main() {
+    // `crushc cast <tool> …`: the CAST file tools (#365, ported from
+    // exosphere's `ant crush cast`). A file literally named `cast` is not a
+    // compilable input (it has no `.crush` / `.cast.json` extension).
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("cast") {
+        crush_lang_sdk::theme::init_styling();
+        std::process::exit(crush_lang_sdk::cast_cli::main(&argv[2..]));
+    }
     let cli = Cli::parse();
     crush_lang_sdk::theme::init_styling();
     if let Err(e) = run_compiler(&cli) {
@@ -143,15 +188,24 @@ fn main() {
 }
 
 fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
-    let source = std::fs::read_to_string(&cli.input)
-        .map_err(|e| anyhow::anyhow!("cannot read '{}': {e}", cli.input.display()))?;
+    if cli.emit == EmitKind::Types {
+        anyhow::bail!(
+            "--emit types is not implemented yet (#371): it used to print the same \
+             source render as --emit ast, with no types"
+        );
+    }
+    use crush_lang_sdk::formats::{self, InputFormat};
+    let format = formats::detect_or_bail(&cli.input, matches!(cli.message_format, MessageFormat::Text))?;
+    if !matches!(format, InputFormat::Crush) && !format.is_cast() {
+        anyhow::bail!(
+            "crushc compiles `.crush` source or CAST (`.cast.json`, `.cast`, `.castb`); \
+             '{}' is already compiled — run it with `crush-run run`",
+            cli.input.display()
+        );
+    }
 
     if cli.verbose {
-        eprintln!(
-            "crushc: reading '{}' ({} bytes)",
-            cli.input.display(),
-            source.len()
-        );
+        eprintln!("crushc: reading '{}' ({format:?})", cli.input.display());
         eprintln!("crushc: edition {}", cli.edition);
         if !cli.lib_paths.is_empty() {
             eprintln!(
@@ -166,7 +220,19 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     }
 
     // ── Step 1: Parse to CAST (Crush Abstract Syntax Tree) ──────────
-    let mut program = match crush_frontend::parser::Parser::parse(&source) {
+    // A CAST input is loaded through the version-gated `Program::load` path.
+    let source = if format.is_cast() {
+        String::new()
+    } else {
+        std::fs::read_to_string(&cli.input)
+            .map_err(|e| anyhow::anyhow!("cannot read '{}': {e}", cli.input.display()))?
+    };
+    let parsed = if format.is_cast() {
+        Ok(formats::load_cast(&cli.input, format)?)
+    } else {
+        crush_frontend::parser::Parser::parse(&source)
+    };
+    let mut program = match parsed {
         Ok(p) => p,
         Err(errors) => {
             let file = cli.input.display().to_string();
@@ -212,6 +278,19 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         }
     }
 
+    // `--emit cast`: the program as parsed, imports merged, before the
+    // polyglot pass (which the loader runs again when the CAST is compiled).
+    if cli.emit == EmitKind::Cast {
+        program.cast_version = crush_cast::CAST_VERSION.to_string();
+        let dest = destination(cli);
+        let codec = match &dest {
+            Dest::File(p) => crush_cast::Format::from_path(p),
+            Dest::Stdout => crush_cast::Format::Json,
+        };
+        let bytes = program.serialize(codec).map_err(|e| anyhow::anyhow!("{e}"))?;
+        return write_artifact(cli, &dest, &bytes, "");
+    }
+
     // Same pass `compile_crush_source` (the `crush-run x.crush` path) runs:
     // without it `@lang` blocks get no variable marshaling (CRUSH-130).
     // It also collects the CRUSH-270 polyglot warnings (implicit output,
@@ -223,8 +302,8 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
 
     if cli.emit == EmitKind::Ast {
         let rendered = crush_frontend::render::render_program(&program);
-        emit_text_output(cli, &rendered)?;
-        return Ok(());
+        let dest = destination(cli);
+        return write_artifact(cli, &dest, rendered.as_bytes(), "");
     }
 
     if cli.verbose {
@@ -267,12 +346,6 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         }
     };
 
-    if cli.emit == EmitKind::Types {
-        let rendered = crush_frontend::render::render_program(&program);
-        emit_text_output(cli, &rendered)?;
-        return Ok(());
-    }
-
     if cli.verbose {
         eprintln!("crushc: type-check OK");
     }
@@ -299,25 +372,38 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     if cli.verbose && cli.invariant_runtime {
         eprintln!("crushc: invariant runtime checks enabled");
     }
+    let mut compiler =
+        crush_frontend::compiler::Compiler::new().with_invariant_runtime(cli.invariant_runtime);
+    let casm_prog = compiler.compile_lowered(lowered, cosm)?;
+    let dest = destination(cli);
     match cli.emit {
         EmitKind::Casm => {
-            let mut compiler = crush_frontend::compiler::Compiler::new()
-                .with_invariant_runtime(cli.invariant_runtime);
-            let casm_prog = compiler.compile_lowered(lowered, cosm)?;
-            // Convert CASM IR to VM bytecode and disassemble back to text.
-            // This produces the canonical VM assembly format that
-            // crush_vm::assemble() (and `crush-vm asm`) can consume.
+            // CASM JSON, the `casm::Program` IR (`.casmb` → MessagePack).
+            let codec = match &dest {
+                Dest::File(p) => casm::Format::from_path(p),
+                Dest::Stdout => casm::Format::Json,
+            };
+            if codec == casm::Format::Binary && !casm_prog.functions.is_empty() {
+                anyhow::bail!(
+                    "binary CASM (.casmb) can't hold a program with functions yet — it would \
+                     not load back (#372); write CASM JSON (.casm) instead"
+                );
+            }
+            let bytes = casm_prog.serialize(codec).map_err(|e| anyhow::anyhow!("{e}"))?;
+            write_artifact(cli, &dest, &bytes, "")
+        }
+        EmitKind::Cvms => {
+            // CVM1 assembly: the bytecode disassembled, with its `.cap`
+            // header, in the form `crush-compile` / `crush_vm::assemble` read.
             let vm_prog = crush_lang_sdk::compile::casm_to_vm(&casm_prog)?;
-            let casm_text = crush_vm::disassemble(&vm_prog);
-            emit_text_output(cli, &casm_text)?;
-            Ok(())
+            let mut text = crush_vm::disassemble(&vm_prog);
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+            write_artifact(cli, &dest, text.as_bytes(), "")
         }
         EmitKind::Vm => {
-            let mut compiler = crush_frontend::compiler::Compiler::new()
-                .with_invariant_runtime(cli.invariant_runtime);
-            let casm_prog = compiler.compile_lowered(lowered, cosm)?;
             let vm_program = crush_lang_sdk::compile::casm_to_vm(&casm_prog)?;
-
             if cli.verbose {
                 eprintln!(
                     "crushc: compiled OK ({} instructions, {} constants)",
@@ -325,35 +411,54 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
                     vm_program.consts.len(),
                 );
             }
-
-            let out_path = cli
-                .output
-                .clone()
-                .unwrap_or_else(|| cli.input.with_extension("cvm1"));
-
-            if cli.verbose {
-                eprintln!(
-                    "crushc: writing {} bytes to '{}'",
-                    vm_program.code.len(),
-                    out_path.display()
-                );
-            }
-
             let blob = vm_program.to_blob();
-            std::fs::write(&out_path, &blob)
-                .map_err(|e| anyhow::anyhow!("cannot write '{}': {e}", out_path.display()))?;
-
-            println!(
-                "  Compiled {} → {} ({} instructions, {} bytes)",
-                cli.input.display(),
-                out_path.display(),
-                vm_program.code.len(),
-                blob.len(),
-            );
-            Ok(())
+            let detail = format!("{} instructions, ", vm_program.code.len());
+            write_artifact(cli, &dest, &blob, &detail)
         }
         _ => unreachable!(),
     }
+}
+
+/// Where an emit goes: stdout or a file.
+enum Dest {
+    Stdout,
+    File(PathBuf),
+}
+
+/// `-o -` → stdout, `-o FILE` → FILE; otherwise an artifact goes beside the
+/// input as `<stem>.<ext>` and a view to stdout.
+fn destination(cli: &Cli) -> Dest {
+    match &cli.output {
+        Some(p) if p.as_os_str() == "-" => Dest::Stdout,
+        Some(p) => Dest::File(p.clone()),
+        None => match cli.emit.artifact_ext() {
+            Some(ext) => Dest::File(crush_lang_sdk::formats::artifact_path(&cli.input, ext)),
+            None => Dest::Stdout,
+        },
+    }
+}
+
+/// Write `bytes` to `dest`; a file write reports the path and real size.
+fn write_artifact(cli: &Cli, dest: &Dest, bytes: &[u8], detail: &str) -> anyhow::Result<()> {
+    match dest {
+        Dest::Stdout => {
+            use std::io::Write;
+            let mut out = std::io::stdout().lock();
+            out.write_all(bytes)?;
+            out.flush()?;
+        }
+        Dest::File(path) => {
+            std::fs::write(path, bytes)
+                .map_err(|e| anyhow::anyhow!("cannot write '{}': {e}", path.display()))?;
+            println!(
+                "  Compiled {} → {} ({detail}{} bytes)",
+                cli.input.display(),
+                path.display(),
+                bytes.len(),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Print an import-resolution failure (text: `[import] error: file:line:col:
@@ -382,21 +487,3 @@ fn report_import_error(cli: &Cli, e: &anyhow::Error) -> ! {
     }
     std::process::exit(1);
 }
-
-/// Emit text to stdout (no -o) or to a file.
-fn emit_text_output(cli: &Cli, content: &str) -> anyhow::Result<()> {
-    if let Some(ref path) = cli.output {
-        std::fs::write(path, content)
-            .map_err(|e| anyhow::anyhow!("cannot write '{}': {e}", path.display()))?;
-        eprintln!(
-            "crushc: wrote '{}' ({} bytes)",
-            path.display(),
-            content.len()
-        );
-    } else {
-        print!("{content}");
-    }
-    Ok(())
-}
-
-

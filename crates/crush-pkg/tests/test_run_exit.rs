@@ -69,7 +69,7 @@ fn run_sees_path_dependencies_like_build_and_bare() {
         assert!(stdout(&out).contains("hello from dep"), "{args:?}:\n{}", all(&out));
     }
     // `run` now also writes target/ (it is the build-then-run path).
-    assert!(app.join("target/consumer.cvm").is_file());
+    assert!(app.join("target/consumer.cvm1").is_file());
 }
 
 #[test]

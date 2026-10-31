@@ -78,7 +78,7 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
     }
 
     Ok(Program {
-        cast_version: "0.2".to_string(),
+        cast_version: crush_cast::CAST_VERSION.to_string(),
         entry: "main".to_string(),
         lang: Some("javascript".to_string()),
         functions,

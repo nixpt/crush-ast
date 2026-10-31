@@ -13,6 +13,9 @@ pub struct DepResolution {
 
 pub struct BuildOutput {
     pub program: crush_vm::Program,
+    /// The CASM IR `program` was assembled from: what `target/<name>.casm`
+    /// holds (CASM JSON, #365).
+    pub casm: ::casm::Program,
     pub source_files: Vec<PathBuf>,
     pub functions: Vec<String>,
     pub deps: Vec<DepResolution>,
@@ -469,7 +472,10 @@ impl PackageBuilder {
             combined.push('\n');
         }
 
-        let program = crush_lang_sdk::compile::compile_crush_source(&combined)?;
+        let (casm, warnings) =
+            crush_lang_sdk::compile::compile_crush_to_casm_with_warnings(&combined)?;
+        let mut program = crush_lang_sdk::compile::casm_to_vm(&casm)?;
+        program.warnings = warnings;
 
         let functions: Vec<String> = program.manifest.functions.keys().cloned().collect();
         let all_source_paths: Vec<PathBuf> = sources.into_iter().map(|(p, _)| p).collect();
@@ -486,6 +492,7 @@ impl PackageBuilder {
 
         Ok(BuildOutput {
             program,
+            casm,
             source_files: all_source_paths,
             functions,
             deps,
@@ -581,28 +588,21 @@ impl PackageBuilder {
 
         let name = &self.manifest.capsule.name;
 
-        let cvm_path = target_dir.join(format!("{}.cvm", name));
+        // CVM1 bytecode under its canonical name (`.cvm1`; readers still take
+        // `.cvm`, the name this wrote before #365).
+        let cvm_path = target_dir.join(format!("{}.cvm1", name));
         let blob = output.program.to_blob();
         std::fs::write(&cvm_path, blob)?;
         println!("  wrote {}", cvm_path.display());
 
-        let casm_path = target_dir.join(format!("{}.casm.json", name));
-        let dump = serde_json::json!({
-            "version": "1.0",
-            "name": name,
-            "functions": output.functions,
-            "code_len": output.program.code.len(),
-            "consts": output.program.consts,
-            "manifest": {
-                "runtime": output.program.manifest.runtime,
-                "permissions": output.program.manifest.permissions,
-                "name": output.program.manifest.name,
-                "entry": output.program.manifest.entry,
-            },
-            "code_hex": output.program.code.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""),
-        });
-        let json_str = serde_json::to_string_pretty(&dump)?;
-        std::fs::write(&casm_path, json_str)?;
+        // The CASM IR as CASM JSON (`casm::Program`), which `crush-run` runs.
+        // (Before #365 this was a `.casm.json` summary — function names and a
+        // hex dump of the code — that no tool could load.)
+        let casm_path = target_dir.join(format!("{}.casm", name));
+        output
+            .casm
+            .save(&casm_path)
+            .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", casm_path.display()))?;
         println!("  wrote {}", casm_path.display());
 
         Ok(())
@@ -776,12 +776,19 @@ mod tests {
         builder.write_output(&output).unwrap();
 
         let target = dir.path().join("target");
-        assert!(target.join("write-test.cvm").exists());
-        assert!(target.join("write-test.casm.json").exists());
+        assert!(target.join("write-test.cvm1").exists());
+        assert!(!target.join("write-test.cvm").exists());
+        assert!(!target.join("write-test.casm.json").exists());
 
-        let cvm_data = std::fs::read(target.join("write-test.cvm")).unwrap();
+        let cvm_data = std::fs::read(target.join("write-test.cvm1")).unwrap();
         let loaded = crush_vm::Program::from_blob(&cvm_data).unwrap();
         assert!(!loaded.code.is_empty());
+
+        // `.casm` is real CASM JSON: it loads through the gated loader and
+        // assembles to the same bytecode.
+        let casm = ::casm::Program::load(&target.join("write-test.casm")).unwrap();
+        let again = crush_lang_sdk::compile::casm_to_vm(&casm).unwrap();
+        assert_eq!(again.code, loaded.code);
     }
 
     #[test]

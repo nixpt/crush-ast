@@ -1,7 +1,9 @@
 # CASM Program JSON Schema
 
-This document describes the JSON wire format of `casm::Program`, the bytecode
-representation consumed by the Crush VM.  It is the output of
+This document describes the JSON wire format of `casm::Program` — the `.casm`
+file format (`docs/FILE-FORMATS.md`; moved here from `crates/crush-cast/`,
+whose name it didn't match, in #365) — the bytecode representation consumed
+by the Crush VM.  It is the output of
 `crush_lang::compile_cast()` and the input to `casm::Program::load()`.
 
 ## Top-level object: `Program`

@@ -8,6 +8,7 @@
 //!     crush repl [ARGS]      -> REPL       (crush-repl [ARGS])
 //!     crush run FILE [ARGS]  -> run        (crush-run run FILE [ARGS])
 //!     crush build FILE [ARGS]-> compile    (crushc FILE [ARGS])
+//!     crush cast CMD FILE…   -> CAST tools (crushc cast CMD FILE…; #365)
 //!     crush debug FILE [ARGS]-> debugger   (crush-debug FILE [ARGS])
 //!     crush gui run FILE --ui-> GUI runner (crush-gui run FILE --ui; CRUSH-319)
 //!     crush doctor [--json]  -> report which polyglot runtimes are on PATH
@@ -107,8 +108,9 @@ fn usage() {
     eprintln!("USAGE:");
     eprintln!("    crush                    start the interactive REPL");
     eprintln!("    crush repl [ARGS]        start the interactive REPL");
-    eprintln!("    crush run FILE [ARGS]    run a .crush/.casm/.cvm1 program");
-    eprintln!("    crush build FILE [ARGS]  compile a .crush source file to .cvm1");
+    eprintln!("    crush run FILE [ARGS]    run a program (.crush, .cast.json/.castb, .casm, .cvms, .cvm1)");
+    eprintln!("    crush build FILE [ARGS]  compile .crush (or CAST) to .cvm1; --emit casm|cvms|cast|ast");
+    eprintln!("    crush cast CMD FILE      CAST tools: validate, pack, unpack, format, diff");
     eprintln!("    crush debug FILE [ARGS]  debug a .crush program: break, step, watch, print");
     eprintln!("    crush gui run FILE --ui  run a program that draws a window with ui.* (needs crush-gui)");
     eprintln!("    crush doctor [--json]    check the host runtimes polyglot blocks need");
@@ -135,6 +137,7 @@ fn main() -> ExitCode {
             args.next();
             exec("crushc", args)
         }
+        Some("cast") => exec("crushc", args),
         Some("debug") => {
             args.next();
             exec("crush-debug", args)

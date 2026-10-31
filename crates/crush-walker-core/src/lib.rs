@@ -42,7 +42,7 @@
 //!         // ... build AST nodes ...
 //!
 //!         Ok(crush_cast::Program {
-//!             cast_version: "0.2".to_string(),
+//!             cast_version: crush_cast::CAST_VERSION.to_string(),
 //!             entry: "main".to_string(),
 //!             lang: Some("yourlang".to_string()),
 //!             functions: Default::default(),

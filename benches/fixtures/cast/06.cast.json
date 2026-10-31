@@ -1,5 +1,5 @@
 {
-  "cast_version": "1.0.0",
+  "cast_version": "0.1.0",
   "entry": "main",
   "lang": "crush",
   "functions": {

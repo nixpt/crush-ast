@@ -51,7 +51,7 @@ def build_module_integration_ast():
     )
 
     program = Program(
-        cast_version="0.2.0",
+        cast_version="0.1.0",
         lang="crush",
         entry="data_analysis_workflow",
         functions={

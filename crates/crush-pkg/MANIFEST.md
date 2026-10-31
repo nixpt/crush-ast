@@ -29,6 +29,25 @@ path = "../util"                  # path deps are compiled into the package
 `crush-pkg show` prints the parsed manifest, including `category` and
 `platforms` when they're set.
 
+## Build outputs and entry formats
+
+`crush-pkg build` writes `target/<name>.cvm1` (CVM1 bytecode; it was
+`target/<name>.cvm` before #365) and `target/<name>.casm` (the CASM IR as
+CASM JSON, which `crush-run run` runs too; before #365 this was a
+`.casm.json` summary no tool could load). An `entry` may also be
+pre-compiled, by extension:
+
+| `entry` extension | Treated as |
+|---|---|
+| `.crush` | Crush source, compiled with its dependencies |
+| `.casm`, `.sno`, `.casmb` | CASM IR — `.sno` is what Sona compiles a `.sn` program to (CASM JSON under its own name) |
+| `.cvms` | CVM1 assembly (its `.cap` lines declare its capabilities) |
+| `.cvm1`, `.cvm` | CVM1 bytecode |
+| `.casm.json`, a text `.casm` | accepted for one release, with a note: rename to `.casm` / `.cvms` |
+
+Bundles carry a `.casm` or `.cvm1` (or `.cvm`) payload. The full table is
+[`docs/FILE-FORMATS.md`](../../docs/FILE-FORMATS.md).
+
 ## Dependencies
 
 Crush has no source-level `import` (CRUSH-110), so a dependency's entry file

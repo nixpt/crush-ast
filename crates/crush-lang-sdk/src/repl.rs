@@ -92,7 +92,7 @@ impl ReplState {
             },
         );
         Program {
-            cast_version: "1.0.0".to_string(),
+            cast_version: crush_cast::CAST_VERSION.to_string(),
             entry: "main".to_string(),
             lang: Some("crush".to_string()),
             functions,

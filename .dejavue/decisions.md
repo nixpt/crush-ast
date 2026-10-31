@@ -1405,3 +1405,9 @@ CRUSH-319 phase 1: desktop+headless backends, headless-verified; window not run 
 Reason:
 CRUSH-110, captain's qualified+selective model. Merge before SemanticAnalyzer::check so imports type-check and missing_grants sees imported code. Separator is :: (already used by lifted methods, so every backend and the debugger take it); '.' is impossible because the compiler reads a dotted Call name as obj.method capability call. Search: importer dir, -L, CRUSH_PATH; a.b -> a/b.crush only (no mod.crush). Modules are definitions only; their main is ignored.
 
+
+## 2026-10-31T04:25:19-05:00 — One extension per Crush file format (#365)
+
+Reason:
+.casm = CASM JSON, .cvms = CVM1 assembly text, .cvm1 canonical bytecode (.cvm alias), CAST_VERSION 0.1.0 written by every producer. CVM1 assembly carries its manifest as .cap lines (chosen over crush-run inferring caps) so the grant travels with the file like .cvm1/.casm. Artifact emits write <stem>.<ext>, views go to stdout, -o - is stdout. Table: docs/FILE-FORMATS.md.
+

@@ -3,6 +3,9 @@
 //! Text format:
 //!   ; or # start line comments
 //!   label:              jump target label
+//!   .cap NAME [NAME…]   capability the program declares (its manifest
+//!                       permissions; the disassembler writes one per
+//!                       permission, so a disassembly runs as compiled, #365)
 //!   .func NAME          function entry point directive
 //!   PUSH 42             integer operand
 //!   PUSH_STR "hello"    string operand (double-quoted, Rust `{:?}` escapes)
@@ -50,6 +53,8 @@ pub fn assemble(
     // `.func name arity` (COSM K1.4): the function's recorded arity.
     let mut arities: HashMap<String, u8> = HashMap::new();
     let mut entry_name: Option<String> = None;
+    // `.cap NAME` (#365): capabilities declared in the text itself.
+    let mut header_caps: Vec<String> = Vec::new();
     let mut consts: Vec<String> = Vec::new();
     let mut const_index: HashMap<String, usize> = HashMap::new();
     let mut offset: usize = 0;
@@ -112,6 +117,20 @@ pub fn assemble(
         if line.starts_with('.') {
             let toks = split_tokens(&line);
             match toks[0].as_str() {
+                ".cap" => {
+                    if toks.len() < 2 {
+                        return Err(AssemblyError::new(lineno, ".cap needs a capability name"));
+                    }
+                    for cap in &toks[1..] {
+                        let cap = cap.trim_matches('"');
+                        if cap.is_empty() || cap.chars().any(char::is_whitespace) {
+                            return Err(AssemblyError::new(lineno, format!("invalid capability name {cap:?}")));
+                        }
+                        if !header_caps.iter().any(|c| c == cap) {
+                            header_caps.push(cap.to_string());
+                        }
+                    }
+                }
                 ".func" => {
                     if toks.len() != 2 && toks.len() != 3 {
                         return Err(AssemblyError::new(lineno, ".func needs a name (and optionally its arity)"));
@@ -277,11 +296,16 @@ pub fn assemble(
         }
     }
 
+    // The text's own `.cap` header, then the caller's grants (`--cap`).
+    let mut all_permissions = header_caps;
+    for cap in permissions.unwrap_or_default() {
+        if !all_permissions.iter().any(|c| c == cap) {
+            all_permissions.push(cap.to_string());
+        }
+    }
     let mut manifest = Manifest {
         runtime: "casm-v0".to_string(),
-        permissions: permissions
-            .map(|p| p.iter().map(|s| s.to_string()).collect())
-            .unwrap_or_default(),
+        permissions: all_permissions,
         name: name.map(str::to_string),
         ..Default::default()
     };
@@ -335,6 +359,15 @@ pub fn disassemble(program: &Program) -> String {
     let mut lines: Vec<String> = Vec::new();
     if let Some(module) = program.kind_table() {
         disassemble_kind_table(module, &mut lines);
+    }
+    // The manifest's permissions travel with the text as `.cap` lines, which
+    // `assemble` reads back, so a disassembly of a program that prints still
+    // runs (#365).
+    if !program.manifest.permissions.is_empty() {
+        lines.push("; capabilities (manifest permissions)".to_string());
+        for cap in &program.manifest.permissions {
+            lines.push(format!(".cap {cap}"));
+        }
     }
 
     // Collect jump targets and function offsets for label placement.
@@ -880,5 +913,68 @@ mod string_escape_tests {
     fn malformed_unicode_escape_is_an_error() {
         assert!(parse_string(r#""\u{zz}""#, 1).is_err());
         assert!(parse_string(r#""\u{110000}""#, 1).is_err());
+    }
+}
+
+#[cfg(test)]
+mod cap_header_tests {
+    use super::*;
+
+    const SRC: &str = ".func main\nPUSH_STR \"hi\"\nCAP_CALL \"io.print\" 1\nPOP\nHALT\n";
+
+    #[test]
+    fn cap_header_declares_manifest_permissions() {
+        let text = format!(".cap io.print\n.cap io.print str.concat\n{SRC}");
+        let program = assemble(&text, None, None).unwrap();
+        assert_eq!(program.manifest.permissions, ["io.print", "str.concat"]);
+    }
+
+    #[test]
+    fn cap_header_and_caller_grants_merge_without_duplicates() {
+        let text = format!(".cap io.print\n{SRC}");
+        let program = assemble(&text, Some(&["io.print", "fs.read"]), None).unwrap();
+        assert_eq!(program.manifest.permissions, ["io.print", "fs.read"]);
+    }
+
+    /// `.cvm1` bytes don't depend on `HashMap` order (#365): the manifest's
+    /// function table is written in name order, and the version byte is 2
+    /// for a program without a kind table.
+    #[test]
+    fn to_blob_is_deterministic_and_writes_version_2_without_a_kind_table() {
+        let text: String = ["zeta", "main", "alpha", "mid", "beta", "omega"]
+            .iter()
+            .map(|f| format!(".func {f}\nRET\n"))
+            .collect();
+        let program = assemble(&text, None, None).unwrap();
+        let blob = program.to_blob();
+        assert_eq!(&blob[..4], b"CVM1");
+        assert_eq!(blob[4], crate::bytecode::VERSION_NO_KIND_TABLE);
+        for _ in 0..16 {
+            let mut copy = program.clone();
+            copy.manifest.functions = program.manifest.functions.clone().into_iter().collect();
+            assert_eq!(copy.to_blob(), blob);
+        }
+        let json = serde_json::to_string(&program.manifest).unwrap();
+        let order: Vec<usize> = ["alpha", "beta", "main", "mid", "omega", "zeta"]
+            .iter()
+            .map(|f| json.find(&format!("\"{f}\":{{")).unwrap())
+            .collect();
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "{json}");
+    }
+
+    #[test]
+    fn bare_cap_directive_is_an_error() {
+        let err = assemble(&format!(".cap\n{SRC}"), None, None).unwrap_err();
+        assert!(err.msg.contains(".cap needs"), "{err}");
+    }
+
+    #[test]
+    fn disassembly_carries_permissions_and_reassembles_to_the_same_manifest() {
+        let program = assemble(SRC, Some(&["io.print"]), None).unwrap();
+        let text = disassemble(&program);
+        assert!(text.contains(".cap io.print"), "{text}");
+        let again = assemble(&text, None, None).unwrap();
+        assert_eq!(again.manifest.permissions, ["io.print"]);
+        assert_eq!(again.code, program.code);
     }
 }

@@ -67,7 +67,7 @@ impl CapsuleBundle {
                 let mut data = Vec::new();
                 entry.read_to_end(&mut data)?;
                 payload = Some(data);
-            } else if name.ends_with(".cvm") {
+            } else if name.ends_with(".cvm") || name.ends_with(".cvm1") {
                 let mut data = Vec::new();
                 entry.read_to_end(&mut data)?;
                 payload = Some(data);
@@ -84,7 +84,7 @@ impl CapsuleBundle {
             for i in 0..archive.len() {
                 let mut entry = archive.by_index(i)?;
                 let entry_name = entry.name();
-                if entry_name.ends_with(".casm") || entry_name.ends_with(".cvm") {
+                if entry_name.ends_with(".casm") || entry_name.ends_with(".cvm") || entry_name.ends_with(".cvm1") {
                     let mut data = Vec::new();
                     entry.read_to_end(&mut data)?;
                     payload = Some(data);
@@ -96,7 +96,7 @@ impl CapsuleBundle {
         let manifest =
             manifest.ok_or_else(|| anyhow::anyhow!("Missing capsule/crush.toml in bundle"))?;
         let payload =
-            payload.ok_or_else(|| anyhow::anyhow!("Missing .casm/.cvm payload in bundle"))?;
+            payload.ok_or_else(|| anyhow::anyhow!("Missing .casm/.cvm1 payload in bundle"))?;
 
         Ok(Self {
             manifest,
@@ -138,7 +138,7 @@ impl CapsuleBundle {
                     Ok(m) => manifest = Some(m),
                     Err(_) => continue,
                 }
-            } else if name.ends_with(".casm") || name.ends_with(".cvm") {
+            } else if name.ends_with(".casm") || name.ends_with(".cvm") || name.ends_with(".cvm1") {
                 let mut data = Vec::new();
                 entry.read_to_end(&mut data)?;
                 payload = Some(data);
@@ -152,7 +152,7 @@ impl CapsuleBundle {
         let manifest =
             manifest.ok_or_else(|| anyhow::anyhow!("Missing capsule/crush.toml in bundle"))?;
         let payload =
-            payload.ok_or_else(|| anyhow::anyhow!("Missing .casm/.cvm payload in bundle"))?;
+            payload.ok_or_else(|| anyhow::anyhow!("Missing .casm/.cvm1 payload in bundle"))?;
 
         Ok(Self {
             manifest,
@@ -171,7 +171,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         crate::manifest::scaffold_package(dir.path(), "bundle-test").unwrap();
 
-        // Build to get .cvm output
+        // Build to get .cvm1 output
         let manifest =
             crate::manifest::Manifest::from_file(&dir.path().join("capsule.toml")).unwrap();
         let builder = crate::builder::PackageBuilder::new(manifest, dir.path().to_path_buf());
@@ -187,7 +187,7 @@ mod tests {
         )
         .unwrap();
         std::fs::copy(
-            dir.path().join("target/bundle-test.cvm"),
+            dir.path().join("target/bundle-test.cvm1"),
             capsule_dir.join("payload.cvm"),
         )
         .unwrap();

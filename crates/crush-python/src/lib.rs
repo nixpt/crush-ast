@@ -47,10 +47,10 @@ fn parse_cson(cson_str: &str) -> PyResult<String> {
     Ok(format!("CaisonDocument(version={:?}, root={:?})", doc.version, doc.root))
 }
 
-/// List all CAST version strings known to this library.
+/// The CAST IR version this library writes and accepts (major-gated).
 #[pyfunction]
 fn cast_version() -> &'static str {
-    "0.2"
+    crush_cast::CAST_VERSION
 }
 
 /// Python module: crush
@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn test_cast_version() {
-        assert_eq!(cast_version(), "0.2");
+        assert_eq!(cast_version(), crush_cast::CAST_VERSION);
     }
 
     #[test]
