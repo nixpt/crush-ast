@@ -90,9 +90,7 @@ pub(crate) fn check_cap_permitted(cap: &str, declared: bool, quotas: &Quotas) ->
     if !declared {
         return Err(VmError::CapNotDeclared(cap.to_string()));
     }
-    if let Some(allowed) = &quotas.allowed_caps
-        && !allowed.iter().any(|a| a == cap)
-    {
+    if !quotas.cap_allowed(cap) {
         return Err(VmError::CapDenied(cap.to_string()));
     }
     Ok(())

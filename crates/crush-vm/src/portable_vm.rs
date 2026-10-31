@@ -2021,11 +2021,7 @@ impl PortableVm {
             .get(idx)
             .is_some_and(|cap| cap == "io.read")
             && self.declared_caps.contains("io.read")
-            && self
-                .quotas
-                .allowed_caps
-                .as_ref()
-                .is_none_or(|allowed| allowed.iter().any(|a| a == "io.read"))
+            && self.quotas.cap_allowed("io.read")
     }
 
     /// `parallel_map` without threads (wasm): the same share-nothing jobs as

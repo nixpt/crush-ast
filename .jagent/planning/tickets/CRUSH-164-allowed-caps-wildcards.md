@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-164 |
 | **Priority** | P5 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M7 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -18,9 +18,9 @@
 
 ## Success criteria
 
-- [ ] `fs.*` matches `fs.read` but not `fsx.read`; `*` alone requires an explicit opt-in
-- [ ] optional expiry instant per entry
-- [ ] tests for match/non-match/expired
+- [x] `fs.*` matches `fs.read` but not `fsx.read`; `*` alone requires an explicit opt-in
+- [x] optional expiry instant per entry
+- [x] tests for match/non-match/expired
 
 ## Technical approach
 
@@ -37,3 +37,7 @@
 ## Source (reference only — re-implement, don't copy)
 
 - exo `crates/platform/sdk/vm-runtime/src/enforcement.rs::Scope::matches`
+
+## Resolution
+
+`Quotas::cap_allowed` (crush-vm `vm.rs`) is the single matcher. `allowed_caps` stays `Option<Vec<String>>` (plain string = exact name). `prefix.*` entries match children only (not `fsx.*`, not the bare prefix). A bare `*` is inert unless `Quotas::allow_any_cap` is set. Per-entry expiry via `Quotas::allowed_caps_expiry` / `allow_cap_until`. Routed sites: `scheduler::check_cap_permitted` (covers every CAP_CALL/EXEC_LANG in both engines), `PortableVm::awaits_io_read`, `Runtime::missing_grants`. Tests: `crates/crush-vm/src/tests/cap_patterns.rs`.

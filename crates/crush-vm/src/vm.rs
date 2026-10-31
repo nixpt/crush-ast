@@ -853,7 +853,20 @@ pub struct Quotas {
     pub max_output: usize,
     pub max_call_depth: usize,
     /// If set, further restricts the program's declared permissions.
+    ///
+    /// Entries are exact capability names (`fs.read`) or `prefix.*` patterns
+    /// (`fs.*` covers `fs.read`/`fs.list`, not `fsx.read` and not `fs`
+    /// itself). A bare `*` entry grants nothing unless [`allow_any_cap`] is
+    /// set. Always test through [`Quotas::cap_allowed`], never `contains`.
+    ///
+    /// [`allow_any_cap`]: Quotas::allow_any_cap
     pub allowed_caps: Option<Vec<String>>,
+    /// Explicit opt-in that lets a bare `*` entry in `allowed_caps` match
+    /// every capability. Without it a `*` entry is inert.
+    pub allow_any_cap: bool,
+    /// Optional expiry per `allowed_caps` entry (keyed by the entry text). An
+    /// entry whose instant has passed matches nothing.
+    pub allowed_caps_expiry: Vec<(String, std::time::Instant)>,
     /// Wall-clock bound (milliseconds) for a single `EXEC_LANG` polyglot
     /// subprocess. `max_steps` bounds *instructions*, not real time — a
     /// capability that blocks on I/O (a hung `python3 -c`, a slow network
@@ -884,8 +897,52 @@ impl Default for Quotas {
             max_output: 1 << 20,
             max_call_depth: 256,
             allowed_caps: None,
+            allow_any_cap: false,
+            allowed_caps_expiry: Vec::new(),
             max_wall_time_ms: 30_000,
         }
+    }
+}
+
+impl Quotas {
+    /// Add an `allowed_caps` entry that stops matching at `until` (CRUSH-164).
+    pub fn allow_cap_until(mut self, entry: impl Into<String>, until: std::time::Instant) -> Self {
+        let entry = entry.into();
+        self.allowed_caps.get_or_insert_with(Vec::new).push(entry.clone());
+        self.allowed_caps_expiry.push((entry, until));
+        self
+    }
+
+    /// THE matcher for `allowed_caps` (CRUSH-164): every check site goes
+    /// through here. A `None` allowlist permits everything. Exact names hit
+    /// the same equality test as before; pattern and expiry work only runs
+    /// for non-exact entries / when expiries are configured.
+    pub fn cap_allowed(&self, cap: &str) -> bool {
+        let Some(list) = &self.allowed_caps else {
+            return true;
+        };
+        list.iter().any(|entry| self.entry_matches(entry, cap))
+    }
+
+    fn entry_matches(&self, entry: &str, cap: &str) -> bool {
+        let hit = if entry == cap {
+            true
+        } else if entry == "*" {
+            self.allow_any_cap
+        } else if let Some(prefix) = entry.strip_suffix('*') {
+            // `fs.*`: the dot stays in the prefix, so `fs` and `fsx.read` miss.
+            prefix.ends_with('.') && cap.len() > prefix.len() && cap.starts_with(prefix)
+        } else {
+            false
+        };
+        if !hit || self.allowed_caps_expiry.is_empty() {
+            return hit;
+        }
+        let now = std::time::Instant::now();
+        !self
+            .allowed_caps_expiry
+            .iter()
+            .any(|(e, until)| e == entry && now >= *until)
     }
 }
 
