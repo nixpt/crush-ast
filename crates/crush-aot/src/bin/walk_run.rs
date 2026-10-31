@@ -87,18 +87,24 @@ fn main() -> anyhow::Result<()> {
     let quotas = crush_vm::Quotas { max_steps: 10_000_000, ..Default::default() };
     let mut exec_times = Vec::with_capacity(cli.runs);
     let mut output = String::new();
+    let mut failed: Option<String> = None;
 
     for run_i in 0..cli.runs {
         let t2 = Instant::now();
-        let result = crush_vm::run_with_caps(&vm_prog, &quotas, Some(&host_caps));
+        let result = if run_i == 0 {
+            // Stream the first run's output so a runtime error never discards
+            // what the program printed before it (CRUSH-184). The output is
+            // kept verbatim — trimming hid trailing spaces and newline-free
+            // `io.write` output (C printf, Rust print!).
+            let mut sink = |part: &str| output.push_str(part);
+            crush_vm::vm::run_with_caps_streaming(&vm_prog, &quotas, Some(&host_caps), &mut sink)
+        } else {
+            crush_vm::run_with_caps(&vm_prog, &quotas, Some(&host_caps))
+        };
         exec_times.push(t2.elapsed());
-        if run_i == 0 {
-            // Program output verbatim — trimming hid trailing spaces and
-            // newline-free `io.write` output (C printf, Rust print!).
-            output = match result {
-                Ok(r) => r.output,
-                Err(e) => format!("Error: {e}\n"),
-            };
+        if let Err(e) = result {
+            failed = Some(format!("{e}"));
+            break;
         }
     }
 
@@ -112,6 +118,11 @@ fn main() -> anyhow::Result<()> {
         eprintln!("  Compile {:>10.1} s", c);
         eprintln!("  Execute {:>10.1} s", e);
         eprintln!("  Total   {:>10.1} s", w + c + e);
+    }
+    // A runtime error is a failure: report it (after the streamed output) and
+    // exit non-zero (CRUSH-184).
+    if let Some(e) = failed {
+        return Err(anyhow::anyhow!("{e}"));
     }
     Ok(())
 }
