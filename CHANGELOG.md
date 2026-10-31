@@ -14,6 +14,12 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Deterministic CASM function layout (CRUSH-188):** `crushc --emit casm` laid
+  the functions out into the code buffer by iterating a `HashMap`, so the same
+  source compiled to different CASM (and different label numbering) from run to
+  run — bad for reproducible builds and the AOT build cache. Functions are now
+  emitted in name order.
+
 - **Go walker: no more silent drops (CRUSH-198):** the walker matched
   `short_variable_declaration`, but tree-sitter-go emits `short_var_declaration`,
   so `a := 7` was dropped and `a` read as uninitialised; `var`, assignment,

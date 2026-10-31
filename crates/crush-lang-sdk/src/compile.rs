@@ -1117,7 +1117,12 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
     }
 
     let is_kind = |name: &str| program.kind_table().is_some_and(|m| m.kind(name).is_some());
-    for (fname, func) in &program.functions {
+    // Lay the functions out in name order, not `HashMap` order: the same source
+    // must assemble to byte-identical code — and a byte-identical disassembly —
+    // on every run (the AOT build cache is keyed on it). CRUSH-188.
+    let mut functions: Vec<_> = program.functions.iter().collect();
+    functions.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    for (fname, func) in functions {
         // A GPU kernel (it uses `ptx_*` device ops, CRUSH-zorro-3) runs on the device via
         // `gpu.launch`, which compiles it from CASM with crush-ptx. It has no CVM1
         // form, so it is left out of the host program.
@@ -1594,6 +1599,30 @@ mod tests {
             .unwrap_or(false)
     }
     use super::*;
+
+    // CRUSH-188: the same source must assemble to byte-identical code. The
+    // function layout used to follow `HashMap` iteration order, so two runs
+    // produced different CASM/disassembly.
+    #[test]
+    fn casm_to_vm_lays_out_functions_in_name_order() {
+        let src = "fn zeta(n) { return n + 1 }\n\
+                   fn alpha(n) { return zeta(n) * 2 }\n\
+                   fn main() { print(alpha(5)) }\n";
+        let text = crush_vm::disassemble(&casm_to_vm(&compile_crush_to_casm(src).unwrap()).unwrap());
+        let order: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix(".func "))
+            .map(|l| l.split_whitespace().next().unwrap())
+            .collect();
+        let mut sorted = order.clone();
+        sorted.sort_unstable();
+        assert_eq!(order, sorted, "functions must be laid out in name order:\n{text}");
+
+        // Two independent compilations agree byte for byte.
+        let a = crush_vm::disassemble(&casm_to_vm(&compile_crush_to_casm(src).unwrap()).unwrap());
+        let b = crush_vm::disassemble(&casm_to_vm(&compile_crush_to_casm(src).unwrap()).unwrap());
+        assert_eq!(a, b, "the same source must assemble identically");
+    }
 
     #[test]
     fn test_compile_simple_program() {
