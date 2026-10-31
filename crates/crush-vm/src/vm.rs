@@ -78,6 +78,12 @@ pub enum VmError {
     CapDenied(String),
     #[error("unknown capability: {0}")]
     UnknownCap(String),
+    /// A **registered** capability ran and failed: its handler returned an
+    /// error (a missing file, a rejected argument, …). Reported as
+    /// `<cap>: <message>`, never as `UnknownCap` — the capability exists, it
+    /// just didn't succeed (CRUSH-241 / GitHub #370).
+    #[error("{cap}: {message}")]
+    CapFailed { cap: String, message: String },
     /// A `throw` that no enclosing `try` caught. The payload is the thrown
     /// value's text. (Was reported as `UnknownCap`, CRUSH-127.)
     #[error("uncaught error: {0}")]
@@ -950,6 +956,10 @@ impl Quotas {
 #[derive(Debug, Default)]
 pub struct VmResult {
     pub output: String,
+    /// Everything the program wrote to stderr (`io.eprint`), in print order.
+    /// Kept separate from `output` so a host can redirect the two streams
+    /// independently (CRUSH-241).
+    pub stderr: String,
     pub steps: usize,
     pub halted: bool,
     pub stack: Vec<Value>,
@@ -1006,6 +1016,26 @@ pub fn run_with_caps_streaming(
     sink: &mut dyn FnMut(&str),
 ) -> Result<VmResult, VmError> {
     crate::scheduler::run_scheduled_streaming(program, quotas, host_caps, Some(sink))
+}
+
+/// [`run_with_caps_streaming`], with stderr as its own stream (CRUSH-241):
+/// `out_sink` sees everything printed to stdout, `err_sink` everything
+/// `io.eprint` wrote. Both are still accumulated in the returned
+/// [`VmResult`].
+pub fn run_with_caps_streaming_split(
+    program: &Program,
+    quotas: &Quotas,
+    host_caps: Option<&HostCaps>,
+    out_sink: &mut dyn FnMut(&str),
+    err_sink: &mut dyn FnMut(&str),
+) -> Result<VmResult, VmError> {
+    crate::scheduler::run_scheduled_streaming_split(
+        program,
+        quotas,
+        host_caps,
+        Some(out_sink),
+        Some(err_sink),
+    )
 }
 
 /// Run a program using the optimized FastVM architecture with empty capabilities.

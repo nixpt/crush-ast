@@ -160,3 +160,61 @@ fn map_is_truthy_only_when_non_empty() {
     m.insert("x".to_string(), Value::Int(1));
     assert!(Value::new_map(m).is_truthy());
 }
+
+// ── CRUSH-241: `io.eprint` is stdout's stderr twin ──────────────────────────
+
+#[test]
+fn cap_io_eprint_is_registered_as_variadic_no_return() {
+    let spec = crate::capabilities()
+        .get("io.eprint")
+        .expect("io.eprint should be in the portable registry");
+    assert_eq!(spec.argc, None, "io.eprint takes any number of arguments, like io.print");
+    assert!(!spec.returns, "io.eprint leaves nothing on the stack");
+    assert!(!spec.privileged, "writing to stderr needs no grant, like io.print");
+}
+
+#[test]
+fn cap_io_eprint_feeds_the_stderr_channel_not_stdout() {
+    let r = run_src_with_perms(
+        "PUSH_STR \"out\"\nCAP_CALL \"io.print\" 1\nPUSH_STR \"diag\"\nPUSH_STR \" 1\"\nCAP_CALL \"io.eprint\" 2\nHALT",
+        &["io.print", "io.eprint"],
+    );
+    assert_eq!(r.output, "out\n", "eprint text must not appear in stdout");
+    assert_eq!(r.stderr, "diag 1\n", "eprint concatenates its args and adds one newline");
+}
+
+#[test]
+fn portable_vm_io_eprint_matches_the_scheduler() {
+    let source = "PUSH_STR \"out\"\nCAP_CALL \"io.print\" 1\nPUSH_STR \"diag\"\nCAP_CALL \"io.eprint\" 1\nHALT";
+    let program = assemble(source, Some(&["io.print", "io.eprint"]), Some("t")).unwrap();
+    let mut vm = crate::PortableVm::new(program);
+    let result = vm.run().expect("run");
+    assert_eq!(result.output, "out\n");
+    assert_eq!(result.stderr, "diag\n");
+    assert_eq!(vm.take_output(), "out\n");
+    assert_eq!(vm.take_stderr(), "diag\n");
+}
+
+// ── CRUSH-241: a registered capability that fails is not "unknown" ──────────
+
+#[test]
+fn failing_registered_capability_is_reported_as_cap_and_message() {
+    struct Boom;
+    impl crate::host::HostCap for Boom {
+        fn spec(&self) -> crate::host::HostCapSpec {
+            crate::host::HostCapSpec { name: "test.boom".to_string(), argc: None, returns: false }
+        }
+        fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+            Err("test.boom target.txt: permission denied".to_string())
+        }
+    }
+    let mut caps = crate::host::HostCaps::new();
+    caps.register(Box::new(Boom));
+    let program = assemble("CAP_CALL \"test.boom\" 0\nHALT", Some(&["test.boom"]), None).unwrap();
+    let error = crate::vm::run_with_caps(&program, &Quotas::default(), Some(&caps)).unwrap_err();
+    assert!(
+        !matches!(error, crate::vm::VmError::UnknownCap(_)),
+        "a registered capability that failed is a CapFailed, got: {error:?}"
+    );
+    assert_eq!(error.to_string(), "test.boom: test.boom target.txt: permission denied");
+}
