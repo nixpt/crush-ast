@@ -33,3 +33,11 @@ Stylo/vello/winit); grant-gated by `--ui`.
 
 See the PR. Phase 2: terminal backend (tui-easy, ratatui 0.30). Later: browser
 (crush-web `Session`, `ui.next_event` as a yield point like `io.read`).
+
+## CI
+
+crush-gui (arniko -> bliss font stack) links the system fontconfig, which the
+workspace CI runners lack, so it broke every `--workspace` job. It stays a
+workspace member but is out of `default-members`, every `--workspace` CI step
+has `--exclude crush-gui`, and a dedicated `Test (gui)` job apt-installs
+`pkg-config libfontconfig1-dev` and runs fmt, clippy and tests for it alone.

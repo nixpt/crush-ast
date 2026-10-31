@@ -38,6 +38,11 @@ members = [
     "xtask"
     , "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-caison", "crates/crush-cson-shim", "crates/crush-lang-custom", "crates/crush-tui", "crates/crush-ptx", "crates/crush-aotc"]
 
+# crush-gui (CRUSH-319) pulls arniko's font/GPU stack, which needs system
+# libraries (fontconfig) a plain `cargo build` shouldn't demand: it stays a
+# member but out of the default set. Build it with `-p crush-gui`.
+default-members = ["crates/crush-errors", "crates/crush-cast", "crates/crush-cosm", "crates/casm", "crates/tree-sitter-crush", "crates/crush-walker-core", "crates/crush-lang-wasm", "crates/crush-lang-dart", "crates/cli", "crates/crush-lang-go", "crates/crush-lang-c", "crates/crush-lang-zig", "crates/crush-vm", "crates/crush-vm-capi", "crates/crush-lang-sdk", "crates/crush-frontend", "crates/crush-index", "crates/crush-pkg", "crates/crush-installer", "crates/crush-diagnostics", "crates/crush-python", "crates/crush-lang-python", "crates/crush-lang-nepali", "crates/crush-lang-rust", "crates/crush-lang-js", "crates/crush-lang-bash", "crates/crush-lang-zsh", "crates/crush-lang-java", "crates/crush-net", "crates/crush-debugger", "crates/crush-jit", "crates/crush-macros", "crates/crush-aot", "xtask", "crates/crush-ffi", "crates/crush-plugin-example", "crates/crush-lint", "crates/crush-caison", "crates/crush-cson-shim", "crates/crush-lang-custom", "crates/crush-tui", "crates/crush-ptx", "crates/crush-aotc"]
+
 # crush-web is deliberately NOT a member: many members depend on crush-vm
 # with default features (native-plugins on), and Cargo unifies features for
 # a shared path dependency across the whole workspace resolve graph even

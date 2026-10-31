@@ -29,6 +29,7 @@ jobs:
           cargo check --workspace \
             --exclude crush-python \
             --exclude crush-lang-custom \
+            --exclude crush-gui \
             2>&1
 
   # ── MSRV: the workspace builds on the declared rust-version ───────────────
@@ -59,6 +60,7 @@ jobs:
           cargo check --workspace \
             --exclude crush-python \
             --exclude crush-lang-custom \
+            --exclude crush-gui \
             2>&1
 
   # ── Core VM + compiler tests ───────────────────────────────────────────────
@@ -462,7 +464,35 @@ jobs:
           cargo test --workspace --no-run \
             --exclude crush-python \
             --exclude crush-lang-custom \
+            --exclude crush-gui \
             2>&1
+
+  # ── crush-gui (CRUSH-319): its own job ─────────────────────────────────────
+  # crush-gui pulls arniko -> bliss -> a font stack that links the system
+  # fontconfig, which the other jobs' runners do not have; it is excluded from
+  # every `--workspace` job above and built only here. Plain apt-get, not a
+  # cached-apt action (a restored cache can miss fontconfig's .pc file).
+  test-gui:
+    name: Test (gui)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libfontconfig1-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt -p crush-gui --check
+      - run: cargo clippy -p crush-gui --all-targets --no-deps -- -D warnings
+      - run: cargo test -p crush-gui --locked
 
   # ── Linting (blocking) ────────────────────────────────────────────────────
   # Previously: `continue-on-error: true` AND `|| true` — two independent reasons
@@ -487,6 +517,7 @@ jobs:
           cargo clippy --workspace \
             --exclude crush-python \
             --exclude crush-lang-custom \
+            --exclude crush-gui \
             -- -D clippy::never_loop
 
   # ── Release build compiles + uploads the binaries as an artifact ─────────
@@ -596,6 +627,7 @@ jobs:
           cargo check --workspace \
             --exclude crush-python \
             --exclude crush-lang-custom \
+            --exclude crush-gui \
             ${{ matrix.args }} 2>&1
 
   # ── crush-web: native tests + headless Chromium (blocking) ────────────────
