@@ -55,12 +55,22 @@ pub fn cap_args(payload: &serde_json::Value, operands: Vec<Value>) -> Vec<Value>
     args
 }
 
+/// The error for an AI op with no registered handler / grant. One message for
+/// the scheduler, PortableVm, FastVM embedders and AOT runtimes.
+pub fn not_granted(kind: &str) -> VmError {
+    VmError::CapDenied(format!(
+        "ai_native.{kind}: AI op '{kind}' not granted / no AI host registered \
+         (grant `ai_native` via HostCapsBuilder::ai_native(true) and register a provider)"
+    ))
+}
+
 /// Dispatch `ai_native.<kind>` through `host_caps`.
 ///
-/// Ungranted (no handler registered) yields `Value::Null` — the pre-CRUSH-32
-/// default; the operands are still consumed by the caller, so the stack stays
-/// balanced either way. A granted handler is arity-checked against its spec
-/// and run with the wall-clock deadline, like any `CAP_CALL`.
+/// Ungranted (no handler registered) is a loud `VmError::CapDenied` naming the
+/// op (CRUSH-234): a silently-null model call is worse than an error for agent
+/// code. The same message is produced on every engine. A granted handler is
+/// arity-checked against its spec and run with the wall-clock deadline, like
+/// any `CAP_CALL`.
 pub fn dispatch(
     kind: &str,
     payload: &serde_json::Value,
@@ -70,7 +80,7 @@ pub fn dispatch(
 ) -> Result<Value, VmError> {
     let gate = format!("ai_native.{kind}");
     let Some(handler) = host_caps.and_then(|h| h.get(&gate)) else {
-        return Ok(Value::Null);
+        return Err(not_granted(kind));
     };
     let args = cap_args(payload, operands);
     if let Some(expected) = handler.spec().argc
@@ -173,21 +183,21 @@ mod tests {
     }
 
     #[test]
-    fn ungranted_is_null_and_never_calls() {
+    fn ungranted_is_a_named_error_and_never_calls() {
         let caps = HostCaps::new();
-        let out = dispatch(
+        let err = dispatch(
             "query",
             &serde_json::json!({"query": "x"}),
             vec![],
             Some(&caps),
             1000,
         )
-        .unwrap();
-        assert_eq!(out, Value::Null);
-        assert_eq!(
-            dispatch("query", &serde_json::json!({}), vec![], None, 1000).unwrap(),
-            Value::Null
-        );
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(matches!(err, VmError::CapDenied(_)), "{msg}");
+        assert!(msg.contains("ai_native.query") && msg.contains("not granted"), "{msg}");
+        let none = dispatch("query", &serde_json::json!({}), vec![], None, 1000).unwrap_err();
+        assert_eq!(none.to_string(), msg);
     }
 
     #[test]

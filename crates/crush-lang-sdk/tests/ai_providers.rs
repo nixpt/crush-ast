@@ -114,14 +114,17 @@ fn compiled_program_reaches_the_host_backends() {
 fn a_backend_is_not_a_grant() {
     let oracle = Arc::new(Oracle::default());
     let fleet = Arc::new(Fleet::default());
-    let out = run(HostCapsBuilder::new()
+    let mut caps = HostCapsBuilder::new()
         .query_provider(oracle.clone())
-        .delegation_backend(fleet.clone()));
-    assert_eq!(
-        out,
-        json!([null, null]),
-        "without ai_native(true) the gates are absent"
-    );
+        .delegation_backend(fleet.clone())
+        .build();
+    caps.register(Box::new(Capture(Arc::new(Mutex::new(Json::Null)))));
+    // CRUSH-234: without ai_native(true) the gates are absent and the first AI
+    // op is a loud error naming it (it used to yield null and carry on).
+    let err = crush_vm::run_with_caps(&program(), &Quotas::default(), Some(&caps))
+        .expect_err("ungranted AI op must fail closed")
+        .to_string();
+    assert!(err.contains("ai_native.query") && err.contains("not granted"), "{err}");
     assert_eq!(oracle.calls.load(Ordering::SeqCst), 0);
     assert!(fleet.dispatched.lock().unwrap().is_empty());
 }

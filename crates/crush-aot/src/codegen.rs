@@ -7,6 +7,7 @@
 pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     crate::refuse_cosm(program, "Rust")?;
     crate::refuse_green_task(program, "Rust")?;
+    crate::refuse_ai(program, "Rust")?;
     crate::method_support::check_rust_result(program)?;
     let mut out = String::new();
 
@@ -954,7 +955,8 @@ fn emit_body(
             }
         }
         // ── AI opcodes ──
-        // CRUSH-32 follow-up: each AI opcode now emits a per-opcode inline stub
+        // UNREACHABLE since CRUSH-234: `crate::refuse_ai` rejects AI ops before codegen.
+        // Was: CRUSH-32 follow-up, each AI opcode emitted a per-opcode inline stub
         // Object ({ok: true, kind, echo: ([])}) via `make_ai_stub`, so the 5
         // tiers (scheduler, portable_vm, fastvm, AOT-Rust, AOT-C) agree at
         // differential-cmp time. Args ride on instruction args, NOT the VM

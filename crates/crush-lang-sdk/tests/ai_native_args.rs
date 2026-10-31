@@ -154,13 +154,41 @@ fn scheduler_and_portable_vm_pass_payload_and_operands() {
     assert_eq!(b, a, "scheduler and PortableVm agree");
 }
 
+/// CRUSH-234: an AI op with no grant is a loud, named error — the same text on
+/// the scheduler, PortableVm and the FastVM embedder seam — not a silent null.
 #[test]
-fn ungranted_ai_ops_are_null_and_keep_the_stack_balanced() {
+fn ungranted_ai_ops_fail_closed_with_the_same_error_on_every_engine() {
     let casm = crush_frontend::compile_cast_owned(program()).expect("compile");
     let prog = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm_to_vm");
-    let (a, b) = run_both(&prog, false);
-    assert_eq!(a, serde_json::json!([null, null, null]));
-    assert_eq!(b, a);
+    let caps = || {
+        let mut c = HostCapsBuilder::new().ai_native(false).build();
+        c.register(Box::new(Capture(Arc::new(Mutex::new(serde_json::Value::Null)))));
+        c
+    };
+    // The first AI op in `program()` is the statement-form goal declaration.
+    let want = "ai_native.goal_declaration: AI op 'goal_declaration' not granted / no AI host registered";
+    let sched = crush_vm::run_with_caps(&prog, &Quotas::default(), Some(&caps()))
+        .expect_err("scheduler must refuse")
+        .to_string();
+    let mut pvm = PortableVm::new(prog.clone());
+    pvm.set_host_caps(caps());
+    let portable = pvm.run().expect_err("PortableVm must refuse").to_string();
+    assert!(sched.contains(want), "{sched}");
+    assert_eq!(sched, portable, "engines agree on the message");
+    // No host caps at all: same.
+    let bare = crush_vm::run_with_caps(&prog, &Quotas::default(), None)
+        .expect_err("no caps must refuse")
+        .to_string();
+    assert_eq!(bare, sched);
+
+    // FastVM: the embedder seam names the same error for every AI request kind.
+    let req = HostRequest::AiQuery { args: serde_json::json!({"query": "q"}) };
+    let denied = crush_vm::fastvm::ai_request_denied(&req, Some(&caps())).expect("denied");
+    assert!(denied.to_string().contains("ai_native.query: AI op 'query' not granted"), "{denied}");
+    assert!(crush_vm::fastvm::ai_request_denied(&req, None).is_some());
+    let granted = HostCapsBuilder::new().ai_native(true).build();
+    assert!(crush_vm::fastvm::ai_request_denied(&req, Some(&granted)).is_none());
+    assert!(crush_vm::fastvm::ai_request_denied(&HostRequest::DomQuery { args: serde_json::json!({}) }, None).is_none());
 }
 
 #[test]
