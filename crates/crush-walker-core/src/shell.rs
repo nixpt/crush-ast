@@ -45,6 +45,51 @@ impl Dialect {
     }
 }
 
+/// Stream state, kept in the global map `__g` so a shell function sees the
+/// redirection its caller set up, the way a real shell's fds are inherited.
+/// `__sh_stream`: 0 = the host's output, 1 = `__sh_buf` (a pipeline stage or a
+/// redirected command). `__sh_in`: the text a command reads as stdin (a
+/// pipeline's previous stage, a `<` file or a here-document); `""` means "no
+/// redirection", and `read` then uses the host's stdin.
+const STREAM: &str = "__sh_stream";
+const BUF: &str = "__sh_buf";
+const IN: &str = "__sh_in";
+/// 1 when `__sh_in` is this command's stdin — including when it is empty, which
+/// is not the same as "no redirection" (`grep none f | wc -l` must not read the
+/// host's stdin just because the buffer is empty).
+const IN_SET: &str = "__sh_in_set";
+/// 1 when redirected stdin came from a file (`<`), 0 when it came from a pipe or
+/// a here-document. `wc` is the only command that has to know the difference:
+/// its multi-column padding for a file's stdin changed between coreutils
+/// versions, so that case is refused instead of guessed.
+const IN_FILE: &str = "__sh_in_file";
+/// Where a `>` / `>>` command's output goes, and whether it appends.
+const OUTF: &str = "__sh_outf";
+const APPEND: &str = "__sh_append";
+/// 1 while a pipeline stage runs: a stage is a subshell, so `exit` in one leaves
+/// that stage (the pipeline, then the script, carries on) — not the script.
+const STAGE: &str = "__sh_stage";
+/// Pathname-expansion options, the ones that change what a pattern matching
+/// nothing does — `shopt -s nullglob` / `shopt -s failglob` in bash,
+/// `setopt null_glob` / `setopt nomatch` in zsh.
+///
+/// `nullglob`: a pattern that matches nothing expands to no word at all.
+/// `failglob` (bash): the command is not run, prints `no match`, and its status
+/// is 1 — the script carries on.
+/// `nomatch` (zsh, on by default): `no matches found`, which in a script ends
+/// it — bash's `failglob` alone does not do that, so the two are separate keys.
+const NULLGLOB: &str = "__sh_nullglob";
+const FAILGLOB: &str = "__sh_failglob";
+const NOMATCH: &str = "__sh_nomatch";
+/// Prefix of the error `failglob` raises: a command carrying a glob catches it,
+/// sets status 1 and carries on, where every other error still ends the run.
+const FAILGLOB_SENTINEL: &str = "__crush_failglob__";
+
+/// Printable ASCII in codepoint order (space through `~`). `tr` expands a range
+/// like `a-z` by slicing this, so a range never has to call `conv.ord`/`conv.chr`
+/// (and a set naming anything outside it is refused).
+const RANGE_ALPHA: &str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+
 /// One shell word, as written in the source (quotes and `$` included).
 #[derive(Clone, Debug)]
 pub struct Word {
@@ -65,9 +110,31 @@ pub struct Assign {
     pub line: usize,
 }
 
+/// One redirection: `<`, `>`, `>>` or a here-document.
+#[derive(Clone, Debug)]
+pub struct Redir {
+    pub kind: RedirKind,
+    /// The path (`<`, `>`, `>>`) or the here-document's body.
+    pub word: Word,
+    /// A here-document with an unquoted delimiter expands `$…` in its body.
+    pub expand: bool,
+    pub line: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RedirKind {
+    In,
+    Out,
+    Append,
+    HereDoc,
+}
+
 #[derive(Clone, Debug)]
 pub enum Cmd {
     Simple { assigns: Vec<Assign>, words: Vec<Word>, line: usize },
+    /// `cmd < f`, `cmd > f`, `cmd >> f`, `cmd <<EOT`: the command with its
+    /// streams pointed somewhere else.
+    Redirected { inner: Box<Cmd>, redirs: Vec<Redir>, line: usize },
     If { branches: Vec<(List, List)>, else_body: Option<List>, line: usize },
     Loop { cond: List, body: List, until: bool, line: usize },
     /// `for var in words`; `words: None` iterates `"$@"`.
@@ -100,7 +167,8 @@ pub enum Cond {
 #[derive(Clone, Debug)]
 pub struct Pipeline {
     pub negated: bool,
-    pub cmd: Cmd,
+    /// `a | b | c`: one entry per stage. A single stage is the plain command.
+    pub stages: Vec<Cmd>,
 }
 
 /// `first && p1 || p2 …`; `true` = `&&`.
@@ -116,14 +184,14 @@ pub type List = Vec<AndOr>;
 pub fn lower_script(dialect: Dialect, script: &List) -> Result<Program> {
     let mut lw = Lw::new(dialect);
     for item in script {
-        if let Cmd::FuncDef { name, .. } = &item.first.cmd {
+        if let [Cmd::FuncDef { name, .. }] = item.first.stages.as_slice() {
             lw.funcs.insert(name.clone());
         }
     }
     let mut body = Vec::new();
     for item in script {
-        match &item.first.cmd {
-            Cmd::FuncDef { name, body: fbody, line } if item.rest.is_empty() && !item.first.negated => {
+        match item.first.stages.as_slice() {
+            [Cmd::FuncDef { name, body: fbody, line }] if item.rest.is_empty() && !item.first.negated => {
                 lw.lower_function(name, fbody, *line)?;
                 lw.defined.insert(name.clone());
             }
@@ -159,6 +227,21 @@ pub fn lower_script(dialect: Dialect, script: &List) -> Result<Program> {
     }
     main.push(decl("__a", E::ArrayLiteral { elements: vec![], meta: m() }));
     main.push(decl("__st", int(0)));
+    for (key, init) in [
+        (STREAM, int(0)),
+        (BUF, s("")),
+        (IN, s("")),
+        (IN_SET, int(0)),
+        (IN_FILE, int(0)),
+        (OUTF, s("")),
+        (APPEND, int(0)),
+        (STAGE, int(0)),
+        (NULLGLOB, int(0)),
+        (FAILGLOB, int(0)),
+        (NOMATCH, int(if dialect == Dialect::Zsh { 1 } else { 0 })),
+    ] {
+        main.push(set_index("__g", key, init));
+    }
     main.extend(body);
     main.push(if_(
         bin("!=", var("__st"), int(0)),
@@ -771,6 +854,13 @@ struct Lw {
     depth: usize,
     /// Per enclosing loop: the variable holding the loop's exit status.
     loops: Vec<String>,
+    /// Globals written since this set was last taken. A pipeline stage's writes
+    /// are rolled back with it: the shells run each stage in a subshell, so
+    /// `printf x | read a` leaves `a` unset.
+    written: BTreeSet<String>,
+    /// Inside a command already wrapped for `failglob`, so the nested commands
+    /// (a redirection's inner command) are not wrapped a second time.
+    glob_guard: bool,
 }
 
 impl Lw {
@@ -791,6 +881,8 @@ impl Lw {
             locals: HashSet::new(),
             depth: 0,
             loops: Vec::new(),
+            written: BTreeSet::new(),
+            glob_guard: false,
         }
     }
 
@@ -806,6 +898,54 @@ impl Lw {
     fn tmp(&mut self) -> String {
         self.tmp += 1;
         format!("__t{}", self.tmp)
+    }
+
+    /// `__g[key]`, the stream state set by a redirection or a pipeline stage.
+    fn stream(&self, key: &str) -> E {
+        index(var("__g"), s(key))
+    }
+
+    /// Write `text` where this command's stdout points: the host's output, or
+    /// the buffer a pipeline stage or a redirected command fills. Everything
+    /// that prints (and every builtin's output) goes through here, so `echo x >
+    /// out` and `echo x | wc -l` are the same code path as a plain `echo x`.
+    fn emit(&mut self, out: &mut Vec<S>, text: E, newline: bool) {
+        // `io.print` already ends its line; `io.write` is the no-newline form.
+        let host = if newline {
+            cap("io.print", vec![text.clone()])
+        } else {
+            cap("io.write", vec![text.clone()])
+        };
+        let buffered = if newline { bin("+", text, s("\n")) } else { text };
+        out.push(if_(
+            bin("==", self.stream(STREAM), int(0)),
+            vec![expr_stmt(host)],
+            Some(vec![set_index("__g", BUF, bin("+", self.stream(BUF), buffered))]),
+        ));
+    }
+
+    /// Remember the stdin a command starts with, so it can be put back after
+    /// the command's own `<` / here-document / pipeline stage.
+    fn push_stdin(&mut self, out: &mut Vec<S>) -> (String, String) {
+        let (text, set) = (self.tmp(), self.tmp());
+        out.push(decl(&text, self.stream(IN)));
+        out.push(decl(&set, self.stream(IN_FILE)));
+        (text, set)
+    }
+
+    fn pop_stdin(&mut self, out: &mut Vec<S>, saved: &(String, String)) {
+        let (text, file) = saved;
+        out.push(set_index("__g", IN_SET, int(0)));
+        out.push(set_index("__g", IN_FILE, var(file)));
+        out.push(set_index("__g", IN, var(text)));
+    }
+
+    /// Point this command's stdin at `text`; `from_file` is true for `< file`
+    /// (which `wc` sizes its columns by) and false for a pipe or here-document.
+    fn set_stdin(&mut self, out: &mut Vec<S>, text: E, from_file: bool) {
+        out.push(set_index("__g", IN, text));
+        out.push(set_index("__g", IN_SET, int(1)));
+        out.push(set_index("__g", IN_FILE, int(if from_file { 1 } else { 0 })));
     }
 
     fn helper(&mut self, name: &'static str, args: Vec<E>) -> E {
@@ -885,6 +1025,7 @@ impl Lw {
             self.fn_global_refs.push((name.to_string(), line));
         }
         self.globals.insert(name.to_string());
+        self.written.insert(name.to_string());
         Ok(set_index("__g", name, value))
     }
 
@@ -940,16 +1081,231 @@ impl Lw {
     }
 
     fn lower_pipeline(&mut self, p: &Pipeline, out: &mut Vec<S>) -> Result<()> {
-        self.lower_cmd(&p.cmd, out)?;
+        if p.stages.len() == 1 {
+            self.lower_cmd(&p.stages[0], out)?;
+        } else {
+            // `a | b | c`: each stage but the last fills `__sh_buf`, and that
+            // buffer becomes the next stage's stdin. Nothing leaves the program
+            // until the last stage prints, so a pipeline cannot interleave with
+            // what the script already printed. The outer streams (a redirection
+            // or an enclosing pipeline stage) are put back for the last stage.
+            let saved_in = self.push_stdin(out);
+            let (s_stream, s_buf, s_stage) = (self.tmp(), self.tmp(), self.tmp());
+            out.push(decl(&s_stream, self.stream(STREAM)));
+            out.push(decl(&s_buf, self.stream(BUF)));
+            out.push(decl(&s_stage, self.stream(STAGE)));
+            let mut carry: Option<String> = None;
+            for (i, stage) in p.stages.iter().enumerate() {
+                let last = i + 1 == p.stages.len();
+                if let Some(prev) = carry.take() {
+                    self.set_stdin(out, var(&prev), false);
+                }
+                if last {
+                    out.push(set_index("__g", STREAM, var(&s_stream)));
+                    out.push(set_index("__g", BUF, var(&s_buf)));
+                } else {
+                    out.push(set_index("__g", STREAM, int(1)));
+                    out.push(set_index("__g", BUF, s("")));
+                }
+                // A pipeline stage runs in a subshell: whatever it assigns is
+                // gone when it ends (`printf x | read a` leaves `a` unset). The
+                // stage is lowered first so its writes are known, then wrapped
+                // in a save/restore.
+                out.push(set_index("__g", STAGE, int(1)));
+                let mut stage_body = Vec::new();
+                let outer = std::mem::take(&mut self.written);
+                self.lower_cmd(stage, &mut stage_body)?;
+                let writes = std::mem::replace(&mut self.written, outer);
+                let mut saves = Vec::new();
+                for name in &writes {
+                    let slot = self.tmp();
+                    out.push(decl(&slot, index(var("__g"), s(name))));
+                    saves.push((slot, name.clone()));
+                }
+                out.extend(stage_body);
+                // bash runs the last stage in a subshell too; zsh keeps it in
+                // the current shell, so `printf x | read a` does set `a` there.
+                if self.d == Dialect::Bash || !last {
+                    for (slot, name) in saves {
+                        out.push(set_index("__g", &name, var(&slot)));
+                    }
+                }
+                out.push(set_index("__g", STAGE, var(&s_stage)));
+                if !last {
+                    // A stage with its own `> file` spent the buffer on the
+                    // file, so the next stage reads nothing — as in the shell.
+                    let buf = self.tmp();
+                    out.push(decl(&buf, self.stream(BUF)));
+                    out.push(set_index("__g", BUF, s("")));
+                    carry = Some(buf);
+                }
+            }
+            self.pop_stdin(out, &saved_in);
+        }
         if p.negated {
             out.push(if_(st_ok(), vec![set_st(1)], Some(vec![set_st(0)])));
         }
         Ok(())
     }
 
+    /// `cmd < in > out >> log <<EOT`: point the command's streams somewhere
+    /// else for the duration of the command.
+    fn lower_redirected(
+        &mut self,
+        inner: &Cmd,
+        redirs: &[Redir],
+        line: usize,
+        out: &mut Vec<S>,
+    ) -> Result<()> {
+        // `cmd > a > b` in a shell creates `a` empty and writes `b`; here only
+        // one of them would ever be touched, so it is refused rather than
+        // quietly doing half of what the shell does. The same goes for two `<`.
+        let outs = redirs
+            .iter()
+            .filter(|r| matches!(r.kind, RedirKind::Out | RedirKind::Append))
+            .count();
+        if outs > 1 {
+            return Err(self.err(
+                "two `>` / `>>` redirections on one command (only the last one's file would be written)",
+                line,
+            ));
+        }
+        if redirs.iter().filter(|r| r.kind == RedirKind::In).count() > 1 {
+            return Err(self.err("two `<` redirections on one command", line));
+        }
+        let writes = outs == 1;
+        if writes && !matches!(inner, Cmd::Simple { .. }) {
+            // The buffer is written out after the command returns, so a compound
+            // command that `break`s, `return`s or `exit`s would lose its output.
+            return Err(self.err(
+                "a `>` / `>>` on a loop, `if` or `{ }` (redirect the commands inside it instead)",
+                line,
+            ));
+        }
+        let saved_in = self.push_stdin(out);
+        let (s_stream, s_buf) = (self.tmp(), self.tmp());
+        if writes {
+            out.push(decl(&s_stream, self.stream(STREAM)));
+            out.push(decl(&s_buf, self.stream(BUF)));
+        }
+        for r in redirs {
+            match r.kind {
+                RedirKind::In => {
+                    let path = self.word_one(&r.word)?;
+                    let t = self.tmp();
+                    out.push(decl(&t, cap("fs.read", vec![path])));
+                    self.set_stdin(out, var(&t), true);
+                }
+                RedirKind::HereDoc => {
+                    let body = if r.expand { self.word_str(&r.word)? } else { s(&r.word.raw) };
+                    self.set_stdin(out, body, false);
+                }
+                RedirKind::Out | RedirKind::Append => {
+                    let path = self.word_one(&r.word)?;
+                    let t = self.tmp();
+                    out.push(decl(&t, path));
+                    out.push(set_index("__g", OUTF, var(&t)));
+                    let append = r.kind == RedirKind::Append;
+                    out.push(set_index("__g", APPEND, int(if append { 1 } else { 0 })));
+                }
+            }
+        }
+        if writes {
+            out.push(set_index("__g", STREAM, int(1)));
+            out.push(set_index("__g", BUF, s("")));
+        }
+        self.lower_cmd(inner, out)?;
+        if writes {
+            self.flush_buffer(out);
+            out.push(set_index("__g", STREAM, var(&s_stream)));
+            out.push(set_index("__g", BUF, var(&s_buf)));
+        }
+        self.pop_stdin(out, &saved_in);
+        Ok(())
+    }
+
+    /// Write a redirected command's buffer to its file and clear it. Also used
+    /// by `exit`, which must not drop what the command already printed.
+    fn flush_buffer(&mut self, out: &mut Vec<S>) {
+        // `>>` keeps what the file already holds: `fs.write` truncates, so the
+        // old contents are read back first (a missing file is empty).
+        let old = self.tmp();
+        out.push(decl(
+            &old,
+            tern(
+                bin("==", self.stream(APPEND), int(1)),
+                tern(
+                    bin("==", cap("fs.exists", vec![self.stream(OUTF)]), int(1)),
+                    cap("fs.read", vec![self.stream(OUTF)]),
+                    s(""),
+                ),
+                s(""),
+            ),
+        ));
+        let text = bin("+", var(&old), self.stream(BUF));
+        out.push(expr_stmt(cap("fs.write", vec![self.stream(OUTF), text])));
+        out.push(set_index("__g", BUF, s("")));
+    }
+
+    /// Does this command itself (not the commands inside its body) contain a
+    /// word that may glob? Only such a command needs the `failglob` wrapper; a
+    /// glob deeper in an `if` or a loop is wrapped where that command is
+    /// lowered.
+    fn cmd_may_glob(&self, cmd: &Cmd) -> bool {
+        let globbable = |w: &Word| w.raw.contains(['*', '?', '[']) || w.raw.contains('$');
+        match cmd {
+            Cmd::Simple { words, .. } => words.iter().any(globbable),
+            Cmd::Redirected { inner, redirs, .. } => {
+                self.cmd_may_glob(inner)
+                    || redirs.iter().any(|r| globbable(&r.word))
+            }
+            Cmd::For { words: Some(ws), .. } => ws.iter().any(globbable),
+            _ => false,
+        }
+    }
+
+    /// One command, with an unmatched pattern under `shopt -s failglob` skipping
+    /// the command (status 1) instead of ending the run.
     fn lower_cmd(&mut self, cmd: &Cmd, out: &mut Vec<S>) -> Result<()> {
+        if self.d == Dialect::Bash && !self.glob_guard && self.cmd_may_glob(cmd) {
+            let mut body = Vec::new();
+            self.glob_guard = true;
+            let lowered = self.lower_cmd_body(cmd, &mut body);
+            self.glob_guard = false;
+            lowered?;
+            let (e, msg) = (self.tmp(), self.tmp());
+            let head = self.helper(
+                "__sh_substr",
+                vec![
+                    var(&msg),
+                    int(0),
+                    int(FAILGLOB_SENTINEL.len() as i64),
+                    boolean(true),
+                ],
+            );
+            out.push(S::TryCatch {
+                body,
+                error_var: e.clone(),
+                handler: vec![
+                    decl(&msg, to_str(var(&e))),
+                    if_(bin("==", head, s(FAILGLOB_SENTINEL)),
+                        vec![set_st(1)],
+                        Some(vec![throw(var(&e))]),
+                    ),
+                ],
+                meta: m(),
+            });
+            return Ok(());
+        }
+        self.lower_cmd_body(cmd, out)
+    }
+
+    fn lower_cmd_body(&mut self, cmd: &Cmd, out: &mut Vec<S>) -> Result<()> {
         match cmd {
             Cmd::Simple { assigns, words, line } => self.lower_simple(assigns, words, *line, out),
+            Cmd::Redirected { inner, redirs, line } => {
+                self.lower_redirected(inner, redirs, *line, out)
+            }
             Cmd::ExtendedTest { cond, line } => {
                 let e = self.cond_expr(cond, *line)?;
                 out.push(if_(e, vec![set_st(0)], Some(vec![set_st(1)])));
@@ -1113,6 +1469,14 @@ impl Lw {
                 Ok(())
             }
             "read" => self.lower_read(args, line, out),
+            "shopt" if self.d == Dialect::Bash => self.lower_shopt(args, line, out),
+            "setopt" | "unsetopt" if self.d == Dialect::Zsh => {
+                self.lower_setopt(&name, args, line, out)
+            }
+            "cat" | "ls" | "wc" | "head" | "tail" | "grep" | "cp" | "mv" | "rm" | "mkdir"
+            | "touch" | "sort" | "uniq" | "cut" | "tr" => {
+                self.lower_coreutil(&name, args, line, out)
+            }
             "local" => self.lower_local(args, line, out),
             "return" => {
                 if !self.in_fn {
@@ -1134,6 +1498,29 @@ impl Lw {
                 };
                 let t = self.tmp();
                 out.push(decl(&t, v));
+                // A shell flushes the files it has open before leaving, so an
+                // `exit` inside `f > log` keeps what `f` already printed.
+                // A pipeline stage is a subshell, though: there `exit` leaves
+                // only the stage and the script goes on. Nothing here can
+                // resume a half-run stage, so that one is refused — after the
+                // last stage too, where it would otherwise end the whole script
+                // and silently skip what follows.
+                let stage_loud = throw(concat(vec![
+                    s("unsupported: `exit` inside a pipeline stage at "),
+                    self.at("exit", line),
+                    s(" — a shell would exit only that stage and continue"),
+                ]));
+                let mut flush_body = Vec::new();
+                self.flush_buffer(&mut flush_body);
+                out.push(if_(
+                    bin("==", self.stream(STAGE), int(1)),
+                    vec![stage_loud],
+                    Some(vec![if_(
+                        bin("==", self.stream(STREAM), int(1)),
+                        vec![if_(bin("!=", self.stream(OUTF), s("")), flush_body, None)],
+                        None,
+                    )]),
+                ));
                 out.push(expr_stmt(cap("sys.exit", vec![var(&t)])));
                 Ok(())
             }
@@ -1279,8 +1666,7 @@ impl Lw {
         }
         out.push(decl(&raw, call("str.join", vec![var(&arr), s(" ")])));
         if !escapes {
-            let c = if newline { "io.print" } else { "io.write" };
-            out.push(expr_stmt(cap(c, vec![var(&raw)])));
+            self.emit(out, var(&raw), newline);
             out.push(set_st(0));
             return Ok(());
         }
@@ -1289,13 +1675,13 @@ impl Lw {
         out.push(decl(&text, self.helper("__sh_esc", vec![var(&raw)])));
         out.push(decl(&stop, self.helper("__sh_esc_stop", vec![var(&raw)])));
         if newline {
-            out.push(if_(
-                not(var(&stop)),
-                vec![expr_stmt(cap("io.print", vec![var(&text)]))],
-                Some(vec![expr_stmt(cap("io.write", vec![var(&text)]))]),
-            ));
+            let mut with_nl = Vec::new();
+            self.emit(&mut with_nl, var(&text), true);
+            let mut no_nl = Vec::new();
+            self.emit(&mut no_nl, var(&text), false);
+            out.push(if_(not(var(&stop)), with_nl, Some(no_nl)));
         } else {
-            out.push(expr_stmt(cap("io.write", vec![var(&text)])));
+            self.emit(out, var(&text), false);
         }
         out.push(set_st(0));
         Ok(())
@@ -1337,7 +1723,7 @@ impl Lw {
                 break;
             }
         }
-        out.push(expr_stmt(cap("io.write", vec![concat(parts)])));
+        self.emit(out, concat(parts), false);
         out.push(set_st(0));
         Ok(())
     }
@@ -1371,6 +1757,75 @@ impl Lw {
                 at,
             ],
         )
+    }
+
+    /// `shopt -s nullglob` / `shopt -u nullglob` (bash), likewise `failglob`.
+    /// Only these two options exist; everything else stays refused so a script
+    /// that asks for an option this VM does not implement hears about it.
+    fn lower_shopt(&mut self, args: &[Word], line: usize, out: &mut Vec<S>) -> Result<()> {
+        let mut enable: Option<bool> = None;
+        if args.is_empty() {
+            return Err(self.err("`shopt` without an option", line));
+        }
+        for a in args {
+            let Some(lit) = self.static_lit(a)? else {
+                return Err(self.err("a `shopt` argument that comes from an expansion", line));
+            };
+            match lit.as_str() {
+                "-s" => enable = Some(true),
+                "-u" => enable = Some(false),
+                "nullglob" | "failglob" => {
+                    let Some(on) = enable else {
+                        return Err(self.err(
+                            &format!("`shopt {lit}` without `-s` or `-u`"),
+                            line,
+                        ));
+                    };
+                    let key = if lit == "nullglob" { NULLGLOB } else { FAILGLOB };
+                    out.push(set_index("__g", key, int(if on { 1 } else { 0 })));
+                }
+                other => {
+                    return Err(self.err(
+                        &format!("`shopt {other}` (only `-s`/`-u nullglob|failglob`)"),
+                        line,
+                    ))
+                }
+            }
+        }
+        out.push(set_st(0));
+        Ok(())
+    }
+
+    /// `setopt null_glob` / `setopt nomatch`, and their `unsetopt` forms (zsh).
+    /// `nomatch` is the default in a script — an unmatched pattern ends the run
+    /// with `no matches found`, the way zsh does — and `no_nomatch` turns it off
+    /// so the word stays as written.
+    fn lower_setopt(&mut self, name: &str, args: &[Word], line: usize, out: &mut Vec<S>) -> Result<()> {
+        if args.is_empty() {
+            return Err(self.err(&format!("`{name}` without an option"), line));
+        }
+        for a in args {
+            let Some(lit) = self.static_lit(a)? else {
+                return Err(self.err(&format!("a `{name}` argument that comes from an expansion"), line));
+            };
+            let (key, on) = match (name, lit.as_str()) {
+                ("setopt", "null_glob" | "nullglob") => (NULLGLOB, true),
+                ("unsetopt", "null_glob" | "nullglob") => (NULLGLOB, false),
+                ("setopt", "nomatch") => (NOMATCH, true),
+                ("setopt", "no_nomatch") => (NOMATCH, false),
+                ("unsetopt", "nomatch") => (NOMATCH, false),
+                ("unsetopt", "no_nomatch") => (NOMATCH, true),
+                _ => {
+                    return Err(self.err(
+                        &format!("`{name} {lit}` (only `null_glob` and `nomatch`)"),
+                        line,
+                    ))
+                }
+            };
+            out.push(set_index("__g", key, int(if on { 1 } else { 0 })));
+        }
+        out.push(set_st(0));
+        Ok(())
     }
 
     /// `read [-r] [-s] [-p prompt] name…` over the `io.read` capability.
@@ -1422,8 +1877,20 @@ impl Lw {
         if let Some(p) = prompt {
             out.push(expr_stmt(cap("io.write", vec![p])));
         }
-        let (text, fields) = (self.tmp(), self.tmp());
-        out.push(decl(&text, self.helper("__sh_read_line", vec![boolean(raw)])));
+        let (text, fields, rest) = (self.tmp(), self.tmp(), self.tmp());
+        // `while read …; done < file` and `cmd | read x`: the line comes from
+        // the redirected text rather than the host's stdin.
+        let (avail, isset) = (self.stream(IN), self.stream(IN_SET));
+        out.push(decl(&rest, self.helper("__sh_in_rest", vec![avail.clone()])));
+        out.push(decl(
+            &text,
+            self.helper("__sh_read_from", vec![avail, isset.clone(), boolean(raw)]),
+        ));
+        out.push(if_(
+            bin("==", isset, int(1)),
+            vec![set_index("__g", IN, var(&rest))],
+            None,
+        ));
         out.push(decl(&fields, self.helper("__sh_read_split", vec![var(&text), int(names.len() as i64)])));
         for (i, name) in names.iter().enumerate() {
             out.push(self.write_var(name, index(var(&fields), int(i as i64)), line)?);
@@ -1433,6 +1900,495 @@ impl Lw {
             vec![set_st(1)],
             Some(vec![set_st(0)]),
         ));
+        Ok(())
+    }
+
+    /// This command's whole stdin, marked consumed (a reader that read it leaves
+    /// nothing for the next one, as in a shell).
+    fn stdin_all(&mut self, out: &mut Vec<S>) -> String {
+        let t = self.tmp();
+        let (avail, isset) = (self.stream(IN), self.stream(IN_SET));
+        out.push(decl(&t, self.helper("__sh_slurp", vec![avail, isset])));
+        out.push(set_index("__g", IN, s("")));
+        out.push(set_index("__g", IN_SET, int(0)));
+        t
+    }
+
+    /// The coreutil subset the walkers run in-VM: `cat ls wc head tail grep cp
+    /// mv rm mkdir touch sort uniq cut tr`. Each is a thin layer over the `fs.*`
+    /// capabilities and the string helpers, so no process is spawned and the
+    /// same script behaves the same way wherever crush runs it. `>`/`>>`/`|`
+    /// work with them because their output goes through `emit`.
+    fn lower_coreutil(
+        &mut self,
+        name: &str,
+        args: &[Word],
+        line: usize,
+        out: &mut Vec<S>,
+    ) -> Result<()> {
+        // `cut` and `tr` take their operands next to the option (`-d :`,
+        // `-f 2`, `SET1 SET2`), so they read the argv themselves.
+        match name {
+            "cut" => return self.lower_cut(args, line, out),
+            "tr" => return self.lower_tr(args, line, out),
+            _ => {}
+        }
+        let mut flags: Vec<String> = Vec::new();
+        let mut ops: Vec<&Word> = Vec::new();
+        for w in args {
+            match self.static_lit(w)? {
+                Some(lit) if lit.len() > 1 && lit.starts_with('-') => flags.push(lit),
+                _ => ops.push(w),
+            }
+        }
+        let no_flags = |flags: &[String]| !flags.is_empty();
+        match name {
+            "cat" => {
+                if no_flags(&flags) {
+                    return Err(self.err(&format!("`cat {}` (no options)", flags.join(" ")), line));
+                }
+                let text = if ops.is_empty() {
+                    var(&self.stdin_all(out))
+                } else {
+                    let mut parts = Vec::new();
+                    for f in &ops {
+                        parts.push(cap("fs.read", vec![self.word_one(f)?]));
+                    }
+                    concat(parts)
+                };
+                self.emit(out, text, false);
+            }
+            "ls" => {
+                if no_flags(&flags) {
+                    return Err(self.err(&format!("`ls {}` (no options)", flags.join(" ")), line));
+                }
+                if ops.len() > 1 {
+                    return Err(self.err("`ls` with more than one directory", line));
+                }
+                let dir = match ops.first() {
+                    Some(w) => self.word_one(w)?,
+                    None => s("."),
+                };
+                // `ls` hides dotfiles, sorts, and prints one name per line
+                // when its output is not a terminal — which is always, here.
+                // (`fs.list` returns directory order, `ls` never does.)
+                let names = self.helper("__sh_nodot", vec![cap("fs.list", vec![dir])]);
+                let sorted = self.helper("__sh_sort", vec![names]);
+                let text = self.helper("__sh_lines_out", vec![sorted]);
+                self.emit(out, text, false);
+            }
+            "wc" => {
+                let (mut lines, mut words, mut bytes, mut chars) = (false, false, false, false);
+                for f in &flags {
+                    for c in f[1..].chars() {
+                        match c {
+                            'l' => lines = true,
+                            'w' => words = true,
+                            'c' => bytes = true,
+                            'm' => chars = true,
+                            other => return Err(self.err(&format!("`wc -{other}` (only -l, -w, -c, -m)"), line)),
+                        }
+                    }
+                }
+                if !ops.is_empty() {
+                    // The multi-file column widths are a GNU `wc` detail; stdin
+                    // (`wc -l < file`, `cat f | wc -l`) is the exact path here.
+                    return Err(self.err("`wc` with a file name (use `wc -l < file` or a pipeline)", line));
+                }
+                if !(lines || words || bytes || chars) {
+                    lines = true;
+                    words = true;
+                    bytes = true;
+                }
+                let text = var(&self.stdin_all(out));
+                let mut cols: Vec<E> = Vec::new();
+                if lines {
+                    cols.push(self.helper("__sh_count", vec![text.clone(), s("\n")]));
+                }
+                if words {
+                    let fields = self.helper("__sh_split", vec![text.clone(), self.at("wc", line)]);
+                    cols.push(to_str(call("len", vec![fields])));
+                }
+                if bytes || chars {
+                    cols.push(to_str(call("len", vec![text.clone()])));
+                }
+                let n = cols.len();
+                // GNU `wc` pads several columns to 7 when it reads a pipe, and
+                // older coreutils will also stat a `< file` stdin; newer ones
+                // pad by the file's digit count instead. The width therefore
+                // depends on the coreutils version, so a multi-column `wc` on a
+                // redirected file is refused rather than padded the wrong way.
+                // One column (the common `wc -l < f`) needs no padding at all.
+                if n > 1 {
+                    let at = self.at("wc", line);
+                    out.push(if_(
+                        bin("==", self.stream(IN_FILE), int(1)),
+                        vec![throw(concat(vec![
+                            s("unsupported: `wc` with several columns on a `< file` at "),
+                            at,
+                            s(
+                                " — its column width depends on the coreutils version (use `wc -l < f`, or a pipeline)",
+                            ),
+                        ]))],
+                        None,
+                    ));
+                }
+                let mut parts = Vec::new();
+                for (i, col) in cols.into_iter().enumerate() {
+                    if i > 0 {
+                        parts.push(s(" "));
+                    }
+                    let txt = to_str(col);
+                    parts.push(if n > 1 {
+                        self.helper("__sh_pad", vec![txt, int(7)])
+                    } else {
+                        txt
+                    });
+                }
+                let joined = concat(parts);
+                self.emit(out, joined, true);
+            }
+            "head" | "tail" => {
+                let mut count: Option<E> = None;
+                let mut rest: Vec<&Word> = ops.clone();
+                for f in &flags {
+                    // `-n N` and the `-nN` spelling; anything else is refused.
+                    let digits = f.trim_start_matches("-n");
+                    if f != "-n" && !f.starts_with("-n") {
+                        return Err(self.err(&format!("`{name} {f}` (only -n N)"), line));
+                    }
+                    if f != "-n" {
+                        match digits.parse::<i64>() {
+                            Ok(v) => count = Some(int(v)),
+                            Err(_) => return Err(self.err(&format!("`{name} {f}` (a numeric count)"), line)),
+                        }
+                        continue;
+                    }
+                    let Some(first) = rest.first().copied() else {
+                        return Err(self.err(&format!("`{name} -n` without a count"), line));
+                    };
+                    // A literal count is checked here; a variable one is
+                    // converted at run time, so `head -n $n` works and a
+                    // non-numeric value is the loud error (not a count of 0).
+                    let lit = self.static_lit(first)?.filter(|l| l.chars().all(|c| c.is_ascii_digit()));
+                    count = Some(match lit {
+                        Some(lit) => int(lit.parse::<i64>().unwrap_or(10)),
+                        None => {
+                            let word_expr = self.word_one(first)?;
+                            let at = self.at(name, line);
+                            self.helper("__sh_int", vec![word_expr, at, boolean(true)])
+                        }
+                    });
+                    rest.remove(0);
+                }
+                if rest.len() > 1 {
+                    return Err(self.err(&format!("`{name}` with more than one file"), line));
+                }
+                let text = match rest.first() {
+                    Some(w) => cap("fs.read", vec![self.word_one(w)?]),
+                    None => var(&self.stdin_all(out)),
+                };
+                let picked = self.helper("__sh_lines", vec![text]);
+                let take = if name == "head" { "__sh_take" } else { "__sh_last" };
+                let picked = self.helper(take, vec![picked, count.unwrap_or_else(|| int(10))]);
+                let text = self.helper("__sh_lines_out", vec![picked]);
+                self.emit(out, text, false);
+            }
+            "grep" => {
+                let (mut count, mut invert) = (false, false);
+                for f in &flags {
+                    for c in f[1..].chars() {
+                        match c {
+                            'c' => count = true,
+                            'v' => invert = true,
+                            other => return Err(self.err(&format!("`grep -{other}` (only -c and -v)"), line)),
+                        }
+                    }
+                }
+                let Some(pat_word) = ops.first() else {
+                    return Err(self.err("`grep` without a pattern", line));
+                };
+                if ops.len() > 2 {
+                    return Err(self.err("`grep` with more than one file", line));
+                }
+                let pat = self.word_one(pat_word)?;
+                let at = self.at("grep", line);
+                // A BRE would need a regex engine; matching `.`/`*` literally
+                // would silently disagree with the shell.
+                out.push(if_(
+                    self.helper("__sh_re_meta", vec![pat.clone()]),
+                    vec![throw(concat(vec![
+                        s("unsupported: a `grep` pattern with regular-expression syntax (`"),
+                        pat.clone(),
+                        s("`) at "),
+                        at,
+                        s(" — only literal text is matched"),
+                    ]))],
+                    None,
+                ));
+                let text = match ops.get(1) {
+                    Some(w) => cap("fs.read", vec![self.word_one(w)?]),
+                    None => var(&self.stdin_all(out)),
+                };
+                let lines = self.helper("__sh_lines", vec![text]);
+                let matched = self.helper("__sh_grep_lines", vec![lines, pat, boolean(invert)]);
+                if count {
+                    let n = to_str(call("len", vec![matched.clone()]));
+                    self.emit(out, n, true);
+                } else {
+                    let text = self.helper("__sh_lines_out", vec![matched.clone()]);
+                    self.emit(out, text, false);
+                }
+                // `grep`'s status is what `&&` and `if` read.
+                out.push(if_(
+                    bin(">", call("len", vec![matched.clone()]), int(0)),
+                    vec![set_st(0)],
+                    Some(vec![set_st(1)]),
+                ));
+                return Ok(());
+            }
+            "cp" | "mv" => {
+                if no_flags(&flags) {
+                    return Err(self.err(&format!("`{name} {}` (no options)", flags.join(" ")), line));
+                }
+                if ops.len() != 2 {
+                    return Err(self.err(&format!("`{name}` without exactly two paths"), line));
+                }
+                let (a, b) = (self.word_one(ops[0])?, self.word_one(ops[1])?);
+                let c = if name == "cp" { "fs.cp" } else { "fs.mv" };
+                out.push(expr_stmt(cap(c, vec![a, b])));
+            }
+            "rm" => {
+                let mut recursive = false;
+                for f in &flags {
+                    for c in f[1..].chars() {
+                        match c {
+                            'r' | 'R' => recursive = true,
+                            // `-f` only suppresses errors, and ours are loud.
+                            'f' => {}
+                            other => return Err(self.err(&format!("`rm -{other}` (only -r and -f)"), line)),
+                        }
+                    }
+                }
+                if ops.is_empty() {
+                    return Err(self.err("`rm` without a path", line));
+                }
+                for w in &ops {
+                    let path = self.word_one(w)?;
+                    let args = if recursive { vec![path, boolean(true)] } else { vec![path] };
+                    out.push(expr_stmt(cap("fs.rm", args)));
+                }
+            }
+            "mkdir" => {
+                let mut parents = false;
+                for f in &flags {
+                    for c in f[1..].chars() {
+                        match c {
+                            'p' => parents = true,
+                            other => return Err(self.err(&format!("`mkdir -{other}` (only -p)"), line)),
+                        }
+                    }
+                }
+                if ops.is_empty() {
+                    return Err(self.err("`mkdir` without a path", line));
+                }
+                for w in &ops {
+                    let path = self.word_one(w)?;
+                    let args = if parents { vec![path, boolean(true)] } else { vec![path] };
+                    out.push(expr_stmt(cap("fs.mkdir", args)));
+                }
+            }
+            "touch" => {
+                if no_flags(&flags) {
+                    return Err(self.err(&format!("`touch {}` (no options)", flags.join(" ")), line));
+                }
+                if ops.is_empty() {
+                    return Err(self.err("`touch` without a path", line));
+                }
+                for w in &ops {
+                    let path = self.word_one(w)?;
+                    out.push(expr_stmt(cap("fs.touch", vec![path])));
+                }
+            }
+            "sort" => {
+                let (mut reverse, mut unique) = (false, false);
+                for f in &flags {
+                    for c in f[1..].chars() {
+                        match c {
+                            'r' => reverse = true,
+                            'u' => unique = true,
+                            // `-n` compares numeric prefixes with GNU's rules for
+                            // blanks, signs and decimals; matching it only for
+                            // plain integers would silently order a mixed input
+                            // differently.
+                            other => return Err(self.err(&format!("`sort -{other}` (only -r and -u)"), line)),
+                        }
+                    }
+                }
+                if !ops.is_empty() {
+                    return Err(self.err("`sort` with a file name (use `< file` or a pipeline)", line));
+                }
+                let text = var(&self.stdin_all(out));
+                let lines = self.helper("__sh_lines", vec![text]);
+                let sorted = self.helper(
+                    "__sh_sort_lines",
+                    vec![lines, boolean(reverse), boolean(unique)],
+                );
+                let text = self.helper("__sh_lines_out", vec![sorted]);
+                self.emit(out, text, false);
+            }
+            "uniq" => {
+                let mut mode = 0i64;
+                for f in &flags {
+                    for c in f[1..].chars() {
+                        let m = match c {
+                            'c' => 1,
+                            'd' => 2,
+                            'u' => 3,
+                            other => return Err(self.err(&format!("`uniq -{other}` (only -c, -d, -u)"), line)),
+                        };
+                        if mode != 0 && mode != m {
+                            return Err(self.err("`uniq` with two of -c, -d, -u", line));
+                        }
+                        mode = m;
+                    }
+                }
+                if !ops.is_empty() {
+                    return Err(self.err("`uniq` with a file name (use `< file` or a pipeline)", line));
+                }
+                let text = var(&self.stdin_all(out));
+                let lines = self.helper("__sh_lines", vec![text]);
+                let uniq = self.helper("__sh_uniq", vec![lines, int(mode)]);
+                let text = self.helper("__sh_lines_out", vec![uniq]);
+                self.emit(out, text, false);
+            }
+            other => return Err(self.err(&format!("`{other}`"), line)),
+        }
+        out.push(set_st(0));
+        Ok(())
+    }
+
+    /// `cut -d D -f N` over stdin. One delimiter character and one field
+    /// number: GNU's field lists (`-f 1,3`, `-f 2-4`) select several columns,
+    /// which is a different output shape and is refused.
+    fn lower_cut(&mut self, args: &[Word], line: usize, out: &mut Vec<S>) -> Result<()> {
+        let (mut delim, mut field): (Option<String>, Option<i64>) = (None, None);
+        let mut i = 0;
+        while i < args.len() {
+            let lit = self.static_lit(&args[i])?;
+            match lit.as_deref() {
+                Some("-d") => {
+                    let Some(w) = args.get(i + 1) else {
+                        return Err(self.err("`cut -d` without a delimiter", line));
+                    };
+                    let Some(d) = self.static_lit(w)? else {
+                        return Err(self.err("a `cut` delimiter that comes from an expansion", line));
+                    };
+                    if d.chars().count() != 1 {
+                        return Err(self.err("`cut -d` with a delimiter that is not one character", line));
+                    }
+                    delim = Some(d);
+                    i += 2;
+                }
+                Some("-f") => {
+                    let Some(w) = args.get(i + 1) else {
+                        return Err(self.err("`cut -f` without a field number", line));
+                    };
+                    let Some(n) = self.static_lit(w)? else {
+                        return Err(self.err("a `cut` field number that comes from an expansion", line));
+                    };
+                    match n.parse::<i64>() {
+                        Ok(v) if v >= 1 => field = Some(v),
+                        _ => {
+                            return Err(self.err(
+                                &format!("`cut -f {n}` (one field number, no lists or ranges)"),
+                                line,
+                            ))
+                        }
+                    }
+                    i += 2;
+                }
+                // The attached spellings `-d:` and `-f2`, which brush hands
+                // over as one word.
+                Some(lit) if lit.starts_with("-d") => {
+                    let d = &lit[2..];
+                    if d.chars().count() != 1 {
+                        return Err(self.err("`cut -d` with a delimiter that is not one character", line));
+                    }
+                    delim = Some(d.to_string());
+                    i += 1;
+                }
+                Some(lit) if lit.starts_with("-f") => {
+                    let n = &lit[2..];
+                    match n.parse::<i64>() {
+                        Ok(v) if v >= 1 => field = Some(v),
+                        _ => {
+                            return Err(self.err(
+                                &format!("`cut -f {n}` (one field number, no lists or ranges)"),
+                                line,
+                            ))
+                        }
+                    }
+                    i += 1;
+                }
+                Some(other) => {
+                    return Err(self.err(&format!("`cut {other}` (only -d and -f)"), line))
+                }
+                None => return Err(self.err("a `cut` argument that comes from an expansion", line)),
+            }
+        }
+        let Some(field) = field else {
+            return Err(self.err("`cut` without -f", line));
+        };
+        let delim = delim.unwrap_or_else(|| "\t".to_string());
+        let text = var(&self.stdin_all(out));
+        let lines = self.helper("__sh_lines", vec![text]);
+        let cut = self.helper("__sh_cut", vec![lines, s(&delim), int(field)]);
+        let text = self.helper("__sh_lines_out", vec![cut]);
+        self.emit(out, text, false);
+        Ok(())
+    }
+
+    /// `tr SET1 SET2` and `tr -d SET`. Ranges (`a-z`, `0-9`) expand; POSIX
+    /// classes (`[:alpha:]`) and backslash escapes mean something else, so a set
+    /// containing either is refused rather than translated literally.
+    fn lower_tr(&mut self, args: &[Word], line: usize, out: &mut Vec<S>) -> Result<()> {
+        let mut delete = false;
+        let mut sets: Vec<String> = Vec::new();
+        for w in args {
+            match self.static_lit(w)? {
+                Some(lit) if lit == "-d" => delete = true,
+                Some(lit) if lit.len() > 1 && lit.starts_with('-') => {
+                    return Err(self.err(&format!("`tr {lit}` (only -d)"), line))
+                }
+                Some(lit) => {
+                    if lit.contains("[:") || lit.contains("\\") {
+                        return Err(self.err(
+                            "a `tr` set with a character class or an escape (only literal characters and ranges)",
+                            line,
+                        ));
+                    }
+                    sets.push(lit);
+                }
+                None => return Err(self.err("a `tr` set that comes from an expansion", line)),
+            }
+        }
+        let text = var(&self.stdin_all(out));
+        let result = if delete {
+            if sets.len() != 1 {
+                return Err(self.err("`tr -d` without exactly one set", line));
+            }
+            let set = self.helper("__sh_trset", vec![s(&sets[0])]);
+            self.helper("__sh_tr_del", vec![text, set])
+        } else {
+            if sets.len() != 2 || sets[1].is_empty() {
+                return Err(self.err("`tr` without two non-empty sets", line));
+            }
+            let from = self.helper("__sh_trset", vec![s(&sets[0])]);
+            let to = self.helper("__sh_trset", vec![s(&sets[1])]);
+            self.helper("__sh_tr", vec![text, from, to])
+        };
+        self.emit(out, result, false);
         Ok(())
     }
 
@@ -1472,6 +2428,10 @@ impl Lw {
             Cond::Or(a, b) => bin("or", self.cond_expr(a, line)?, self.cond_expr(b, line)?),
             Cond::Unary("-z", w) => bin("==", self.word_str(w)?, s("")),
             Cond::Unary("-n", w) => bin("!=", self.word_str(w)?, s("")),
+            Cond::Unary(op, w) if matches!(*op, "-e" | "-f" | "-d") => {
+                let path = self.word_str(w)?;
+                self.file_test(op, path).expect("a file test")
+            }
             Cond::Unary(op, _) => return Err(self.err(&format!("`{op}` in `[[ … ]]` (file and shell-option tests)"), line)),
             Cond::Binary(op, l, r) => match *op {
                 "==" | "=" | "!=" => {
@@ -1515,6 +2475,10 @@ impl Lw {
                 match lit(0) {
                     Some("-z") => Ok(bin("==", a[1].e.clone(), s(""))),
                     Some("-n") => Ok(bin("!=", a[1].e.clone(), s(""))),
+                    Some(op) if matches!(op, "-e" | "-f" | "-d") => {
+                        let op = op.to_string();
+                        Ok(self.file_test(&op, a[1].e.clone()).expect("a file test"))
+                    }
                     Some(op) => Err(self.err(&format!("test operator `{op}`"), line)),
                     None => Err(self.err("a test operator that comes from an expansion", line)),
                 }
@@ -1545,6 +2509,24 @@ impl Lw {
             }
             _ => Err(self.err("a test expression with more than 4 arguments (`-a`/`-o` chains)", line)),
         }
+    }
+
+    /// `-e`, `-f`, `-d` over the filesystem sandbox. `-f` is "exists and is not
+    /// a directory", because the only two metadata answers the SDK has are
+    /// `fs.exists` (follows symlinks) and `fs.is_dir`. `None` for every other
+    /// unary operator, which the callers refuse by name.
+    fn file_test(&mut self, op: &str, path: E) -> Option<E> {
+        let exists = || cap("fs.exists", vec![path.clone()]);
+        Some(match op {
+            "-e" => bin("==", exists(), int(1)),
+            "-d" => bin("==", cap("fs.is_dir", vec![path]), int(1)),
+            "-f" => bin(
+                "and",
+                bin("==", exists(), int(1)),
+                bin("==", cap("fs.is_dir", vec![path]), int(0)),
+            ),
+            _ => return None,
+        })
     }
 
     fn test_binary(&mut self, op: &str, l: &TArg, r: &TArg, line: usize) -> Result<E> {
@@ -1746,18 +2728,11 @@ impl Lw {
 
     // ── words ──
 
+    /// Parse a word into quoted/unquoted literals and expansions. A word's
+    /// parts are the same whether it is later used as a pattern or expanded as
+    /// a pathname — what a `*` *means* is decided by the caller, which escapes
+    /// quoted text and hands the result to `__sh_glob` or `__sh_globexp`.
     fn parse_word(&self, w: &Word) -> Result<Vec<Seg>> {
-        self.parse_word_mode(w, false)
-    }
-
-    /// Parse a word that is used where a *pattern* is expected (`case` arms,
-    /// the right side of `[[ … == … ]]`): unquoted `*`, `?` and `[` are
-    /// pattern characters rather than a pathname expansion.
-    fn parse_pattern_word(&self, w: &Word) -> Result<Vec<Seg>> {
-        self.parse_word_mode(w, true)
-    }
-
-    fn parse_word_mode(&self, w: &Word, pattern: bool) -> Result<Vec<Seg>> {
         let line = w.line;
         let raw = w.raw.as_str();
         if raw == "[" || raw == "]" {
@@ -2232,9 +3207,16 @@ impl Lw {
             Fields::One(e) => array(vec![e]),
             Fields::Many(a) => a,
         };
-        // Under zsh a pattern that matches nothing is an error, not a literal.
-        let nomatch = boolean(self.d == Dialect::Zsh);
-        Ok(Fields::Many(self.helper("__sh_globmap", vec![arr, at, nomatch])))
+        // What a pattern matching nothing does (literal word, no word, or an
+        // error) depends on `nullglob`/`failglob`/`nomatch`, read at runtime
+        // because `shopt`/`setopt` can turn them on anywhere in the script. The
+        // helpers get them as arguments: `__g` is main's, not theirs.
+        let opts = vec![
+            self.stream(NULLGLOB),
+            self.stream(FAILGLOB),
+            self.stream(NOMATCH),
+        ];
+        Ok(Fields::Many(self.helper("__sh_globmap", vec![arr, at].into_iter().chain(opts).collect())))
     }
 
     /// The fields of a word before pathname expansion.
@@ -2310,7 +3292,7 @@ impl Lw {
     /// the text of an *expansion* is a pattern in bash but literal in zsh
     /// (`p='a*'; [[ abc == $p ]]` is true in bash, false in zsh).
     fn pattern_of(&mut self, w: &Word) -> Result<E> {
-        let segs = self.parse_pattern_word(w)?;
+        let segs = self.parse_word(w)?;
         let mut parts: Vec<E> = Vec::new();
         for sg in &segs {
             match sg {
@@ -2391,6 +3373,34 @@ const SHELL_HELPERS: &[&str] = &[
     "__sh_glob",
     "__sh_globmap",
     "__sh_globexp",
+    "__sh_meta",
+    "__sh_dstar",
+    "__sh_join",
+    "__sh_sort",
+    "__sh_dironly",
+    "__sh_slurp",
+    "__sh_in_line",
+    "__sh_in_rest",
+    "__sh_read_from",
+    "__sh_unbackslash",
+    "__sh_lines",
+    "__sh_lines_out",
+    "__sh_nodot",
+    "__sh_take",
+    "__sh_last",
+    "__sh_find",
+    "__sh_grep_lines",
+    "__sh_re_meta",
+    "__sh_count",
+    "__sh_pad",
+    "__sh_rev",
+    "__sh_dedupe",
+    "__sh_sort_lines",
+    "__sh_uniq",
+    "__sh_cut",
+    "__sh_trset",
+    "__sh_tr",
+    "__sh_tr_del",
     "__sh_unglob",
     "__sh_quote_pat",
     "__sh_read_line",
@@ -2597,9 +3607,10 @@ fn helper_fn(name: &str) -> Function {
                 ret(var("out")),
             ],
         ),
-        // __sh_globmap(arr, at, nomatch): pathname expansion of each field.
+        // __sh_globmap(arr, at, nullglob, failglob, nomatch): pathname expansion
+        // of each field.
         "__sh_globmap" => func(
-            &["arr", "at", "nomatch"],
+            &["arr", "at", "nullglob", "failglob", "nomatch"],
             vec![
                 decl("out", array(vec![])),
                 for_("f", var("arr"), vec![set(
@@ -2607,24 +3618,28 @@ fn helper_fn(name: &str) -> Function {
                     bin(
                         "+",
                         var("out"),
-                        call("__sh_globexp", vec![var("f"), var("at"), var("nomatch")]),
+                        call(
+                            "__sh_globexp",
+                            vec![
+                                var("f"),
+                                var("at"),
+                                var("nullglob"),
+                                var("failglob"),
+                                var("nomatch"),
+                            ],
+                        ),
                     ),
                 )]),
                 ret(var("out")),
             ],
         ),
-        // __sh_globexp(field, at): the pathnames one word expands to, or the
-        // word itself when the pattern matches nothing (bash's default). The
-        // pattern is only the last path component: `*` never matches a leading
-        // `.`, the matches are sorted (`fs.list` sorts), and a glob in a
-        // directory component is refused rather than half-expanded.
-        "__sh_globexp" => func(
-            &["field", "at", "nomatch"],
+        // __sh_meta(s): does `s` hold an unescaped `*`, `?` or `[`?
+        "__sh_meta" => func(
+            &["s"],
             vec![
-                decl("cs", chars(var("field"))),
+                decl("cs", chars(var("s"))),
                 decl("n", len(var("cs"))),
                 decl("i", int(0)),
-                decl("meta", boolean(false)),
                 while_(bin("<", var("i"), var("n")), vec![
                     decl("c", index(var("cs"), var("i"))),
                     if_(
@@ -2637,117 +3652,368 @@ fn helper_fn(name: &str) -> Function {
                                     bin("or", bin("==", var("c"), s("*")), bin("==", var("c"), s("?"))),
                                     bin("==", var("c"), s("[")),
                                 ),
-                                vec![set("meta", boolean(true))],
+                                vec![ret(boolean(true))],
                                 None,
                             ),
                             set("i", bin("+", var("i"), int(1))),
                         ]),
                     ),
                 ]),
-                decl("lit", call("__sh_unglob", vec![var("field")])),
-                if_(not(var("meta")), vec![ret(array(vec![var("lit")]))], None),
-                // Split at the last `/`: everything before it is the directory.
-                decl("k", int(-1)),
-                decl("j", int(0)),
-                while_(bin("<", var("j"), var("n")), vec![
+                ret(boolean(false)),
+            ],
+        ),
+        // __sh_dstar(s): does `s` hold an unescaped `**`? bash reads it as `*`
+        // without `globstar`, zsh recurses by default, so it is refused rather
+        // than guessed at in either dialect.
+        "__sh_dstar" => func(
+            &["s"],
+            vec![
+                decl("cs", chars(var("s"))),
+                decl("n", len(var("cs"))),
+                decl("i", int(0)),
+                while_(bin("<", var("i"), var("n")), vec![
+                    decl("c", index(var("cs"), var("i"))),
                     if_(
-                        bin("==", index(var("cs"), var("j")), s("/")),
-                        vec![set("k", var("j"))],
-                        None,
+                        bin("==", var("c"), s("\\")),
+                        vec![set("i", bin("+", var("i"), int(2)))],
+                        Some(vec![
+                            if_(
+                                bin(
+                                    "and",
+                                    bin("==", var("c"), s("*")),
+                                    bin(
+                                        "and",
+                                        bin("<", bin("+", var("i"), int(1)), var("n")),
+                                        bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("*")),
+                                    ),
+                                ),
+                                vec![ret(boolean(true))],
+                                None,
+                            ),
+                            set("i", bin("+", var("i"), int(1))),
+                        ]),
                     ),
+                ]),
+                ret(boolean(false)),
+            ],
+        ),
+        // __sh_join(dir, name): `dir/name`, where "" is the working directory and
+        // "/" is the root the pattern started from.
+        "__sh_join" => func(
+            &["dir", "name"],
+            vec![
+                if_(bin("==", var("dir"), s("")), vec![ret(var("name"))], None),
+                if_(bin("==", var("dir"), s("/")), vec![ret(bin("+", s("/"), var("name")))], None),
+                ret(bin("+", bin("+", var("dir"), s("/")), var("name"))),
+            ],
+        ),
+        // __sh_sort(a): `a` in byte order, the order both shells print glob
+        // matches in. Insertion sort, so a word matching hundreds of names
+        // costs O(n²) string comparisons and can reach the step quota — loudly,
+        // never by printing a different order.
+        // __sh_sort(a): merge sort in byte order. It used to be an insertion
+        // sort that rebuilt the array on every insertion, so a directory of a
+        // few hundred matches cost O(n²) comparisons *and* copies; this is
+        // O(n log n) and appends in place (`append` is the VM's native cap).
+        "__sh_sort" => func(
+            &["a"],
+            vec![
+                decl("n", len(var("a"))),
+                if_(bin("<=", var("n"), int(1)), vec![ret(var("a"))], None),
+                decl("mid", bin("/", var("n"), int(2))),
+                decl("left", array(vec![])),
+                decl("right", array(vec![])),
+                decl("i", int(0)),
+                while_(bin("<", var("i"), var("n")), vec![
+                    if_(
+                        bin("<", var("i"), var("mid")),
+                        vec![expr_stmt(cap("append", vec![var("left"), index(var("a"), var("i"))]))],
+                        Some(vec![expr_stmt(cap("append", vec![var("right"), index(var("a"), var("i"))]))]),
+                    ),
+                    set("i", bin("+", var("i"), int(1))),
+                ]),
+                decl("l", call("__sh_sort", vec![var("left")])),
+                decl("r", call("__sh_sort", vec![var("right")])),
+                decl("out", array(vec![])),
+                set("i", int(0)),
+                decl("j", int(0)),
+                while_(
+                    bin("and", bin("<", var("i"), len(var("l"))), bin("<", var("j"), len(var("r")))),
+                    vec![if_(
+                        bin(
+                            "<=",
+                            call("__sh_strcmp", vec![index(var("l"), var("i")), index(var("r"), var("j"))]),
+                            int(0),
+                        ),
+                        vec![
+                            expr_stmt(cap("append", vec![var("out"), index(var("l"), var("i"))])),
+                            set("i", bin("+", var("i"), int(1))),
+                        ],
+                        Some(vec![
+                            expr_stmt(cap("append", vec![var("out"), index(var("r"), var("j"))])),
+                            set("j", bin("+", var("j"), int(1))),
+                        ]),
+                    )],
+                ),
+                while_(bin("<", var("i"), len(var("l"))), vec![
+                    expr_stmt(cap("append", vec![var("out"), index(var("l"), var("i"))])),
+                    set("i", bin("+", var("i"), int(1))),
+                ]),
+                while_(bin("<", var("j"), len(var("r"))), vec![
+                    expr_stmt(cap("append", vec![var("out"), index(var("r"), var("j"))])),
                     set("j", bin("+", var("j"), int(1))),
                 ]),
-                decl("dir", s(".")),
-                decl("pre", s("")),
-                decl("base", var("field")),
-                if_(bin(">=", var("k"), int(0)), vec![
-                    decl("dmeta", boolean(false)),
-                    decl("q", int(0)),
-                    while_(bin("<", var("q"), var("k")), vec![
-                        decl("dc", index(var("cs"), var("q"))),
-                        if_(
-                            bin("==", var("dc"), s("\\")),
-                            vec![set("q", bin("+", var("q"), int(2)))],
-                            Some(vec![
-                                if_(
-                                    bin(
-                                        "or",
-                                        bin("or", bin("==", var("dc"), s("*")), bin("==", var("dc"), s("?"))),
-                                        bin("==", var("dc"), s("[")),
-                                    ),
-                                    vec![set("dmeta", boolean(true))],
-                                    None,
-                                ),
-                                set("q", bin("+", var("q"), int(1))),
-                            ]),
-                        ),
-                    ]),
-                    if_(var("dmeta"), vec![throw(concat(vec![
-                        s("unsupported: a glob in a directory component of `"),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_dironly(a): the matches that are directories, each keeping the
+        // `/` the word asked for (`echo */` lists directories only).
+        "__sh_dironly" => func(
+            &["a"],
+            vec![
+                decl("out", array(vec![])),
+                for_("p", var("a"), vec![
+                    if_(
+                        bin("==", cap("fs.is_dir", vec![var("p")]), int(1)),
+                        vec![set("out", bin("+", var("out"), array(vec![bin("+", var("p"), s("/"))])))],
+                        None,
+                    ),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_globexp(field, at, nullglob, failglob, nomatch): the pathnames one
+        // word expands to, or — when the pattern matches nothing — whatever the
+        // shell's options say: the word as written (both shells' default), no
+        // word at all (`nullglob`), or an error (`failglob` in bash, `nomatch`
+        // in zsh).
+        //
+        // Every path component is matched on its own against the directories
+        // built so far, so `*/*.txt`, `sub/*.log` and `a?/*/[xy]*` all work:
+        //
+        // - a component with no metacharacter is appended as written, but it has
+        //   to exist, so `a*/missing` stays one word instead of inventing paths;
+        // - a component is only listed when it is a directory (`fs.is_dir`), so
+        //   a file matched by `*` does not turn into a "not a directory" error;
+        // - a leading `.` in the component is what lets `.`-names match, as in
+        //   both shells;
+        // - a trailing `/` keeps the slash and keeps only directories;
+        // - the result is sorted in byte order, and an absolute pattern is
+        //   refused: the filesystem sandbox is relative to the script's
+        //   directory, so `/usr/*` could not be answered honestly.
+        "__sh_globexp" => func(
+            &["field", "at", "nullglob", "failglob", "nomatch"],
+            vec![
+                // No metacharacter at all: quote removal only, and no filesystem
+                // access — `echo /etc/hosts` must not need a granted capability.
+                if_(
+                    not(call("__sh_meta", vec![var("field")])),
+                    vec![ret(array(vec![call("__sh_unglob", vec![var("field")])]))],
+                    None,
+                ),
+                if_(
+                    call("__sh_dstar", vec![var("field")]),
+                    vec![throw(concat(vec![
+                        s("unsupported: `**` in `"),
                         var("field"),
                         s("` at "),
                         var("at"),
-                    ]))], None),
-                    set("pre", call("__sh_join_range", vec![var("cs"), int(0), bin("+", var("k"), int(1))])),
-                    set("base", call("__sh_join_range", vec![var("cs"), bin("+", var("k"), int(1)), var("n")])),
-                    set("dir", call("__sh_join_range", vec![var("cs"), int(0), var("k")])),
-                    // `/x*` lists the root, not a directory named "".
-                    if_(bin("==", var("dir"), s("")), vec![set("dir", s("/"))], None),
-                ], None),
-                decl("dirp", call("__sh_unglob", vec![var("dir")])),
-                decl("prep", call("__sh_unglob", vec![var("pre")])),
-                // Nothing to match in, or a trailing `/`: leave the word alone.
-                if_(bin("==", var("base"), s("")), vec![ret(array(vec![var("lit")]))], None),
-                if_(
-                    bin("==", cap("fs.exists", vec![var("dirp")]), int(0)),
-                    vec![ret(array(vec![var("lit")]))],
+                        s("` — `**` is `*` in bash and recursive in zsh"),
+                    ]))],
                     None,
                 ),
-                // A leading `.` in the pattern is what lets `.`-files match.
-                decl("hidden", bin(
-                    "or",
+                decl("lit", call("__sh_unglob", vec![var("field")])),
+                // A trailing `/` asks for directories; strip one, remember it.
+                decl("w", var("field")),
+                decl(
+                    "slash",
                     bin(
                         "==",
-                        call("__sh_substr", vec![var("base"), int(0), int(1), boolean(true)]),
-                        s("."),
+                        call("__sh_substr", vec![var("field"), int(-1), int(1), boolean(true)]),
+                        s("/"),
                     ),
-                    bin(
-                        "==",
-                        call("__sh_substr", vec![var("base"), int(0), int(2), boolean(true)]),
-                        s("\\."),
-                    ),
-                )),
-                decl("out", array(vec![])),
-                for_("nm", cap("fs.list", vec![var("dirp")]), vec![
+                ),
+                if_(
+                    var("slash"),
+                    vec![set("w", call("__sh_substr", vec![var("field"), int(0), int(-1), boolean(true)]))],
+                    None,
+                ),
+                // Split into components on unescaped `/`, keeping the escapes.
+                decl("cs", chars(var("w"))),
+                decl("n", len(var("cs"))),
+                decl("comps", array(vec![])),
+                decl("cur", s("")),
+                decl("i", int(0)),
+                decl("rooted", boolean(false)),
+                while_(bin("<", var("i"), var("n")), vec![
+                    decl("c", index(var("cs"), var("i"))),
                     if_(
-                        bin(
-                            "and",
-                            bin(
-                                "==",
-                                call("__sh_substr", vec![var("nm"), int(0), int(1), boolean(true)]),
-                                s("."),
+                        bin("==", var("c"), s("\\")),
+                        vec![
+                            set("cur", bin("+", var("cur"), var("c"))),
+                            if_(
+                                bin("<", bin("+", var("i"), int(1)), var("n")),
+                                vec![
+                                    set(
+                                        "cur",
+                                        bin("+", var("cur"), index(var("cs"), bin("+", var("i"), int(1)))),
+                                    ),
+                                    set("i", bin("+", var("i"), int(1))),
+                                ],
+                                None,
                             ),
-                            not(var("hidden")),
-                        ),
-                        vec![S::Continue { meta: m() }],
-                        None,
-                    ),
-                    if_(
-                        bin(
-                            "==",
-                            call("__sh_glob", vec![var("base"), var("nm")]),
-                            boolean(true),
-                        ),
-                        vec![set(
-                            "out",
-                            bin("+", var("out"), array(vec![bin("+", var("prep"), var("nm"))])),
-                        )],
-                        None,
+                            set("i", bin("+", var("i"), int(1))),
+                        ],
+                        Some(vec![
+                            if_(
+                                bin("==", var("c"), s("/")),
+                                vec![if_(
+                                    bin("and", bin("==", var("i"), int(0)), bin("==", var("cur"), s(""))),
+                                    vec![set("rooted", boolean(true))],
+                                    Some(vec![
+                                        set("comps", bin("+", var("comps"), array(vec![var("cur")]))),
+                                        set("cur", s("")),
+                                    ]),
+                                )],
+                                Some(vec![set("cur", bin("+", var("cur"), var("c")))]),
+                            ),
+                            set("i", bin("+", var("i"), int(1))),
+                        ]),
                     ),
                 ]),
-                // No match: bash keeps the word as written; zsh fails the
-                // command (here the whole run) with `no matches found`.
-                if_(bin("==", len(var("out")), int(0)), vec![
+                set("comps", bin("+", var("comps"), array(vec![var("cur")]))),
+                if_(
+                    var("rooted"),
+                    vec![throw(concat(vec![
+                        s("unsupported: an absolute path with a glob in it `"),
+                        var("field"),
+                        s("` at "),
+                        var("at"),
+                        s("` — the filesystem sandbox is relative to the script's directory"),
+                    ]))],
+                    None,
+                ),
+                // Walk the components left to right. `cands` holds the paths built
+                // so far: "" is the working directory, "/" only appears for a
+                // rooted pattern (refused above).
+                decl("cands", array(vec![s("")])),
+                decl("j", int(0)),
+                while_(bin("<", var("j"), len(var("comps"))), vec![
+                    decl("comp", index(var("comps"), var("j"))),
+                    decl("next", array(vec![])),
+                    for_("cand", var("cands"), vec![
+                        if_(
+                            bin("==", var("comp"), s("")),
+                            // `a//b`, or the empty component a trailing `/` leaves.
+                            vec![expr_stmt(cap("append", vec![var("next"), var("cand")]))],
+                            Some(vec![if_(
+                                not(call("__sh_meta", vec![var("comp")])),
+                                vec![
+                                    decl(
+                                        "q",
+                                        call(
+                                            "__sh_join",
+                                            vec![var("cand"), call("__sh_unglob", vec![var("comp")])],
+                                        ),
+                                    ),
+                                    if_(
+                                        bin("==", cap("fs.exists", vec![var("q")]), int(1)),
+                                        vec![expr_stmt(cap("append", vec![var("next"), var("q")]))],
+                                        None,
+                                    ),
+                                ],
+                                Some(vec![
+                                    decl(
+                                        "dirp",
+                                        tern(bin("==", var("cand"), s("")), s("."), var("cand")),
+                                    ),
+                                    if_(
+                                        bin(
+                                            "and",
+                                            bin("==", cap("fs.exists", vec![var("dirp")]), int(1)),
+                                            bin("==", cap("fs.is_dir", vec![var("dirp")]), int(1)),
+                                        ),
+                                        vec![
+                                            // A leading `.` in the pattern is what lets
+                                            // `.`-names match; otherwise they are skipped.
+                                            decl(
+                                                "hidden",
+                                                bin(
+                                                    "or",
+                                                    bin(
+                                                        "==",
+                                                        call(
+                                                            "__sh_substr",
+                                                            vec![var("comp"), int(0), int(1), boolean(true)],
+                                                        ),
+                                                        s("."),
+                                                    ),
+                                                    bin(
+                                                        "==",
+                                                        call(
+                                                            "__sh_substr",
+                                                            vec![var("comp"), int(0), int(2), boolean(true)],
+                                                        ),
+                                                        s("\\."),
+                                                    ),
+                                                ),
+                                            ),
+                                            for_("nm", cap("fs.list", vec![var("dirp")]), vec![
+                                                if_(
+                                                    bin(
+                                                        "and",
+                                                        bin(
+                                                            "==",
+                                                            call(
+                                                                "__sh_substr",
+                                                                vec![var("nm"), int(0), int(1), boolean(true)],
+                                                            ),
+                                                            s("."),
+                                                        ),
+                                                        not(var("hidden")),
+                                                    ),
+                                                    vec![S::Continue { meta: m() }],
+                                                    None,
+                                                ),
+                                                if_(
+                                                    bin(
+                                                        "==",
+                                                        call("__sh_glob", vec![var("comp"), var("nm")]),
+                                                        boolean(true),
+                                                    ),
+                                                    vec![expr_stmt(cap(
+                                                        "append",
+                                                        vec![
+                                                            var("next"),
+                                                            call("__sh_join", vec![var("cand"), var("nm")]),
+                                                        ],
+                                                    ))],
+                                                    None,
+                                                ),
+                                            ]),
+                                        ],
+                                        None,
+                                    ),
+                                ]),
+                            )]),
+                        ),
+                    ]),
+                    set("cands", var("next")),
+                    set("j", bin("+", var("j"), int(1))),
+                ]),
+                decl(
+                    "shown",
+                    tern(var("slash"), call("__sh_dironly", vec![var("cands")]), var("cands")),
+                ),
+                // Nothing matched. `failglob` is checked first: with both set,
+                // bash reports the error rather than dropping the word.
+                if_(bin("==", len(var("shown")), int(0)), vec![
+                    if_(var("failglob"), vec![throw(concat(vec![
+                        s(FAILGLOB_SENTINEL),
+                        s("no match: "),
+                        var("field"),
+                    ]))], None),
+                    if_(var("nullglob"), vec![ret(array(vec![]))], None),
                     if_(var("nomatch"), vec![throw(concat(vec![
                         s("no matches found: "),
                         var("field"),
@@ -2757,7 +4023,553 @@ fn helper_fn(name: &str) -> Function {
                     ]))], None),
                     ret(array(vec![var("lit")])),
                 ], None),
+                ret(call("__sh_sort", vec![var("shown")])),
+            ],
+        ),
+
+        // ── stdin / stdout plumbing for redirections and pipelines ──────────
+
+        // __sh_slurp(avail, isset): everything this command reads. When its
+        // stdin is redirected (a pipeline stage, `<`, a here-document) that is
+        // exactly `avail` — even when empty. Otherwise the host's stdin, a line
+        // at a time, which is the same source `read` uses.
+        "__sh_slurp" => func(
+            &["avail", "isset"],
+            vec![
+                if_(bin("==", var("isset"), int(1)), vec![ret(var("avail"))], None),
+                decl("out", s("")),
+                while_(boolean(true), vec![
+                    decl("line", call("__sh_read_line", vec![boolean(true)])),
+                    if_(bin("==", var("line"), s("")), vec![S::Break { meta: m() }], None),
+                    set("out", bin("+", bin("+", var("out"), var("line")), s("\n"))),
+                ]),
                 ret(var("out")),
+            ],
+        ),
+        // __sh_in_line(avail): the first line of redirected stdin.
+        "__sh_in_line" => func(
+            &["avail"],
+            vec![
+                decl("i", call("__sh_find", vec![var("avail"), s("\n")])),
+                if_(
+                    bin("<", var("i"), int(0)),
+                    vec![ret(var("avail"))],
+                    None,
+                ),
+                ret(call("__sh_substr", vec![var("avail"), int(0), var("i"), boolean(true)])),
+            ],
+        ),
+        // __sh_in_rest(avail): what is left after that first line.
+        "__sh_in_rest" => func(
+            &["avail"],
+            vec![
+                decl("i", call("__sh_find", vec![var("avail"), s("\n")])),
+                if_(bin("<", var("i"), int(0)), vec![ret(s(""))], None),
+                ret(call(
+                    "__sh_substr",
+                    vec![var("avail"), bin("+", var("i"), int(1)), int(0), boolean(false)],
+                )),
+            ],
+        ),
+        // __sh_read_from(avail, isset, raw): one line of stdin, from the
+        // redirection when there is one. `raw` (read -r) keeps backslashes.
+        "__sh_read_from" => func(
+            &["avail", "isset", "raw"],
+            vec![
+                if_(bin("==", var("isset"), int(1)), vec![
+                    decl("line", call("__sh_in_line", vec![var("avail")])),
+                    if_(
+                        not(var("raw")),
+                        vec![ret(call("__sh_unbackslash", vec![var("line")]))],
+                        None,
+                    ),
+                    ret(var("line")),
+                ], None),
+                ret(call("__sh_read_line", vec![var("raw")])),
+            ],
+        ),
+        // __sh_unbackslash(s): drop the `\` of every `\x`, as `read` does
+        // without `-r` (a trailing `\` is dropped too, not continued).
+        "__sh_unbackslash" => func(
+            &["s"],
+            vec![
+                decl("cs", chars(var("s"))),
+                decl("n", len(var("cs"))),
+                decl("i", int(0)),
+                decl("out", s("")),
+                while_(bin("<", var("i"), var("n")), vec![
+                    if_(
+                        bin("==", index(var("cs"), var("i")), s("\\")),
+                        vec![if_(
+                            bin("<", bin("+", var("i"), int(1)), var("n")),
+                            vec![
+                                set(
+                                    "out",
+                                    bin("+", var("out"), index(var("cs"), bin("+", var("i"), int(1)))),
+                                ),
+                                set("i", bin("+", var("i"), int(2))),
+                            ],
+                            Some(vec![set("i", bin("+", var("i"), int(1)))]),
+                        )],
+                        Some(vec![
+                            set("out", bin("+", var("out"), index(var("cs"), var("i")))),
+                            set("i", bin("+", var("i"), int(1))),
+                        ]),
+                    ),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+
+        // ── the builtin command set ─────────────────────────────────────────
+
+        // __sh_lines(s): `s` split into lines, without the empty "line" a final
+        // newline would leave behind.
+        "__sh_lines" => func(
+            &["s"],
+            vec![
+                decl("out", array(vec![])),
+                decl("cur", s("")),
+                for_("c", chars(var("s")), vec![if_(
+                    bin("==", var("c"), s("\n")),
+                    vec![
+                        set("out", bin("+", var("out"), array(vec![var("cur")]))),
+                        set("cur", s("")),
+                    ],
+                    Some(vec![set("cur", bin("+", var("cur"), var("c")))]),
+                )]),
+                if_(
+                    bin("!=", var("cur"), s("")),
+                    vec![set("out", bin("+", var("out"), array(vec![var("cur")])))],
+                    None,
+                ),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_lines_out(a): lines back to text, each with its newline.
+        "__sh_lines_out" => func(
+            &["a"],
+            vec![
+                decl("out", s("")),
+                for_("l", var("a"), vec![set(
+                    "out",
+                    bin("+", bin("+", var("out"), var("l")), s("\n")),
+                )]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_nodot(a): the names that do not start with `.` — `ls` hides those.
+        "__sh_nodot" => func(
+            &["a"],
+            vec![
+                decl("out", array(vec![])),
+                for_("n", var("a"), vec![if_(
+                    bin(
+                        "!=",
+                        call("__sh_substr", vec![var("n"), int(0), int(1), boolean(true)]),
+                        s("."),
+                    ),
+                    vec![expr_stmt(cap("append", vec![var("out"), var("n")]))],
+                    None,
+                )]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_take(a, n): the first `n` lines.
+        "__sh_take" => func(
+            &["a", "n"],
+            vec![
+                decl("out", array(vec![])),
+                decl("i", int(0)),
+                while_(
+                    bin(
+                        "and",
+                        bin("<", var("i"), var("n")),
+                        bin("<", var("i"), len(var("a"))),
+                    ),
+                    vec![
+                        expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))])),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_last(a, n): the last `n` lines.
+        "__sh_last" => func(
+            &["a", "n"],
+            vec![
+                decl("out", array(vec![])),
+                decl("i", bin("-", len(var("a")), var("n"))),
+                if_(bin("<", var("i"), int(0)), vec![set("i", int(0))], None),
+                while_(bin("<", var("i"), len(var("a"))), vec![
+                    expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))])),
+                    set("i", bin("+", var("i"), int(1))),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_rev(a): the array reversed (`sort -r`, and handy on its own).
+        "__sh_rev" => func(
+            &["a"],
+            vec![
+                decl("out", array(vec![])),
+                decl("i", bin("-", len(var("a")), int(1))),
+                while_(bin(">=", var("i"), int(0)), vec![
+                    expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))])),
+                    set("i", bin("-", var("i"), int(1))),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_dedupe(a): drop repeated *adjacent* lines (the array is sorted
+        // where `sort -u` uses this; `uniq` needs the runs, not this).
+        "__sh_dedupe" => func(
+            &["a"],
+            vec![
+                decl("out", array(vec![])),
+                if_(bin(">", len(var("a")), int(0)), vec![expr_stmt(cap("append", vec![var("out"), index(var("a"), int(0))]))], None),
+                decl("i", int(1)),
+                while_(bin("<", var("i"), len(var("a"))), vec![
+                    if_(
+                        bin(
+                            "!=",
+                            call(
+                                "__sh_strcmp",
+                                vec![index(var("a"), bin("-", var("i"), int(1))), index(var("a"), var("i"))],
+                            ),
+                            int(0),
+                        ),
+                        vec![expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))]))],
+                        None,
+                    ),
+                    set("i", bin("+", var("i"), int(1))),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_sort_lines(a, rev, uniq): `sort`. Byte order (which for UTF-8 is
+        // also codepoint order), `-r` after the sort, `-u` drops duplicates.
+        "__sh_sort_lines" => func(
+            &["a", "rev", "uniq"],
+            vec![
+                decl("s", call("__sh_sort", vec![var("a")])),
+                if_(var("uniq"), vec![set("s", call("__sh_dedupe", vec![var("s")]))], None),
+                if_(var("rev"), vec![set("s", call("__sh_rev", vec![var("s")]))], None),
+                ret(var("s")),
+            ],
+        ),
+        // __sh_uniq(a, mode): `uniq` over adjacent runs. mode 0 keeps one of
+        // each run, 1 is `-c` (a count and a space before the line, the count
+        // padded to 7), 2 is `-d` (only runs longer than one), 3 is `-u`.
+        "__sh_uniq" => func(
+            &["a", "mode"],
+            vec![
+                decl("out", array(vec![])),
+                decl("i", int(0)),
+                while_(bin("<", var("i"), len(var("a"))), vec![
+                    decl("n", int(1)),
+                    while_(
+                        bin("and", bin("<", bin("+", var("i"), var("n")), len(var("a"))),
+                            bin(
+                                "==",
+                                call(
+                                    "__sh_strcmp",
+                                    vec![index(var("a"), var("i")), index(var("a"), bin("+", var("i"), var("n")))],
+                                ),
+                                int(0),
+                            )),
+                        vec![set("n", bin("+", var("n"), int(1)))],
+                    ),
+                    if_(
+                        bin("==", var("mode"), int(1)),
+                        vec![expr_stmt(cap(
+                            "append",
+                            vec![
+                                var("out"),
+                                bin(
+                                    "+",
+                                    bin("+", call("__sh_pad", vec![to_str(var("n")), int(7)]), s(" ")),
+                                    index(var("a"), var("i")),
+                                ),
+                            ],
+                        ))],
+                        Some(vec![if_(
+                            bin(
+                                "or",
+                                bin("and", bin("==", var("mode"), int(2)), bin(">", var("n"), int(1))),
+                                bin("and", bin("==", var("mode"), int(3)), bin("==", var("n"), int(1))),
+                            ),
+                            vec![expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))]))],
+                            Some(vec![if_(
+                                bin("==", var("mode"), int(0)),
+                                vec![expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))]))],
+                                None,
+                            )]),
+                        )]),
+                    ),
+                    set("i", bin("+", var("i"), var("n"))),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_cut(a, delim, field): `cut -d D -f N` over lines. A line without
+        // the delimiter has no field N, which GNU `cut` prints whole.
+        "__sh_cut" => func(
+            &["a", "delim", "field"],
+            vec![
+                decl("out", array(vec![])),
+                for_("l", var("a"), vec![
+                    if_(
+                        bin("<", call("__sh_find", vec![var("l"), var("delim")]), int(0)),
+                        vec![expr_stmt(cap("append", vec![var("out"), var("l")]))],
+                        Some(vec![
+                            decl("parts", call("str.split", vec![var("l"), var("delim")])),
+                            if_(
+                                bin("<=", var("field"), len(var("parts"))),
+                                vec![expr_stmt(cap(
+                                    "append",
+                                    vec![var("out"), index(var("parts"), bin("-", var("field"), int(1)))],
+                                ))],
+                                Some(vec![expr_stmt(cap("append", vec![var("out"), s("")]))]),
+                            ),
+                        ]),
+                    ),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_trset(s): expand the ranges in a `tr` set (`a-z`, `0-9`) into a
+        // plain string of characters, the form both `tr` helpers want.
+        //
+        // Ranges are read off printable ASCII (`RANGE_ALPHA`), where position is
+        // `codepoint - 0x20`: this avoids a `conv.ord` call, and a set naming a
+        // character outside that alphabet (or an inverted range) is refused
+        // rather than guessed at.
+        "__sh_trset" => func(
+            &["s"],
+            vec![
+                decl("cs", chars(var("s"))),
+                decl("out", s("")),
+                decl("i", int(0)),
+                // Declared up front: a `decl` inside a branch does not get a
+                // fresh slot the VM can load from later in the same branch.
+                decl("a", int(0)),
+                decl("b", int(0)),
+                while_(bin("<", var("i"), len(var("cs"))), vec![
+                    if_(
+                        bin(
+                            "and",
+                            bin("and", bin("<", bin("+", var("i"), int(2)), len(var("cs"))),
+                                bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("-"))),
+                            bin(
+                                "and",
+                                bin(">=", call("__sh_find", vec![s(RANGE_ALPHA), index(var("cs"), var("i"))]), int(0)),
+                                bin(">=", call("__sh_find", vec![s(RANGE_ALPHA), index(var("cs"), bin("+", var("i"), int(2)))]), int(0)),
+                            ),
+                        ),
+                        vec![
+                            set("a", call("__sh_find", vec![s(RANGE_ALPHA), index(var("cs"), var("i"))])),
+                            set("b", call("__sh_find", vec![s(RANGE_ALPHA), index(var("cs"), bin("+", var("i"), int(2)))])),
+                            if_(
+                                bin("<", var("b"), var("a")),
+                                vec![throw(concat(vec![
+                                    s("unsupported: an inverted `tr` range `"),
+                                    index(var("cs"), var("i")),
+                                    s("-"),
+                                    index(var("cs"), bin("+", var("i"), int(2))),
+                                    s("`"),
+                                ]))],
+                                None,
+                            ),
+                            set(
+                                "out",
+                                bin(
+                                    "+",
+                                    var("out"),
+                                    call(
+                                        "__sh_substr",
+                                        vec![
+                                            s(RANGE_ALPHA),
+                                            var("a"),
+                                            bin("+", bin("-", var("b"), var("a")), int(1)),
+                                            boolean(true),
+                                        ],
+                                    ),
+                                ),
+                            ),
+                            set("i", bin("+", var("i"), int(3))),
+                        ],
+                        Some(vec![
+                            set("out", bin("+", var("out"), index(var("cs"), var("i")))),
+                            set("i", bin("+", var("i"), int(1))),
+                        ]),
+                    ),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_tr(text, from, to): map each character of `text` that occurs in
+        // `from` to the character at the same position in `to` (past the end
+        // of `to`, the last one, as `tr` does).
+        "__sh_tr" => func(
+            &["text", "from", "to"],
+            vec![
+                decl("cs", chars(var("text"))),
+                decl("ts", chars(var("to"))),
+                decl("out", s("")),
+                decl("i", int(0)),
+                while_(bin("<", var("i"), len(var("cs"))), vec![
+                    decl("k", call("__sh_find", vec![var("from"), index(var("cs"), var("i"))])),
+                    if_(
+                        bin(">=", var("k"), int(0)),
+                        vec![set(
+                            "out",
+                            bin(
+                                "+",
+                                var("out"),
+                                tern(
+                                    bin("<", var("k"), len(var("ts"))),
+                                    index(var("ts"), var("k")),
+                                    index(var("ts"), bin("-", len(var("ts")), int(1))),
+                                ),
+                            ),
+                        )],
+                        Some(vec![set("out", bin("+", var("out"), index(var("cs"), var("i"))))]),
+                    ),
+                    set("i", bin("+", var("i"), int(1))),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_tr_del(text, set): drop every character of `set` (`tr -d`).
+        "__sh_tr_del" => func(
+            &["text", "set"],
+            vec![
+                decl("cs", chars(var("text"))),
+                decl("out", s("")),
+                decl("i", int(0)),
+                while_(bin("<", var("i"), len(var("cs"))), vec![
+                    if_(
+                        bin("<", call("__sh_find", vec![var("set"), index(var("cs"), var("i"))]), int(0)),
+                        vec![set("out", bin("+", var("out"), index(var("cs"), var("i"))))],
+                        None,
+                    ),
+                    set("i", bin("+", var("i"), int(1))),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_find(hay, needle): where `needle` first occurs in `hay`, or -1.
+        "__sh_find" => func(
+            &["hay", "needle"],
+            vec![
+                decl("h", chars(var("hay"))),
+                decl("nd", chars(var("needle"))),
+                decl("i", int(0)),
+                while_(
+                    bin("<=", var("i"), bin("-", len(var("h")), len(var("nd")))),
+                    vec![
+                        decl("ok", boolean(true)),
+                        decl("j", int(0)),
+                        while_(bin("<", var("j"), len(var("nd"))), vec![
+                            if_(
+                                bin(
+                                    "!=",
+                                    index(var("h"), bin("+", var("i"), var("j"))),
+                                    index(var("nd"), var("j")),
+                                ),
+                                vec![set("ok", boolean(false)), S::Break { meta: m() }],
+                                None,
+                            ),
+                            set("j", bin("+", var("j"), int(1))),
+                        ]),
+                        if_(var("ok"), vec![ret(var("i"))], None),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
+                ret(int(-1)),
+            ],
+        ),
+        // __sh_grep_lines(a, pat, invert): the lines that contain `pat`.
+        "__sh_grep_lines" => func(
+            &["a", "pat", "invert"],
+            vec![
+                decl("out", array(vec![])),
+                for_("l", var("a"), vec![
+                    decl(
+                        "hit",
+                        bin(">=", call("__sh_find", vec![var("l"), var("pat")]), int(0)),
+                    ),
+                    if_(
+                        bin("!=", var("hit"), var("invert")),
+                        vec![expr_stmt(cap("append", vec![var("out"), var("l")]))],
+                        None,
+                    ),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_re_meta(pat): does `pat` use regular-expression syntax? `grep`
+        // here matches literal text only, so such a pattern is refused rather
+        // than matched as if the metacharacters were plain characters.
+        "__sh_re_meta" => func(
+            &["pat"],
+            vec![
+                decl("cs", chars(var("pat"))),
+                decl("i", int(0)),
+                while_(bin("<", var("i"), len(var("cs"))), vec![
+                    decl("c", index(var("cs"), var("i"))),
+                    if_(
+                        bin(
+                            "or",
+                            bin(
+                                "or",
+                                bin("or", bin("==", var("c"), s("\\")), bin("==", var("c"), s("."))),
+                                bin("or", bin("==", var("c"), s("*")), bin("==", var("c"), s("["))),
+                            ),
+                            bin(
+                                "or",
+                                bin("or", bin("==", var("c"), s("]")), bin("==", var("c"), s("^"))),
+                                bin("==", var("c"), s("$")),
+                            ),
+                        ),
+                        vec![ret(boolean(true))],
+                        None,
+                    ),
+                    set("i", bin("+", var("i"), int(1))),
+                ]),
+                ret(boolean(false)),
+            ],
+        ),
+        // __sh_count(s, ch): how many times `ch` occurs in `s` (`wc -l`).
+        "__sh_count" => func(
+            &["s", "ch"],
+            vec![
+                decl("n", int(0)),
+                for_("c", chars(var("s")), vec![if_(
+                    bin("==", var("c"), var("ch")),
+                    vec![set("n", bin("+", var("n"), int(1)))],
+                    None,
+                )]),
+                ret(var("n")),
+            ],
+        ),
+        // __sh_pad(s, n): `s` right-aligned in `n` columns, the width GNU `wc`
+        // uses for its columns.
+        "__sh_pad" => func(
+            &["s", "n"],
+            vec![
+                if_(
+                    bin("<", len(var("s")), var("n")),
+                    vec![ret(bin(
+                        "+",
+                        call("__sh_repeat", vec![s(" "), bin("-", var("n"), len(var("s")))]),
+                        var("s"),
+                    ))],
+                    None,
+                ),
+                ret(var("s")),
             ],
         ),
         // __sh_glob(pat, s): does the whole of `s` match the shell pattern

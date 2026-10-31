@@ -1,0 +1,233 @@
+name: release-artifacts
+
+# Builds the prebuilt artifacts for a release tag vX.Y.Z and attaches them to
+# that tag's GitHub Release (CRUSH-342). Pre-1.0 releases are marked
+# pre-release and not "latest"; from 1.0 they are normal releases.
+#
+# Trigger design: workflow_dispatch ONLY, with a required `tag` input.
+#   * release.yml pushes the tag with the default GITHUB_TOKEN, and events made
+#     with that token do not start new workflow runs, so an `on: push: tags`
+#     trigger here would never fire for the tags that matter. (publish.yml
+#     has the same limitation and is also dispatched with a tag input.)
+#   * workflow_dispatch IS allowed from GITHUB_TOKEN, so release.yml runs
+#     `gh workflow run artifacts.yml -f tag=vX.Y.Z` right after it tags.
+#   * The same input backfills older tags, and rebuilds a tag whose upload
+#     failed: `gh workflow run artifacts.yml --ref main -f tag=v0.8.0`.
+#   * The workflow file comes from main; the SOURCE is the tag (the checkout
+#     below pins refs/tags/<tag>), never a moving main.
+#
+# Assets (all on the release for the tag, replaced with --clobber on re-run):
+#   crush-<ver>-x86_64-unknown-linux-gnu.tar.gz   the CLIs (see below); the
+#       archive has one top-level directory, crush-<ver>-x86_64-unknown-linux-gnu/,
+#       holding the binaries + README/LICENSE files. cargo-binstall reads this
+#       layout from [package.metadata.binstall] in crush-lang-sdk / crush-pkg.
+#   crush-web-<ver>-pkg.tar.gz                    crates/crush-web built for the
+#       browser: `wasm-bindgen --target web` output (crush_web.js,
+#       crush_web_bg.wasm, ...), features polyglot-javascript + polyglot-python
+#   SHA256SUMS                                    sha256 of both archives
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach artifacts to (vX.Y.Z)"
+        type: string
+        required: true
+
+permissions:
+  contents: write # create/update the release, upload assets
+
+concurrency:
+  group: release-artifacts-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RELEASE_TAG: ${{ inputs.tag }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  validate:
+    name: Validate tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - name: refuse anything but a release tag
+        id: v
+        run: |
+          case "$RELEASE_TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::error::release-artifacts needs a release tag (vX.Y.Z); got '$RELEASE_TAG'"
+              exit 1 ;;
+          esac
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - name: tag must match the workspace version
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          have=$(awk '/^\[workspace.package\]/{f=1;next} f&&/^version/{gsub(/[" ]/,"",$3);print $3;exit}' Cargo.toml)
+          if [ "$have" != "$VERSION" ]; then
+            echo "::error::tag $RELEASE_TAG but Cargo.toml [workspace.package] version is '$have'"
+            exit 1
+          fi
+
+  binaries:
+    name: CLI binaries (x86_64-unknown-linux-gnu)
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      TARGET: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
+      - uses: dtolnay/rust-toolchain@stable
+      # Cold on purpose (cache-targets: false), same reason as ci.yml's release
+      # build: a partially restored release target/ breaks the ort-sys relink.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+      # The user-facing CLIs `crush-installer` installs: crush-lang-sdk's six
+      # (crush, crushc, crush-run, crush-compile, crush-repl, crush-debug —
+      # crush-debug needs the default `debug` feature) and crush-pkg.
+      # Plus crush-gui (CRUSH-319; outside default-members, so named with -p).
+      # It needs pkg-config + libfontconfig1-dev — plain apt-get, NOT
+      # awalsh128/cache-apt-pkgs-action (its restored cache broke bliss-engine CI).
+      # Deliberately NOT shipped: the AOT toolchain (crush-aotc & co., needs
+      # rustc on the user's machine) and the *_walker dev binaries.
+      - name: System libraries for crush-gui
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libfontconfig1-dev
+      - name: Build
+        run: cargo build --release --locked -p crush-lang-sdk -p crush-pkg -p crush-gui
+      - name: Package
+        run: |
+          set -euo pipefail
+          name="crush-${VERSION}-${TARGET}"
+          mkdir -p "dist/${name}"
+          for b in crush crushc crush-run crush-compile crush-repl crush-debug crush-pkg crush-gui; do
+            cp "target/release/$b" "dist/${name}/"
+          done
+          cp README.md LICENSE-APACHE LICENSE-MIT "dist/${name}/"
+          {
+            echo "tag: $RELEASE_TAG"
+            echo "commit: $(git rev-parse HEAD)"
+            echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ) on $RUNNER_OS $(uname -m)"
+            echo "rustc: $(rustc -V)"
+          } > "dist/${name}/BUILD-INFO"
+          # smoke: the packaged binaries run
+          "dist/${name}/crush" --version
+          "dist/${name}/crush-run" --help >/dev/null
+          tar -C dist -czf "${name}.tar.gz" "${name}"
+          tar -tzf "${name}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-binaries
+          path: crush-*.tar.gz
+          retention-days: 3
+          if-no-files-found: error
+
+  web-pkg:
+    name: crush-web browser package
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/crush-web
+          cache-targets: false
+      # crush-web is its own workspace root with its own Cargo.lock and release
+      # profile (opt-level s, lto). The CLI must match the wasm-bindgen crate
+      # version locked there. No wasm-opt pass (same recipe the language guide
+      # uses for its src/play/pkg), --target web, polyglot features on.
+      - name: Install the matching wasm-bindgen CLI
+        run: |
+          v=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/"/, "", $3); print $3 }' crates/crush-web/Cargo.lock)
+          echo "wasm-bindgen $v"
+          cargo install wasm-bindgen-cli --version "${v}" --locked
+      - name: Build
+        working-directory: crates/crush-web
+        run: |
+          cargo build --release --locked --target wasm32-unknown-unknown \
+            --features polyglot-javascript,polyglot-python
+          wasm-bindgen --target web --out-dir pkg \
+            target/wasm32-unknown-unknown/release/crush_web.wasm
+          {
+            echo "tag: $RELEASE_TAG"
+            echo "commit: $(git rev-parse HEAD)"
+            echo "features: polyglot-javascript polyglot-python (+ default panic-hook stdlib)"
+            echo "rustc: $(rustc -V)"
+            echo "wasm-bindgen: $(wasm-bindgen --version)"
+          } > pkg/BUILD-INFO
+          (cd pkg && sha256sum crush_web_bg.wasm crush_web.js >> BUILD-INFO)
+      - name: Package
+        run: |
+          set -euo pipefail
+          name="crush-web-${VERSION}-pkg"
+          tar -C crates/crush-web -czf "${name}.tar.gz" pkg
+          tar -tzf "${name}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-pkg
+          path: crush-web-*-pkg.tar.gz
+          retention-days: 3
+          if-no-files-found: error
+
+  upload:
+    name: Attach to the GitHub Release
+    needs: [validate, binaries, web-pkg]
+    runs-on: ubuntu-latest
+    steps:
+      # Needs only the repo context for `gh`, not the source.
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+          merge-multiple: true
+      - name: SHA256SUMS
+        run: |
+          cd dl
+          sha256sum -- *.tar.gz | tee SHA256SUMS
+      - name: Create the release if missing, upload (idempotent)
+        env:
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Pre-1.0: pre-release, never "latest" (CRUSH-342). From 1.0: normal.
+          flags=(--prerelease --latest=false)
+          [ "${VERSION%%.*}" -ge 1 ] && flags=()
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" \
+              --generate-notes "${flags[@]}"
+          fi
+          gh release upload "$RELEASE_TAG" dl/*.tar.gz dl/SHA256SUMS --clobber
+          gh release view "$RELEASE_TAG" --json isPrerelease,assets \
+            --jq '{isPrerelease, assets: [.assets[].name]}'

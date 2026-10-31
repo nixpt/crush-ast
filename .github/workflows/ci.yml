@@ -29,6 +29,7 @@ jobs:
           cargo check --workspace \
             --exclude crush-python \
             --exclude crush-lang-custom \
+            --exclude crush-gui \
             2>&1
 
   # ── MSRV: the workspace builds on the declared rust-version ───────────────
@@ -59,6 +60,7 @@ jobs:
           cargo check --workspace \
             --exclude crush-python \
             --exclude crush-lang-custom \
+            --exclude crush-gui \
             2>&1
 
   # ── Core VM + compiler tests ───────────────────────────────────────────────
@@ -309,8 +311,13 @@ jobs:
   # (pyo3, abi3-py311): setup-python provides a shared libpython.
   #
   # No tests yet, but kept in the list so new ones run without a CI change:
-  # crush-cson, crush-ffi, crush-plugin-example, crush-tui, tree-sitter-crush
-  # (its grammar corpus needs the tree-sitter CLI, which this job doesn't run).
+  # crush-cson, crush-ffi, crush-plugin-example, crush-tui.
+  #
+  # tree-sitter-crush runs here too. Its `test/corpus/` grammar corpus still
+  # needs the tree-sitter CLI (which this job doesn't run), but
+  # `tests/grammar_examples.rs` parses every `examples/crush/*.crush` with the
+  # crate's own parser and fails on ERROR nodes — the check CRUSH-207 asked
+  # for, without the CLI. (CRUSH-207)
   test-rest:
     name: Test (rest)
     runs-on: ubuntu-latest
@@ -462,7 +469,35 @@ jobs:
           cargo test --workspace --no-run \
             --exclude crush-python \
             --exclude crush-lang-custom \
+            --exclude crush-gui \
             2>&1
+
+  # ── crush-gui (CRUSH-319): its own job ─────────────────────────────────────
+  # crush-gui pulls arniko -> bliss -> a font stack that links the system
+  # fontconfig, which the other jobs' runners do not have; it is excluded from
+  # every `--workspace` job above and built only here. Plain apt-get, not a
+  # cached-apt action (a restored cache can miss fontconfig's .pc file).
+  test-gui:
+    name: Test (gui)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: nixpt/buckets
+          path: buckets
+      - run: mv buckets ..
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libfontconfig1-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt -p crush-gui --check
+      - run: cargo clippy -p crush-gui --all-targets --no-deps -- -D warnings
+      - run: cargo test -p crush-gui --locked
 
   # ── Linting (blocking) ────────────────────────────────────────────────────
   # Previously: `continue-on-error: true` AND `|| true` — two independent reasons
@@ -487,6 +522,7 @@ jobs:
           cargo clippy --workspace \
             --exclude crush-python \
             --exclude crush-lang-custom \
+            --exclude crush-gui \
             -- -D clippy::never_loop
 
   # ── Release build compiles + uploads the binaries as an artifact ─────────
@@ -530,7 +566,33 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
-      - run: |
+      # Pull requests only type-check the release profile (CRUSH-342): the full
+      # build was ~9.4 of the ~12 min PR wall time and its output was thrown
+      # away. `cargo check --release` still catches release-only breakage
+      # (cfg(not(debug_assertions)) code, release-profile feature paths); it
+      # does not link, so link-time failures (the ort-sys/onnxruntime relink)
+      # are caught on the push to main, where the full build runs. Tagged
+      # builds are done by artifacts.yml (full release build, from the tag).
+      - name: Check (release profile, same packages)
+        if: github.event_name == 'pull_request'
+        run: |
+          cargo check --release \
+            -p crush-aot \
+            -p crush-vm \
+            -p crush-lang-sdk \
+            -p crush-lang-python \
+            -p crush-lang-js \
+            -p crush-lang-rust \
+            -p crush-lang-c \
+            -p crush-lang-bash \
+            -p crush-lang-go \
+            -p crush-lang-zig \
+            -p crush-lang-dart \
+            -p crush-pkg \
+            2>&1
+      - name: Build (release)
+        if: github.event_name != 'pull_request'
+        run: |
           cargo build --release \
             -p crush-aot \
             -p crush-vm \
@@ -549,6 +611,7 @@ jobs:
       # download a release build instead of spending 20+ minutes compiling one.
       # Public repo → no Actions storage charge; 14 days keeps the list short.
       - name: Package release binaries
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           dist="crush-linux-x86_64"
@@ -567,6 +630,7 @@ jobs:
           tar -czf "$dist.tar.gz" "$dist"
           ls -la "$dist" "$dist.tar.gz"
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: crush-linux-x86_64-${{ github.sha }}
           path: crush-linux-x86_64.tar.gz
@@ -596,6 +660,7 @@ jobs:
           cargo check --workspace \
             --exclude crush-python \
             --exclude crush-lang-custom \
+            --exclude crush-gui \
             ${{ matrix.args }} 2>&1
 
   # ── crush-web: native tests + headless Chromium (blocking) ────────────────

@@ -6,14 +6,14 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Portable, std-only TCP/TLS network stack exposed as CRUSH host capabilities."
-readme = "../../README.md"
+readme = "README.md"
 
 [features]
 tls = ["dep:rustls", "dep:webpki-roots"]
 default = ["tls"]
 
 [dependencies]
-crush-lang-sdk.workspace = true
+crush-vm = { path = "../crush-vm", version = "0.8.0", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

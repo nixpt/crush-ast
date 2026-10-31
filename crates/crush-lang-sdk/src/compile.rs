@@ -32,6 +32,17 @@ fn cap_returns_value(name: &str) -> bool {
     true
 }
 
+/// Compile Crush source for a debugger: the program (its `source_map` in
+/// Crush source lines) and the names of its locals.
+pub fn compile_crush_source_for_debug(
+    source: &str,
+) -> anyhow::Result<(crush_vm::Program, LocalNames)> {
+    let (casm, warnings) = compile_crush_to_casm_with_options(source, &CompileOptions::default())?;
+    let (mut program, names) = casm_to_vm_named(&casm)?;
+    program.warnings = warnings;
+    Ok((program, names))
+}
+
 pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
     compile_crush_source_with(source, &CompileOptions::default())
 }
@@ -634,6 +645,21 @@ fn prepare_stmts(
                     "`->` output lists are not supported for @{lang}: it has no value marshaling"
                 );
             }
+            // #255: @bash blocks lost their only input path when #245 removed
+            // the env-only fallback (bash has no free-variable analyzer like
+            // python/js). Scan the block for `$name` / `${name}` references
+            // and inject the matching Crush locals as env vars, restoring the
+            // documented pre-#245 behavior. Anything not referenced stays out.
+            Statement::LangBlock {
+                lang, code, variables, ..
+            } if lang == "bash" || lang == "sh" => {
+                let refs = bash_var_refs(code);
+                let inputs: Vec<String> = refs
+                    .into_iter()
+                    .filter(|name| known_locals.contains(name))
+                    .collect();
+                *variables = inputs;
+            }
             Statement::If {
                 then_body,
                 else_body,
@@ -1108,8 +1134,108 @@ fn dedent(code: &str) -> String {
         .to_string()
 }
 
+/// Collect the variable names a `@bash` block references via `$name` or
+/// `${name}` (#255). This is deliberately a dumb scanner, not a shell
+/// parser: it skips single-quoted regions (no expansion there) and `$$`
+/// (PID), and takes the longest valid identifier after `$`. False positives
+/// (e.g. `$name` inside a double-quoted string that bash would expand
+/// anyway) are harmless — an extra env var costs nothing. False negatives
+/// would silently drop a variable, so when in doubt we include.
+fn bash_var_refs(code: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let bytes = code.as_bytes();
+    let mut i = 0;
+    let mut in_single_quote = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_single_quote {
+            if b == b'\'' {
+                in_single_quote = false;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' => {
+                in_single_quote = true;
+                i += 1;
+            }
+            b'$' => {
+                let next = bytes.get(i + 1).copied();
+                match next {
+                    Some(b'{') => {
+                        // ${name} — also ${name:-default} etc.; take up to
+                        // the first non-identifier char.
+                        let mut j = i + 2;
+                        while j < bytes.len()
+                            && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                        {
+                            j += 1;
+                        }
+                        if j > i + 2 {
+                            let name = &code[i + 2..j];
+                            // Skip positional/special params like $1, $#, $@
+                            if name
+                                .chars()
+                                .next()
+                                .map(|c| c.is_alphabetic() || c == '_')
+                                .unwrap_or(false)
+                                && seen.insert(name.to_string())
+                            {
+                                refs.push(name.to_string());
+                            }
+                        }
+                        i = j;
+                    }
+                    Some(c) if c.is_ascii_alphabetic() || c == b'_' => {
+                        // $name — longest identifier run
+                        let mut j = i + 1;
+                        while j < bytes.len()
+                            && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                        {
+                            j += 1;
+                        }
+                        let name = &code[i + 1..j];
+                        if seen.insert(name.to_string()) {
+                            refs.push(name.to_string());
+                        }
+                        i = j;
+                    }
+                    // $$ (PID), $1 (positional), $# etc.: not Crush vars
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    refs
+}
+
+/// Local variable names per function, `function -> [(name, slot)]`: what
+/// compiled bytecode forgets and a debugger needs to say `print total`.
+pub type LocalNames = HashMap<String, Vec<(String, u16)>>;
+
 pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> {
+    Ok(casm_to_vm_named(program)?.0)
+}
+
+/// [`casm_to_vm`] plus the [`LocalNames`] it assigned slots from. The program's
+/// `source_map` maps bytecode offsets to the lines of the Crush source the CASM
+/// came from (instructions that carry no line are left out).
+pub fn casm_to_vm_named(
+    program: &casm::Program,
+) -> anyhow::Result<(crush_vm::Program, LocalNames)> {
+    let mut local_names: LocalNames = HashMap::new();
     let mut lines: Vec<String> = Vec::new();
+    // Crush source line behind each entry of `lines` (0 = none), for the
+    // debugger's source map. Entries that carry no line are not pushed here;
+    // `resize` below pads them.
+    let mut line_src: Vec<usize> = Vec::new();
     let mut perms: HashSet<String> = HashSet::new();
 
     for _func in program.functions.values() {
@@ -1508,7 +1634,16 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 // dropped; porting onto `ai_native` is a later ticket.
                 other => anyhow::bail!("Unsupported CVM1 opcode: {other} at {fname}:{i}"),
             };
+            line_src.resize(lines.len(), 0);
             lines.push(format!("    {op}"));
+            line_src.push(
+                instr
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.get("line"))
+                    .and_then(|l| l.as_u64())
+                    .unwrap_or(0) as usize,
+            );
         }
 
         // Emit label for one-past-the-end targets (used by try/catch's jmp with
@@ -1517,6 +1652,9 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
         if let Some(label) = target_labels.get(&func.body.len()) {
             lines.push(format!("{label}:"));
         }
+        let mut names: Vec<(String, u16)> = slot_map.into_iter().collect();
+        names.sort_by_key(|&(_, slot)| slot);
+        local_names.insert(fname.clone(), names);
     }
 
     // Post-process: restore the frontend's stack discipline around a
@@ -1527,11 +1665,18 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
     // `JMP` to a shared POP, a STORE, a RET), so push the null the
     // expression stands for. Only dropping an adjacent POP underflowed the
     // stack when a void call ended a match arm (GitHub issue #143).
+    line_src.resize(lines.len(), 0);
     let mut cleaned: Vec<String> = Vec::new();
+    // Crush source line of each physical line of the assembly (index = line - 1).
+    let mut asm_src: Vec<usize> = Vec::new();
     let mut i = 0;
     while i < lines.len() {
         let line = &lines[i];
         cleaned.push(line.clone());
+        asm_src.extend(std::iter::repeat_n(
+            line_src[i],
+            line.matches('\n').count() + 1,
+        ));
         if let Some(cap_name) = line.trim().strip_prefix("CAP_CALL ") {
             let name = cap_name.split('"').nth(1).unwrap_or("");
             if !cap_returns_value(name) {
@@ -1539,6 +1684,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     i += 1;
                 } else {
                     cleaned.push("    PUSH_NULL".to_string());
+                    asm_src.push(line_src[i]);
                 }
             }
         }
@@ -1559,6 +1705,17 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
     // COSM K1.3 (CRUSH-zorro-42): the kind table goes into the CVM1 program
     // as-is; `to_blob` writes it as the version-3 kind-table section.
     vm_program.cosm = program.cosm.clone();
+    // The assembler maps offsets to lines of the generated assembly; the
+    // debugger wants the author's lines, which the instructions carry in their
+    // `meta`. Instructions without one drop out of the map.
+    vm_program.source_map = vm_program
+        .source_map
+        .iter()
+        .filter_map(|&(asm_line, offset)| {
+            let line = *asm_src.get(asm_line.checked_sub(1)?)?;
+            (line > 0).then_some((line, offset))
+        })
+        .collect();
     // COSM K1.4: a program with Kinds records each function's arity, which
     // the VMs need to make function values (bound methods) from members.
     if vm_program.kind_table().is_some() {
@@ -1566,7 +1723,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
             entry.arity = program.functions.get(name).and_then(|f| u8::try_from(f.params.len()).ok());
         }
     }
-    Ok(vm_program)
+    Ok((vm_program, local_names))
 }
 
 /// `CONSTRUCT "kind" argc`, followed — for a Kind built by an initialiser
@@ -1583,6 +1740,28 @@ fn construct_asm(program: &casm::Program, kind: &str, argc: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// CRUSH-317: the program's source map is in the author's lines, so a
+    /// debugger can break on `file:line`; the local names ride along.
+    #[test]
+    fn compiled_crush_maps_offsets_to_source_lines_and_names_its_locals() {
+        let src = "fn main() {\n    let a = 1\n    let b = a + 2\n    print(b)\n}\nmain()\n";
+        let (program, names) = compile_crush_source_for_debug(src).unwrap();
+        let lines: std::collections::BTreeSet<usize> =
+            program.source_map.iter().map(|&(l, _)| l).collect();
+        assert!(lines.is_superset(&[2, 3, 4].into()), "{lines:?}");
+        assert!(lines.iter().all(|&l| (1..=6).contains(&l)), "{lines:?}");
+        // Offsets are code offsets, ascending, inside the program.
+        assert!(program.source_map.windows(2).all(|w| w[0].1 <= w[1].1));
+        assert!(
+            program
+                .source_map
+                .iter()
+                .all(|&(_, o)| o < program.code.len())
+        );
+        let main: Vec<&str> = names["main"].iter().map(|(n, _)| n.as_str()).collect();
+        assert!(main.contains(&"a") && main.contains(&"b"), "{main:?}");
+    }
+
     fn _poly_caps() -> crush_vm::HostCaps {
         let mut c = crush_vm::HostCaps::new();
         c.grant_polyglot(&["python", "javascript", "bash"]);
@@ -2259,6 +2438,46 @@ mod tests {
         let src = "fn main() {\n    @bash -> x {\n        echo hi\n    }\n}\n";
         let err = compile_crush_source(src).expect_err("bash has no value marshaling");
         assert!(err.to_string().contains("@bash"), "error should name the language: {err}");
+    }
+
+    // #255: @bash blocks see the Crush variables they reference via
+    // $name / ${name} as env vars (restores the pre-#245 behavior).
+    #[test]
+    fn test_bash_var_refs_scanner() {
+        // Basic $name and ${name} forms
+        assert_eq!(
+            bash_var_refs("echo $name"),
+            vec!["name".to_string()]
+        );
+        assert_eq!(
+            bash_var_refs("echo ${name}"),
+            vec!["name".to_string()]
+        );
+        // Dedupes, preserves first-seen order
+        assert_eq!(
+            bash_var_refs("echo $a $b ${a}"),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        // Skips single-quoted (no expansion), $$ (PID), $1 (positional)
+        assert_eq!(bash_var_refs("echo '$name' $$ $1"), Vec::<String>::new());
+        // ${name:-default} counts as a reference to name
+        assert_eq!(
+            bash_var_refs("echo ${name:-fallback}"),
+            vec!["name".to_string()]
+        );
+    }
+
+    // #255 end-to-end: a referenced Crush var reaches the bash block's
+    // exec_lang spec in the compiled CASM.
+    #[test]
+    fn test_bash_block_sees_referenced_crush_var() {
+        let src = "fn main() {\n    let name = \"crush\"\n    @bash {\n        echo \"hello [$name]\"\n    }\n}\n";
+        let casm = compile_crush_to_casm(src).expect("compile bash block");
+        let json = serde_json::to_string(&casm).expect("casm to json");
+        assert!(
+            json.contains("\"var_0\":\"name\"") || json.contains("\"var_0\": \"name\""),
+            "bash block's exec_lang spec should list `name` as var_0: {json}"
+        );
     }
 
     // `use @lang` + `->` still splice the import into the block.

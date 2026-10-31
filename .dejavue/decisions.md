@@ -1315,6 +1315,10 @@ Reason:
 The Go walker matched tree-sitter-go's node `short_variable_declaration`, which does not exist (it is `short_var_declaration`), so `a := 7` fell through the `_ => Ok(None)` catch-all and `a` read as uninitialised; var/assignment/inc/for/block were dropped the same way, and unknown expressions became NullLiteral. Fix: visit_statement -> visit_statements returning Vec (one node can yield several statements, e.g. a C-style for -> init + while), implement var/assignment/inc/dec/for(all shapes)/block, and make the catch-all a loud error. The same rule as the rest of the repo: exact or loud, never silently wrong. A multi-value return and unknown expressions also error now. Known divergence left as a follow-up: fmt.Println(a, b) maps to io.print which concatenates, while Go joins with spaces.
 
 
+## 2026-10-30T20:28:28-05:00 — [ARCHITECTURAL] A walker lowers a node or refuses it loudly; it never fabricates null or an empty program (CRUSH-203)
+
+Reason:
+Several walkers silently produced wrong or empty programs: the Zig walker matched tree-sitter-zig node names that do not exist (IntegerLiteral instead of integer, BinaryExpr instead of binary_expression, CallExpr instead of call_expression), so every literal became null and programs printed nothing; the Dart walker discarded every node and returned an empty program; the Java walker returned Program::default() and panicked with a bare unreachable! in language()/parse(); the Wasm walker dropped every non-call operator and lowered fd_write to an arg-less io.print. Fix: Zig node names and wrappers corrected and its null/empty fallbacks made loud errors naming the node kind and position; Dart and Java fail with not implemented; Wasm errors on unhandled operators and imported calls; crush-walk-run reads .wasm as bytes; the Nepali walker's false native-keyword comment corrected. Same rule as CRUSH-198: exact or loud.
 ## 2026-10-30T19:31:21-05:00 — [ARCHITECTURAL] A run that did not finish is not success, and an embedded io.print reaches stdout (CRUSH-205)
 
 Reason:
@@ -1335,4 +1339,63 @@ Live-verified 2026-10-30 (unicode-support survey, worktree agent/nixp/unicode-su
 
 Reason:
 Fix (worktree agent/nixp/unicode-support): arr_slice is arrays-only by contract; seq.slice is the ONE char-based strings-and-arrays implementation mirrored by both AOT backends (_seq_slice/seq_slice). New rule for anyone extending slice-like syntax or porting a walker: bracket slice syntax -> seq.slice (4 args: target,start,stop,step, null=from-edge); arr_slice stays the method-call-compat cap. Gotcha: omitted bounds lex as ONE DoubleColon token (Rust path '::') — treat DoubleColon as a bound separator in [ ], never as two Colons.
+## 2026-10-30T21:14:22-05:00 — [ARCHITECTURAL] tree-sitter-crush is a published grammar with no in-repo consumer; it must be checked by cargo test, not only by the tree-sitter CLI (CRUSH-207)
+
+Reason:
+tree-sitter-crush parsed 1 of 51 examples/crush/*.crush without ERROR nodes, and CI could not see it: the crate had zero Rust tests and its grammar corpus (test/corpus/*.txt) only runs under the tree-sitter CLI, which no CI job invokes. Meanwhile crush-frontend does NOT use the grammar - it has its own hand-written lexer/parser - so nothing in-repo would ever have caught the drift; the consumers are external (crush-symbols, and exosphere's path-dependency, CRUSH-23). Fix: (1) crates/tree-sitter-crush/tests/grammar_examples.rs parses every examples/crush/*.crush plus the crate's test_*.crush fixtures with the bundled parser and fails on ERROR/MISSING nodes, running in the existing test-rest CI job; the KNOWN_BAD allowlist may only shrink, so a fixed file forces its entry's removal. (2) The grammar was brought back to the frontend's syntax: // and block comments (the rule knew only #, so almost every file died at line 1), general assignment targets, fn return types, pub/async, string escapes, && || ! not and unary minus, chained field access, object and struct literals, null, capability declarations, the @-annotation family (keyed off the lexer's IMPORT_KEYWORDS list), semantic_switch, named arguments, and brace-balanced polyglot bodies. Result: 1/51 -> 49/51. Two design notes: object/struct literals live in a new _value_expression (after =, return, in arguments) rather than in expression, because allowing a statement to start with { is what made 'if x { }' and '@module { }' ambiguous; and capability_call's optional('@') became a distinct alternative because it went ambiguous once binary operators could follow. Regenerating parser.c needs tree-sitter CLI >= 0.25 (ABI 15); 0.24 refuses the committed parser. Remaining: the differential test against crushc --check, which would catch the grammar being MORE permissive than the frontend - the current check cannot.
+## 2026-10-30T21:16:19-05:00 — Shell pipelines and redirections run in-VM: no process, fs caps only (CRUSH-311)
+
+Reason:
+Option A of CRUSH-311, chosen over spawning real processes: a pipeline is a buffer handoff between two lowered commands, '<' '>' '>>' are fs.read/fs.write over the existing sandbox, a here-document is a string, and cat ls wc head tail grep cp mv rm mkdir touch lower inline onto the fs.* caps. No process is spawned - $(...) , subshells, 2>&1 and any command outside the builtin set stay refused loudly, so the guarantee that a script either prints what bash prints or fails with 'unsupported: ... at line N' survives. crush-walk-run gates file contents behind --allow-fs (renamed from --allow-fs-write because < and cat need fs.read), keeping glob-name reading on by default. Verified by the 234-case shared oracle: bash 193 match / 41 loud, zsh 187 / 47, 0 silently wrong.
+## 2026-10-30T21:05:20-05:00 — Raw sockets are tcp.* caps with their own grants (--tcp, --tcp-listen), not net.*
+
+Reason:
+net.* is a family prefix: effects_of maps net.* to net/http, covers() makes a 'net' declaration cover every net.<x>, and --net grants the whole namespace. Raw sockets, and above all listen/accept (being a server), must not ride along with the HTTP grant. tcp.* sits outside that family. Two flags: --tcp (connect, tls_wrap) and --tcp-listen (listen, accept); send/recv/close/ping act only on ids a granted cap produced so either flag registers them; --tcp-listen does not include connect. crush-net now depends on crush-vm only (was crush-lang-sdk, a cycle); the SDK depends on it behind features tcp/tcp-tls, on by default (never granted by default).
+
+Artifacts: crates/crush-net, crates/crush-lang-sdk/src/host_caps.rs, crates/crush-lang-sdk/src/effects.rs
+
+Rejected alternatives:
+- **net.tcp_* names (swept in by net/http effect label and net family declarations)**
+- **one --sockets grant for client+server (a server needs a stronger opt-in)**
+- **host:port allow-list (no precedent; overbuild)**
+
+Outcome:
+CRUSH-318 PR agent/nova/CRUSH-318
+## 2026-10-30T20:45:44-05:00 — [ARCHITECTURAL] A JS/TS dialect comes from the real file extension; an unknown one is refused, not treated as JS (CRUSH-zorro-8)
+
+Reason:
+JsLowering::for_ext mapped every unrecognised extension to plain JS, so a .ts file reached through a temp path (walker_N.tmp) or a typo like 'typescript' was parsed as ES - TypeScript syntax then either failed oddly or silently dropped types. Fix: for_ext accepts exactly js mjs cjs jsx ts tsx mts cts (cts is TypeScript) and refuses anything else naming that set; the JsFrontend/JsAdapter extension lists gained cts/jsx; swc parses cts as TypeScript; and SubprocessWalker::parse carries the filename so walk names its temp file walker_N.<ext>, keeping the dialect. Remaining: TS syntax under an ES extension is accepted (types stripped) by swc rather than a loud error - that needs the swc TS-mode strip-into-boa approach (the optional ts feature).
+## 2026-10-30T20:54:05-05:00 — net on by default, db opt-in; http.* renamed with no alias; time.now is seconds
+
+Reason:
+CRUSH-264 (owner, 2026-10-31): net joins crush-lang-sdk default features (grant-gated, still needs --net; per-package features mean bins can't take it alone, so library default-feature consumers get ureq too); db stays --features db. exosphere http.* is refused up front via effects::RENAMED_CAPS naming net.http_* rather than aliased, so a rename is explicit and one table feeds every runner. time.now stays seconds, time.now_ms is ms, documented because exosphere's was ms.
+
+
+## 2026-10-30T22:42:31-05:00 — Release per tag as pre-release with artifacts via workflow_dispatch; PR CI release job is check-only
+
+Reason:
+Tags had no Releases so built artifacts were discarded and re-compiled by consumers. Tags pushed with GITHUB_TOKEN start no push-tag workflows, so release.yml dispatches artifacts.yml (workflow_dispatch is allowed from GITHUB_TOKEN); the same input backfills old tags. Source is checked out at the tag, never main. Owner decision 2026-10-31.
+
+Artifacts: .github/workflows/artifacts.yml
+
+Rejected alternatives:
+- **on:push:tags trigger (never fires for GITHUB_TOKEN-pushed tags)**
+- **build inside release.yml (not re-runnable/backfillable per tag)**
+
+Outcome:
+artifacts.yml + binstall metadata; ci.yml release build on PR becomes cargo check --release
+## 2026-10-30T22:20:14-05:00 — [STRATEGIC] [ADOPTED] ui.* is pull-based (render + blocking next_event) behind a UiBackend seam; crush-gui is its own crate on arniko from crates.io
+
+Reason:
+The VM cannot be re-entered from winit and Value is !Send, so the program runs on its own thread and events are pulled like io.read; one API lets desktop, tui-easy terminal and the crush-web browser Session share programs. arniko pulls Stylo/vello/winit so it stays out of crush-lang-sdk's default build; the whole ui.* family is one --ui grant.
+
+Artifacts: docs/design/ui-api.md
+
+Rejected alternatives:
+- **host-to-VM callbacks (needs VM re-entry)**
+- **arniko-crush as a dependency (yanked crush-lang-sdk, nixpt/arniko#27)**
+- **ui.* in crush-lang-sdk default features**
+
+Outcome:
+CRUSH-319 phase 1: desktop+headless backends, headless-verified; window not run on a screen
 

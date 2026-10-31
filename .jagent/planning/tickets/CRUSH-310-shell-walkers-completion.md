@@ -89,17 +89,29 @@ before coding).
 - **`read`**: `-r`, `-s`, `-p prompt`, one or more names (the last gets the rest
   of the line with its spacing), `REPLY` default, and bash's backslash
   handling / line continuation without `-r`.
+- **File tests**: `-e`, `-f`, `-d` in `[[ … ]]` and in `test`/`[`, onto
+  `fs.exists`/`fs.is_dir` (`-f` is `exists` and not `is_dir`). `-nt`/`-ot`/
+  `-ef` and the rarer tests stay refused.
+- **Builtin commands** (CRUSH-311): `cat ls wc head tail grep cp mv rm mkdir
+  touch sort uniq cut tr`, in-VM over `fs.read`/`fs.write` — no process is
+  ever started.
+- **Glob options**: `shopt -s/-u nullglob failglob` in bash,
+  `setopt`/`unsetopt null_glob nomatch` in zsh, consulted at run time by
+  `__sh_globexp`.
 
 ### Still refused loudly (unchanged classes)
 
-`$(…)`, backticks, pipelines, redirections and heredocs, subshells, `~`,
-brace expansion, external commands, `source`/`eval`/`trap`, environment
-variables the script never assigns, `=~`, file tests (`-f`, `-d`, `-nt`, …) in
-`[[ … ]]` and `test`, `${!x}`, `${x^^}` in zsh, a glob in a directory component
-(`*/*.txt`), `**`, `nullglob`/`failglob`/`extglob`/`GLOB_SUBST`, `%a` and any
-other unlisted `printf` conversion, a float argument that is not a number,
-negative `%x`/`%o`/`%u`, `declare`/`typeset`, associative arrays, `IFS`
-assignment, and a name used both as an array and as a plain value.
+`$(…)`, backticks, subshells, `~`, brace expansion, external commands outside
+the builtin set (`date`, `sed`, `awk`, …), `source`/`eval`/`trap`, environment
+variables the script never assigns, `=~`, `-nt`/`-ot`/`-ef` and the rarer file
+tests (`-f`, `-d` and `-e` do lower, onto `fs.exists`/`fs.is_dir`), `${!x}`,
+`${x^^}` in zsh, `**`, an absolute path with a glob in it (`/usr/*` — the
+filesystem sandbox is relative to the script's directory), `extglob`,
+`globstar` and every `shopt`/`setopt` option other than
+`nullglob`/`failglob`/`null_glob`/`nomatch`, `%a` and any other unlisted
+`printf` conversion, a float argument that is not a number, negative
+`%x`/`%o`/`%u`, `declare`/`typeset`, associative arrays, `IFS` assignment, and a
+name used both as an array and as a plain value.
 
 ### Dialect differences this pinned down (probed, then encoded)
 
@@ -129,18 +141,18 @@ exits with the requested status.
 
 ## Verification
 
-- Oracle corpus: **168 cases** (was 88) in
+- Oracle corpus: **270 cases** (was 88) in
   `crates/crush-lang-bash/tests/oracle/cases.rs`, run against `/usr/bin/bash`
   and `/usr/bin/zsh -f`, each case in a fresh working directory holding its
   fixture files (`okf`/`perf` cases) so a glob sees the same files either way:
-  - bash: 134 match, 34 loud-unsupported, **0 failures**
-  - zsh: 130 match, 38 loud-unsupported, **0 failures**
+  - bash: 220 match, 50 loud-unsupported, **0 failures**
+  - zsh: 210 match, 60 loud-unsupported, **0 failures**
   - (CRUSH-202 was 57 match / 31 loud per dialect.)
 - `crates/crush-lang-bash/tests/read_test.rs`: 13 tests, driving `read`
   through `PortableVm` with `InputSource::supplied` so nothing touches the
   harness's stdin.
 - `crates/crush-lang-bash/tests/real_script.rs` and
-  `crates/crush-lang-zsh/tests/real_script.rs`: one 70-line script
+  `crates/crush-lang-zsh/tests/real_script.rs`: one 88-line script
   (`crates/crush-lang-bash/tests/scripts/kitchen_sink.sh`) run through each
   walker and through the real shell, comparing stdout and exit status.
 - `cargo test -p crush-walker-core -p crush-lang-bash -p crush-lang-zsh`: all
@@ -148,7 +160,15 @@ exits with the requested status.
   warnings.
 - Live, through the real CLI:
   `crush-walk-run kitchen_sink.sh` is byte-identical to `bash kitchen_sink.sh`
-  (and the zsh-walker path matches `zsh -f`).
+  (and the zsh-walker path matches `zsh -f`), as are a file-test script and a
+  `sort | uniq | cut | tr` pipeline.
+- CI: `Test (walkers)` runs the oracle corpus. The workspace-wide
+  `Test (workspace)` job — the only one that links every test binary in one go —
+  has failed on a hosted runner as `ld terminated with signal 7 [Bus error]`
+  (lld's output mmap off a full disk) while the same commit passed on the
+  pull_request run, so it is a runner-capacity problem rather than a test: the
+  job needs the test binaries built without debug info and the runner's unused
+  toolchains freed first.
 
 ## Pathname expansion
 
@@ -159,21 +179,42 @@ capability decision; it now lowers onto `fs.exists` + `fs.list`.
 Words are expanded after field splitting, per field, the way bash does it:
 
 - `*`, `?` and `[…]` match through the same pattern matcher `${x#pat}` and
-  `[[ $x == pat ]]` use; the pattern is matched component by component against
-  the entries of its directory (`.` for a bare word).
-- A name starting with `.` is only matched by a pattern that starts with one.
-  Matches come back sorted (`fs.list` sorts), and a pattern that matches nothing
+  `[[ $x == pat ]]` use.
+- **Every path component globs**, not just the last one: `*/*.txt`,
+  `sub/*/[ab]*`, `*/*/*/x` and `echo */` all walk the tree. Each component is
+  matched against the entries of the directories built so far.
+  - a component with no metacharacter is appended as written but has to exist,
+    so `a*/missing` stays one word instead of inventing `a1/missing`;
+  - a component is only listed when it is a directory, so a *file* matched by
+    `*` is skipped rather than failing with "not a directory" (`*/bar` with a
+    `notes.txt` in the way);
+  - a trailing `/` keeps the slash and keeps only directories (`echo */`);
+  - an absolute pattern is refused: the sandbox root is the script's directory,
+    so `/usr/*` could only be answered by guessing.
+- A name starting with `.` is only matched by a pattern that starts with one,
+  in every component (`.h*/*.txt` reaches `.hid/z.txt`, `*/*.txt` does not).
+  Matches come back sorted in byte order, and a pattern that matches nothing
   stays as written in bash.
 - zsh rules are kept apart: it does not glob the text a *variable* contributes
   (`x='*'; echo $x` prints `*`), and an unmatched pattern is an error there
   (`no matches found`).
+- What an unmatched pattern does is an option, not a constant:
+  `shopt -s nullglob` drops the word in bash, `shopt -s failglob` skips the
+  command with status 1 and lets the script carry on, and zsh's `setopt
+  null_glob` / `setopt no_nomatch` do the equivalent. The other `shopt` /
+  `setopt` options stay refused, so a script asking for `extglob` hears about
+  it instead of getting bash's default behaviour.
 - Quoted text inside a glob word is escaped before matching and unescaped on the
   way out, so `a"*"b*` matches `a*bx.txt` and `echo "*.txt"` stays literal.
-- The one capability this needs is the filesystem: `fs.exists` + `fs.list`
-  (granted by `HostCapsBuilder::fs(true).fs_root(dir)`, which the oracle
-  harness and `crush-walk-run` do, the latter over the directory the script was
-  started in). A host that grants no filesystem gets `unknown capability:
-  fs.list` — loud, never a guess.
+- The capabilities this needs are the filesystem: `fs.exists`, `fs.list` and
+  `fs.is_dir` (the last one is new here, and exists because `fs.list` on a file
+  is an error — a walk into `*/*.txt` has to know which matches it may descend
+  into). All three are granted by
+  `HostCapsBuilder::fs(true).fs_root(dir)`, which the oracle harness and
+  `crush-walk-run` do, the latter over the directory the script was started in.
+  A host that grants no filesystem gets `unknown capability: fs.exists` (or
+  `fs.is_dir`, if it grants only the two the first version of this needed) —
+  loud, never a guess.
 
 ## Known limitations
 
@@ -183,14 +224,21 @@ of input (status 1, variables empty). `while read` loops terminate instead of
 spinning forever, at the cost of stopping at a blank line. Documented in
 `lower_read`'s doc comment and in `read_test.rs`.
 
-**Globs sort in byte order, and a failed zsh glob stops the run.** Matches are
-ordered like `LC_ALL=C` (`z1.txt` before `z10.txt`); under a UTF-8 collation
-locale bash and zsh order by collation, which can put `z10.txt` first. And a
-zsh pattern that matches nothing should fail only that command, leaving the
-script to continue with status 1; here it aborts the run with `no matches
-found: …` (everything printed before it is kept). Both are loud, neither is
-silent — but a script that relies on continuing, or on collation order, will
-notice.
+**Globs sort in byte order.** Matches are ordered like `LC_ALL=C` (`z1.txt`
+before `z10.txt`, and `a.b/` before `a/` for `echo */`); under a UTF-8
+collation locale bash and zsh order by collation, which can put `z10.txt` first
+and `a/` before `a.b/` — probed both ways. The sort is a merge sort over the
+matches. A script that relies on collation order will notice; the ordering is
+never silently random.
+
+**An unmatched glob ends the run in zsh, and that is correct.** Probed against
+`zsh -f`: an unmatched pattern in a *script* prints `no matches found` and
+stops it with status 1 — it does not fail just that command. So this walker's
+`no matches found` abort matches zsh, and `shopt -s failglob` in bash is the
+case that only skips the command (status 1, script continues), which is
+implemented separately. Scripts that want bash's keep-the-word behaviour in
+zsh write `setopt no_nomatch`; both shells' `nullglob`/`null_glob` drop the
+word entirely.
 
 **`printf` floats round the decimal you wrote, not a binary double.** The
 formatter works on the written decimal (`__sh_fparse` → digits + decimal
@@ -206,12 +254,16 @@ much larger change and is listed as a follow-up.
 
 - Exact `double` semantics for `printf` floats (needs `strtod` plus exact
   binary→decimal conversion) — see the limitation above.
-- Globs in directory components (`*/*.txt`), `**`, and the `nullglob` /
-  `failglob` / `extglob` options.
-- Locale collation for glob order, and zsh's "fail the command, not the run"
-  for an unmatched pattern.
+- `**` (recursive in zsh, `*` in bash), absolute-path globs, and the
+  `extglob` / `globstar` options.
+- Locale collation for glob order (the sort is `LC_ALL=C` byte order).
+- A zero-field word reaching `printf` after `nullglob` drops it: `printf`'s
+  arguments are lowered one word each, so a word that expands to no fields (or
+  to several) is refused rather than reusing the format, as bash does.
 - `printf %a` (hex float) and `declare`/`typeset` with associative arrays.
-- Pipelines, redirections and `$(…)` — these need a process/fs capability and a
-  decision about what a shell script is allowed to do (M6 has no ticket for
-  this yet).
+- `$(…)`/backticks — needs a process or a builtin-only capture decision;
+  **CRUSH-311** chose builtin-only, which leaves `$(date)` refused.
+- Pipelines, redirections, heredocs and the builtin command set landed in
+  **CRUSH-311** (`|`, `<`, `>`, `>>`, `<<`, `cat ls wc head tail grep cp mv rm
+  mkdir touch`), after this ticket.
 - A POSIX `sh`/`dash` dialect, so `.sh` stops being read with bash rules.

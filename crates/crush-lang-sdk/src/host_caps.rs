@@ -33,6 +33,10 @@ pub struct HostCapsBuilder {
     graphics: bool,
     #[cfg(feature = "net")]
     net: bool,
+    #[cfg(feature = "tcp")]
+    tcp: bool,
+    #[cfg(feature = "tcp")]
+    tcp_listen: bool,
     #[cfg(feature = "net")]
     net_max_response_bytes: usize,
     #[cfg(feature = "db")]
@@ -195,6 +199,25 @@ impl HostCapsBuilder {
         self
     }
 
+    /// Enable raw TCP client sockets: `tcp.connect`, `tcp.tls_wrap` and the
+    /// `tcp.send`/`tcp.recv`/`tcp.close`/`tcp.ping` that act on a connection
+    /// (CRUSH-318). Not implied by [`net`](Self::net), which is HTTP only.
+    #[cfg(feature = "tcp")]
+    pub fn tcp(mut self, enable: bool) -> Self {
+        self.tcp = enable;
+        self
+    }
+
+    /// Enable raw TCP *server* sockets: `tcp.listen` and `tcp.accept` (plus
+    /// `tcp.send`/`tcp.recv`/`tcp.close`/`tcp.ping` for the connections they
+    /// hand out). A stronger grant than [`tcp`](Self::tcp): the program becomes
+    /// reachable from other hosts. Does not grant outbound `tcp.connect`.
+    #[cfg(feature = "tcp")]
+    pub fn tcp_listen(mut self, enable: bool) -> Self {
+        self.tcp_listen = enable;
+        self
+    }
+
     /// Set the maximum HTTP response size in bytes.
     #[cfg(feature = "net")]
     pub fn net_max_response_bytes(mut self, n: usize) -> Self {
@@ -284,12 +307,7 @@ impl HostCapsBuilder {
                 Some(backend) => FsSandbox::with_backend(root, backend),
                 None => FsSandbox::new(root),
             };
-            caps.register(Box::new(FsReadCap { fs: fs.clone() }));
-            caps.register(Box::new(FsWriteCap { fs: fs.clone() }));
-            caps.register(Box::new(FsExistsCap { fs: fs.clone() }));
-            caps.register(Box::new(FsListCap { fs: fs.clone() }));
-            crate::fs_tools::register(&mut caps, &fs);
-            crate::text_tools::register(&mut caps, &fs);
+            register_fs_caps(&mut caps, &fs);
         }
         if self.env {
             caps.register(Box::new(EnvAllCap {
@@ -335,6 +353,18 @@ impl HostCapsBuilder {
         #[cfg(feature = "net")]
         if self.net {
             crate::net::register(&mut caps, self.net_max_response_bytes.max(1));
+        }
+        #[cfg(feature = "tcp")]
+        if self.tcp || self.tcp_listen {
+            // One connection table, so an id from `tcp.accept` works in `tcp.recv`.
+            let state = crush_net::new_state();
+            crush_net::register_io(&mut caps, std::sync::Arc::clone(&state));
+            if self.tcp {
+                crush_net::register_client(&mut caps, std::sync::Arc::clone(&state));
+            }
+            if self.tcp_listen {
+                crush_net::register_listen(&mut caps, state);
+            }
         }
         #[cfg(feature = "db")]
         if let Some(path) = self.db_path {
@@ -770,6 +800,61 @@ impl HostCap for FsExistsCap {
     }
 }
 
+/// Register the whole filesystem capability group into `caps`, confined to
+/// `root`: the file caps (`fs.read`, `fs.write`, `fs.exists`, `fs.is_dir`,
+/// `fs.list`) plus the `fs.*` / `text.*` coreutils. `HostCapsBuilder::fs(true)`
+/// builds this group for hosts that want a builder; this is for a host that
+/// already owns its registry — `crush-walk-run`, whose shell programs need the
+/// coreutils for `>`, `<`, `cat`, `cp`, …
+pub fn register_fs(caps: &mut HostCaps, root: &str) {
+    register_fs_caps(caps, &FsSandbox::new(root));
+}
+
+fn register_fs_caps(caps: &mut HostCaps, fs: &FsSandbox) {
+    caps.register(Box::new(FsReadCap { fs: fs.clone() }));
+    caps.register(Box::new(FsWriteCap { fs: fs.clone() }));
+    caps.register(Box::new(FsExistsCap { fs: fs.clone() }));
+    caps.register(Box::new(FsIsDirCap { fs: fs.clone() }));
+    caps.register(Box::new(FsListCap { fs: fs.clone() }));
+    crate::fs_tools::register(caps, fs);
+    crate::text_tools::register(caps, fs);
+}
+
+/// `fs.is_dir(path)`: 1 when `path` is a directory *inside* the sandbox, else
+/// 0 (also 0 when it does not exist). Read-only metadata, like `fs.exists`, but
+/// it answers the one question a pathname walk needs before it descends into a
+/// match: does listing this path mean anything? `fs.list` on a file is an
+/// error, so a caller that globs `*/*.txt` cannot just try.
+pub struct FsIsDirCap {
+    fs: FsSandbox,
+}
+
+impl FsIsDirCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
+    pub fn new(root: &str) -> Self {
+        Self {
+            fs: FsSandbox::new(root),
+        }
+    }
+}
+
+impl HostCap for FsIsDirCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "fs.is_dir".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let path = self.fs.resolve(&args[0])?;
+        let is_dir = matches!(self.fs.backend().kind(&path), Ok(crate::fs_backend::Kind::Dir));
+        Ok(Some(Value::Int(if is_dir { 1 } else { 0 })))
+    }
+}
+
 pub struct FsListCap {
     fs: FsSandbox,
 }
@@ -1196,6 +1281,7 @@ mod tests {
             .build();
 
         assert!(caps.get("fs.read").is_some());
+        assert!(caps.get("fs.is_dir").is_some());
         assert!(caps.get("env.get").is_some());
         assert!(caps.get("time.now").is_some());
         assert!(caps.get("time.now_ms").is_some());

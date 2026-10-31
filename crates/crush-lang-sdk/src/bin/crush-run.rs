@@ -134,7 +134,19 @@ struct RunArgs {
     #[arg(long, value_name = "N", default_value = "1048576")]
     net_max_response_bytes: usize,
 
+    /// Enable raw TCP client sockets (tcp.connect/send/recv/close/ping/tls_wrap). Separate from
+    /// --net (HTTP only); does not allow tcp.listen/accept.
+    #[arg(long)]
+    tcp: bool,
+
+    /// Enable raw TCP SERVER sockets (tcp.listen/accept, plus send/recv/close/ping on the
+    /// connections they return): the program becomes reachable from other hosts. Does not
+    /// allow outbound tcp.connect; add --tcp for that.
+    #[arg(long = "tcp-listen")]
+    tcp_listen: bool,
+
     /// Enable database host capabilities (db.query, db.execute) on this path.
+    /// Opt-in at build time: needs a build with `--features db`.
     #[arg(long, value_name = "PATH")]
     db: Option<PathBuf>,
 
@@ -430,8 +442,8 @@ fn list_caps() {
     println!("  env.get NAME           read environment variable");
     println!("  env.all                map of every environment variable");
     println!("  env.home_dir           home directory (HOME / USERPROFILE), or null");
-    println!("  time.now               return Unix timestamp (seconds)");
-    println!("  time.now_ms / now_iso  current time (epoch ms / RFC 3339)");
+    println!("  time.now               return Unix timestamp in SECONDS (exosphere's time.now was ms: use time.now_ms)");
+    println!("  time.now_ms / now_iso  current time (epoch MILLISECONDS / RFC 3339)");
     println!("  time.elapsed START_MS  milliseconds since START_MS");
     println!("  time.sleep MS          block for MS milliseconds (bounded by the wall-time quota)");
     println!("  async.sleep MS         same as time.sleep (blocking; does not yield)");
@@ -469,11 +481,38 @@ fn list_caps() {
             "  net.http_request METHOD URL BODY HEADERS  any method; returns {{status, body}}"
         );
     }
+    #[cfg(feature = "tcp")]
+    {
+        println!("Raw TCP client capabilities (enable with --tcp; NOT granted by --net):");
+        println!("  tcp.connect URI        connect to tcp://IP:PORT, return a connection id");
+        println!("  tcp.tls_wrap ID SNI    upgrade a connection to TLS (client side)");
+        println!("  tcp.send ID DATA       write a string, return bytes written");
+        println!("  tcp.recv ID            blocking read, return a string");
+        println!("  tcp.close ID           drop the connection");
+        println!("  tcp.ping X             returns \"pong\"");
+        println!(
+            "Raw TCP server capabilities (enable with --tcp-listen; a separate, stronger grant):"
+        );
+        println!("  tcp.listen URI         bind tcp://IP:PORT, return a listener id");
+        println!("  tcp.accept LISTENER    blocking accept, return a connection id");
+        println!("  (tcp.send/recv/close/ping also work under --tcp-listen; tcp.connect does not)");
+    }
     #[cfg(feature = "db")]
     {
         println!("Database capabilities (enable with --db PATH):");
         println!("  db.query SQL [PARAMS...]  execute SELECT, return rows");
         println!("  db.execute SQL [PARAMS...] execute INSERT/UPDATE/DELETE, return affected rows");
+    }
+    #[cfg(not(feature = "db"))]
+    {
+        println!("Database capabilities (db.query, db.execute) are not in this build:");
+        println!("  they are opt-in; rebuild with `--features db` (e.g.");
+        println!("  `cargo install crush-lang-sdk --features db`), then run with --db PATH.");
+    }
+    #[cfg(not(feature = "net"))]
+    {
+        println!("Network capabilities (net.http_*) are not in this build:");
+        println!("  rebuild with `--features net`, then run with --net.");
     }
     #[cfg(feature = "stdlib")]
     {
@@ -591,13 +630,27 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         eprintln!("warning: --net requires the 'net' feature (not enabled in this build)");
     }
 
+    #[cfg(feature = "tcp")]
+    {
+        builder = builder.tcp(args.tcp).tcp_listen(args.tcp_listen);
+    }
+    #[cfg(not(feature = "tcp"))]
+    if args.tcp || args.tcp_listen {
+        eprintln!(
+            "warning: --tcp/--tcp-listen require the 'tcp' feature (not enabled in this build)"
+        );
+    }
+
     #[cfg(feature = "db")]
     if let Some(ref db_path) = args.db {
         builder = builder.db(db_path.to_string_lossy());
     }
     #[cfg(not(feature = "db"))]
     if args.db.is_some() {
-        eprintln!("warning: --db requires the 'db' feature (not enabled in this build)");
+        eprintln!(
+            "warning: --db requires the 'db' feature, which is opt-in and not in this build \
+             (rebuild with `--features db`)"
+        );
     }
 
     // Stdcaps are pure (no I/O, no authority), so they are on unless the

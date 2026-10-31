@@ -31,6 +31,108 @@ add its entry after yours.
   no scalar splitting, step-form slot order), `crush-frontend` compiler tests
   (string targets reach `seq.slice`; the step lands in the step slot).
 
+- **Every tag now has a GitHub pre-release with prebuilt artifacts (CRUSH-342):**
+  `release.yml` dispatches the new `artifacts.yml`, which builds the tag and
+  attaches `crush-<ver>-x86_64-unknown-linux-gnu.tar.gz` (the CLIs),
+  `crush-web-<ver>-pkg.tar.gz` (browser wasm package) and `SHA256SUMS`;
+  `cargo binstall crush-lang-sdk` / `crush-pkg` use it. Pre-1.0 releases are
+  marked pre-release and not latest. PR CI runs `cargo check --release` instead
+  of the full release build (which still runs on `main`).
+
+- **`tree-sitter-crush` tracks the frontend again, and CI now checks it
+  (CRUSH-207):** the grammar parsed **1 of 51** `examples/crush/*.crush` without
+  ERROR nodes. The comment rule knew only `#`, so a file opening with `//` died
+  at line 1; assignment accepted only `a.b = c`; there were no return types,
+  string escapes, logical operators, object/struct literals, `@`-annotations or
+  `semantic_switch`. All of those are now handled — **49 of 51** parse clean.
+  A new `crates/tree-sitter-crush/tests/grammar_examples.rs` parses the corpus
+  and the crate's fixtures on every `cargo test`, failing on ERROR nodes with a
+  `KNOWN_BAD` allowlist that may only shrink (it runs in the existing `test-rest`
+  CI job; the grammar corpus still needs the tree-sitter CLI). Note for
+  consumers: the `field_assignment` node is now `assignment` (it covers
+  identifier/index targets too), and regenerating `parser.c` needs tree-sitter
+  CLI ≥ 0.25.
+
+- **Raw TCP/TLS sockets as `tcp.*` capabilities, behind their own grants
+  (CRUSH-318):** `crush-net` is now wired into `crush-lang-sdk` (cargo features
+  `tcp`, `tcp-tls`, on by default; grants are never on by default). `crush-run
+  --tcp` grants outbound client sockets (`tcp.connect`, `tcp.tls_wrap`,
+  `tcp.send`/`recv`/`close`/`ping`); `crush-run --tcp-listen` is a separate,
+  stronger grant for being a server (`tcp.listen`, `tcp.accept`, plus
+  send/recv/close/ping on the connections they return, but not `tcp.connect`).
+  `--net` stays HTTP-client-only and grants neither. The caps were renamed
+  from `net.*` to `tcp.*` so the `net` family can never cover them, and
+  `crush-net` now depends on `crush-vm` instead of `crush-lang-sdk` (the old
+  edge was a cycle). Also fixed in `crush-net`: `tcp.send`/`recv`/`close` did
+  not work on a `tcp.tls_wrap`ped connection, `tls_wrap` could hand out an id
+  that collided with a later plain connection, and `tcp.accept` held the
+  shared state lock while blocking.
+
+- **JS/TS dialect handling: unknown extensions are refused, `cts` is TypeScript
+  (CRUSH-zorro-8):** `JsLowering::for_ext` treated every unrecognised extension
+  as plain JS, so a `.ts` file reached as `.tmp` (or a typo like `typescript`)
+  parsed TypeScript as ES. It now accepts exactly
+  `js mjs cjs jsx ts tsx mts cts` and refuses anything else, naming the set;
+  `cts` is TypeScript; and `SubprocessWalker` names its temp file
+  `walker_N.<ext>` so a walked `.ts` keeps its dialect.
+
+- **Stub walkers no longer produce empty programs (CRUSH-203):** the Zig walker
+  matched the wrong tree-sitter node names (`IntegerLiteral` vs the real
+  `integer`/`float`/`string`/`boolean`, `BinaryExpr` vs `binary_expression`, …),
+  so every literal silently became `null` and every program printed nothing; the
+  names and wrappers are fixed and unhandled nodes now error with the node kind
+  and position. Dart and Java (which returned an empty program / panicked with a
+  bare `unreachable!`) fail with "not implemented". The Wasm walker no longer
+  drops every non-`call` operator or lowers `fd_write` to an arg-less
+  `io.print`; it errors loudly. `crush-walk-run` reads a `.wasm` file as bytes.
+  The Nepali walker's false "native Nepali keywords" comment is corrected.
+
+- **`crush-gui`: Crush programs can draw a window (CRUSH-319, phase 1):** a new
+  crate with a grant-gated `ui.*` capability API and a desktop backend on
+  [arniko](https://crates.io/crates/arniko) 0.3.1 (from crates.io; it is not in
+  `crush-lang-sdk`'s default build, since arniko pulls Stylo/vello/winit). A
+  program renders HTML with `ui.render(markup)` and *pulls* events in a loop with
+  a blocking `ui.next_event()` (a map `{kind, id, value, key}`: `click`, `input`,
+  `submit`, `key`, `close`), like `io.read` - no callbacks into the VM. Component
+  helpers: `ui.button/input/card/alert/badge/escape`. Run with
+  `crush-gui run app.crush --ui` or `crush gui run app.crush --ui`; `--ui` is
+  the grant (a program using `ui.*` without it is refused before it runs, naming
+  the flag; no other flag grants it), and `crush-run` now points such a program
+  at `crush gui`. `crush-installer` installs `crush-gui` when it is built. Tests
+  run the examples (`examples/gui/`) headlessly against a real bliss DOM. The
+  desktop window itself has not been run on a screen. Design:
+  `docs/design/ui-api.md`; the terminal (tui-easy) and browser backends are
+  follow-ups behind the same `UiBackend` seam.
+
+- **`crush debug FILE` / `crush-debug`: the debugger is runnable (CRUSH-317):**
+  `crush-debugger` had breakpoints, step/next/finish, watchpoints and
+  grant-gated inspection but no front end that compiled Crush source, so it could
+  only debug hand-written CASM. `crush debug prog.crush --step --inspect` now
+  compiles through `crush run`'s pipeline and opens the REPL; `break FILE:LINE`
+  resolves in the *source's* lines (the compiler's source map, which used to be
+  the generated assembly's), `print total` / `print p.x` / `watch total` /
+  `locals` use variable names, `step`/`next` go by source line, and stops show
+  the line. Debugging grants nothing by default: `--step` to run and step,
+  `--inspect=redacted` / `--inspect` to see values; a refused command names the
+  flag. `--message-format json` emits the `DebugEvent`s as NDJSON for an editor or
+  agent. `crush-installer` now installs `crush` and `crush-debug`. Fixes found on
+  the way: hashing a closure that captures itself (`let f = |n| f(n - 1)`)
+  overflowed the stack under `--inspect=redacted`, and `BreakpointSet::remove`
+  used `IndexMap::remove`, now a deprecation error under `-D warnings`.
+
+- **`net` on by default, `http.*` refused with its replacement, `time.now` unit
+  documented (CRUSH-264):** `crush-lang-sdk`'s `default` features now include
+  `net`, so `crush-run --net` grants `net.http_get/post/put/delete/request` out of
+  the box (still refused up front without `--net`); `db` stays opt-in
+  (`--features db`) and `crush-run caps` says so. exosphere's `http.get/…` have no
+  alias: a program calling one is refused before it runs with `http.get was
+  renamed to net.http_get (grant it with --net)` (`effects::RENAMED_CAPS`, shared
+  by every runner that preflights). `time.now` is seconds, `time.now_ms`
+  milliseconds (exosphere's `time.now` was ms) — now stated in `crush-run caps`,
+  the SDK README and MIGRATION-INVENTORY. `examples/crush/httpclient.crush` uses
+  `net.http_get` and `str.format` and compiles. Embedders that don't want the
+  HTTP client: `default-features = false`.
+
 - **Consistent `--message-format json` diagnostics across `crushc` and `crush-run`
   (CRUSH-315):** the same broken program now yields the same NDJSON records
   from both. `crush-run` used to flatten every compile failure to `E-IO` with no

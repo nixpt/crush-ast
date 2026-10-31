@@ -5,19 +5,26 @@ Tree-sitter grammar for the CRUSH programming language.
 ## Purpose
 
 Provides a Tree-sitter grammar for parsing CRUSH source code. Used by:
-- The Crush language frontend (`crush-frontend`) for CRUSH → CAST parsing
+
 - Code editors for syntax highlighting
-- Development tools for code analysis
+- Development tools for code analysis (`crush-symbols`, and `exosphere`'s
+  embedded copy — the one path dependency between the two repos, CRUSH-23)
+
+Note: `crush-frontend` in this workspace does **not** use this grammar. It has
+its own hand-written lexer and parser (`crates/crush-frontend/src/parser/`),
+which is the source of truth for the language. This grammar tracks it, and
+`tests/grammar_examples.rs` fails if it drifts.
 
 ## Grammar Features
 
-- Function definitions with parameters and return types
-- Variable declarations and assignments
-- Control flow (if/else, while, for)
-- Capability calls
-- Import/export statements
-- Struct definitions
-- Comments
+- Function definitions with parameters and return types (`fn f(n: Int) -> Int`)
+- Variable declarations and assignments (`x = 1`, `p.x = 2`, `xs[0] = 3`)
+- Control flow (if/else, while, for), `try`/`catch`, `match`, `semantic_switch`
+- Capability calls and `capability <name> <access>` declarations
+- Import/export statements, polyglot blocks (`@python { … }`)
+- Struct definitions and struct/object literals (`Point { x: 1 }`, `{"k": 1}`)
+- AI-native annotations (`@module`, `@decision`, `@invariant`, `@wip`, …)
+- `//`, `#` and `/* … */` comments
 
 ## Usage
 
@@ -40,15 +47,21 @@ For syntax highlighting in editors, see the `queries/` directory for highlight q
 ## Development
 
 ```bash
-# Generate parser
+# Regenerate src/parser.c + grammar.json + node-types.json after editing
+# grammar.js. Needs tree-sitter CLI >= 0.25 (the committed parser.c is ABI 15).
 tree-sitter generate
 
-# Test grammar
+# Grammar corpus (test/corpus/*.txt) — needs the CLI, so CI doesn't run it.
 tree-sitter test
 
-# Parse example
-tree-sitter parse examples/hello.crush
+# The check CI *does* run: parse every examples/crush/*.crush with the bundled
+# parser and fail on ERROR nodes.
+cargo test -p tree-sitter-crush
 ```
+
+`tree-sitter test --update` refreshes the corpus expectations but drops field
+names for new cases; `tree-sitter parse` prints them, so prefer re-emitting
+from that when adding cases.
 
 ## See Also
 

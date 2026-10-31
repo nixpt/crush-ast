@@ -40,7 +40,61 @@ be called as `o.f(x)`. With COSM, a method call must resolve on the receiver.
 
 ## Technical approach
 
-- Decide statically when the receiver's Kind is known (a let with a struct literal/constructor, a typed param), and emit `CALL_MEMBER` with a runtime fallback to the built-in path for non-Records otherwise.
+**Design decided (2026-10-21):** [`docs/design/object-model.md` §9 "Method dispatch: how `o.m(args)` resolves"](../../../docs/design/object-model.md)
+is the rule this ticket implements. Summary: a dotted call is classified once, at lowering, by form and receiver
+provenance — (1) a capability namespace whose prefix is not a value binding stays a full-named `cap_call`; (2) a
+provably exact Kind may lower to a direct `call` (an optimisation, never a different semantics); (3) a known but
+inexact Kind and (4) a Kind known only at run time lower to `CALL_MEMBER`; (5) a provably primitive receiver keeps
+the walkers' existing built-in lowering. At run time the one shared `cosm_rt::call_member` dispatches in the order:
+instance field holding a function value → the receiver Kind's members (a Record's own method always beats a
+same-named built-in) → a closed, per-type built-in table for non-Record primitives → a loud error. A Map has only
+the field-function case. `CALL_MEMBER` on FastVM/JIT/AOT is refused at load/compile time, never partially
+implemented. The CRUSH-280 rule stays: dynamic calls are passed raw and are refused at lowering if any same-named
+member in the program has a default/rest (non-plain) signature, because the hidden `__has_*` ABI is positional.
+No path from a member call to a host capability may remain: the frontend's unmarked `cap_call "<method>"`
+fall-through for a declared-variable receiver becomes a member call, so a capability name can only originate from
+a namespace/bare form naming it in full (§9.6 of the design).
+
+Implementation plan (small slices, in order; each lands with its test and the gates in Dispatch below):
+
+1. **Runtime fallback, Map + non-callable tiers (VM crate only).** Extend the shared `cosm_rt::call_member`
+   (`crates/crush-vm/src/cosm_rt.rs`) with the `Value::Map` field-function branch (§9.3) and keep the non-Record
+   error naming method and receiver type. Test: `crates/crush-vm/src/tests/records.rs`-style CVM1 cases run on
+   both VMs — Map field lambda called as `o.f(x)` returns its result; absent member and non-function field each
+   error with the §9.4 messages; a Record field function still shadows a same-named Kind method.
+2. **Runtime fallback, built-in tier (VM crate only).** Add the one shared per-type built-in table beside
+   `cosm_rt` (initial rows only where already exact on both VMs, per §9.7 Open (owner) 1) and call it from
+   `cosm_rt::call_member` for non-Record/non-Map/non-Kind receivers; no capability lookup, no permission.
+   Test: the §9.4 `bump(v)` example parameterised over an array, a Record with a `push` method, an int, and a
+   Map with a non-function `push` field, on both VMs; a `"hi".push(x)` type/name mismatch errors, and
+   `capabilities_used` on the program reports no capability named after the method.
+3. **Frontend: close the capability fall-through.** In `crates/crush-frontend/src/compiler.rs`'s dotted
+   `CapabilityCall` path, a declared-variable receiver whose method is not a receiver method lowers to
+   `call_member` instead of `cap_call "<method>"` + a recorded permission (§9.6); namespace forms (prefix not a
+   declared variable) are untouched. Test: frontend tests asserting `p.frobnicate()` on a struct compiles to
+   `call_member` with an empty added-permission set, `net.fetch(…)` still compiles to `cap_call "net.fetch"`,
+   and a local value shadowing a namespace name calls its field function.
+4. **JS walker: unknown-receiver member calls.** In `crates/crush-lang-js`, an identifier/computed receiver the
+   walker cannot prove is an instance and cannot claim with a built-in row (conservatively, per §9.1 rule 4)
+   lowers to CAST `MethodCall` (marked for the §9.5 scan) instead of the walk-time refusal, and built-in rows lose
+   first claim on receivers proven to be instances (§9.2). Test: boa e2e — a parameter/capture/call-result
+   receiver holding a class instance calls its method, the same receiver holding an array uses the built-in,
+   a Record method named `add`/`push` beats the built-in row, and parity lists change only where the PR says so.
+5. **Argument-shape scan as a shared rule (§9.5).** Generalise the JS walker's end-of-module checks
+   (`check_member_calls`) so every member call emitted under slices 3–4 is either adapted for an exact target,
+   adapted with all reachable overrides proved shape-identical, or raw with no non-plain same-named member in
+   the program; Crush's `receiver_methods` path gets the equivalent scan over its COSM module. Test: the §9.5
+   worked example — `new A().m(1)` adapts and runs, `f(o) { o.m(1) }` over a defaulted `m` refuses at lowering,
+   a differently-shaped override refuses, and a field-function call with the wrong arity errors at run time.
+6. **Backend refusal sweep.** Pin, per backend, that a program containing `call_member` is refused at
+   load/compile time naming the op (FastVM/JIT lowering, `crush-aot` Rust and C, `crush-aotc`, PTX), while a
+   rule-2/rule-5 program with no `call_member` still compiles there. Test: one fixture program per tier in each
+   backend's existing unsupported-ops/refusal test file; no parity list entry silently flips.
+7. **End-to-end + docs close-out.** A `crush-lang-sdk` suite covering the ticket's Success criteria (Crush `impl`
+   methods on static and dynamic receivers, a lambda in a field called as a method, `self` mutation visible
+   through a `reference` receiver and not through `value(copy)`, a trait default method, the §9.2 name clash),
+   compiler comments naming §9 at the lowered sites, and this ticket's Status updated. Test: the suite itself on
+   both exact VMs, plus the walker and parity harnesses unchanged or with explicitly updated lists.
 
 ## Files to modify
 

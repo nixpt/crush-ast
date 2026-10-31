@@ -84,7 +84,48 @@ pub const CASES: &[Case] = &[
     perf("glob_empty_dir", "echo *\n", &[], X::Match, X::Loud("no matches found")),
     // bash globs the text an expansion contributes; zsh does not.
     perf("glob_from_variable", "x='*'\necho $x\n", &["a.txt", "b.txt"], X::Match, X::Match),
-    loud("glob_in_dir_component", "echo */*.txt\n", "glob in a directory component"),
+    // Every component may glob. The walk only descends into directories, sorts
+    // the whole result (not just each directory's names), and a literal
+    // component after a glob has to exist or the word stays as written.
+    okf(
+        "glob_two_levels",
+        "echo */*.txt\n",
+        &["a1/one.txt", "a2/two.txt", "sub/three.md", "top.txt"],
+    ),
+    okf("glob_two_levels_sorted", "echo */*\n", &["b/z", "a/y", "a.b/x"]),
+    okf("glob_three_levels", "echo */*/*.txt\n", &["a/b/x.txt", "a/c/y.txt", "a/z.md"]),
+    okf("glob_dir_star_skips_files", "echo */bar\n", &["a1/bar", "afile"]),
+    okf("glob_dir_star_from_variable_prefix", "p=a\necho $p*/*.txt\n", &["a1/x.txt", "b1/y.txt"]),
+    okf("glob_hidden_dir_needs_dot", "echo */*.txt\necho .h*/*.txt\n", &[".hid/z.txt", "seen/a.txt"]),
+    okf("glob_trailing_slash", "echo */\n", &["a/", "b/", "f.txt"]),
+    // Byte order puts `.` before `/`, so the whole pathname is the sort key
+    // (`a.b/` before `a/`); a collation locale orders these differently.
+    okf("glob_trailing_slash_sorted", "echo */\n", &["a/", "a.b/", "b/"]),
+    okf("glob_trailing_slash_two_levels", "echo */*/\n", &["a/x/", "a.b/y/", "b/z/"]),
+    okf("glob_dir_component_for_loop", "for f in */*.txt; do echo \"[$f]\"; done\n", &["a/x.txt", "b/y.txt"]),
+    okf("glob_two_levels_brace_free", "echo sub/*/[ab]*\n", &["sub/one/a1", "sub/one/b2", "sub/two/c3"]),
+    // A glob that matches files where the next component needs directories
+    // matches nothing at all (never "not a directory").
+    perf("glob_two_levels_no_match", "echo */*/*\n", &["a/one.txt", "b/two.txt"], X::Match, X::Loud("no matches found")),
+    perf("glob_literal_after_glob_missing", "echo a*/missing\n", &["a1/one.txt"], X::Match, X::Loud("no matches found")),
+    // The sandbox is relative to the script's directory: `/usr/*` could only be
+    // answered by guessing, so it is refused rather than half-expanded.
+    loud("glob_absolute_path", "echo /usr/*\n", "an absolute path with a glob"),
+    loud("glob_double_star", "echo **/*.txt\n", "`**`"),
+    // ── what an unmatched pattern does: the options ──
+    // bash: `nullglob` drops the word, `failglob` skips the command (status 1)
+    // and carries on. zsh: `null_glob` drops it, `no_nomatch` keeps it. The
+    // options are per-dialect builtins, so each case is loud on the other side.
+    perf("bash_nullglob", "shopt -s nullglob\necho before x* after\necho done\n", &["a.txt"], X::Match, X::Loud("`shopt`")),
+    perf("bash_nullglob_unset", "shopt -s nullglob\nshopt -u nullglob\necho x*\n", &["a.txt"], X::Match, X::Loud("`shopt`")),
+    perf("bash_nullglob_for_loop", "shopt -s nullglob\nfor f in x*; do echo \"got $f\"; done\necho done\n", &["a.txt"], X::Match, X::Loud("`shopt`")),
+    perf("bash_failglob_skips_command", "shopt -s failglob\necho x*\necho after=$?\necho tail\n", &["a.txt"], X::Match, X::Loud("`shopt`")),
+    perf("bash_failglob_wins_over_nullglob", "shopt -s nullglob failglob\necho x*\necho after=$?\n", &[], X::Match, X::Loud("`shopt`")),
+    perf("zsh_null_glob", "setopt null_glob\necho before x* after\necho done\n", &["a.txt"], X::Loud("`setopt`"), X::Match),
+    perf("zsh_no_nomatch", "setopt no_nomatch\necho x*\necho after=$?\n", &["a.txt"], X::Loud("`setopt`"), X::Match),
+    perf("zsh_glob_option_is_setopt_not_shopt", "shopt -s nullglob\necho x*\n", &["a.txt"], X::Match, X::Loud("`shopt`")),
+    per("bash_shopt_other_option", "shopt -s extglob\n", X::Loud("shopt extglob"), X::Loud("`shopt`")),
+    per("zsh_setopt_other_option", "setopt extended_glob\n", X::Loud("`setopt`"), X::Loud("setopt extended_glob")),
     per("zsh_echo_backslash", "echo 'a\\nb'\n", X::Match, X::Match),
     loud("tilde", "echo ~\n", "tilde expansion"),
     loud("brace_expansion", "echo {a,b}\n", "brace expansion"),
@@ -153,7 +194,14 @@ pub const CASES: &[Case] = &[
         "x=1\n[ ! \"$x\" = 2 ] && echo not2\n! [ \"$x\" = 1 ] || echo is1\n[ \\( \"$x\" \\) ] && echo paren\n[ ! -z \"$x\" ] && echo notz\n[ \"$x\" -a \"\" ] || echo and-false\n[ \"$x\" -o \"\" ] && echo or-true\n",
     ),
     loud("test_non_integer", "x=abc\n[ $x -gt 1 ] && echo yes\necho after\n", "non-integer value"),
-    loud("test_file_operator", "[ -f /etc/passwd ] && echo f\n", "test operator `-f`"),
+    // `-e`/`-f`/`-d` are answered by fs.exists/fs.is_dir, which the sandbox
+    // confines to the script's directory: an absolute operand is loud.
+    okf(
+        "test_file_tests",
+        "[ -f a.txt ] && echo file\n[ -d a.txt ] || echo notdir\n[ -e sub ] && echo exists\n[ -e nope ] || echo missing\n",
+        &["a.txt", "sub/"],
+    ),
+    loud("test_file_outside_sandbox", "[ -f /etc/passwd ] && echo f\n", "absolute paths are not allowed"),
     loud("test_empty_unquoted", "e=\nif [ $e = x ]; then echo y; fi\necho done\n", "words where one is needed"),
     loud("test_5_args", "[ 1 = 1 -a 2 = 2 ] && echo y\n", "more than 4 arguments"),
     ok("ext_eq_no_split", "x='a b'\n[[ $x == 'a b' ]] && echo nosplit\nif [[ $x == a* ]]; then echo glob; fi\nif [[ $x == \"a*\" ]]; then echo wrong; else echo quoted-literal; fi\n"),
@@ -166,7 +214,12 @@ pub const CASES: &[Case] = &[
     ok("ext_quoted_dash", "x=-n\n[[ $x == -n ]] && echo literal-dash\n"),
     ok("ext_no_pathname_expansion", "v='a*'\n[[ $v == 'a*' ]] && echo literal-star-value\n"),
     per("ext_expansion_pattern", "p='a*'\n[[ abc == $p ]] && echo pattern; true\n", X::Match, X::Match),
-    loud("ext_file_test", "[[ -f /etc/passwd ]] && echo f\n", "file and shell-option tests"),
+    okf(
+        "ext_file_tests",
+        "[[ -f a.txt ]] && echo file\n[[ -d sub ]] && echo dir\n[[ -e a.txt ]] && echo exists\n[[ -d a.txt ]] || echo notdir\n[[ -e nope ]] || echo missing\n",
+        &["a.txt", "sub/"],
+    ),
+    loud("ext_file_outside_sandbox", "[[ -f /etc/passwd ]] && echo f\n", "absolute paths are not allowed"),
     loud("ext_regex", "[[ abc =~ ^a ]] && echo r\n", "regex"),
     // ── arithmetic ──
     ok("arith_basic", "a=7\necho $((a+1)) $(( a * 2 - 3 )) $((a/2)) $((a%3)) $((-a))\n"),
@@ -297,9 +350,96 @@ pub const CASES: &[Case] = &[
     loud("command_substitution", "v=$(echo hi)\necho $v\n", "command substitution"),
     loud("backticks", "v=`echo hi`\necho $v\n", "backticks"),
 
-    loud("external_command", "ls /\n", "command `ls`"),
-    loud("pipeline", "echo a | cat\n", "pipeline"),
-    loud("redirection", "echo a > /dev/null\n", "redirection"),
+    loud("external_command", "date\n", "command `date`"),
+    // ── pipelines: an in-VM buffer handoff, not a process ──
+    ok("pipeline_echo_cat", "echo a | cat\n"),
+    ok("pipeline_wc_l", "printf 'a\\nb\\n' | wc -l\n"),
+    ok("pipeline_three_stages", "printf 'a\\nb\\nc\\n' | grep b | wc -l\n"),
+    ok("pipeline_grep", "printf 'one\\ntwo\\nthree\\n' | grep t\n"),
+    ok("pipeline_grep_v", "printf 'one\\ntwo\\n' | grep -v one\n"),
+    ok("pipeline_grep_c", "printf 'a\\nb\\na\\n' | grep -c a\n"),
+    ok("pipeline_head", "printf '1\\n2\\n3\\n' | head -n 2\n"),
+    ok("pipeline_tail", "printf '1\\n2\\n3\\n' | tail -n 1\n"),
+    ok("pipeline_status", "printf 'a\\nb\\n' | grep hello\necho \"s=$?\"\n"),
+    ok("pipeline_and_or", "printf 'a\\n' | grep a && echo yes\nprintf 'a\\n' | grep z || echo no\n"),
+    ok("pipeline_negated", "! printf 'a\\n' | grep z\necho \"s=$?\"\n"),
+    ok("pipeline_into_read", "printf 'x y\\n' | read a b\necho \"[$a][$b]\"\n"),
+    ok("pipeline_from_heredoc", "cat <<'EOT' | wc -l\na\nb\nEOT\n"),
+    ok("pipeline_into_file", "printf 'a\\nb\\n' | grep b > f\ncat f\n"),
+    ok("pipeline_from_file", "printf 'a\\nb\\n' > f\ncat < f | wc -l\n"),
+    // ── redirections: `fs.write` / `fs.read` over the sandbox ──
+    ok("redirection_out", "echo hi > out.txt\ncat out.txt\n"),
+    ok("redirection_append", "echo a > f\necho b >> f\ncat f\n"),
+    ok("redirection_truncates", "echo one > f\necho two > f\ncat f\n"),
+    ok("redirection_append_new_file", "echo a >> f\ncat f\n"),
+    ok("redirection_in", "printf 'x\\ny\\n' > f\nwc -l < f\n"),
+    ok("redirection_in_cat", "printf 'x\\n' > f\ncat < f\n"),
+    ok("redirection_empty", ": > f\nwc -c < f\n"),
+    ok("redirection_printf_stderr_free", "printf '%s\\n' a b > f\ncat f\n"),
+    ok("redirection_while_read", "printf 'a\\nb\\n' > f\nwhile read l; do echo \"[$l]\"; done < f\n"),
+    ok("redirection_group_read", "printf 'a\\n' > f\n{ read x; } < f\necho \"[$x]\"\n"),
+    ok("redirection_heredoc_literal", "cat <<'EOT'\nliteral $x `y`\nEOT\n"),
+    ok("redirection_heredoc_expand", "n=w\ncat <<EOT\nhi $n\nEOT\n"),
+    ok("redirection_heredoc_empty", "cat <<'EOT'\nEOT\necho done\n"),
+    ok("redirection_in_loop_no_leak", "printf 'a\\nb\\n' > f\nwhile read l; do break; done < f\necho after\n"),
+    // ── the builtin command set ──
+    ok("coreutil_ls_hides_dotfiles", "touch a.txt .hidden\nls\n"),
+    okf("coreutil_ls_dir", "ls sub\n", &["sub/x", "sub/y", "sub/.h"]),
+    // `fs.list` is directory order; `ls` sorts, so the fixture is out of order.
+    okf("coreutil_ls_sorts", "ls\n", &["b.txt", "a.txt", "c.txt"]),
+    ok("coreutil_ls_empty", "mkdir e\nls e\necho end\n"),
+    ok("coreutil_cat_stdin", "printf 'a\\nb\\n' | cat\n"),
+    ok("coreutil_cat_append", "printf 'a\\n' > f\ncat f f\n"),
+    ok("coreutil_wc_default", "printf 'a b\\nc\\n' | wc\n"),
+    ok("coreutil_wc_flags", "printf 'a b\\nc\\n' | wc -l -w\n"),
+    // One column needs no padding, so it is exact on every coreutils version.
+    ok("coreutil_wc_file_single_column", "printf 'abc\\ndefg\\n' > f\nwc -l < f\necho done\n"),
+    // Several columns on a file's stdin: coreutils < 9.8 pads to 7, newer ones
+    // pad by the file's digit count. Refused rather than padded the wrong way.
+    loud("coreutil_wc_file_multi_column", "printf 'abc\\ndefg\\n' > f\nwc < f\n", "several columns"),
+    ok("coreutil_grep_missing_status", "printf 'a\\n' | grep z\necho \"[$?]\"\n"),
+    ok("coreutil_head_default_is_ten", "printf '1\\n2\\n' | head\n"),
+    ok("coreutil_head_variable_count", "n=2\nprintf '1\\n2\\n3\\n' | head -n $n\n"),
+    ok("coreutil_tail_count_from_file", "n=1\nprintf '1\\n2\\n' > f\ntail -n $n f\n"),
+    ok("coreutil_sort", "printf 'b\\na\\nc\\n' | sort\n"),
+    ok("coreutil_sort_reverse", "printf 'b\\na\\nc\\n' | sort -r\n"),
+    ok("coreutil_sort_unique", "printf 'b\\na\\nb\\n' | sort -u\n"),
+    ok("coreutil_sort_ru", "printf 'b\\na\\nb\\n' | sort -ru\n"),
+    ok("coreutil_sort_file_redirect", "printf 'b\\na\\n' > f\nsort < f\n"),
+    ok("coreutil_uniq", "printf 'a\\na\\nb\\na\\n' | uniq\n"),
+    ok("coreutil_uniq_count", "printf 'a\\na\\nb\\n' | uniq -c\n"),
+    ok("coreutil_uniq_dups", "printf 'a\\na\\nb\\n' | uniq -d\n"),
+    ok("coreutil_uniq_unique", "printf 'a\\na\\nb\\n' | uniq -u\n"),
+    ok("coreutil_cut_field", "printf 'a:b:c\\n' | cut -d: -f2\n"),
+    ok("coreutil_cut_default_delim", "printf 'a\\tb\\n' | cut -f2\n"),
+    ok("coreutil_cut_no_delimiter", "printf 'abc\\n' | cut -d: -f2\n"),
+    ok("coreutil_cut_short_field", "printf 'a:b\\n' | cut -d: -f3\n"),
+    ok("coreutil_tr_upper", "printf 'abc\\n' | tr a-z A-Z\n"),
+    ok("coreutil_tr_literal", "printf 'abc\\n' | tr ab XY\n"),
+    ok("coreutil_tr_delete", "printf 'a1b2\\n' | tr -d 0-9\n"),
+    ok("coreutil_tr_delete_range", "printf 'a b\\n' | tr -d a-z\n"),
+    ok("coreutil_pipeline_sort_uniq", "printf 'one\\ntwo\\none\\n' | sort | uniq\n"),
+    ok("coreutil_pipeline_sort_cut", "printf 'b:2\\na:1\\n' | sort | cut -d: -f1\n"),
+    loud("coreutil_sort_numeric", "printf '2\\n10\\n' | sort -n\n", "sort -n"),
+    loud("coreutil_uniq_two_modes", "printf 'a\\n' | uniq -cd\n", "two of"),
+    loud("coreutil_cut_field_list", "printf 'a:b\\n' | cut -d: -f1,2\n", "one field number"),
+    loud("coreutil_tr_class", "printf 'a\\n' | tr '[:lower:]' '[:upper:]'\n", "character class"),
+    loud("coreutil_find_not_builtin", "find .\n", "command `find`"),
+    ok("coreutil_cp_mv_rm", "printf 'a\\n' > f\ncp f g\nmv g h\ncat h\nrm h\nls\n"),
+    ok("coreutil_mkdir_touch", "mkdir -p a/b\ntouch a/b/x\nls a/b\n"),
+    ok("coreutil_function_redirect", "setout() { echo from-fn; }\nsetout > fn.txt\ncat fn.txt\n"),
+    // `exit` inside a redirected function must flush what the function printed.
+    ok("redirection_function_exit", "f() { echo before; exit 3; }\nf > x.txt\necho unreachable\n"),
+    // A stage's `exit` has no file to flush into; refusing beats dropping its output.
+    loud("pipeline_stage_exit", "printf 'x\\n' | exit 0\n", "`exit` inside a pipeline stage"),
+    loud("redirection_stderr", "echo a 2>&1\n", "file descriptor"),
+    // A shell creates `f` empty and writes `g`; there is no way to do both here,
+    // so it is refused instead of writing only one of them.
+    loud("redirection_two_outputs", "echo a > f > g\n", "two `>`"),
+    loud("redirection_compound_out", "if true; then echo a; fi > f\n", "`>` / `>>` on a loop"),
+    loud("coreutil_sed_not_builtin", "printf 'a\\n' | sed s/a/b/\n", "command `sed`"),
+    loud("coreutil_grep_regex", "printf 'a1\\n' | grep 'a.'\n", "regular-expression syntax"),
+    loud("coreutil_wc_file_arg", "wc f\n", "`wc` with a file name"),
     // `read` itself needs stdin, so it is covered by `read_test.rs`; the
     // forms it does not lower are refused here.
     loud("read_unsupported_option", "read -t 5 x\n", "read -t"),
@@ -447,9 +587,12 @@ pub fn run_corpus(o: &Oracle) {
     eprintln!("| case | {} out (exit) | crush out (exit) | verdict |", o.dialect);
     eprintln!("|---|---|---|---|");
     for case in CASES {
-        let cwd = fixture_dir(o, case.name, case.files);
-        let (sh_out, sh_code) = run_shell(o, case.name, case.src, &cwd);
-        let crush = run_crush(case.src, o.to_cast, &cwd);
+        // One fixture directory each: a case that writes (`echo x > f`) must not
+        // see the file the real shell just wrote.
+        let sh_cwd = fixture_dir(o, &format!("{}-sh", case.name), case.files);
+        let crash_cwd = fixture_dir(o, &format!("{}-crush", case.name), case.files);
+        let (sh_out, sh_code) = run_shell(o, case.name, case.src, &sh_cwd);
+        let crush = run_crush(case.src, o.to_cast, &crash_cwd);
         let crush_cell = match &crush {
             Ok((out, code)) => format!("`{}` ({code})", show(out)),
             Err(e) => format!("error: {}", show(e)),

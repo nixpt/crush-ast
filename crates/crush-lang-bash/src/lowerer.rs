@@ -12,7 +12,7 @@ use brush_parser::ast::{
 };
 use crush_cast::Program;
 use crush_walker_core::LowerCtx;
-use crush_walker_core::shell::{self, AndOr, Assign, Cmd, Dialect, List, Pipeline, Word};
+use crush_walker_core::shell::{self, AndOr, Assign, Cmd, Dialect, List, Pipeline, Redir, RedirKind, Word};
 
 /// Lower a brush-parser Program to a CAST Program.
 pub fn lower_program(program: ast::Program, _ctx: &LowerCtx) -> anyhow::Result<Program> {
@@ -41,7 +41,10 @@ fn list(cl: &CompoundList) -> List {
             if matches!(item.1, SeparatorOperator::Async) {
                 let line = line_of(&item.0);
                 AndOr {
-                    first: Pipeline { negated: false, cmd: unsupported("a background command (`&`)", line) },
+                    first: Pipeline {
+                        negated: false,
+                        stages: vec![unsupported("a background command (`&`)", line)],
+                    },
                     rest: vec![],
                 }
             } else {
@@ -67,28 +70,94 @@ fn and_or(a: &AndOrList) -> AndOr {
 
 fn pipeline(p: &ast::Pipeline) -> Pipeline {
     let line = line_of(p);
-    let cmd = if p.timed.is_some() {
-        unsupported("`time`", line)
-    } else if p.seq.len() != 1 {
-        unsupported("a pipeline (`|`)", line)
-    } else {
-        command(&p.seq[0], line)
+    if p.timed.is_some() {
+        return Pipeline { negated: p.bang, stages: vec![unsupported("`time`", line)] };
+    }
+    Pipeline { negated: p.bang, stages: p.seq.iter().map(|c| command(c, line)).collect() }
+}
+
+/// One redirection (`<`, `>`, `>>`, `<<`) as the shared shell IR wants it.
+fn redir(r: &ast::IoRedirect, line: usize) -> Result<Redir, Cmd> {
+    use ast::{IoFileRedirectKind as K, IoFileRedirectTarget as T, IoRedirect as R};
+    let fd_ok = |fd: &Option<ast::IoFd>, want: i32| match fd {
+        None => Ok(()),
+        Some(n) if *n == want => Ok(()),
+        Some(n) => Err(unsupported(&format!("a redirection of file descriptor {n}"), line)),
     };
-    Pipeline { negated: p.bang, cmd }
+    match r {
+        R::File(fd, kind, target) => {
+            let (rkind, want) = match kind {
+                K::Read => (RedirKind::In, 0),
+                K::Write | K::Clobber => (RedirKind::Out, 1),
+                K::Append => (RedirKind::Append, 1),
+                K::DuplicateInput | K::DuplicateOutput => {
+                    return Err(unsupported(
+                        "a redirection that duplicates a file descriptor (`2>&1`)",
+                        line,
+                    ))
+                }
+                other => {
+                    return Err(unsupported(
+                        &format!("`{other}` (only `<`, `>`, `>>` and here-documents)"),
+                        line,
+                    ))
+                }
+            };
+            fd_ok(fd, want)?;
+            match target {
+                T::Filename(w) => Ok(Redir { kind: rkind, word: word(w), expand: false, line }),
+                _ => Err(unsupported("a redirection onto a file descriptor or process substitution", line)),
+            }
+        }
+        R::HereDocument(fd, doc) => {
+            fd_ok(fd, 0)?;
+            let body = if doc.remove_tabs {
+                doc.doc.value.lines().map(|l| l.trim_start_matches('\t')).collect::<Vec<_>>().join("\n")
+            } else {
+                doc.doc.value.clone()
+            };
+            Ok(Redir {
+                kind: RedirKind::HereDoc,
+                word: Word { raw: body, line },
+                // `<<'EOT'` is literal; `<<EOT` expands `$…`.
+                expand: doc.requires_expansion,
+                line,
+            })
+        }
+        R::HereString(..) => Err(unsupported("a here-string `<<<`", line)),
+        R::OutputAndError(..) => Err(unsupported("`&>` (stdout and stderr together)", line)),
+    }
 }
 
 fn command(c: &Command, line: usize) -> Cmd {
     match c {
         Command::Simple(sc) => simple(sc, line),
-        Command::Compound(_, Some(_)) => unsupported("a redirection", line),
-        Command::Compound(cc, None) => compound(cc, line),
+        Command::Compound(cc, redirs) => {
+            let inner = compound(cc, line);
+            match redirs {
+                None => inner,
+                Some(rs) => {
+                    let mut out = Vec::new();
+                    for r in &rs.0 {
+                        match redir(r, line) {
+                            Ok(x) => out.push(x),
+                            Err(c) => return c,
+                        }
+                    }
+                    Cmd::Redirected { inner: Box::new(inner), redirs: out, line }
+                }
+            }
+        }
         Command::Function(fd) => {
             if fd.body.1.is_some() {
                 return unsupported("a redirection on a function body", line);
             }
             let body = match &fd.body.0 {
                 CompoundCommand::BraceGroup(g) => list(&g.list),
-                other => vec![AndOr { first: Pipeline { negated: false, cmd: compound(other, line) }, rest: vec![] }],
+                other => vec![AndOr {
+                    first: Pipeline { negated: false, stages: vec![compound(other, line)] },
+                    rest: vec![],
+                }],
             };
             Cmd::FuncDef { name: fd.fname.value.clone(), body, line }
         }
@@ -110,6 +179,11 @@ fn cond(e: &ast::ExtendedTestExpr, line: usize) -> Result<shell::Cond, Cmd> {
         X::UnaryTest(p, w) => match p {
             UP::StringHasZeroLength => shell::Cond::Unary("-z", word(w)),
             UP::StringHasNonZeroLength => shell::Cond::Unary("-n", word(w)),
+            // The three the capability layer can answer: `fs.exists` and
+            // `fs.is_dir` are already granted for globs.
+            UP::FileExists => shell::Cond::Unary("-e", word(w)),
+            UP::FileExistsAndIsDir => shell::Cond::Unary("-d", word(w)),
+            UP::FileExistsAndIsRegularFile => shell::Cond::Unary("-f", word(w)),
             other => return Err(unsupported(&format!("`{other}` in `[[ … ]]` (file and shell-option tests)"), line)),
         },
         X::BinaryTest(p, l, r) => {
@@ -135,6 +209,7 @@ fn simple(sc: &ast::SimpleCommand, line: usize) -> Cmd {
     let line = sc.word_or_name.as_ref().map(line_of).filter(|l| *l > 0).unwrap_or(line);
     let mut assigns = Vec::new();
     let mut words = Vec::new();
+    let mut redirs = Vec::new();
     for item in sc.prefix.iter().flat_map(|p| p.0.iter()) {
         match item {
             CommandPrefixOrSuffixItem::AssignmentWord(a, _) => match assignment(a) {
@@ -142,7 +217,10 @@ fn simple(sc: &ast::SimpleCommand, line: usize) -> Cmd {
                 Err(c) => return c,
             },
             CommandPrefixOrSuffixItem::Word(w) => words.push(word(w)),
-            CommandPrefixOrSuffixItem::IoRedirect(_) => return unsupported("a redirection", line),
+            CommandPrefixOrSuffixItem::IoRedirect(r) => match redir(r, line) {
+                Ok(r) => redirs.push(r),
+                Err(c) => return c,
+            },
             CommandPrefixOrSuffixItem::ProcessSubstitution(..) => return unsupported("process substitution", line),
         }
     }
@@ -153,11 +231,19 @@ fn simple(sc: &ast::SimpleCommand, line: usize) -> Cmd {
         match item {
             // `local x=1`, `export x=1`: the builtin parses `name=value` itself.
             CommandPrefixOrSuffixItem::AssignmentWord(_, w) | CommandPrefixOrSuffixItem::Word(w) => words.push(word(w)),
-            CommandPrefixOrSuffixItem::IoRedirect(_) => return unsupported("a redirection", line),
+            CommandPrefixOrSuffixItem::IoRedirect(r) => match redir(r, line) {
+                Ok(r) => redirs.push(r),
+                Err(c) => return c,
+            },
             CommandPrefixOrSuffixItem::ProcessSubstitution(..) => return unsupported("process substitution", line),
         }
     }
-    Cmd::Simple { assigns, words, line }
+    let simple = Cmd::Simple { assigns, words, line };
+    if redirs.is_empty() {
+        simple
+    } else {
+        Cmd::Redirected { inner: Box::new(simple), redirs, line }
+    }
 }
 
 fn assignment(a: &ast::Assignment) -> Result<Assign, Cmd> {

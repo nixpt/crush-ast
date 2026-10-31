@@ -4,13 +4,29 @@ use clap::Parser;
 use crush_walker_core::AdapterRegistry;
 
 #[derive(Parser)]
-#[command(name = "crush-walk-run")]
+#[command(
+    name = "crush-walk-run",
+    about = "Run a script through the walkers: parse → CAST → CASM → CVM1.",
+    after_help = "What a script may touch:\n  \
+  read directory names (pathname expansion)   fs.exists, fs.list, fs.is_dir   always\n  \
+  read and write files (`<` `>` `>>`, `cat` `ls` `wc` …)   fs.read, fs.write, fs.*   --allow-fs\n  \
+  run another program (`date`, `git`, `jq`, …)   none   refused, always\n\n\
+  Every grant is confined to the directory crush-walk-run is started in.\n\
+  There is no shell, no process and no network: a command that is not one of\n\
+  the builtins (`cat ls wc head tail grep cp mv rm mkdir touch`) is refused\n\
+  with `unsupported: command … at line N`, not executed."
+)]
 struct Cli {
     file: PathBuf,
     #[arg(short = 'n', long, default_value = "1")] runs: usize,
     #[arg(long)] dump_cast: bool,
     #[arg(long)] dump_casm: bool,
     #[arg(short = 't', long)] timing: bool,
+    /// Let the script read and write files (`<`, `>`, `>>` and the builtin
+    /// command set), confined to the directory it was started in. Off by
+    /// default: running a script should not let it rewrite the tree unless
+    /// the caller says so.
+    #[arg(long)] allow_fs: bool,
 }
 
 /// Global adapter registry for all 11 language walkers.
@@ -32,11 +48,25 @@ fn registry() -> AdapterRegistry {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let source = std::fs::read_to_string(&cli.file)?;
     let filename = cli.file.to_string_lossy();
 
     let t0 = Instant::now();
-    let (_, cast_program) = registry().walk(&source, &filename)?;
+    // Wasm is a binary format: read the bytes, not a UTF-8 string (CRUSH-203).
+    let (_, cast_program) = if cli.file.extension().and_then(|e| e.to_str()) == Some("wasm") {
+        let bytes = std::fs::read(&cli.file)?;
+        let program = crush_lang_wasm::walk_wasm(&bytes, &filename)
+            .map_err(|e| anyhow::anyhow!("wasm@walk: {e:?}"))?;
+        (
+            crush_walker_core::FeatureReport {
+                lang: "wasm".to_string(),
+                ..Default::default()
+            },
+            program,
+        )
+    } else {
+        let source = std::fs::read_to_string(&cli.file)?;
+        registry().walk(&source, &filename)?
+    };
     let walk_time = t0.elapsed();
     if cli.dump_cast { println!("{}", serde_json::to_string_pretty(&cast_program)?); return Ok(()); }
 
@@ -80,13 +110,24 @@ fn main() -> anyhow::Result<()> {
     // and `exit N` lowers to it directly (CRUSH-266). Without this the whole
     // run failed with "unknown capability: sys.exit".
     host_caps.register(Box::new(crush_lang_sdk::host_caps::SysExitCap));
-    // Pathname expansion (`echo *.txt`, `for f in *`) is the shell's one look at
-    // the filesystem: `fs.exists` + `fs.list`, confined to the directory the
-    // script was started in. Hosts that embed walker output can leave them out
-    // and a glob is then refused loudly ("unknown capability: fs.list").
+    // Pathname expansion (`echo *.txt`, `for f in *`, `echo */*.log`) is the
+    // shell's one look at the filesystem: `fs.exists` + `fs.list` +
+    // `fs.is_dir` (a walk into `*/*.txt` has to know which matches it may
+    // descend into), confined to the directory the script was started in.
+    // Hosts that embed walker output can leave them out and a glob is then
+    // refused loudly ("unknown capability: fs.list").
     let root = std::env::current_dir()?.display().to_string();
-    host_caps.register(Box::new(crush_lang_sdk::host_caps::FsExistsCap::new(&root)));
-    host_caps.register(Box::new(crush_lang_sdk::host_caps::FsListCap::new(&root)));
+    // `>`/`>>`/`<` and the builtin command set (`cat`, `wc`, `cp`, …) need the
+    // file contents, and that is a separate consent from reading the names a
+    // glob matches. `register_fs` covers the three read-only caps as well, so
+    // the two paths do not stack.
+    if cli.allow_fs {
+        crush_lang_sdk::host_caps::register_fs(&mut host_caps, &root);
+    } else {
+        host_caps.register(Box::new(crush_lang_sdk::host_caps::FsExistsCap::new(&root)));
+        host_caps.register(Box::new(crush_lang_sdk::host_caps::FsIsDirCap::new(&root)));
+        host_caps.register(Box::new(crush_lang_sdk::host_caps::FsListCap::new(&root)));
+    }
     for name in &[
         "append", "push", "make_range", "arr_set", "arr_get", "str.concat",
         "__crush_deref__", "__crush_addr_of__", "__crush_unary__",

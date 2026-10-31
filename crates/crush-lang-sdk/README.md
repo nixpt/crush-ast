@@ -169,6 +169,36 @@ feature, which is on by default — with `default-features = false` the stdlib
 is absent and `--stdlib` is an error. Capabilities with real authority
 (`--fs`, `--env`, `--time`, `--net`, …) are always opt-in.
 
+Raw TCP/TLS sockets (the `tcp` / `tcp-tls` cargo features, on by default, via
+[`crush-net`](../crush-net)) are two further grants, neither implied by
+`--net` (which stays HTTP-client-only):
+
+| flag | capabilities | builder |
+|---|---|---|
+| `--tcp` | `tcp.connect`, `tcp.tls_wrap`, and `tcp.send`/`recv`/`close`/`ping` | `HostCapsBuilder::tcp(true)` |
+| `--tcp-listen` | `tcp.listen`, `tcp.accept`, and `tcp.send`/`recv`/`close`/`ping` on the connections they return; **not** `tcp.connect` | `HostCapsBuilder::tcp_listen(true)` |
+
+A program that needs one without its grant is refused before it runs, naming
+the flag.
+
+Two build-time features decide which of those flags exist (CRUSH-264):
+
+- `net` (`net.http_get/post/put/delete/request`, via `ureq`) is **on by
+  default**. A program using `net.*` is still refused up front unless run with
+  `--net`. Cargo features are per-package, so the library carries it too; an
+  embedder that wants no HTTP client says `default-features = false`.
+- `db` (`db.query`, `db.execute`, bundled SQLite) is **opt-in**: build with
+  `--features db` (`cargo install crush-lang-sdk --features db`), then run with
+  `--db PATH`. `crush-run caps` says so when it is missing.
+
+Time units: `time.now` is Unix **seconds**; `time.now_ms` is **milliseconds**.
+exosphere/nanovm's `time.now` was milliseconds, so a ported program that
+subtracts or compares it needs `time.now_ms`.
+
+exosphere's `http.get/post/put/delete/request` were renamed `net.http_get/…`
+with no alias. A program that calls `http.get` is refused before it runs:
+`http.get was renamed to net.http_get (grant it with --net)`.
+
 ## License
 
 Licensed under either of MIT or Apache-2.0 at your option.
