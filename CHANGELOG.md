@@ -14,6 +14,18 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- File formats unified (#365, `docs/FILE-FORMATS.md`). **Migration:** `crushc --emit casm` now
+  writes CASM JSON (`<stem>.casm`); the CVM1 assembly it used to print is `--emit cvms`
+  (`<stem>.cvms`, with `.cap` lines so a program that prints round-trips through
+  `crush-compile`/`crush-run`). Artifact emits (`vm`/`casm`/`cvms`/`cast`) write `<stem>.<ext>`
+  beside the input, `--emit ast` prints, `-o -` is stdout. New `--emit cast` (CAST JSON; `-o
+  x.castb` for CBOR), CAST inputs for `crushc`/`crush-run` (`.cast.json`, `.cast`, `.castb`),
+  and `crushc cast validate|pack|unpack|format|diff` / `crush cast …`. `crush-pkg build` writes
+  `target/<name>.cvm1` and a loadable `target/<name>.casm`. `CAST_VERSION` is `0.1.0`, written
+  by every producer (the parser wrote `1.0.0`; 20 bench fixtures failed the gate). `.casm.json`
+  and a text `.casm` still load for one release, with a note; `.cvm` and `.sno` stay aliases.
+  `--emit types` is now an explicit not-implemented error (#371); `.casmb` can't hold a program
+  with functions yet, so crushc refuses to write one (#372). CVM1 output is byte-deterministic.
 - `crush-pkg` (CRUSH-348/349/350): `run` now builds and runs the same combined program as a bare
   `crush-pkg` (path dependencies visible); `sys.exit(n)` ends `crush-pkg` with status `n` and keeps
   output printed before it (no `E-RUN` banner; real runtime errors keep it); the unused-dependency
