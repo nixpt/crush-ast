@@ -16,7 +16,7 @@ fn point_module() -> CosmModule {
 fn program(cosm: Option<CosmModule>) -> Program {
     let mut p = Program::new();
     p.lang = Some("crush".to_string());
-    p.manifest = Manifest { permissions: vec!["io.print".to_string()] };
+    p.manifest = Manifest { permissions: vec!["io.print".to_string()], ..Default::default() };
     let push = Instruction {
         op: "push_int".to_string(),
         lang: None,

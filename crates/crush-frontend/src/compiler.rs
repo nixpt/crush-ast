@@ -308,6 +308,7 @@ impl Compiler {
     }
 
     fn compile_program(&mut self, mut program: Program) -> Result<CasmProgram> {
+        let declared_capabilities = program.manifest.as_ref().and_then(|m| m.capabilities.clone());
         self.local_functions.clear();
         self.lambdas.clear();
         self.lambda_aliases.clear();
@@ -565,8 +566,10 @@ impl Compiler {
             // Sorted, so the same source writes the same CASM JSON (#365).
             let mut permissions: Vec<String> = self.all_permissions.iter().cloned().collect();
             permissions.sort_unstable();
-            casm_program.manifest = Manifest { permissions };
+            casm_program.manifest = Manifest { permissions, declared: None };
         }
+        // #258: the `@capabilities` declaration travels with the artifact.
+        casm_program.manifest.declared = declared_capabilities;
 
         self.last_debug_info = Some(debug_info);
 

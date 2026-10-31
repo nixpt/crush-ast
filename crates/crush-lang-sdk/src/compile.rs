@@ -387,7 +387,7 @@ fn unknown_builtin(
 /// ambient capabilities and the ones its entries cover. Checked on the
 /// bytecode, so the names are exactly the ones the VM will gate on
 /// (builtins lowered to capability calls, `polyglot.<lang>`, AI gates).
-fn check_declared_capabilities(casm: &casm::Program, declared: &[String]) -> anyhow::Result<()> {
+pub fn check_declared_capabilities(casm: &casm::Program, declared: &[String]) -> anyhow::Result<()> {
     let used = crate::effects::used_by(&casm_to_vm(casm)?)?;
     let undeclared = crate::effects::undeclared(&used, declared);
     if undeclared.is_empty() {
@@ -1774,6 +1774,7 @@ pub fn casm_to_vm_named(
     // COSM K1.3 (CRUSH-zorro-42): the kind table goes into the CVM1 program
     // as-is; `to_blob` writes it as the version-3 kind-table section.
     vm_program.cosm = program.cosm.clone();
+    vm_program.manifest.declared_capabilities = program.manifest.declared.clone();
     // The assembler maps offsets to lines of the generated assembly; the
     // debugger wants the author's lines, which the instructions carry in their
     // `meta`. Instructions without one drop out of the map.
