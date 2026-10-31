@@ -74,38 +74,31 @@ pub fn walk_wasm(wasm_bytes: &[u8], filename: &str) -> Result<Program, WalkerErr
                 wasmparser::Operator::Call { function_index } => {
                     if (function_index as usize) < import_count {
                         let (module, name, _) = imported_funcs[function_index as usize];
-                        if module == "wasi_snapshot_preview1" && name == "fd_write" {
-                            crush_body.push(Statement::ExprStmt {
-                                expr: Expression::CapabilityCall {
-                                    name: "io.print".to_string(),
-                                    args: vec![],
-                                    meta: HashMap::new(),
-                                },
-                                meta: HashMap::new(),
-                            });
-                        } else {
-                            crush_body.push(Statement::ExprStmt {
-                                expr: Expression::Call {
-                                    function: format!("{}.{}", module, name),
-                                    args: vec![],
-                                    meta: HashMap::new(),
-                                },
-                                meta: HashMap::new(),
-                            });
-                        }
-                    } else {
-                        crush_body.push(Statement::ExprStmt {
-                            expr: Expression::Call {
-                                function: format!("func_{}", function_index),
-                                args: vec![],
-                                meta: HashMap::new(),
-                            },
-                            meta: HashMap::new(),
-                        });
+                        // Every import (including `fd_write`) needs its
+                        // arguments, which this walker does not track — mapping
+                        // `fd_write` to an arg-less `io.print` was silently wrong
+                        // (CRUSH-203). Refuse instead.
+                        return Err(WalkerError::WalkError(format!(
+                            "wasm: imported call `{module}.{name}` is not supported by the Crush Wasm walker (CRUSH-203)"
+                        )));
                     }
+                    crush_body.push(Statement::ExprStmt {
+                        expr: Expression::Call {
+                            function: format!("func_{}", function_index),
+                            args: vec![],
+                            meta: HashMap::new(),
+                        },
+                        meta: HashMap::new(),
+                    });
                 }
                 wasmparser::Operator::End => break,
-                _ => {}
+                // Everything else is dropped by the old walker, so a module's
+                // computation vanished silently. Refuse instead (CRUSH-203).
+                other => {
+                    return Err(WalkerError::WalkError(format!(
+                        "wasm: operator `{other:?}` is not supported by the Crush Wasm walker (CRUSH-203)"
+                    )));
+                }
             }
         }
 
@@ -166,7 +159,9 @@ mod tests {
     }
 
     #[test]
-    fn test_wasi_print_wasm() {
+    fn test_wasi_print_wasm_is_loud() {
+        // CRUSH-203: `fd_write` used to become an arg-less `io.print`, silently
+        // printing nothing; it must be refused now.
         let wat_src = r#"
 (module
   (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
@@ -177,23 +172,17 @@ mod tests {
 )
         "#;
         let wasm_bytes = wat::parse_str(wat_src).unwrap();
+        let err = walk_wasm(&wasm_bytes, "test.wasm").unwrap_err().to_string();
+        assert!(err.contains("not supported"), "expected a loud error, got: {err}");
+    }
+
+    #[test]
+    fn test_empty_body_is_ok() {
+        // A module whose only body is `end` lowers to nothing.
+        let wasm_bytes = wat::parse_str(r#"(module (func (export "_start")))"#).unwrap();
         let program = walk_wasm(&wasm_bytes, "test.wasm").unwrap();
-        
-        assert_eq!(program.lang.unwrap(), "wasm");
         assert!(program.functions.contains_key("_start"));
         assert!(program.functions.contains_key("main"));
-        
-        let start_func = &program.functions["_start"];
-        assert_eq!(start_func.body.len(), 1);
-        if let Statement::ExprStmt { expr, .. } = &start_func.body[0] {
-            if let Expression::CapabilityCall { name, .. } = expr {
-                assert_eq!(name, "io.print");
-            } else {
-                panic!("Expected Expression::CapabilityCall");
-            }
-        } else {
-            panic!("Expected Statement::ExprStmt");
-        }
     }
 }
 

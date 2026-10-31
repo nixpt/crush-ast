@@ -14,6 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Stub walkers no longer produce empty programs (CRUSH-203):** the Zig walker
+  matched the wrong tree-sitter node names (`IntegerLiteral` vs the real
+  `integer`/`float`/`string`/`boolean`, `BinaryExpr` vs `binary_expression`, …),
+  so every literal silently became `null` and every program printed nothing; the
+  names and wrappers are fixed and unhandled nodes now error with the node kind
+  and position. Dart and Java (which returned an empty program / panicked with a
+  bare `unreachable!`) fail with "not implemented". The Wasm walker no longer
+  drops every non-`call` operator or lowers `fd_write` to an arg-less
+  `io.print`; it errors loudly. `crush-walk-run` reads a `.wasm` file as bytes.
+  The Nepali walker's false "native Nepali keywords" comment is corrected.
+
 - **`crush debug FILE` / `crush-debug`: the debugger is runnable (CRUSH-317):**
   `crush-debugger` had breakpoints, step/next/finish, watchpoints and
   grant-gated inspection but no front end that compiled Crush source, so it could
