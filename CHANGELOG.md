@@ -14,6 +14,9 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- feat(sdk): `fs.stat` (type, size, modified), `fs.is_file`, `fs.append`, and a
+  `find -type` filter on `fs.find`, behind `--fs` / `--fs-root` (CRUSH-240)
+
 ## [0.10.0] - 2026-10-31
 
 - Merge pull request #377 from nixpt/agent/satya/CRUSH-squeeze-roots

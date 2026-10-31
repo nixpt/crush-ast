@@ -91,9 +91,10 @@ impl HostCapsBuilder {
         self
     }
 
-    /// Enable filesystem capabilities: `fs.read`, `fs.write`, `fs.exists`,
-    /// `fs.list`, the coreutils `fs.ls/cat/pwd/cd/mkdir/rm/cp/mv/touch/find`,
-    /// and the `text.*` file tools — all confined to [`fs_root`](Self::fs_root).
+    /// Enable filesystem capabilities: `fs.read`, `fs.write`, `fs.append`,
+    /// `fs.exists`, `fs.is_dir`, `fs.is_file`, `fs.stat`, `fs.list`, the
+    /// coreutils `fs.ls/cat/pwd/cd/mkdir/rm/cp/mv/touch/find`, and the
+    /// `text.*` file tools — all confined to [`fs_root`](Self::fs_root).
     pub fn fs(mut self, enable: bool) -> Self {
         self.fs = enable;
         self
@@ -745,25 +746,60 @@ impl HostCap for FsWriteCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        let data = fs_write_payload(&args[1])?;
+        let data = fs_write_payload("fs.write", &args[1])?;
         self.fs.backend().write(&path, &data)
             .map_err(|e| format!("fs.write {}: {e}", self.fs.display(&path)))?;
         Ok(None)
     }
 }
 
-/// The bytes `fs.write` puts in the file (#302): a string as UTF-8, `bytes`
-/// and buffers raw (the same reading `bytes.*` / `binary.*` give them, so a
-/// buffer cell outside 0..=255 is an error), and any other data value as its
-/// text form. A value whose text form is only a placeholder (`<fn f>`,
-/// `<handle 3>`, …) is refused instead of being written.
-fn fs_write_payload(value: &Value) -> Result<Vec<u8>, String> {
+/// `fs.append(path, data)`: like [`FsWriteCap`], but keeps what is already in
+/// the file and adds `data` after it (CRUSH-240). Creates the file if it does
+/// not exist. `>>` in a Crush script, and a log line at a time.
+pub struct FsAppendCap {
+    fs: FsSandbox,
+}
+
+impl FsAppendCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
+    pub fn new(root: &str) -> Self {
+        Self {
+            fs: FsSandbox::new(root),
+        }
+    }
+}
+
+impl HostCap for FsAppendCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "fs.append".to_string(),
+            argc: Some(2),
+            returns: false,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let path = self.fs.resolve(&args[0])?;
+        let data = fs_write_payload("fs.append", &args[1])?;
+        self.fs.backend().append(&path, &data)
+            .map_err(|e| format!("fs.append {}: {e}", self.fs.display(&path)))?;
+        Ok(None)
+    }
+}
+
+/// The bytes `fs.write` and `fs.append` put in the file (#302): a string as
+/// UTF-8, `bytes` and buffers raw (the same reading `bytes.*` / `binary.*`
+/// give them, so a buffer cell outside 0..=255 is an error), and any other
+/// data value as its text form. A value whose text form is only a placeholder
+/// (`<fn f>`, `<handle 3>`, …) is refused instead of being written.
+fn fs_write_payload(cap: &str, value: &Value) -> Result<Vec<u8>, String> {
     match value {
         Value::Str(s) => Ok(s.as_bytes().to_vec()),
-        Value::Bytes(_) | Value::Vector(_) => crate::stdlib::bytes::byte_view("fs.write", value),
+        Value::Bytes(_) | Value::Vector(_) => crate::stdlib::bytes::byte_view(cap, value),
         Value::Func(_) | Value::Handle(_) | Value::Foreign(_) | Value::Cell(_) | Value::Kind(_) => {
             Err(format!(
-                "fs.write: a {} has no file form; write a string, bytes or a buffer",
+                "{cap}: a {} has no file form; write a string, bytes or a buffer",
                 value.type_name()
             ))
         }
@@ -801,8 +837,9 @@ impl HostCap for FsExistsCap {
 }
 
 /// Register the whole filesystem capability group into `caps`, confined to
-/// `root`: the file caps (`fs.read`, `fs.write`, `fs.exists`, `fs.is_dir`,
-/// `fs.list`) plus the `fs.*` / `text.*` coreutils. `HostCapsBuilder::fs(true)`
+/// `root`: the file caps (`fs.read`, `fs.write`, `fs.append`, `fs.exists`,
+/// `fs.is_dir`, `fs.is_file`, `fs.stat`, `fs.list`) plus the `fs.*` /
+/// `text.*` coreutils. `HostCapsBuilder::fs(true)`
 /// builds this group for hosts that want a builder; this is for a host that
 /// already owns its registry — `crush-walk-run`, whose shell programs need the
 /// coreutils for `>`, `<`, `cat`, `cp`, …
@@ -813,8 +850,11 @@ pub fn register_fs(caps: &mut HostCaps, root: &str) {
 fn register_fs_caps(caps: &mut HostCaps, fs: &FsSandbox) {
     caps.register(Box::new(FsReadCap { fs: fs.clone() }));
     caps.register(Box::new(FsWriteCap { fs: fs.clone() }));
+    caps.register(Box::new(FsAppendCap { fs: fs.clone() }));
     caps.register(Box::new(FsExistsCap { fs: fs.clone() }));
     caps.register(Box::new(FsIsDirCap { fs: fs.clone() }));
+    caps.register(Box::new(FsIsFileCap { fs: fs.clone() }));
+    caps.register(Box::new(FsStatCap { fs: fs.clone() }));
     caps.register(Box::new(FsListCap { fs: fs.clone() }));
     crate::fs_tools::register(caps, fs);
     crate::text_tools::register(caps, fs);
@@ -852,6 +892,116 @@ impl HostCap for FsIsDirCap {
         let path = self.fs.resolve(&args[0])?;
         let is_dir = matches!(self.fs.backend().kind(&path), Ok(crate::fs_backend::Kind::Dir));
         Ok(Some(Value::Int(if is_dir { 1 } else { 0 })))
+    }
+}
+
+/// `fs.is_file(path)`: 1 when `path` is a regular file *inside* the sandbox,
+/// else 0 (also 0 for a directory or a path that does not exist). The other
+/// half of [`FsIsDirCap`] (CRUSH-240): `fs.find` returns files and
+/// directories alike, and this is how a script tells them apart.
+pub struct FsIsFileCap {
+    fs: FsSandbox,
+}
+
+impl FsIsFileCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
+    pub fn new(root: &str) -> Self {
+        Self {
+            fs: FsSandbox::new(root),
+        }
+    }
+}
+
+impl HostCap for FsIsFileCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "fs.is_file".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let path = self.fs.resolve(&args[0])?;
+        let is_file = matches!(self.fs.backend().kind(&path), Ok(crate::fs_backend::Kind::File));
+        Ok(Some(Value::Int(if is_file { 1 } else { 0 })))
+    }
+}
+
+/// `fs.stat(path)`: what `stat(2)` says about a path inside the sandbox, as a
+/// map with three keys (CRUSH-240):
+///
+/// - `"type"`: `"file"`, `"dir"`, `"symlink"` or `"other"` (a socket, a
+///   device, …). Symlinks are followed, as `stat` follows them — a link to a
+///   file reports `"file"`; use `fs.find`'s type filter to see the links
+///   themselves.
+/// - `"size"`: the length in bytes for a regular file, and `0` for anything
+///   else: the size a directory reports differs between filesystems, so it is
+///   not passed through.
+/// - `"modified"`: seconds since the Unix epoch (UTC), the same unit as
+///   `time.now`.
+///
+/// A missing path is an error, as `fs.cat` on it is; `fs.exists` answers 0 for
+/// it instead. Read-only metadata, so `fs/read`, not `fs/write`.
+pub struct FsStatCap {
+    fs: FsSandbox,
+}
+
+impl FsStatCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
+    pub fn new(root: &str) -> Self {
+        Self {
+            fs: FsSandbox::new(root),
+        }
+    }
+}
+
+impl HostCap for FsStatCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "fs.stat".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let path = self.fs.resolve(&args[0])?;
+        let meta = self
+            .fs
+            .backend()
+            .metadata(&path)
+            .map_err(|e| format!("fs.stat {}: {e}", self.fs.display(&path)))?;
+        let kind = match meta.kind {
+            crate::fs_backend::Kind::File => "file",
+            crate::fs_backend::Kind::Dir => "dir",
+            crate::fs_backend::Kind::Symlink => "symlink",
+            crate::fs_backend::Kind::Other => "other",
+        };
+        let size = if meta.kind == crate::fs_backend::Kind::File {
+            meta.size as i64
+        } else {
+            0
+        };
+        Ok(Some(Value::new_map([
+            ("type".to_string(), Value::Str(kind.to_string())),
+            ("size".to_string(), Value::Int(size)),
+            (
+                "modified".to_string(),
+                Value::Int(epoch_seconds(meta.modified)),
+            ),
+        ])))
+    }
+}
+
+/// `SystemTime` as seconds since the Unix epoch, rounded towards the past for
+/// a time before it.
+fn epoch_seconds(time: std::time::SystemTime) -> i64 {
+    match time.duration_since(std::time::UNIX_EPOCH) {
+        Ok(after) => after.as_secs() as i64,
+        Err(before) => -(before.duration().as_secs() as i64),
     }
 }
 
@@ -1282,6 +1432,9 @@ mod tests {
 
         assert!(caps.get("fs.read").is_some());
         assert!(caps.get("fs.is_dir").is_some());
+        assert!(caps.get("fs.is_file").is_some());
+        assert!(caps.get("fs.stat").is_some());
+        assert!(caps.get("fs.append").is_some());
         assert!(caps.get("env.get").is_some());
         assert!(caps.get("time.now").is_some());
         assert!(caps.get("time.now_ms").is_some());
@@ -1351,6 +1504,62 @@ mod tests {
         let err = write.call(vec![path("h.txt"), Value::Handle(3)]).unwrap_err();
         assert!(err.contains("has no file form"), "{err}");
         assert!(!dir.path().join("bad.bin").exists() && !dir.path().join("h.txt").exists());
+    }
+
+    /// CRUSH-240: `fs.append` creates and extends, with the same payload rules
+    /// as `fs.write`, and is confined to the sandbox like every other fs cap.
+    #[test]
+    fn fs_append_extends_and_stays_in_the_sandbox() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("out")).unwrap();
+        let append = FsAppendCap::new(root.to_str().unwrap());
+        let path = |s: &str| Value::Str(s.to_string());
+
+        append.call(vec![path("log.txt"), path("one\n")]).unwrap();
+        append.call(vec![path("log.txt"), path("two\n")]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("log.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+
+        // Bytes and other data values land the way `fs.write` puts them.
+        append
+            .call(vec![path("log.txt"), Value::Bytes(vec![b'!'])])
+            .unwrap();
+        append.call(vec![path("log.txt"), Value::Int(3)]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("log.txt")).unwrap(),
+            "one\ntwo\n!3"
+        );
+
+        // Placeholders are refused, naming this cap.
+        let err = append
+            .call(vec![path("h.txt"), Value::Handle(3)])
+            .unwrap_err();
+        assert!(err.contains("fs.append") && err.contains("has no file form"), "{err}");
+        assert!(!root.join("h.txt").exists());
+
+        // `..` and a symlink out of the root are both refused.
+        for escape in ["../out.txt", "out/new.txt"] {
+            let err = append
+                .call(vec![path(escape), path("x")])
+                .unwrap_err();
+            assert!(err.contains("escapes sandbox"), "{escape}: {err}");
+        }
+        let mut outside: Vec<_> = std::fs::read_dir(&outside)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        outside.sort();
+        assert!(outside.is_empty(), "something was created outside: {outside:?}");
+        let missing = append
+            .call(vec![path("nodir/log.txt"), path("x")])
+            .unwrap_err();
+        assert!(missing.starts_with("fs.append nodir/log.txt:"), "{missing}");
     }
 
     #[test]

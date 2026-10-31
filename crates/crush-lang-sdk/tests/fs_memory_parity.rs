@@ -18,16 +18,43 @@ fn b(v: bool) -> Value {
 
 /// One step's outcome as text: the value, or the error with the disk root
 /// (only `text.*` errors name a host path) replaced by `<root>`.
+///
+/// `fs.stat`'s `modified` is a wall-clock time, so two runs a moment apart
+/// cannot share it: both sides are reduced to `modified=<time>` and the rest
+/// of the map is still compared (CRUSH-240).
 fn run(caps: &HostCaps, root: &str, cap: &str, args: &[Value]) -> String {
     let c = caps.get(cap).unwrap_or_else(|| panic!("{cap} not registered"));
     match c.call(args.to_vec()) {
-        Ok(Some(v)) => format!("ok {v}"),
+        Ok(Some(v)) => format!("ok {}", outcome(cap, &v)),
         Ok(None) => "ok".to_string(),
         Err(e) => {
             let e = if root.is_empty() { e } else { e.replace(root, "<root>") };
             format!("err {}", e.replace("<root>/", "/"))
         }
     }
+}
+
+fn outcome(cap: &str, v: &Value) -> String {
+    if cap != "fs.stat" {
+        return v.to_string();
+    }
+    let Value::Map(m) = v else {
+        panic!("fs.stat did not return a map: {v:?}");
+    };
+    let mut parts: Vec<String> = m
+        .borrow()
+        .iter()
+        .map(|(k, v)| {
+            if k == "modified" {
+                assert!(matches!(v, Value::Int(_)), "fs.stat modified is not an int: {v:?}");
+                "modified=<time>".to_string()
+            } else {
+                format!("{k}: {v}")
+            }
+        })
+        .collect();
+    parts.sort();
+    format!("{{{}}}", parts.join(", "))
 }
 
 type Step = (&'static str, Vec<Value>);
@@ -176,6 +203,30 @@ fn scripts() -> Vec<(&'static str, Vec<Step>)> {
             ("fs.mkdir", vec![s("d")]),
             ("fs.touch", vec![s("d")]),
             ("fs.touch", vec![s("nodir/x")]),
+        ]),
+        // CRUSH-240: type, size and time, and appending instead of replacing.
+        ("stat, type and append", vec![
+            ("fs.stat", vec![s("nope")]),
+            ("fs.is_file", vec![s("nope")]),
+            ("fs.is_dir", vec![s("nope")]),
+            ("fs.write", vec![s("f.txt"), s("hello")]),
+            ("fs.stat", vec![s("f.txt")]),
+            ("fs.is_file", vec![s("f.txt")]),
+            ("fs.is_dir", vec![s("f.txt")]),
+            ("fs.append", vec![s("f.txt"), s("!")]),
+            ("fs.read", vec![s("f.txt")]),
+            ("fs.stat", vec![s("f.txt")]),
+            ("fs.append", vec![s("new.txt"), s("1")]),
+            ("fs.read", vec![s("new.txt")]),
+            ("fs.mkdir", vec![s("d")]),
+            ("fs.stat", vec![s("d")]),
+            ("fs.is_dir", vec![s("d")]),
+            ("fs.is_file", vec![s("d")]),
+            ("fs.append", vec![s("d"), s("x")]),
+            ("fs.append", vec![s("nodir/x"), s("x")]),
+            ("fs.append", vec![s("../x"), s("x")]),
+            ("fs.touch", vec![s("f.txt")]),
+            ("fs.stat", vec![s("f.txt")]),
         ]),
         ("text tools", vec![
             ("fs.write", vec![s("t.txt"), s("a,1\nb,2\nc,3\nd,4\n")]),

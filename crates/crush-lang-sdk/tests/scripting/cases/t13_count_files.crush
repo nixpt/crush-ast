@@ -1,6 +1,16 @@
 // Count regular files (not directories) under the current directory.
-// fs.find returns directories too, and nothing tells them apart (no fs.is_dir / fs.stat).
+// `fs.find`'s third argument is the `find -type` filter; `fs.is_file` is the
+// same answer for one path, so the count is checked twice.
 fn main() {
-  io.print("files: " + len(fs.find(".", "*")))
+  let files = fs.find(".", "*", "file")
+  let i = 0
+  while i < len(files) {
+    if fs.is_file(files[i]) == 0 {
+      io.print("not a file: " + files[i])
+      return 1
+    }
+    i = i + 1
+  }
+  io.print("files: " + len(files))
   return 0
 }

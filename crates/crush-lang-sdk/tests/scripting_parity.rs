@@ -24,10 +24,6 @@ const KNOWN_GAPS: &[(&str, &str)] = &[
         "t11_missing_file",
         "a failing capability call can't be caught by try/catch (CRUSH-219)",
     ),
-    (
-        "t13_count_files",
-        "fs.find returns directories too and nothing tells files from directories (CRUSH-240)",
-    ),
 ];
 
 const ARGS: [&str; 2] = ["one", "two words"];

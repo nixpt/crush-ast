@@ -1,0 +1,11 @@
+// Append a line to the log, then show its last two lines.
+fn main() {
+  fs.append("logs/app.log", "rotation: done\n")
+  let last = text.tail("logs/app.log", 2)
+  let i = 0
+  while i < len(last) {
+    io.print(last[i])
+    i = i + 1
+  }
+  return 0
+}

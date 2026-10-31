@@ -383,7 +383,7 @@ fn crush_run_caps_lists_fs_coreutils() {
     let stdout = String::from_utf8_lossy(&run_crush_run(&["caps"]).stdout).into_owned();
     for cap in [
         "fs.ls", "fs.cat", "fs.pwd", "fs.cd", "fs.mkdir", "fs.rm", "fs.cp", "fs.mv", "fs.touch",
-        "fs.find",
+        "fs.find", "fs.append", "fs.is_dir", "fs.is_file", "fs.stat",
     ] {
         assert!(
             stdout.contains(&format!("  {cap} ")),
@@ -405,6 +405,8 @@ fn crush_run_caps_json_lists_effects_and_grants() {
             .clone()
     };
     assert_eq!(find("fs.rm")["effects"], serde_json::json!(["fs/write"]));
+    assert_eq!(find("fs.append")["effects"], serde_json::json!(["fs/write"]));
+    assert_eq!(find("fs.stat")["effects"], serde_json::json!(["fs/read"]));
     assert_eq!(find("fs.rm")["grant"], "--fs");
     assert_eq!(find("conv.to_str")["effects"], serde_json::json!([]));
     assert_eq!(find("io.print")["grant"], "portable");

@@ -480,7 +480,11 @@ fn list_caps() {
     println!("Host capabilities (enable with --fs / --env / --time):");
     println!("  fs.read PATH           read file contents");
     println!("  fs.write PATH DATA     write file contents");
+    println!("  fs.append PATH DATA    append to a file, creating it if it is missing");
     println!("  fs.exists PATH         return 1 if file exists, else 0");
+    println!("  fs.is_dir PATH         return 1 if PATH is a directory, else 0");
+    println!("  fs.is_file PATH        return 1 if PATH is a regular file, else 0");
+    println!("  fs.stat PATH           {{type, size, modified}}: kind, bytes, Unix seconds");
     println!("  fs.list DIR            list directory entries (sorted)");
     println!("  fs.ls [DIR]            same as fs.list; DIR defaults to the working directory");
     println!("  fs.cat PATH            same as fs.read");
@@ -495,7 +499,7 @@ fn list_caps() {
     println!("  fs.cp SRC DST [RECURSIVE]  copy a file; a directory needs RECURSIVE=true");
     println!("  fs.mv SRC DST          move / rename");
     println!("  fs.touch PATH          create an empty file or update its mtime");
-    println!("  fs.find DIR [GLOB]     every entry below DIR, optionally filtered by a name glob");
+    println!("  fs.find DIR [GLOB [TYPE]]  every entry below DIR, filtered by a name glob and/or TYPE=file|dir|symlink|other");
     println!("  text.head/tail PATH N  first / last N lines of a file");
     println!("  text.wc PATH           {{lines, words, chars}} of a file");
     println!("  text.cut PATH DELIM COL  1-based column of every line");
