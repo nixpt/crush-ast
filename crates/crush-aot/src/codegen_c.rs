@@ -14,6 +14,7 @@ use std::collections::HashMap;
 pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     crate::refuse_cosm(program, "C")?;
     crate::refuse_green_task(program, "C")?;
+    crate::refuse_ai(program, "C")?;
     crate::method_support::check_c(program)?;
     let mut out = String::new();
 
@@ -1762,7 +1763,7 @@ fn emit_c_instr(
         // AOT C can't perform AI queries. The JSON config is in the instruction args,
         // NOT on the stack. Push null (matching scheduler/portable VM behavior).
         // ── AI opcodes ──
-        // CRUSH-32 follow-up: per-opcode inline stub emit (`mk_ai_stub`), so all
+        // UNREACHABLE since CRUSH-234 (`crate::refuse_ai`). Was: CRUSH-32 follow-up: per-opcode inline stub emit (`mk_ai_stub`), so all
         // 5 execution tiers agree at differential-cmp time. Args ride on
         // instruction args (not on the VM stack); echo is always an empty
         // Array here.

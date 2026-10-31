@@ -216,6 +216,33 @@ impl FastVM {
 /// `RuntimeValue`: scalars map directly; arrays/maps (which `RuntimeValue`
 /// cannot model) as their JSON text, keys sorted. A cap error is also `None`.
 /// DOM requests still drop their args (CRUSH-33 follow-up).
+/// CRUSH-234: the fail-closed counterpart of [`resolve_host_request`]. If `req`
+/// is one of the ten AI requests and `host_caps` has no `ai_native.<kind>`
+/// handler, returns the same named `CapDenied` error the scheduler and
+/// PortableVm raise; otherwise `None`. FastVM embedders that get `None` from
+/// `resolve_host_request` for an AI request should surface this error rather
+/// than resuming the VM with a made-up value.
+pub fn ai_request_denied(
+    req: &HostRequest,
+    host_caps: Option<&crate::HostCaps>,
+) -> Option<crate::vm::VmError> {
+    let kind = match req {
+        HostRequest::AiQuery { .. } => "query",
+        HostRequest::AiSynthesize { .. } => "synthesize",
+        HostRequest::AiAgentDelegation { .. } => "agent_delegation",
+        HostRequest::AiSemanticMatch { .. } => "semantic_match",
+        HostRequest::AiLearningLoop { .. } => "learning_loop",
+        HostRequest::AiContextAware { .. } => "context_aware",
+        HostRequest::AiToolchain { .. } => "toolchain",
+        HostRequest::AiGoalDeclaration { .. } => "goal_declaration",
+        HostRequest::AiProgressUpdate { .. } => "progress_update",
+        HostRequest::AiKnowledgeSharing { .. } => "knowledge_sharing",
+        _ => return None,
+    };
+    let granted = host_caps.is_some_and(|h| h.get(&format!("ai_native.{kind}")).is_some());
+    (!granted).then(|| crate::ai_args::not_granted(kind))
+}
+
 pub fn resolve_host_request(
     req: &HostRequest,
     host_caps: Option<&crate::HostCaps>,

@@ -1642,8 +1642,8 @@ fn execute_one(
         | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
             // CRUSH-32/156: gate the AI opcodes through `host_caps.get("ai_native.<kind>")`
             // with the compiled payload + stack operands (`crate::ai_args` is
-            // the shared contract). Ungranted → `Value::Null`, operands still
-            // consumed so the stack stays balanced.
+            // the shared contract). Ungranted → `VmError::CapDenied` (CRUSH-234); operands are still
+            // consumed before the check.
             let kind = bytecode::ai_native_kind_for_opcode(opcode)
                 .expect("AI opcode byte in combined match arm must map to a known kind");
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
