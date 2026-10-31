@@ -21,6 +21,7 @@
 mod builtins;
 mod class;
 mod expr;
+mod host;
 mod scope;
 mod stmt;
 
@@ -70,6 +71,27 @@ pub(crate) struct Lower<'a> {
     /// COSM kinds declared by JS classes (CRUSH-277 S1), in declaration
     /// order; they ride out in `Program::cosm`.
     kinds: Vec<crush_cosm::KindDecl>,
+    /// Classes visible from the statement lists currently being
+    /// lowered (CRUSH-281): kind name → `Some(owner)` for a class only
+    /// pre-registered so far, where `owner` is the `fn_depth` of the
+    /// statement list that declares it, or `None` once its declaration
+    /// has been lowered. A pre-registered class may be constructed
+    /// only from a function nested deeper than its owning list (the
+    /// body runs after the whole list has); a statement of the list
+    /// itself is in the class's temporal dead zone. Entries are
+    /// snapshotted and restored around each function body and block,
+    /// so a function-local class is invisible to its siblings.
+    visible_kinds: HashMap<String, Option<usize>>,
+    /// Resolved names that are class *bindings* (a class declaration's
+    /// name, or the binding of a class expression of the same name).
+    /// A kind whose name is not a binding here — a class expression's
+    /// inner name (`const C = class K { … }`) — is not constructible
+    /// through that name outside the class (CRUSH-281 review).
+    class_bindings: std::collections::HashSet<String>,
+    /// Depth of class field initialisers being lowered: they run at
+    /// construction time, so like function bodies they may use
+    /// pending kinds.
+    deferred_new: usize,
     /// Whether `this` names a receiver here: directly inside a class
     /// method, constructor or accessor (CRUSH-277 D2). Entering any other
     /// function clears it — a nested function's `this` is its own, and an
@@ -86,11 +108,39 @@ pub(crate) struct Lower<'a> {
     /// function boundary: an instance flowing in as a parameter or a
     /// capture isn't tracked (CRUSH-zorro-44's general problem).
     instance_kinds: HashMap<String, String>,
+    /// Bindings proven to hold a JS host collection (`new Map()` /
+    /// `new Set(...)`): binding name → its host kind, proven and
+    /// forgotten by exactly the rules of `instance_kinds`
+    /// (CRUSH-288). A binding is in at most one of the two maps.
+    host_kinds: HashMap<String, host::HostKind>,
+    /// Every assignment to a `this.field` in the module, by lowering
+    /// class and field: a host-kind proof, or a poison when the
+    /// assigned value doesn't prove one (CRUSH-288).
+    field_host_proofs: HashMap<(String, String), host::HostKind>,
+    field_host_poisons: std::collections::HashSet<(String, String)>,
+    /// Field reads/calls that assumed a host kind, validated at end
+    /// of module by [`Lower::check_field_host`].
+    field_host_uses: Vec<host::FieldHostUse>,
+    /// The synthesized Map/Set helper functions' names, chosen on
+    /// first use (CRUSH-288).
+    host_fns: Option<host::HostFns>,
     /// Depth of control statements (branches, loops, `try`) currently
     /// being lowered, and the bindings assigned inside them: both serve
     /// the forgetting rule of [`Lower::stmt`] (CRUSH-286 review #3).
     branch_depth: usize,
     flow_assigned: std::collections::HashSet<String>,
+    /// Lowered finally bodies active at this source location.
+    finally_stack: Vec<Vec<CastStmt>>,
+    /// Current break/continue targets (switches are break-only).
+    jump_targets: Vec<JumpTarget>,
+    /// Private completion signals registered while lowering this function.
+    completion_signals: Vec<CompletionSignal>,
+    /// Nesting of source try statements, including catch-only boundaries.
+    try_depth: usize,
+    /// Source loop nesting and switch floors retain the existing refusal of
+    /// `continue` inside a switch.
+    loop_depth: usize,
+    switch_loop_floors: Vec<usize>,
     /// Depth of nested expression lowering. An assignment proves a new
     /// kind only at the top of the expression being lowered: one
     /// nested inside a larger expression (`f && (c = new B())`,
@@ -136,6 +186,26 @@ pub(crate) struct Lower<'a> {
     toplevel_sigs: HashMap<Sym, scope::Sig>,
 }
 
+/// A syntactic break/continue destination, used to determine which active
+/// finalizers a non-local jump must execute.
+#[derive(Clone)]
+pub(super) struct JumpTarget {
+    pub(super) finally_depth: usize,
+    pub(super) try_depth: usize,
+    pub(super) is_switch: bool,
+    pub(super) is_loop: bool,
+    pub(super) break_action: Vec<CastStmt>,
+    pub(super) continue_action: Vec<CastStmt>,
+}
+
+#[derive(Clone)]
+pub(super) struct CompletionSignal {
+    pub(super) token: String,
+    pub(super) target_try_depth: usize,
+    /// The real loop jump; loop-specific rewrites add `for` updates/tests.
+    pub(super) action: Vec<CastStmt>,
+}
+
 /// A member call the walker emitted (CRUSH-286 review): the statically
 /// known receiver kind and the signature its arguments were adapted
 /// to, if any. Checked in [`Lower::check_member_calls`] once the whole
@@ -162,11 +232,25 @@ impl<'a> Lower<'a> {
             scopes: Scopes::default(),
             functions: HashMap::new(),
             kinds: Vec::new(),
+            visible_kinds: Default::default(),
+            class_bindings: Default::default(),
+            deferred_new: 0,
             this_bound: false,
             super_ctor: None,
             instance_kinds: Default::default(),
+            host_kinds: Default::default(),
+            field_host_proofs: Default::default(),
+            field_host_poisons: Default::default(),
+            field_host_uses: Default::default(),
+            host_fns: None,
             branch_depth: 0,
             flow_assigned: Default::default(),
+            finally_stack: Vec::new(),
+            jump_targets: Vec::new(),
+            completion_signals: Vec::new(),
+            try_depth: 0,
+            loop_depth: 0,
+            switch_loop_floors: Vec::new(),
             expr_depth: 0,
             fn_depth: 0,
             fn_assigned: Default::default(),
@@ -250,7 +334,14 @@ pub fn lower_boa(ast: BoaAst, ctx: &LowerCtx) -> anyhow::Result<Program> {
     let mut lower = Lower::new(interner, ctx);
     let main_body = lower.top_level(&items)?;
     lower.check_member_calls()?;
+    lower.check_field_host()?;
     let mut functions = std::mem::take(&mut lower.functions);
+    // The Map/Set helpers, only when the module uses them (CRUSH-288).
+    if let Some(fns) = &lower.host_fns {
+        for (name, f) in host::helpers(fns) {
+            functions.insert(name, f);
+        }
+    }
     if !main_body.is_empty() {
         functions.insert(
             "main".to_string(),

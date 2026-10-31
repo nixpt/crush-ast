@@ -49,6 +49,7 @@ const RUST_LOUD: &[(&str, &str)] = &[
     ("class_accessor", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
     ("class_basic", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
     ("class_defaults", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
+    ("class_destructuring", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
     ("class_extends", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
     ("class_fields", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
     ("class_static", "COSM objects aren't supported on the AOT backends yet (CRUSH-zorro-43)"),
@@ -80,6 +81,7 @@ const RUST_LOUD: &[(&str, &str)] = &[
     ("ops_bitwise", "CRUSH-zorro-12: bitwise operators"),
     ("ops_division_inf", "CRUSH-zorro-12: Infinity/NaN from division"),
     ("ops_int_overflow", "CRUSH-zorro-13: number model"),
+    ("ops_logical_assign", "CRUSH-292: logical assignment is not supported by the swc walker yet"),
     ("ops_nan", "CRUSH-zorro-12: `NaN` is an unassigned local on swc, now loud (CRUSH-zorro-54)"),
     ("ops_null_eq_undefined", "CRUSH-zorro-12: `undefined` is an unassigned local on swc (matched by accident while it read as null; loud since CRUSH-zorro-54)"),
     ("ops_nullish", "CRUSH-zorro-12: ??"),
@@ -103,7 +105,6 @@ const RUST_LOUD: &[(&str, &str)] = &[
 const RUST_SILENT: &[(&str, &str, &str)] = &[
     // AOT only (loud on the VM):
     ("misc_undefined", "CRUSH-zorro-12", "undefined / out-of-range index / missing field print `null`"),
-    ("ops_optional_chain", "CRUSH-zorro-12", "o?.x?.y prints `null`, not `undefined`"),
 ];
 
 /// C backend: identical to the Rust backend today. Split when they diverge.
@@ -116,16 +117,20 @@ const C_SILENT: &[(&str, &str, &str)] = RUST_SILENT;
 const BOA_EXACT: &[&str] = &[
     "arr_push_loop_multi",
     "arr_push_multi",
+    "arr_spread_call",
+    "builtin_map_set",
     "fn_default_param",
+    "ops_optional_chain",
+    "obj_destructure",
     "fn_rest_param",
     "fn_rest_param_more",
+    "ops_logical_assign",
     "scope_block_shadow",
     "scope_shadow_loop",
 ];
 /// Silently wrong (or right by accident) on AOT with swc, refused at walk
 /// time with boa:
 const BOA_LOUD: &[(&str, &str)] = &[
-    ("ops_optional_chain", "CRUSH-zorro-12: `?.` (refused at walk time)"),
     ("misc_console_multi", "CRUSH-zorro-12: `undefined` as a value (refused at walk time)"),
     ("ops_nan", "CRUSH-zorro-12: `NaN` as a value (refused at walk time)"),
     // A top-level function using a script variable is a closure over it on

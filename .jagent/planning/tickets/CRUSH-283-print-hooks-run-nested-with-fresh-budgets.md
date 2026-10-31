@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-283 |
 | **Priority** | P2 |
-| **Status** | Open |
+| **Status** | Backlog |
 | **Phase** | COSM follow-up (post CRUSH-277) |
 | **Assignee** | unassigned |
 | **Filed by** | muse — 2026-10-20, from kai's re-review of PR #285 |

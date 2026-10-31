@@ -22,6 +22,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use crush_lang_sdk::theme::{JsonDiagnostic, JsonDiagnosticExt as _};
 use crush_lang_sdk::{HostCapsBuilder, MessageFormat, Runtime};
 use crush_vm::{Quotas, VmResult};
 
@@ -45,7 +46,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
 
-        /// A program (.crush, .casm or .cvm1) to inspect instead of listing
+        /// A program (.crush, .casm, .cvm1 or .cvm) to inspect instead of listing
         /// every capability.
         path: Option<PathBuf>,
     },
@@ -53,7 +54,7 @@ enum Commands {
 
 #[derive(Parser)]
 struct RunArgs {
-    /// Path to the program file (.crush, .casm or .cvm1).
+    /// Path to the program file (.crush, .casm, .cvm1 or .cvm — crush-pkg's name for a CVM1 blob).
     path: PathBuf,
 
     /// Arguments for the program, returned by `sys.args()`. Flags for
@@ -91,7 +92,8 @@ struct RunArgs {
     #[arg(long)]
     bus: bool,
 
-    /// Enable task-management capabilities (task.start/stop/list).
+    /// Enable task-management capabilities (task.start/stop/list). `task.start`
+    /// spawns a host process, so `--task` also grants `process/spawn`.
     #[arg(long)]
     task: bool,
 
@@ -132,7 +134,19 @@ struct RunArgs {
     #[arg(long, value_name = "N", default_value = "1048576")]
     net_max_response_bytes: usize,
 
+    /// Enable raw TCP client sockets (tcp.connect/send/recv/close/ping/tls_wrap). Separate from
+    /// --net (HTTP only); does not allow tcp.listen/accept.
+    #[arg(long)]
+    tcp: bool,
+
+    /// Enable raw TCP SERVER sockets (tcp.listen/accept, plus send/recv/close/ping on the
+    /// connections they return): the program becomes reachable from other hosts. Does not
+    /// allow outbound tcp.connect; add --tcp for that.
+    #[arg(long = "tcp-listen")]
+    tcp_listen: bool,
+
     /// Enable database host capabilities (db.query, db.execute) on this path.
+    /// Opt-in at build time: needs a build with `--features db`.
     #[arg(long, value_name = "PATH")]
     db: Option<PathBuf>,
 
@@ -187,22 +201,31 @@ fn main() {
                         eprint!("{}", crush_lang_sdk::theme::render_anyhow_error(&e, label));
                     }
                     MessageFormat::Json => {
-                        // Map a typed `RuntimeError` to a structured
-                        // diagnostic with a distinct stable code per
-                        // variant. Fall back to a generic I/O code for
-                        // non-RuntimeError arms (load failures, compile
-                        // failures, etc.).
-                        let diag = if let Some(runtime_err) =
-                            e.downcast_ref::<crush_lang_sdk::RuntimeError>()
-                        {
-                            crush_lang_sdk::theme::JsonDiagnostic::runtime_error(runtime_err)
+                        // The same records `crushc` emits for the same input
+                        // (CRUSH-315): syntax errors -> E-PP0n with position,
+                        // semantic errors -> E-TP01 with position, a run that
+                        // fails -> E-RT0n with the error text in `message`, a
+                        // refused capability -> E-CAPS. The program's path is
+                        // attached to every record.
+                        let file = args.path.display().to_string();
+                        let diags = if let Some(refused) = e.downcast_ref::<NotGranted>() {
+                            vec![
+                                JsonDiagnostic::error(JsonDiagnostic::CODE_CAPS, &refused.message)
+                                    .with_hint(&refused.hint)
+                                    .in_file(Some(&file)),
+                            ]
                         } else {
-                            crush_lang_sdk::theme::JsonDiagnostic::generic_error(
-                                &e.to_string(),
-                                crush_lang_sdk::theme::JsonDiagnostic::CODE_IO,
+                            let cause = e.downcast_ref::<CompileFailed>().map_or(&e, |c| &c.0);
+                            crush_lang_sdk::theme::diagnostics_for_error(
+                                cause,
+                                Some(&file),
+                                JsonDiagnostic::CODE_IO,
                             )
                         };
-                        eprint!("{}\n", diag.to_line());
+                        eprint!(
+                            "{}",
+                            crush_lang_sdk::theme::render_diagnostics_ndjson(&diags)
+                        );
                     }
                 }
                 std::process::exit(1);
@@ -214,11 +237,44 @@ fn main() {
 /// The program can request capabilities this run doesn't grant, found before
 /// it ran (CRUSH-243), so `main` labels it `[capabilities]`.
 #[derive(Debug)]
-struct NotGranted(String);
+struct NotGranted {
+    /// The full text-mode explanation (what `Display` prints).
+    text: String,
+    /// One line for a `message`: what is wrong.
+    message: String,
+    /// What to do about it: the flag that grants each missing capability.
+    hint: String,
+}
+
+impl NotGranted {
+    fn new(path: &std::path::Path, missing: &[crush_lang_sdk::effects::MissingGrant]) -> Self {
+        let caps: Vec<&str> = missing.iter().map(|m| m.capability.as_str()).collect();
+        let mut flags: Vec<&str> = missing.iter().filter_map(|m| m.grant).collect();
+        flags.sort_unstable();
+        flags.dedup();
+        let hint = if flags.is_empty() {
+            "no grant in this build provides them".to_string()
+        } else {
+            format!("grant with {}", flags.join(" "))
+        };
+        Self {
+            text: format!(
+                "{} needs capabilities this run does not grant; nothing was run:\n{}",
+                path.display(),
+                crush_lang_sdk::effects::describe_missing(missing)
+            ),
+            message: format!(
+                "needs capabilities this run does not grant; nothing was run: {}",
+                caps.join(", ")
+            ),
+            hint,
+        }
+    }
+}
 
 impl std::fmt::Display for NotGranted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.text)
     }
 }
 
@@ -250,8 +306,8 @@ fn load_program(path: &std::path::Path, casm_caps: &[String], polyglot: bool) ->
             }
             Ok((crush_lang_sdk::assemble(&source, Some(&permissions), None)?, None))
         }
-        "cvm1" => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
-        _ => anyhow::bail!("unsupported file extension: {ext} (expected .crush, .casm, or .cvm1)"),
+        "cvm1" | "cvm" => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
+        _ => anyhow::bail!("unsupported file extension: {ext} (expected .crush, .casm, or .cvm1 / .cvm)"),
     }
 }
 
@@ -386,8 +442,8 @@ fn list_caps() {
     println!("  env.get NAME           read environment variable");
     println!("  env.all                map of every environment variable");
     println!("  env.home_dir           home directory (HOME / USERPROFILE), or null");
-    println!("  time.now               return Unix timestamp (seconds)");
-    println!("  time.now_ms / now_iso  current time (epoch ms / RFC 3339)");
+    println!("  time.now               return Unix timestamp in SECONDS (exosphere's time.now was ms: use time.now_ms)");
+    println!("  time.now_ms / now_iso  current time (epoch MILLISECONDS / RFC 3339)");
     println!("  time.elapsed START_MS  milliseconds since START_MS");
     println!("  time.sleep MS          block for MS milliseconds (bounded by the wall-time quota)");
     println!("  async.sleep MS         same as time.sleep (blocking; does not yield)");
@@ -395,7 +451,7 @@ fn list_caps() {
     println!("  message_bus.publish TOPIC PAYLOAD");
     println!("  message_bus.subscribe TOPIC");
     println!("  message_bus.recv       blocking receive");
-    println!("Task capabilities (enable with --task):");
+    println!("Task capabilities (enable with --task; task.start spawns a host process, granting process/spawn):");
     println!("  task.start NAME COMMAND [ARGS...]");
     println!("  task.stop TASK_ID");
     println!("  task.list");
@@ -425,11 +481,38 @@ fn list_caps() {
             "  net.http_request METHOD URL BODY HEADERS  any method; returns {{status, body}}"
         );
     }
+    #[cfg(feature = "tcp")]
+    {
+        println!("Raw TCP client capabilities (enable with --tcp; NOT granted by --net):");
+        println!("  tcp.connect URI        connect to tcp://IP:PORT, return a connection id");
+        println!("  tcp.tls_wrap ID SNI    upgrade a connection to TLS (client side)");
+        println!("  tcp.send ID DATA       write a string, return bytes written");
+        println!("  tcp.recv ID            blocking read, return a string");
+        println!("  tcp.close ID           drop the connection");
+        println!("  tcp.ping X             returns \"pong\"");
+        println!(
+            "Raw TCP server capabilities (enable with --tcp-listen; a separate, stronger grant):"
+        );
+        println!("  tcp.listen URI         bind tcp://IP:PORT, return a listener id");
+        println!("  tcp.accept LISTENER    blocking accept, return a connection id");
+        println!("  (tcp.send/recv/close/ping also work under --tcp-listen; tcp.connect does not)");
+    }
     #[cfg(feature = "db")]
     {
         println!("Database capabilities (enable with --db PATH):");
         println!("  db.query SQL [PARAMS...]  execute SELECT, return rows");
         println!("  db.execute SQL [PARAMS...] execute INSERT/UPDATE/DELETE, return affected rows");
+    }
+    #[cfg(not(feature = "db"))]
+    {
+        println!("Database capabilities (db.query, db.execute) are not in this build:");
+        println!("  they are opt-in; rebuild with `--features db` (e.g.");
+        println!("  `cargo install crush-lang-sdk --features db`), then run with --db PATH.");
+    }
+    #[cfg(not(feature = "net"))]
+    {
+        println!("Network capabilities (net.http_*) are not in this build:");
+        println!("  rebuild with `--features net`, then run with --net.");
     }
     #[cfg(feature = "stdlib")]
     {
@@ -464,9 +547,9 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     // cleanly. Hoisting Runtime init above the dispatch would otherwise
     // reorder those warnings before the bail.
     match ext {
-        "crush" | "casm" | "cvm1" => {}
+        "crush" | "casm" | "cvm1" | "cvm" => {}
         _ => anyhow::bail!(
-            "unsupported file extension: {ext} (expected .crush, .casm, or .cvm1)"
+            "unsupported file extension: {ext} (expected .crush, .casm, or .cvm1 / .cvm)"
         ),
     }
 
@@ -547,13 +630,27 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         eprintln!("warning: --net requires the 'net' feature (not enabled in this build)");
     }
 
+    #[cfg(feature = "tcp")]
+    {
+        builder = builder.tcp(args.tcp).tcp_listen(args.tcp_listen);
+    }
+    #[cfg(not(feature = "tcp"))]
+    if args.tcp || args.tcp_listen {
+        eprintln!(
+            "warning: --tcp/--tcp-listen require the 'tcp' feature (not enabled in this build)"
+        );
+    }
+
     #[cfg(feature = "db")]
     if let Some(ref db_path) = args.db {
         builder = builder.db(db_path.to_string_lossy());
     }
     #[cfg(not(feature = "db"))]
     if args.db.is_some() {
-        eprintln!("warning: --db requires the 'db' feature (not enabled in this build)");
+        eprintln!(
+            "warning: --db requires the 'db' feature, which is opt-in and not in this build \
+             (rebuild with `--features db`)"
+        );
     }
 
     // Stdcaps are pure (no I/O, no authority), so they are on unless the
@@ -578,7 +675,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     // `.cvm1` blob that doesn't decode is left to `run_blob` below, which
     // reports it as a typed load error.
     let preflight = match ext {
-        "cvm1" => std::fs::read(&args.path)
+        "cvm1" | "cvm" => std::fs::read(&args.path)
             .ok()
             .and_then(|blob| crush_vm::Program::from_blob(&blob).ok()),
         _ => {
@@ -594,12 +691,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     if let Some(program) = &preflight {
         let missing = runtime.missing_grants(program)?;
         if !missing.is_empty() {
-            return Err(NotGranted(format!(
-                "{} needs capabilities this run does not grant; nothing was run:\n{}",
-                args.path.display(),
-                crush_lang_sdk::effects::describe_missing(&missing)
-            ))
-            .into());
+            return Err(NotGranted::new(&args.path, &missing).into());
         }
     }
 

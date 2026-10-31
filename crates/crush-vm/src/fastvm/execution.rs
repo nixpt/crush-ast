@@ -2,7 +2,7 @@
 
 use super::instructions::SymbolTables;
 use super::instructions::{FastInstr, FastOp};
-use super::operations::{compare_op, current_locals_base, is_truthy};
+use super::operations::{current_locals_base, is_truthy};
 use super::arithmetic::{add_rtv, concat_arrays, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_ordered};
 use super::similarity::calculate_similarity;
 use super::types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC, UNASSIGNED_LOCAL};
@@ -255,8 +255,21 @@ pub fn execute_one(
         }
 
         // ===== Comparison =====
-        FastOp::Eq => compare_op(stack, |a, b| a == b, |a, b| a == b)?,
-        FastOp::Ne => compare_op(stack, |a, b| a != b, |a, b| a != b)?,
+        // EQ/NE use the canonical structural equality shared with the JIT
+        // (CRUSH-215): strings/arrays/maps compare by value, not by arena
+        // identity, and `!=` is the exact negation of `==` for every kind.
+        FastOp::Eq => {
+            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let eq = crate::value::runtime_value_eq(&a, &b, arena);
+            stack.push(RuntimeValue::Bool(eq));
+        }
+        FastOp::Ne => {
+            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let eq = crate::value::runtime_value_eq(&a, &b, arena);
+            stack.push(RuntimeValue::Bool(!eq));
+        }
         FastOp::Lt => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;

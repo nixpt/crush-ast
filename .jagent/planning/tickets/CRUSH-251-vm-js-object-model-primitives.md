@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-251 |
 | **Priority** | P1 — blocks real-page JS on crush (bozo frontend) |
-| **Status** | Backlog |
+| **Status** | In Progress — the closures/function-values slice landed (steps 1–5: #192, #194, #202, #203, #205, #207, 2026-10-15); prototype chain, `in`/`delete`, receivers/`new`, and function-object properties are open |
 | **Phase** | M6 |
 | **Assignee** | unassigned |
 | **Dependencies** | none (consumed by bozo BOZO-M7-1/M7-2) |
@@ -61,3 +61,7 @@ model, they now block: Python `lambda` and nested `def` closures (deferred from 
 push, #184 / CRUSH-zorro-2), JS arrow-function closures, and **#175 `parallel_map`**, whose closure form waits
 for this ticket (decision recorded in `.dejavue/decisions.md`). The owner noted that higher-order functions
 are still needed. Prototypes / `this` / `new` can follow as later slices.
+
+## Survey 2026-10-31 (status)
+
+The ticket's 2026-10-15 sequencing note makes closures the first slice. Steps 1–5 merged as PRs #192/#194/#202/#203/#205/#207. Receiver and `new` work then moved to COSM (CRUSH-zorro-40..44, CRUSH-277); whether that fully covers this ticket's remaining criteria was not verified. Previous status: `Backlog`.

@@ -100,6 +100,73 @@ fn test_boa_try_catch() {
     assert!(program.functions.contains_key("main"));
 }
 
+/// CRUSH-zorro-7: walker-level `try…finally` for JS completions (return /
+/// throw / break / continue / fall-through). Runtime `VmError`s still bypass
+/// finally — same as try/catch today (CRUSH-zorro-34).
+#[test]
+fn test_boa_try_finally_completions() {
+    // return runs finally, then yields the captured value (node: fin\n1)
+    assert_eq!(
+        run_js("function f() { try { return 1; } finally { console.log('fin'); } } console.log(f());"),
+        "fin\n1\n"
+    );
+    // finally's return overrides the pending one
+    assert_eq!(
+        run_js("function f() { try { return 1; } finally { return 2; } } console.log(f());"),
+        "2\n"
+    );
+    // value captured before finally mutates the binding
+    assert_eq!(
+        run_js("let x = 1; function f() { try { return x; } finally { x = 9; } } console.log(f()); console.log(x);"),
+        "1\n9\n"
+    );
+    // fall-through
+    assert_eq!(
+        run_js("try { console.log('try'); } finally { console.log('fin'); }"),
+        "try\nfin\n"
+    );
+    // explicit throw: finally then propagate
+    assert_eq!(
+        run_js("try { try { throw 7; } finally { console.log('fin'); } } catch (e) { console.log(e); }"),
+        "fin\n7\n"
+    );
+    // catch runs before finally
+    assert_eq!(
+        run_js("try { throw 3; } catch (e) { console.log('c'+e); } finally { console.log('fin'); }"),
+        "c3\nfin\n"
+    );
+    // throw from catch still runs finally
+    assert_eq!(
+        run_js("try { try { throw 1; } catch (e) { throw 2; } finally { console.log('fin'); } } catch (e) { console.log(e); }"),
+        "fin\n2\n"
+    );
+    // nested finallys: inner then outer
+    assert_eq!(
+        run_js("try { try { console.log('t'); } finally { console.log('i'); } } finally { console.log('o'); }"),
+        "t\ni\no\n"
+    );
+    // break across try runs finally once; loop-internal break does not
+    // (no Array.join — CRUSH-zorro-15; log each push instead)
+    assert_eq!(
+        run_js("for (const n of [1, 2, 3]) { try { if (n == 2) break; console.log(n); } finally { console.log('f'+n); } }"),
+        "1\nf1\nf2\n"
+    );
+    assert_eq!(
+        run_js("try { for (const n of [1, 2]) { if (n == 2) break; console.log(n); } } finally { console.log('fin'); }"),
+        "1\nfin\n"
+    );
+    // continue across try
+    assert_eq!(
+        run_js("for (const n of [1, 2, 3]) { try { if (n == 2) continue; console.log(n); } finally { console.log('f'+n); } }"),
+        "1\nf1\nf2\n3\nf3\n"
+    );
+    // nested function return does not run the outer finally
+    assert_eq!(
+        run_js("function outer() { try { function inner() { return 5; } return inner(); } finally { console.log('fin'); } } console.log(outer());"),
+        "fin\n5\n"
+    );
+}
+
 #[test]
 fn test_boa_function_decl() {
     let source = "function greet(name) { return 'hello ' + name; }";
@@ -181,6 +248,22 @@ fn test_boa_dowhile_loop() {
 fn test_boa_labeled_break_is_loud() {
     let msg = loud("loop1: for (let i = 0; i < 3; i++) { break loop1; }");
     assert!(msg.contains("labeled `break`"), "{msg}");
+}
+
+// The ticket's program (CRUSH-zorro-6): node prints `0 0` then `1 0`. Both
+// jumps name `outer`; the label is refused (never dropped onto the inner
+// loop), and the error names the jump.
+#[test]
+fn test_boa_labeled_continue_is_loud() {
+    let msg = loud(
+        "outer: for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) { \
+         if (j == 1) continue outer; if (i == 2) break outer; console.log(i, j); } }",
+    );
+    assert!(msg.contains("labeled `continue` (`continue label`)"), "{msg}");
+    // A labeled block (not a loop) can't be a jump target either: CAST has no
+    // labeled jump, so it must stay loud rather than break the inner loop.
+    let msg = loud("l: { console.log(1); break l; }");
+    assert!(msg.contains("labeled `break` (`break label`)"), "{msg}");
 }
 
 #[test]
@@ -400,6 +483,10 @@ fn test_boa_parameter_adaptation_refusals() {
     // Its hidden arguments come from direct calls only.
     let msg = loud("function f(a = 1) { return a; }\nconst g = f;\nconsole.log(g());");
     assert!(msg.contains("using `f` as a value"), "{msg}");
+    // A rest/default function remains a blocked value-callee case: applying
+    // through CALL_VALUE's exact-arity ABI cannot synthesize its hidden slots.
+    let msg = loud("function sum(...xs) { return xs.length; } const g = sum; g(...[1, 2]);");
+    assert!(msg.contains("using `sum` as a value"), "{msg}");
     // Arrow functions and function expressions can be called from anywhere.
     assert!(loud("const f = (a = 1) => a;\nconsole.log(f());").contains("outside a `function` declaration"));
     assert!(loud("const f = (...xs) => xs;\nconsole.log(f());").contains("outside a `function` declaration"));
@@ -545,8 +632,9 @@ fn test_boa_class_loud_edges() {
     assert!(loud("class A { m() { return super.m(); } }").contains("no ancestor"), "super without parent");
     assert!(loud("class B { } class A extends B { m() { return super.m(); } }").contains("no ancestor"), "super of nothing");
     assert!(loud("class B { x = 1; } class A extends B { m() { return super.x; } }").contains("`super.x` read"), "super.x read");
-    // `new` of a name that isn't a class declared in this module.
-    assert!(loud("const s = new Set();").contains("`new Set`"), "host constructor");
+    // `new` of a name that isn't a class declared in this module
+    // (`new Map` / `new Set` themselves land with CRUSH-288).
+    assert!(loud("const s = new WeakMap();").contains("`new WeakMap`"), "host constructor");
     assert!(loud("class A { } A();").contains("without `new`"), "class called bare");
     assert!(loud("class A extends ns.Base { constructor() { } }").contains("anything but a name"), "expression superclass");
     assert!(loud("class A { async m() { return 1; } }").contains("async method"), "async method");
@@ -581,6 +669,16 @@ fn run_js_err(source: &str) -> String {
     crush_vm::run(&loaded, &crush_vm::Quotas::default())
         .unwrap_err()
         .to_string()
+}
+
+/// Like `run_js_err`, but execute on the standalone portable VM.
+fn run_js_portable_err(source: &str) -> String {
+    let program = test_lower(source);
+    let casm = crush_frontend::compile_cast(&program).unwrap();
+    let vm = crush_lang_sdk::compile::casm_to_vm(&casm).unwrap();
+    let mut portable = crush_vm::PortableVm::new(vm);
+    portable.set_quotas(crush_vm::Quotas::default());
+    portable.run().unwrap_err().to_string()
 }
 
 /// Compile like `run_js` but run on the portable VM.
@@ -936,6 +1034,208 @@ console.log(Util.twice(21));
     assert_eq!(params[0].0, "x");
 }
 
+// CRUSH-284: destructuring parameters — the options-object idiom
+// (maya's constructors), renames, per-property defaults, a
+// parameter-level default, array patterns and nested patterns. The
+// destructured parameter is one visible parameter for the signature
+// machinery; property defaults run in the callee's prologue.
+#[test]
+fn test_boa_destructuring_parameters_run() {
+    // Maya's shape: an options object with a parameter-level default.
+    let source = r#"
+class Engine {
+  constructor({ width = 960, height = 540 } = {}) {
+    this.width = width;
+    this.height = height;
+  }
+  area() { return this.width * this.height; }
+}
+console.log(new Engine().area());
+console.log(new Engine({ width: 100 }).area());
+console.log(new Engine({ width: 2, height: 3 }).area());
+"#;
+    assert_eq!(run_js(source), "518400\n54000\n6\n");
+    // Renames, methods, and a default reading an earlier property.
+    let source = r#"
+class Box {
+  volume({ w: width, h, d = h }) { return width * h * d; }
+}
+console.log(new Box().volume({ w: 2, h: 3 }));
+function swap({ a, b }) { return b - a; }
+console.log(swap({ a: 1, b: 43 }));
+"#;
+    assert_eq!(run_js(source), "18\n42\n");
+    // Array patterns, holes, nested patterns, parameter defaults in
+    // plain functions.
+    let source = r#"
+function head([first, , third = 40]) { return first + third; }
+console.log(head([1, 2]));
+function deep({ point: { x, y } }) { return x + y; }
+console.log(deep({ point: { x: 20, y: 22 } }));
+function pair([a, b] = [30, 12]) { return a + b; }
+console.log(pair());
+"#;
+    assert_eq!(run_js(source), "41\n42\n42\n");
+}
+
+// CRUSH-284 review: a per-element default fires on *absence* only —
+// a property or element present with value null keeps its null, as
+// in JS (the default tests `undefined`, and crush has no undefined;
+// absence is a has-key / length question, never `== null`).
+#[test]
+fn test_boa_destructuring_defaults_skip_explicit_null() {
+    let source = r#"
+function f({ a = 1 }) { return a; }
+console.log(f({}));
+console.log(f({ a: null }));
+console.log(f({ a: 5 }));
+function g([a = 1]) { return a; }
+console.log(g([]));
+console.log(g([null]));
+console.log(g([5]));
+"#;
+    assert_eq!(run_js(source), "1\nnull\n5\n1\nnull\n5\n");
+    // Nested patterns follow the same rule.
+    let source = r#"
+function h({ p: { q = 7 } = {} }) { return q; }
+console.log(h({}));
+console.log(h({ p: { q: null } }));
+"#;
+    assert_eq!(run_js(source), "7\nnull\n");
+    // `h({ p: null })`: the nested pattern destructures null — a
+    // run-time error in JS, and a loud one here, never a silent 7.
+    let err = run_js_err("function h({ p: { q = 7 } = {} }) { return q; } console.log(h({ p: null }));");
+    assert!(!err.is_empty(), "destructuring null must fail loudly");
+}
+
+// CRUSH-284 review: the call-shape machinery (CRUSH-280) sees a
+// destructured parameter as one parameter — a missing argument
+// refuses, dispatch through an override must match shape, and an
+// unknown receiver refuses while a defaulted member of the name
+// exists.
+#[test]
+fn test_boa_destructuring_param_call_shapes() {
+    let src = "function f({ a }) { return a; } console.log(f());";
+    assert!(loud(src).contains("CRUSH"), "missing argument: {}", loud(src));
+    // Destructuring null itself is a run-time error, as in JS.
+    let err = run_js_err("function f({ a }) { return a; } console.log(f(null));");
+    assert!(!err.is_empty(), "destructuring null must fail loudly: {err}");
+    // An override whose destructured parameter has a different shape
+    // (here: no parameter-level default) refuses.
+    let src = "class Base { m({ a = 1 } = {}) { return a; } run() { return this.m({ a: 5 }); } } class Sub extends Base { m({ a }) { return a; } } console.log(new Sub().run());";
+    assert!(
+        loud(src).contains("overrides it with a different"),
+        "override shape: {}",
+        loud(src)
+    );
+    // The same shape through an override runs.
+    let source = r#"
+class Base {
+  m({ a = 1 } = {}) { return a; }
+  run() { return this.m(); }
+}
+class Sub extends Base { m({ a = 9 } = {}) { return a; } }
+console.log(new Sub().run());
+"#;
+    assert_eq!(run_js(source), "9\n");
+    // An unknown receiver refuses while a defaulted destructured
+    // member of the name exists; a plain one runs.
+    let src = "class Acc { bump({ by = 1 } = {}) { return by; } } const xs = [new Acc()]; console.log(xs[0].bump({}));";
+    assert!(loud(src).contains("hidden slots"), "unknown receiver: {}", loud(src));
+    let source = r#"
+class Acc { bump({ by }) { return by; } }
+const xs = [new Acc()];
+console.log(xs[0].bump({ by: 42 }));
+"#;
+    assert_eq!(run_js(source), "42\n");
+}
+
+// CRUSH-287: destructuring declarations — the CRUSH-284 pattern
+// machinery over a declaration's initializer, which is evaluated
+// once before any binding is written.
+#[test]
+fn test_boa_destructuring_declarations_run() {
+    let source = r#"
+const { width, height = 540 } = { width: 100 };
+console.log(width + height);
+let { x: renamed = 1, y } = { y: 41 };
+console.log(renamed + y);
+var [first, , third = 40] = [1, 2];
+console.log(first + third);
+const { p: { q } } = { p: { q: 42 } };
+console.log(q);
+"#;
+    assert_eq!(run_js(source), "640\n42\n41\n42\n");
+    // The initializer evaluates once, and a present null keeps null.
+    let source = r#"
+let calls = 0;
+function src() { calls = calls + 1; return { a: 41, b: null }; }
+const { a, b: bee = 1 } = src();
+console.log(a + calls);
+console.log(bee);
+"#;
+    assert_eq!(run_js(source), "42\nnull\n");
+    // Block-scoped pattern bindings shadow like any other `const`.
+    let source = r#"
+const a = 1;
+{
+  const { a } = { a: 41 };
+  console.log(a + 1);
+}
+console.log(a);
+class Holder {
+  read() {
+    const { v } = { v: 42 };
+    return v;
+  }
+}
+console.log(new Holder().read());
+"#;
+    assert_eq!(run_js(source), "42\n1\n42\n");
+    // No initializer: the names bind null (JS's undefined).
+    assert_eq!(run_js("let { a }; console.log(a);"), "null\n");
+}
+
+#[test]
+fn test_boa_destructuring_declarations_loud() {
+    // Destructuring assignment and loop heads stay loud.
+    assert!(
+        loud("let a; ({ a } = { a: 1 });").contains("destructuring assignment"),
+        "assignment"
+    );
+    assert!(
+        loud("for (const { a } of [[1]]) { console.log(a); }").contains("destructuring loop variable"),
+        "loop head"
+    );
+    // Rest elements stay loud in declarations too.
+    assert!(
+        loud("const { ...rest } = { a: 1 };").contains("rest"),
+        "object rest"
+    );
+    assert!(
+        loud("const [head, ...tail] = [1, 2];").contains("rest"),
+        "array rest"
+    );
+}
+
+#[test]
+fn test_boa_destructuring_parameters_loud() {
+    // Object and array rest elements have no lowering yet.
+    assert!(
+        loud("function f({ ...rest }) { return 1; } console.log(f({}));").contains("rest"),
+        "object rest"
+    );
+    assert!(
+        loud("function f([head, ...tail]) { return head; } console.log(f([1]));").contains("rest"),
+        "array rest"
+    );
+    // A computed property name in a pattern has no lowering yet.
+    assert!(
+        loud("function f({ [k]: v }) { return v; }").contains("computed"),
+        "computed name"
+    );
+}
+
 // CRUSH-280: default and rest parameters on constructors, methods and
 // statics — the zorro-18 hidden-flag ABI, adapted at each call site.
 #[test]
@@ -1109,11 +1409,9 @@ console.log(c.m());
 #[test]
 fn test_boa_instance_kind_forgetting_more_shapes() {
     let classes = "class A { m(a = 1) { return a; } } class B { m(a, b) { return a; } } ";
-    // Logical assignment may keep the old value; it is refused as a
-    // construct, and must never teach the tracker the new kind.
-    let src = format!("{classes}let c = new A(); c ||= new B(); console.log(c.m(5));");
-    assert!(loud(&src).contains("logical assignment"), "||=: {}", loud(&src));
     for tail in [
+        // A logical assignment may keep the old value, so it forgets too.
+        "let c = new A(); c ||= new B(); console.log(c.m(5));",
         // A compound assignment forgets.
         "let c = new A(); c += 1; console.log(c.m(5));",
         // Assignments nested in larger expressions may never run.
@@ -1171,6 +1469,212 @@ while (k > 0) { total = total + c.m(1); k = k - 1; }
 console.log(total);
 "#;
     assert_eq!(run_js(source), "4\n");
+}
+
+// CRUSH-281: `new C()` inside a top-level `function` — the function
+// bodies lower before the class items (hoisting), but the calls run
+// after the whole module, so the classes are registered by then.
+// Both declaration orders work; a module-level `new` before the
+// class declaration still refuses (the JS temporal dead zone).
+#[test]
+fn test_boa_new_inside_top_level_function() {
+    let source = r#"
+class Counter {
+  constructor(x = 40) { this.x = x; }
+  val() { return this.x + 2; }
+}
+function make() { return new Counter(); }
+function makeWith(v) { return new Counter(v).val(); }
+console.log(make().val());
+console.log(makeWith(0));
+"#;
+    assert_eq!(run_js(source), "42\n2\n");
+    // The class declared after the function.
+    let source = r#"
+function make() { return new Counter(41).get(); }
+class Counter {
+  constructor(x) { this.x = x; }
+  get() { return this.x + 1; }
+}
+console.log(make());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // A static called from a top-level function, class after it.
+    let source = r#"
+function pick() { return Util.pick(); }
+class Util { static pick(v = 42) { return v; } }
+console.log(pick());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // The temporal dead zone is still refused at module level.
+    let src = "console.log(new Counter(1).get()); class Counter { constructor(x) { this.x = x; } get() { return this.x; } }";
+    assert!(
+        loud(src).contains("temporal dead zone"),
+        "statement-order new: {}",
+        loud(src)
+    );
+    // An exported class constructs from a function too.
+    let source = r#"
+export class Counter {
+  constructor(x) { this.x = x; }
+  get() { return this.x; }
+}
+function make() { return new Counter(42).get(); }
+console.log(make());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // Inside a function body the same pre-registration applies, and a
+    // field initialiser (evaluated at construction) may construct a
+    // class declared later in the module.
+    let source = r#"
+function outer() {
+  class C {
+    constructor(x) { this.x = x; }
+    val() { return this.x + 1; }
+  }
+  function inner() { return new C(41).val(); }
+  return inner();
+}
+console.log(outer());
+class Holder {
+  child = new Later(42);
+  get() { return this.child.val(); }
+}
+class Later {
+  constructor(x) { this.x = x; }
+  val() { return this.x; }
+}
+console.log(new Holder().get());
+"#;
+    assert_eq!(run_js(source), "42\n42\n");
+}
+
+// CRUSH-281 review (kai): the pre-registration must not leak across
+// statement lists or name bindings. A class is constructible only
+// from a function nested deeper than the list that declares it, only
+// through the binding that declares it, and only in the scope that
+// declares it; two classes that would share one kind name refuse.
+#[test]
+fn test_boa_new_pending_class_scope_rules() {
+    // A statement of the list itself is still in the temporal dead
+    // zone, even inside a function body.
+    let src = r#"
+function f() { const o = new D(1); class D { constructor(x) { this.x = x; } } return o.x; }
+console.log(f());
+"#;
+    assert!(
+        loud(src).contains("temporal dead zone"),
+        "TDZ in a function body: {}",
+        loud(src)
+    );
+    // A function nested deeper than the declaring list may construct.
+    let source = r#"
+function f() {
+  function g() { return new D(41).val(); }
+  class D { constructor(x) { this.x = x; } val() { return this.x + 1; } }
+  return g();
+}
+console.log(f());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    // The same two rules inside a block.
+    let source = r#"
+function f() {
+  {
+    function g() { return new D(41).val(); }
+    class D { constructor(x) { this.x = x; } val() { return this.x + 1; } }
+    return g();
+  }
+}
+console.log(f());
+"#;
+    assert_eq!(run_js(source), "42\n");
+    let src = "function f() { { const o = new D(1); class D { constructor(x) { this.x = x; } } return o; } } console.log(f());";
+    assert!(
+        loud(src).contains("temporal dead zone"),
+        "TDZ in a block: {}",
+        loud(src)
+    );
+    // A parameter or local named like the class shadows it: `new` on
+    // that binding is not construction of the module class.
+    let src = r#"
+class C { constructor() { this.v = 7; } }
+function g(C) { return new C(); }
+console.log(g(null));
+"#;
+    assert!(
+        loud(src).contains("not the class"),
+        "parameter shadow: {}",
+        loud(src)
+    );
+    let src = r#"
+class C { constructor() { this.v = 7; } }
+function g() { let C = 5; return new C(); }
+console.log(g());
+"#;
+    assert!(
+        loud(src).contains("not the class"),
+        "local shadow: {}",
+        loud(src)
+    );
+    // A class local to one function is not visible to a sibling.
+    let src = r#"
+function f() { class C { constructor(x) { this.v = x; } } return 0; }
+function g() { return new C(2); }
+console.log(g());
+"#;
+    assert!(
+        loud(src).contains("only a class declared in this module"),
+        "sibling leak: {}",
+        loud(src)
+    );
+    // Two classes that would share one kind name refuse loudly
+    // (properly scoped kind names are future work).
+    let src = r#"
+class C { constructor(a, b = 2) { this.v = a + b; } }
+function f() { class C { constructor(x) { this.v = x; } } return 0; }
+function g() { return new C(1).v; }
+console.log(g());
+"#;
+    assert!(
+        loud(src).contains("share one kind name"),
+        "module/local duplicate: {}",
+        loud(src)
+    );
+    let src = r#"
+function f() { class C { constructor(x) { this.v = x; } } return 0; }
+function g() { class C { constructor(x) { this.v = x; } } return 0; }
+console.log(f() + g());
+"#;
+    assert!(
+        loud(src).contains("share one kind name"),
+        "sibling duplicates: {}",
+        loud(src)
+    );
+    // A class expression's own name is bound only inside the class:
+    // `const C = class K { … }` does not make `K` constructible here.
+    let src = r#"
+const C = class K { constructor() { this.v = 3; } };
+function h() { return new K(); }
+console.log(h());
+"#;
+    assert!(
+        loud(src).contains("only a class declared in this module"),
+        "class-expression name leak: {}",
+        loud(src)
+    );
+    let src = "const C = class K { constructor() { this.v = 3; } }; console.log(new K());";
+    assert!(
+        loud(src).contains("only a class declared in this module"),
+        "class-expression name at statement position: {}",
+        loud(src)
+    );
+    // The same-name shape keeps working.
+    let source = r#"
+const K = class K { constructor() { this.v = 41; } get() { return this.v + 1; } };
+console.log(new K().get());
+"#;
+    assert_eq!(run_js(source), "42\n");
 }
 
 // CRUSH-277 S4: getters and setters run end to end.
@@ -1299,7 +1803,7 @@ fn test_boa_parameter_abi() {
     assert!(names[3].starts_with("__has_b_"), "{names:?}");
 }
 
-// CRUSH-266 (boa path): an exported `function` declaration hoists like a
+// CRUSH-340 (boa path): an exported `function` declaration hoists like a
 // bare one and keeps its body; the export itself refers to it. It used to be
 // refused outright ("exporting a function, class, generator or async
 // declaration"), so no ES module lowered through boa at all.
@@ -1347,7 +1851,7 @@ console.log(new Counter().bump());
     );
 }
 
-// CRUSH-266 (boa path, end-to-end): the exported function is callable from
+// CRUSH-340 (boa path, end-to-end): the exported function is callable from
 // the module body and computes the right value through CASM -> CVM1.
 #[test]
 fn test_boa_exported_function_runs_end_to_end() {
@@ -1365,4 +1869,432 @@ fn test_boa_exported_function_runs_end_to_end() {
     };
     let out = crush_vm::run_with_caps(&vm, &quotas, None).expect("run").output;
     assert_eq!(out.trim(), "42");
+}
+
+// CRUSH-290 (boa path, end-to-end): `===` / `!==` are strict equality — no
+// coercion — and compile through the checked path (`compile_cast`, which runs
+// the semantics checker that used to reject the bare `BinaryOp "==="`).
+#[test]
+fn test_boa_strict_equality_runs_end_to_end() {
+    assert_eq!(
+        run_js("console.log(1 === 1);\nconsole.log(1 === \"1\");\n"),
+        "true\nfalse\n"
+    );
+    let source = r#"
+class A { }
+class B { }
+const a = new A();
+const b = new A();
+const f = () => 1;
+const o = {};
+const p = o;
+console.log(a === null, a === a, a === b);
+console.log(A === A, A === B, a === A, A === null);
+console.log(f === f, f === a, o === p, {} === {}, 1 !== '1', 1 !== 1);
+"#;
+    assert_eq!(
+        run_js(source),
+        "false true false\ntrue false false false\ntrue false true false true false\n"
+    );
+}
+
+#[test]
+fn test_boa_switch_on_instance_uses_strict_identity() {
+    let source = r#"
+class A { }
+const a = new A();
+switch (a) {
+  case null: console.log('null'); break;
+  case a: console.log('same'); break;
+  default: console.log('different');
+}
+"#;
+    assert_eq!(run_js(source), "same\n");
+}
+
+// CRUSH-290: a `switch` case test is JS strict equality too — the generated
+// comparison is the `js.strict_eq` capability, so the program compiles
+// through the checked path. Expected output is what `node` prints.
+#[test]
+fn test_boa_switch_matches_on_strict_equality() {
+    let source = r#"
+const n = 2;
+switch (n) {
+  case 1: console.log('one'); break;
+  case 2: console.log('two'); break;
+  default: console.log('many');
+}
+const s = 'b';
+switch (s) {
+  case 'a': console.log('A');
+  case 'b': console.log('B');
+  case 'c': console.log('C'); break;
+  default: console.log('D');
+}
+switch ('3') { case 3: console.log('number 3'); break; default: console.log('not coerced'); }
+switch (n) { case 9: console.log('nine'); break; default: console.log('default only'); }
+"#;
+    assert_eq!(run_js(source), "two\nB\nC\nnot coerced\ndefault only\n");
+}
+
+// CRUSH-288: host constructors — `new Map()` / `new Set()` on proven
+// receivers (a Map is an array of [key, value] pairs under the hood,
+// a Set an array of values; operations are synthesized helpers).
+#[test]
+fn test_boa_host_map_set_run() {
+    let source = r#"
+const m = new Map();
+m.set("a", 1);
+m.set("b", 2);
+m.set("a", 3);
+console.log(m.get("a"), m.size, m.has("b"), m.get("zz"));
+console.log(m.delete("b"), m.has("b"), m.size);
+console.log(m.keys()[0], m.values()[0], m.entries()[0][1]);
+m.clear();
+console.log(m.size);
+const s = new Set([1, 1, 2]);
+s.add(3);
+s.add(2);
+console.log(s.size, s.has(2), s.has(9));
+console.log(s.delete(1), s.size);
+let total = 0;
+for (const v of s) { total += v; }
+console.log(total);
+const n = new Map([[7, "seven"], ["k", 9]]);
+console.log(n.get(7), n.get("k"));
+const src = [5, 5, 6];
+const dup = new Set(src);
+console.log(dup.size, dup.has(6));
+"#;
+    assert_eq!(
+        run_js(source),
+        "3 2 true null\ntrue false 1\na 3 3\n0\n3 true false\ntrue 2\n5\nseven 9\n2 true\n"
+    );
+    // Maya's shape: collections as class fields, numeric ids as keys.
+    let source = r#"
+class Registry {
+  constructor() { this.entries = new Map(); this.tags = new Set(); }
+  add(id, tag) { this.entries.set(id, tag); this.tags.add(tag); return this.entries.get(id); }
+  has(id) { return this.entries.has(id); }
+  count() { return this.entries.size + this.tags.size; }
+}
+const r = new Registry();
+console.log(r.add(5, "x"), r.has(5), r.has(6), r.count());
+console.log(new Map().set("k", 1).get("k"), new Set().add(4).size);
+"#;
+    assert_eq!(run_js(source), "x true false 2\n1 1\n");
+    // The portable VM runs the same helpers.
+    assert_eq!(
+        run_js_portable(
+            "const m = new Map(); m.set(7, \"s\"); const s = new Set([2, 2]);\nconsole.log(m.get(7), m.size, s.size, s.has(2));"
+        )
+        .unwrap(),
+        "s 1 1 true\n"
+    );
+}
+
+#[test]
+fn test_boa_host_map_set_loud() {
+    // A parameter receiver is never proven (the zorro-44 problem).
+    assert!(loud("function f(m) { return m.get(\"a\"); }").contains("CRUSH-zorro-17"));
+    // Subscripts on a proven Map would read the pair array: refused.
+    assert!(loud("const m = new Map(); console.log(m[\"a\"]);").contains("use .get()"));
+    // Wrong-kind and unsupported methods on a proven receiver.
+    assert!(loud("const s = new Set(); s.set(\"a\", 1);").contains("a Set has no method"));
+    assert!(loud("const m = new Map(); m.forEach((v) => v);").contains("forEach"));
+    // Arity is exact.
+    assert!(loud("const m = new Map(); m.get();").contains("expects"));
+    // Reassignment forgets the host kind.
+    assert!(loud("let m = new Map(); m = []; m.set(\"a\", 1);").contains("CRUSH-zorro-17"));
+    // A field reassigned to a non-collection anywhere in the class
+    // poisons the proof for the whole hierarchy.
+    let msg = loud(
+        "class R { constructor() { this.m = new Map(); } \
+         f() { return this.m.get(\"a\"); } g() { this.m = []; } }",
+    );
+    assert!(msg.contains("cannot be proven"), "got: {msg}");
+    // A user class named Map shadows the host constructor.
+    let source = "class Map { constructor() { this.x = 41; } get() { return this.x + 1; } }\nconsole.log(new Map().get());";
+    assert_eq!(run_js(source), "42\n");
+}
+
+// CRUSH-289: optional chaining — a chain folds to nested
+// `__crush_ternary__` null tests over its pure prefixes.
+#[test]
+fn test_boa_optional_chaining_run() {
+    let source = r#"
+const a = { b: { c: 42 } };
+console.log(a?.b?.c, a?.x?.y, a?.b.c);
+const n = null;
+console.log(n?.b, n?.b?.c);
+const m = new Map();
+m.set("a", 5);
+console.log(m?.get("a"), m?.size);
+"#;
+    assert_eq!(run_js(source), "42 null 42\nnull null\n5 1\n");
+    // Maya's shapes: an optional delegate, an optional hook.
+    let source = r#"
+class Owner { lookup(t) { return t + 1; } }
+class Comp {
+  constructor(owner) { this.owner = owner; }
+  find(t) { return this.owner?.lookup(t); }
+}
+console.log(new Comp(new Owner()).find(41), new Comp(null).find(41));
+class Base { run() { return this.onAttach?.(); } }
+class Sub extends Base { onAttach() { return 7; } }
+console.log(new Sub().run());
+let calls = 0;
+function side() { calls = calls + 1; return 1; }
+const zip = null;
+console.log(zip?.m(side()), calls);
+const race = null;
+console.log(race?.surface == "vacuum" ? "space" : "rally", (race?.ice || []).length);
+"#;
+    assert_eq!(run_js(source), "42 null\n7\nnull 0\nrally 0\n");
+}
+
+#[test]
+fn test_boa_optional_chaining_loud() {
+    // A side-effecting prefix would be evaluated twice (the test
+    // and the branch), so it refuses instead.
+    assert!(
+        loud("function f() { return { b: 1 }; } console.log(f()?.b);")
+            .contains("side-effecting")
+    );
+    assert!(
+        loud("const a = { b() { return { c: 1 }; } }; console.log(a?.b()?.c);")
+            .contains("side-effecting")
+    );
+    // A private field in a chain.
+    assert!(
+        loud("class A { #x = 1; get(o) { return o?.#x; } }").contains("private")
+    );
+}
+
+// CRUSH-292: logical assignment (`&&=`, `||=`, `??=`) — the binary
+// operator's semantics with the write folded in: keep the current value
+// (running nothing of the right side), or assign it. Node prints the same
+// for this program.
+#[test]
+fn test_boa_logical_assignment_runs() {
+    let source = r#"
+let x = 0;
+x ||= 5;
+console.log(x);
+let y = 3;
+y ||= 5;
+console.log(y);
+let a = 1;
+a &&= 7;
+console.log(a);
+let b = 0;
+b &&= 7;
+console.log(b);
+let n = null;
+n ??= 9;
+console.log(n);
+let m = 0;
+m ??= 9;
+console.log(m);
+const o = { v: 0 };
+o.v ||= 6;
+console.log(o.v);
+const arr = [0, 0];
+arr[0] ||= 7;
+console.log(arr[0]);
+console.log(arr[1] ??= 5);
+"#;
+    assert_eq!(run_js(source), "5\n3\n7\n0\n9\n0\n6\n7\n0\n");
+}
+
+// CRUSH-292: a computed target with side effects stays refused — the
+// lowering reads the slot for the condition and writes it on the assign
+// branch, so `a[f()] ||= 1` would call `f()` twice.
+#[test]
+fn test_boa_logical_assignment_computed_target_with_side_effects_is_loud() {
+    assert!(
+        loud("function f() { return 0; } const a = [1]; a[f()] ||= 2;")
+            .contains("computed target with side effects")
+    );
+}
+
+// CRUSH-292: the expression's value is the kept or newly assigned value, and
+// the right side is not evaluated when the current value is kept (the
+// `calls` counter stays put). Node prints the same.
+#[test]
+fn test_boa_logical_assignment_value_and_rhs_laziness() {
+    let source = r#"
+let x = 0;
+console.log(x ||= 4);
+console.log(x);
+let y = 3;
+console.log(y ||= 5);
+console.log(y);
+let calls = 0;
+function bump() { calls = calls + 1; return 9; }
+let kept = 3;
+kept ||= bump();
+console.log(kept);
+console.log(calls);
+let f = 0;
+f &&= bump();
+console.log(f);
+console.log(calls);
+let n = null;
+console.log(n ??= bump());
+console.log(calls);
+let zero = 0;
+zero ??= bump();
+console.log(zero);
+console.log(calls);
+"#;
+    assert_eq!(run_js(source), "4\n4\n3\n3\n3\n0\n0\n0\n9\n1\n0\n1\n");
+}
+
+// CRUSH-293 D2: at a call site whose callee signature the walker knows and
+// whose parameters are all plain, a spread argument is expanded in place —
+// `f(...xs)` becomes `f(xs[0], …, xs[N-1])` — so the callee receives what node
+// passes it. Values below are node's.
+#[test]
+fn test_boa_spread_argument_at_a_known_signature() {
+    let source = r#"
+function f(a, b, c) { return a + b + c; }
+const xs = [1, 2, 3];
+console.log(f(...xs));
+// Extra elements are invisible, exactly as node ignores them.
+const long = [1, 2, 3, 9];
+console.log(f(...long));
+"#;
+    assert_eq!(run_js(source), "6\n6\n");
+}
+
+// Spread first / middle / last / several: the slots an element lands in depend
+// on the arrays' lengths only at run time, so the flattened argument list is
+// read by slot. node: 6, 10, 73.
+#[test]
+fn test_boa_spread_argument_first_middle_last_and_two_spreads() {
+    let source = r#"
+function f(a, b, c) { return a + b + c; }
+function g(a, b, c, d) { return a + b + c + d; }
+const xs = [1, 2];
+const ys = [3, 4];
+console.log(f(1, ...[2], 3));
+console.log(g(...xs, ...ys));
+console.log(g(...[], ...xs, 30, 40));
+"#;
+    assert_eq!(run_js(source), "6\n10\n73\n");
+}
+
+// The same expansion at the other known signatures: `new`, `super(...)` inside
+// a derived constructor, an instance method on a known-instance receiver, and
+// `this.m(...)`. node: 6, 11, `3 3`.
+#[test]
+fn test_boa_spread_argument_into_constructors_and_methods() {
+    let source = r#"
+class B { constructor(a, b, c) { this.n = a + b + c; } }
+class P { constructor(a, b) { this.n = a + b; } }
+class C extends P { constructor(p) { super(...p); } }
+class A { m(a, b) { return a + b; } sum(v) { return this.m(...v); } }
+const xs = [1, 2, 3];
+const a = new A();
+console.log(new B(...xs).n);
+console.log(new C([5, 6]).n);
+console.log(a.m(...[1, 2]), a.sum([1, 2]));
+"#;
+    assert_eq!(run_js(source), "6\n11\n3 3\n");
+}
+
+// What stays loud, with the message naming the spread: a signature with a
+// default or rest parameter (its hidden "given" flag / array slot can't come
+// from a run-time length), a source that isn't a plain name or an array
+// literal (it would be evaluated once per element slot), a builtin row (no
+// signature to expand into), and `arguments` (CRUSH-zorro-18).
+#[test]
+fn test_boa_spread_argument_stays_loud() {
+    let msg = loud("function f(a, b = 2) { return a + b; }\nconst xs = [1, 2];\nconsole.log(f(...xs));");
+    assert!(msg.contains("a spread argument (`f(...args)`)"), "default parameter: {msg}");
+    let msg = loud("function f(...rest) { return rest; }\nconst xs = [1, 2];\nconsole.log(f(...xs));");
+    assert!(msg.contains("a spread argument (`f(...args)`)"), "rest parameter: {msg}");
+    let msg = loud(
+        "function f(a, b) { return a + b; }\nfunction make() { return [1, 2]; }\nconsole.log(f(...make()));",
+    );
+    assert!(
+        msg.contains("other than a plain name or an array literal"),
+        "computed source: {msg}"
+    );
+    let msg = loud("const xs = [1, 2];\nconsole.log(...xs);");
+    assert!(msg.contains("a spread argument (`f(...args)`)"), "console.log: {msg}");
+    let msg = loud("function f(a) { return a; }\nfunction g() { return f(...arguments); }\nconsole.log(g(1));");
+    assert!(msg.contains("arguments"), "arguments: {msg}");
+}
+
+// A short array must never turn into a value: the slot read is loud at run
+// time, where JS would pass `undefined` (CRUSH-zorro-12). A literal source is
+// known at walk time, so a short one is refused there, by the plain call's
+// missing-argument rule.
+#[test]
+fn test_boa_spread_argument_short_array_is_loud() {
+    let err = run_js_err("function f(a, b) { return a + b; }\nconst xs = [1];\nconsole.log(f(...xs));");
+    assert!(err.contains("array index out of range"), "{err}");
+    let msg = loud("function f(a, b) { return a + b; }\nconsole.log(f(...[1]));");
+    assert!(msg.contains("without its argument 2"), "{msg}");
+}
+
+// A builtin row counts a spread as one argument; the spread is the real
+// blocker, so that is what the refusal must name (CRUSH-293).
+#[test]
+fn test_boa_spread_argument_math_max_names_the_spread() {
+    let msg = loud("const xs = [1, 2];\nconsole.log(Math.max(...xs));");
+    assert!(msg.contains("a spread argument (`f(...args)`)"), "{msg}");
+    assert!(!msg.contains("argument(s)"), "{msg}");
+}
+
+#[test]
+fn test_boa_value_callee_spreads_run_on_both_vms() {
+    let source = r#"
+function add(a, b) { return a + b; }
+function relay(fn, xs) { return fn(...xs); }
+const value = add;
+console.log(relay(add, [1, 2]));
+console.log(value(...[20, 22]));
+"#;
+    assert_eq!(run_js(source), "3\n42\n");
+    assert_eq!(run_js_portable(source).unwrap(), "3\n42\n");
+}
+
+#[test]
+fn test_boa_value_callee_spreads_refuse_mixed_and_multiple_spreads() {
+    let mixed = loud(
+        "function add(a, b) { return a + b; } const value = add; value(1, ...[2]);",
+    );
+    assert!(mixed.contains("mixed fixed and spread arguments to a value callee"), "{mixed}");
+
+    let multiple = loud(
+        "function add(a, b) { return a + b; } const value = add; value(...[1], ...[2]);",
+    );
+    assert!(multiple.contains("mixed or multiple spread arguments to a value callee"), "{multiple}");
+}
+
+#[test]
+fn test_boa_value_callee_spreads_refuse_bad_inputs_on_both_vms() {
+    let cases = [
+        (
+            "function relay(fn, xs) { return fn(...xs); } relay(3, [1, 2]);",
+            "not callable",
+        ),
+        (
+            "function add(a, b) { return a + b; } function relay(fn, xs) { return fn(...xs); } relay(add, \"12\");",
+            "expects an array of arguments, got str",
+        ),
+        (
+            "function add(a, b) { return a + b; } function relay(fn, xs) { return fn(...xs); } relay(add, [1]);",
+            "takes 2 argument(s), got 1",
+        ),
+    ];
+    for (source, expected) in cases {
+        let scheduler_error = run_js_err(source);
+        assert!(scheduler_error.contains(expected), "{scheduler_error}");
+        let portable_error = run_js_portable_err(source);
+        assert!(portable_error.contains(expected), "{portable_error}");
+    }
 }

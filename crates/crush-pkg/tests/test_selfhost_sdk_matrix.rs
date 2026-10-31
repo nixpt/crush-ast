@@ -283,6 +283,7 @@ fn sdk_matrix_structural_lockstep() {
     // Citation: `crush-pkg::runners.rs::CrushRunner.host_caps: Option<HostCaps>`.
     let runner = CrushRunner {
         host_caps: Some(caps),
+        ..Default::default()
     };
     let result = runner
         .run(&manifest, &main_path, &[])

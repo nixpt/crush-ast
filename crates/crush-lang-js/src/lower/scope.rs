@@ -41,6 +41,11 @@ pub(super) struct FnScope {
     /// Per frame: the parameter kinds of the `function` declarations bound
     /// there, so their calls can be adapted (CRUSH-zorro-18).
     sigs: Vec<HashMap<Sym, Sig>>,
+    /// Per frame: the bindings that are class declarations (or bindings
+    /// of a class expression), so a use can tell the class binding from
+    /// a parameter/local of the same spelling that shadows it
+    /// (CRUSH-281 review).
+    classes: Vec<HashSet<Sym>>,
 }
 
 /// How a `function` declaration's parameter is passed (CRUSH-zorro-18).
@@ -86,6 +91,7 @@ impl Scopes {
             frames: vec![HashMap::new()],
             predeclared: vec![HashSet::new()],
             sigs: vec![HashMap::new()],
+            classes: vec![HashSet::new()],
         });
     }
 
@@ -118,6 +124,7 @@ impl Scopes {
         f.frames.push(HashMap::new());
         f.predeclared.push(HashSet::new());
         f.sigs.push(HashMap::new());
+        f.classes.push(HashSet::new());
     }
 
     pub(super) fn pop_block(&mut self) {
@@ -126,6 +133,39 @@ impl Scopes {
         f.frames.pop();
         f.predeclared.pop();
         f.sigs.pop();
+        f.classes.pop();
+    }
+
+    /// Mark the binding `sym` refers to in its declaring frame as a
+    /// class binding. No-op when no frame declares `sym` (a class
+    /// expression's own name, bound only inside the class, is such a
+    /// name — it must not mark an unrelated outer binding).
+    pub(super) fn mark_class(&mut self, sym: Sym) {
+        for f in self.fns.iter_mut().rev() {
+            for (frame, classes) in f.frames.iter().zip(&mut f.classes).rev() {
+                if frame.contains_key(&sym) {
+                    classes.insert(sym);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Is the binding `sym` refers to a class binding? `Some(true)` for
+    /// the class's own binding, `Some(false)` when the nearest binding
+    /// of that spelling is something else (a parameter, a `let`, a
+    /// function, an import) that shadows any class, and `None` when no
+    /// visible frame declares it (a global, or a module binding seen
+    /// from an isolated top-level function).
+    pub(super) fn binding_class(&self, sym: Sym) -> Option<bool> {
+        for f in self.fns.iter().rev() {
+            for (frame, classes) in f.frames.iter().zip(&f.classes).rev() {
+                if frame.contains_key(&sym) {
+                    return Some(classes.contains(&sym));
+                }
+            }
+        }
+        None
     }
 
     /// Declare (or rebind) a binding of the innermost frame under `name`.
@@ -527,6 +567,23 @@ fn assigned_syms_expr(e: &boa_ast::expression::Expression, out: &mut Vec<Sym>) {
             }
         }
         Expression::Spread(s) => assigned_syms_expr(s.target(), out),
+        Expression::Optional(o) => {
+            use boa_ast::expression::OptionalOperationKind;
+            assigned_syms_expr(o.target(), out);
+            for op in o.chain() {
+                match op.kind() {
+                    OptionalOperationKind::Call { args } => {
+                        for a in args {
+                            assigned_syms_expr(a, out);
+                        }
+                    }
+                    OptionalOperationKind::SimplePropertyAccess {
+                        field: PropertyAccessField::Expr(f),
+                    } => assigned_syms_expr(f, out),
+                    _ => {}
+                }
+            }
+        }
         Expression::ArrowFunction(f) => assigned_syms_items(f.body().statements(), out),
         Expression::FunctionExpression(f) => assigned_syms_items(f.body().statements(), out),
         _ => {}

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-4 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done — PR #198 merged 2026-10-15 |
 | **Phase** | JS/TS parity spike |
 | **Assignee** | unassigned |
 | **Dependencies** | none — do this first |
@@ -59,3 +59,7 @@ Every other ticket's definition of done is "my area's corpus programs leave the 
 - Reference implementation: `node` on PATH (v26; TypeScript runs with built-in type stripping). Never hand-write a `.out`.
 - `crates/crush-lang-js/src/lower_swc.rs` is shared by most tickets. Until CRUSH-zorro-11 lands, keep edits local to the area you own and merge `origin/main` often; after it lands, add entries to the builtin/method table instead of new match arms.
 - Gates before the PR: `cargo test -p crush-lang-js -p crush-lang-sdk -p crush-aot`, the walker set, and clippy. A new loud error must say what isn't supported, never "load from uninitialised slot".
+
+## Survey 2026-10-31 (status)
+
+PR #198 (`agent/vega/CRUSH-zorro-4`) merged 2026-10-15. Its body covers every criterion: the 96-program node_corpus, KNOWN_LOUD/KNOWN_SILENT lists, `crush-aot/tests/js_parity.rs`, the 25-program TS twin, freshness, exact comparison, stdlib caps, and the swc-vs-boa report. Previous status: `Backlog`.

@@ -24,7 +24,7 @@ pub(super) fn register(caps: &mut HostCaps) {
 }
 
 /// Copy the bytes out of a `Value::Bytes` or a buffer.
-pub(super) fn byte_view(cap: &str, v: &Value) -> Result<Vec<u8>, String> {
+pub(crate) fn byte_view(cap: &str, v: &Value) -> Result<Vec<u8>, String> {
     match v {
         Value::Bytes(b) => Ok(b.clone()),
         Value::Vector(cells) => cells
@@ -113,6 +113,15 @@ std_cap!(
     Some(1),
     |args: &[Value]| {
         let size = get_usize("buffer.alloc", args, 0)?;
+        // Bound the allocation: `vec![Value; size]` with a huge `size` aborts
+        // the host on an out-of-memory allocation (CRUSH-181).
+        let bytes = size.saturating_mul(std::mem::size_of::<Value>());
+        if bytes > super::MAX_STDLIB_ALLOC_BYTES {
+            return Err(format!(
+                "buffer.alloc: {size} elements (~{bytes} bytes) over the {}-byte limit",
+                super::MAX_STDLIB_ALLOC_BYTES
+            ));
+        }
         Ok(Some(Value::new_vector(vec![Value::Int(0); size])))
     }
 );

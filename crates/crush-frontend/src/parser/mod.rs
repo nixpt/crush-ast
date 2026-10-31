@@ -1039,6 +1039,7 @@ impl Parser {
 
     /// Parse let statement: let name = value
     fn parse_let_statement(&mut self) -> Result<Statement, ()> {
+        let stmt_meta = self.make_meta();
         self.expect(Token::Let(SourceLocation { line: 0, col: 0 }))?;
 
         let name = match self.peek() {
@@ -1077,12 +1078,13 @@ impl Parser {
             name,
             value,
             type_hint: type_hint.unwrap_or(CastType::Any),
-            meta: self.make_meta(),
+            meta: stmt_meta,
         })
     }
 
     /// Parse if statement: if condition { body } else { body }
     fn parse_if_statement(&mut self) -> Result<Statement, ()> {
+        let stmt_meta = self.make_meta();
         self.expect(Token::If(SourceLocation { line: 0, col: 0 }))?;
 
         let condition = self.parse_expression()?;
@@ -1117,12 +1119,13 @@ impl Parser {
             } else {
                 Some(else_body)
             },
-            meta: self.make_meta(),
+            meta: stmt_meta,
         })
     }
 
     /// Parse while statement: while condition { body }
     fn parse_while_statement(&mut self) -> Result<Statement, ()> {
+        let stmt_meta = self.make_meta();
         self.expect(Token::While(SourceLocation { line: 0, col: 0 }))?;
 
         let condition = self.parse_expression()?;
@@ -1135,12 +1138,13 @@ impl Parser {
         Ok(Statement::While {
             condition: Box::new(condition),
             body,
-            meta: self.make_meta(),
+            meta: stmt_meta,
         })
     }
 
     /// Parse for statement: for item in iterable { body }
     fn parse_for_statement(&mut self) -> Result<Statement, ()> {
+        let stmt_meta = self.make_meta();
         self.expect(Token::For(SourceLocation { line: 0, col: 0 }))?;
 
         let variable = match self.peek() {
@@ -1174,12 +1178,13 @@ impl Parser {
             variable,
             iterable: Box::new(iterable),
             body,
-            meta: self.make_meta(),
+            meta: stmt_meta,
         })
     }
 
     /// Parse return statement: return value
     fn parse_return_statement(&mut self) -> Result<Statement, ()> {
+        let stmt_meta = self.make_meta();
         self.expect(Token::Return(SourceLocation { line: 0, col: 0 }))?;
 
         let value = if self.is_expression_start() {
@@ -1192,7 +1197,7 @@ impl Parser {
 
         Ok(Statement::Return {
             value,
-            meta: self.make_meta(),
+            meta: stmt_meta,
         })
     }
 
@@ -1598,6 +1603,7 @@ impl Parser {
 
     /// Parse expression statement
     fn parse_expression_statement(&mut self) -> Result<Statement, ()> {
+        let stmt_meta = self.make_meta();
         #[allow(unused_assignments)]
         let mut expr = self.parse_expression()?;
 
@@ -1610,7 +1616,7 @@ impl Parser {
                     return Ok(Statement::Assign {
                         target: name,
                         value,
-                        meta: self.make_meta(),
+                        meta: stmt_meta,
                     });
                 }
                 // `p.x = 10` — field assignment. Statement::SetField already exists in the CAST
@@ -1624,7 +1630,7 @@ impl Parser {
                         target: *target,
                         field,
                         value,
-                        meta: self.make_meta(),
+                        meta: stmt_meta,
                     });
                 }
                 // `xs[0] = 9` — indexed assignment. Lowered to a cap_call "arr_set"
@@ -1639,7 +1645,7 @@ impl Parser {
                             args: vec![*target, *index, value],
                             meta: self.make_meta(),
                         },
-                        meta: self.make_meta(),
+                        meta: stmt_meta,
                     });
                 }
                 other => {
@@ -1653,7 +1659,7 @@ impl Parser {
 
         Ok(Statement::ExprStmt {
             expr,
-            meta: self.make_meta(),
+            meta: stmt_meta,
         })
     }
 
@@ -1677,7 +1683,16 @@ impl Parser {
             // `return |b| a + b` parsed as a bare `return` (CRUSH-251).
             | Token::Bar(..)
             | Token::Or(..)
-            | Token::Pipe(..) => true,
+            | Token::Pipe(..)
+            // Every other token `parse_primary` starts an expression with
+            // (#253): without them `return match v { … }` and
+            // `return new P()` parsed as a bare `return` followed by an
+            // unreachable statement — the function silently returned null.
+            | Token::Match(..)
+            | Token::New(..) => true,
+            // `async.*` — the contextual-keyword namespace (`return
+            // async.sleep(1)` likewise became a bare `return`).
+            Token::Async(..) => matches!(self.peek_ahead(1), Token::Dot(_)),
             _ => false,
         }
     }
@@ -1721,6 +1736,8 @@ impl Parser {
                 break;
             }
 
+            // The operator's own position, for a diagnostic about the expression.
+            let op_meta = self.make_meta();
             self.advance();
 
             let next_min_prec = if right_assoc { prec } else { prec + 1 };
@@ -1867,16 +1884,16 @@ impl Parser {
                 self.expect(Token::RParen(SourceLocation { line: 0, col: 0 }))?;
 
                 match left {
-                    Expression::Var { name, .. } => Expression::Call {
+                    Expression::Var { name, meta } => Expression::Call {
                         function: name,
                         args,
-                        meta: self.make_meta(),
+                        meta,
                     },
                     Expression::GetField { target, field, .. } => match *target {
-                        Expression::Var { name: obj, .. } => Expression::CapabilityCall {
+                        Expression::Var { name: obj, meta } => Expression::CapabilityCall {
                             name: format!("{}.{}", obj, field),
                             args,
-                            meta: self.make_meta(),
+                            meta,
                         },
                         _ => {
                             let (line, col) = self.get_location(self.peek());
@@ -1905,7 +1922,7 @@ impl Parser {
                     operator: op.to_string(),
                     left: Box::new(left),
                     right: Box::new(right),
-                    meta: self.make_meta(),
+                    meta: op_meta,
                 }
             };
         }
@@ -2031,6 +2048,8 @@ impl Parser {
             }
             Token::Ident(name, _) => {
                 let n = name.clone();
+                // Stamp the identifier's own position, before advancing past it.
+                let ident_meta = self.make_meta();
                 self.advance();
                 if self.structs.contains_key(&n) && matches!(self.peek(), Token::LBrace(_)) {
                     return self.parse_struct_literal(n);
@@ -2050,11 +2069,11 @@ impl Parser {
                         }
                         self.advance();
                     }
-                    return Ok(Expression::Var { name: path, meta: self.make_meta() });
+                    return Ok(Expression::Var { name: path, meta: ident_meta });
                 }
                 Ok(Expression::Var {
                     name: n,
-                    meta: self.make_meta(),
+                    meta: ident_meta,
                 })
             }
             Token::LParen(_) => {

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-161 |
 | **Priority** | P2 |
-| **Status** | Done (PR open; publish is foreman + captain) |
+| **Status** | Done — PR #108 merged 2026-10-08; the `cargo publish` step is foreman's (unticked box) |
 | **Phase** | M0 |
 | **Assignee** | panini-d |
 | **Dependencies** | none |
@@ -61,3 +61,7 @@
   added was not re-run here (the crates.io dry-run above is the stronger
   check); re-run it on the release tag as step 1 says.
 - Not done here: the publish (C-7, foreman + captain).
+
+## Survey 2026-10-31 (status)
+
+PR #108 (`agent/panini-d/CRUSH-161`) merged 2026-10-08. Previous status: `Done (PR open; publish is foreman + captain)`.

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-202 |
 | **Priority** | P0 |
-| **Status** | Done (pending merge) |
+| **Status** | Done — PR #173 merged 2026-10-15; the captured follow-ups landed later in `c534fba` (CRUSH-294) |
 | **Phase** | M6 |
 | **Assignee** | panini |
 | **Dependencies** | none |
@@ -88,3 +88,7 @@ subshells and rejected `for ((…))` / `a=(…)`).
 classifier function + `case`; primes with a function used as a condition, `for ((…))`,
 `until`, `printf`; recursive gcd with `$#`, `local`, `!`/`||`, a Collatz `((steps++))`
 loop): output and exit status identical to bash and to zsh for all six runs.
+
+## Survey 2026-10-31 (status)
+
+PR #173 (`agent/panini/CRUSH-202`) merged 2026-10-15. Previous status: `Done (pending merge)`.

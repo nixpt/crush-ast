@@ -32,6 +32,17 @@ fn cap_returns_value(name: &str) -> bool {
     true
 }
 
+/// Compile Crush source for a debugger: the program (its `source_map` in
+/// Crush source lines) and the names of its locals.
+pub fn compile_crush_source_for_debug(
+    source: &str,
+) -> anyhow::Result<(crush_vm::Program, LocalNames)> {
+    let (casm, warnings) = compile_crush_to_casm_with_options(source, &CompileOptions::default())?;
+    let (mut program, names) = casm_to_vm_named(&casm)?;
+    program.warnings = warnings;
+    Ok((program, names))
+}
+
 pub fn compile_crush_source(source: &str) -> anyhow::Result<crush_vm::Program> {
     compile_crush_source_with(source, &CompileOptions::default())
 }
@@ -173,8 +184,9 @@ fn compile_lowering_blocks(
     let casm = crush_frontend::compiler::Compiler::new().compile_lowered(program, cosm)?;
     if let Some((name, line, lang)) = unknown_builtin(&casm, &blocks)? {
         anyhow::bail!(
-            "line {line}: this @{lang} block can't be lowered inline: `{name}` is not supported by the \
+            "line {line}: this @{lang} block can't be lowered inline: {} is not supported by the \
              walker yet (it has no Crush lowering)\n  {}",
+            describe_unlowered(&name),
             lowering_help(&lang)
         );
     }
@@ -229,9 +241,26 @@ pub fn compile_lowered_script(
     };
     let casm = crush_frontend::compiler::Compiler::new().compile(program)?;
     if let Some((name, _, _)) = unknown_builtin(&casm, &blocks)? {
-        return Err(refuse(format!("`{name}` is not supported by the walker yet (it has no Crush lowering)")));
+        return Err(refuse(format!(
+            "{} is not supported by the walker yet (it has no Crush lowering)",
+            describe_unlowered(&name)
+        )));
     }
     casm_to_vm(&casm)
+}
+
+/// What [`unknown_builtin`] found, as the source construct: a builtin by name
+/// (`` `sum` ``), but a walker intrinsic by what the author wrote, not by the
+/// internal name the walker lowered it to (#312: `x in y` was reported as
+/// `` `__crush_contains__` ``).
+fn describe_unlowered(name: &str) -> String {
+    match name {
+        "__crush_contains__" => "the `in` operator (`x in y`)".to_string(),
+        n if n.starts_with("__crush_") && n.ends_with("__") => {
+            format!("a construct the walker lowers to its internal `{n}`")
+        }
+        n => format!("`{n}`"),
+    }
 }
 
 /// A Python / JS builtin the walker has no Crush lowering for (`sum`, `int`,
@@ -792,16 +821,26 @@ fn lower_block(
             .collect(),
         meta: meta.clone(),
     };
+    // The block prints what EXEC_LANG prints (#312): its output is held while
+    // it runs and emitted trimmed when it returns; a throw out of it is fatal.
+    let capture = |name: &str, args: Vec<Expression>| Statement::ExprStmt {
+        expr: Expression::CapabilityCall { name: name.to_string(), args, meta: meta.clone() },
+        meta: meta.clone(),
+    };
+    let begin = capture(
+        "lang.capture_begin",
+        vec![str_lit(lang), Expression::IntLiteral { value: line as i64, meta: meta.clone() }],
+    );
+    let end = capture("lang.capture_end", Vec::new());
     if output_names.is_empty() {
-        return Ok(vec![Statement::ExprStmt { expr: call, meta: meta.clone() }]);
+        return Ok(vec![begin, Statement::ExprStmt { expr: call, meta: meta.clone() }, end]);
     }
     let result = format!("__crush_{lang}_block_{n}_out");
-    let mut out = vec![Statement::VarDecl {
-        name: result.clone(),
-        value: call,
-        type_hint: CastType::Any,
-        meta: meta.clone(),
-    }];
+    let mut out = vec![
+        begin,
+        Statement::VarDecl { name: result.clone(), value: call, type_hint: CastType::Any, meta: meta.clone() },
+        end,
+    ];
     for (k, name) in output_names.iter().enumerate() {
         let value = marshal(
             Expression::Index {
@@ -1080,8 +1119,26 @@ fn dedent(code: &str) -> String {
         .to_string()
 }
 
+/// Local variable names per function, `function -> [(name, slot)]`: what
+/// compiled bytecode forgets and a debugger needs to say `print total`.
+pub type LocalNames = HashMap<String, Vec<(String, u16)>>;
+
 pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> {
+    Ok(casm_to_vm_named(program)?.0)
+}
+
+/// [`casm_to_vm`] plus the [`LocalNames`] it assigned slots from. The program's
+/// `source_map` maps bytecode offsets to the lines of the Crush source the CASM
+/// came from (instructions that carry no line are left out).
+pub fn casm_to_vm_named(
+    program: &casm::Program,
+) -> anyhow::Result<(crush_vm::Program, LocalNames)> {
+    let mut local_names: LocalNames = HashMap::new();
     let mut lines: Vec<String> = Vec::new();
+    // Crush source line behind each entry of `lines` (0 = none), for the
+    // debugger's source map. Entries that carry no line are not pushed here;
+    // `resize` below pads them.
+    let mut line_src: Vec<usize> = Vec::new();
     let mut perms: HashSet<String> = HashSet::new();
 
     for _func in program.functions.values() {
@@ -1089,7 +1146,12 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
     }
 
     let is_kind = |name: &str| program.kind_table().is_some_and(|m| m.kind(name).is_some());
-    for (fname, func) in &program.functions {
+    // Lay the functions out in name order, not `HashMap` order: the same source
+    // must assemble to byte-identical code — and a byte-identical disassembly —
+    // on every run (the AOT build cache is keyed on it). CRUSH-188.
+    let mut functions: Vec<_> = program.functions.iter().collect();
+    functions.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    for (fname, func) in functions {
         // A GPU kernel (it uses `ptx_*` device ops, CRUSH-zorro-3) runs on the device via
         // `gpu.launch`, which compiles it from CASM with crush-ptx. It has no CVM1
         // form, so it is left out of the host program.
@@ -1207,6 +1269,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
                     format!("CALL_VALUE {argc}")
                 }
+                "call_value_apply" => "CALL_VALUE_APPLY".to_string(),
                 // CRUSH-251 step 3: a variable closures capture by reference
                 // lives in a cell in its slot.
                 "cell_new" => "CELL_NEW".to_string(),
@@ -1474,7 +1537,16 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                 // dropped; porting onto `ai_native` is a later ticket.
                 other => anyhow::bail!("Unsupported CVM1 opcode: {other} at {fname}:{i}"),
             };
+            line_src.resize(lines.len(), 0);
             lines.push(format!("    {op}"));
+            line_src.push(
+                instr
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.get("line"))
+                    .and_then(|l| l.as_u64())
+                    .unwrap_or(0) as usize,
+            );
         }
 
         // Emit label for one-past-the-end targets (used by try/catch's jmp with
@@ -1483,6 +1555,9 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
         if let Some(label) = target_labels.get(&func.body.len()) {
             lines.push(format!("{label}:"));
         }
+        let mut names: Vec<(String, u16)> = slot_map.into_iter().collect();
+        names.sort_by_key(|&(_, slot)| slot);
+        local_names.insert(fname.clone(), names);
     }
 
     // Post-process: restore the frontend's stack discipline around a
@@ -1493,11 +1568,18 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
     // `JMP` to a shared POP, a STORE, a RET), so push the null the
     // expression stands for. Only dropping an adjacent POP underflowed the
     // stack when a void call ended a match arm (GitHub issue #143).
+    line_src.resize(lines.len(), 0);
     let mut cleaned: Vec<String> = Vec::new();
+    // Crush source line of each physical line of the assembly (index = line - 1).
+    let mut asm_src: Vec<usize> = Vec::new();
     let mut i = 0;
     while i < lines.len() {
         let line = &lines[i];
         cleaned.push(line.clone());
+        asm_src.extend(std::iter::repeat_n(
+            line_src[i],
+            line.matches('\n').count() + 1,
+        ));
         if let Some(cap_name) = line.trim().strip_prefix("CAP_CALL ") {
             let name = cap_name.split('"').nth(1).unwrap_or("");
             if !cap_returns_value(name) {
@@ -1505,6 +1587,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
                     i += 1;
                 } else {
                     cleaned.push("    PUSH_NULL".to_string());
+                    asm_src.push(line_src[i]);
                 }
             }
         }
@@ -1525,6 +1608,17 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
     // COSM K1.3 (CRUSH-zorro-42): the kind table goes into the CVM1 program
     // as-is; `to_blob` writes it as the version-3 kind-table section.
     vm_program.cosm = program.cosm.clone();
+    // The assembler maps offsets to lines of the generated assembly; the
+    // debugger wants the author's lines, which the instructions carry in their
+    // `meta`. Instructions without one drop out of the map.
+    vm_program.source_map = vm_program
+        .source_map
+        .iter()
+        .filter_map(|&(asm_line, offset)| {
+            let line = *asm_src.get(asm_line.checked_sub(1)?)?;
+            (line > 0).then_some((line, offset))
+        })
+        .collect();
     // COSM K1.4: a program with Kinds records each function's arity, which
     // the VMs need to make function values (bound methods) from members.
     if vm_program.kind_table().is_some() {
@@ -1532,7 +1626,7 @@ pub fn casm_to_vm(program: &casm::Program) -> anyhow::Result<crush_vm::Program> 
             entry.arity = program.functions.get(name).and_then(|f| u8::try_from(f.params.len()).ok());
         }
     }
-    Ok(vm_program)
+    Ok((vm_program, local_names))
 }
 
 /// `CONSTRUCT "kind" argc`, followed — for a Kind built by an initialiser
@@ -1549,6 +1643,28 @@ fn construct_asm(program: &casm::Program, kind: &str, argc: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// CRUSH-317: the program's source map is in the author's lines, so a
+    /// debugger can break on `file:line`; the local names ride along.
+    #[test]
+    fn compiled_crush_maps_offsets_to_source_lines_and_names_its_locals() {
+        let src = "fn main() {\n    let a = 1\n    let b = a + 2\n    print(b)\n}\nmain()\n";
+        let (program, names) = compile_crush_source_for_debug(src).unwrap();
+        let lines: std::collections::BTreeSet<usize> =
+            program.source_map.iter().map(|&(l, _)| l).collect();
+        assert!(lines.is_superset(&[2, 3, 4].into()), "{lines:?}");
+        assert!(lines.iter().all(|&l| (1..=6).contains(&l)), "{lines:?}");
+        // Offsets are code offsets, ascending, inside the program.
+        assert!(program.source_map.windows(2).all(|w| w[0].1 <= w[1].1));
+        assert!(
+            program
+                .source_map
+                .iter()
+                .all(|&(_, o)| o < program.code.len())
+        );
+        let main: Vec<&str> = names["main"].iter().map(|(n, _)| n.as_str()).collect();
+        assert!(main.contains(&"a") && main.contains(&"b"), "{main:?}");
+    }
+
     fn _poly_caps() -> crush_vm::HostCaps {
         let mut c = crush_vm::HostCaps::new();
         c.grant_polyglot(&["python", "javascript", "bash"]);
@@ -1565,6 +1681,30 @@ mod tests {
             .unwrap_or(false)
     }
     use super::*;
+
+    // CRUSH-188: the same source must assemble to byte-identical code. The
+    // function layout used to follow `HashMap` iteration order, so two runs
+    // produced different CASM/disassembly.
+    #[test]
+    fn casm_to_vm_lays_out_functions_in_name_order() {
+        let src = "fn zeta(n) { return n + 1 }\n\
+                   fn alpha(n) { return zeta(n) * 2 }\n\
+                   fn main() { print(alpha(5)) }\n";
+        let text = crush_vm::disassemble(&casm_to_vm(&compile_crush_to_casm(src).unwrap()).unwrap());
+        let order: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix(".func "))
+            .map(|l| l.split_whitespace().next().unwrap())
+            .collect();
+        let mut sorted = order.clone();
+        sorted.sort_unstable();
+        assert_eq!(order, sorted, "functions must be laid out in name order:\n{text}");
+
+        // Two independent compilations agree byte for byte.
+        let a = crush_vm::disassemble(&casm_to_vm(&compile_crush_to_casm(src).unwrap()).unwrap());
+        let b = crush_vm::disassemble(&casm_to_vm(&compile_crush_to_casm(src).unwrap()).unwrap());
+        assert_eq!(a, b, "the same source must assemble identically");
+    }
 
     #[test]
     fn test_compile_simple_program() {

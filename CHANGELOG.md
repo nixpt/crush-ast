@@ -14,6 +14,280 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Raw TCP/TLS sockets as `tcp.*` capabilities, behind their own grants
+  (CRUSH-318):** `crush-net` is now wired into `crush-lang-sdk` (cargo features
+  `tcp`, `tcp-tls`, on by default; grants are never on by default). `crush-run
+  --tcp` grants outbound client sockets (`tcp.connect`, `tcp.tls_wrap`,
+  `tcp.send`/`recv`/`close`/`ping`); `crush-run --tcp-listen` is a separate,
+  stronger grant for being a server (`tcp.listen`, `tcp.accept`, plus
+  send/recv/close/ping on the connections they return, but not `tcp.connect`).
+  `--net` stays HTTP-client-only and grants neither. The caps were renamed
+  from `net.*` to `tcp.*` so the `net` family can never cover them, and
+  `crush-net` now depends on `crush-vm` instead of `crush-lang-sdk` (the old
+  edge was a cycle). Also fixed in `crush-net`: `tcp.send`/`recv`/`close` did
+  not work on a `tcp.tls_wrap`ped connection, `tls_wrap` could hand out an id
+  that collided with a later plain connection, and `tcp.accept` held the
+  shared state lock while blocking.
+
+- **JS/TS dialect handling: unknown extensions are refused, `cts` is TypeScript
+  (CRUSH-zorro-8):** `JsLowering::for_ext` treated every unrecognised extension
+  as plain JS, so a `.ts` file reached as `.tmp` (or a typo like `typescript`)
+  parsed TypeScript as ES. It now accepts exactly
+  `js mjs cjs jsx ts tsx mts cts` and refuses anything else, naming the set;
+  `cts` is TypeScript; and `SubprocessWalker` names its temp file
+  `walker_N.<ext>` so a walked `.ts` keeps its dialect.
+
+- **Stub walkers no longer produce empty programs (CRUSH-203):** the Zig walker
+  matched the wrong tree-sitter node names (`IntegerLiteral` vs the real
+  `integer`/`float`/`string`/`boolean`, `BinaryExpr` vs `binary_expression`, …),
+  so every literal silently became `null` and every program printed nothing; the
+  names and wrappers are fixed and unhandled nodes now error with the node kind
+  and position. Dart and Java (which returned an empty program / panicked with a
+  bare `unreachable!`) fail with "not implemented". The Wasm walker no longer
+  drops every non-`call` operator or lowers `fd_write` to an arg-less
+  `io.print`; it errors loudly. `crush-walk-run` reads a `.wasm` file as bytes.
+  The Nepali walker's false "native Nepali keywords" comment is corrected.
+
+- **`crush debug FILE` / `crush-debug`: the debugger is runnable (CRUSH-317):**
+  `crush-debugger` had breakpoints, step/next/finish, watchpoints and
+  grant-gated inspection but no front end that compiled Crush source, so it could
+  only debug hand-written CASM. `crush debug prog.crush --step --inspect` now
+  compiles through `crush run`'s pipeline and opens the REPL; `break FILE:LINE`
+  resolves in the *source's* lines (the compiler's source map, which used to be
+  the generated assembly's), `print total` / `print p.x` / `watch total` /
+  `locals` use variable names, `step`/`next` go by source line, and stops show
+  the line. Debugging grants nothing by default: `--step` to run and step,
+  `--inspect=redacted` / `--inspect` to see values; a refused command names the
+  flag. `--message-format json` emits the `DebugEvent`s as NDJSON for an editor or
+  agent. `crush-installer` now installs `crush` and `crush-debug`. Fixes found on
+  the way: hashing a closure that captures itself (`let f = |n| f(n - 1)`)
+  overflowed the stack under `--inspect=redacted`, and `BreakpointSet::remove`
+  used `IndexMap::remove`, now a deprecation error under `-D warnings`.
+
+- **`net` on by default, `http.*` refused with its replacement, `time.now` unit
+  documented (CRUSH-264):** `crush-lang-sdk`'s `default` features now include
+  `net`, so `crush-run --net` grants `net.http_get/post/put/delete/request` out of
+  the box (still refused up front without `--net`); `db` stays opt-in
+  (`--features db`) and `crush-run caps` says so. exosphere's `http.get/…` have no
+  alias: a program calling one is refused before it runs with `http.get was
+  renamed to net.http_get (grant it with --net)` (`effects::RENAMED_CAPS`, shared
+  by every runner that preflights). `time.now` is seconds, `time.now_ms`
+  milliseconds (exosphere's `time.now` was ms) — now stated in `crush-run caps`,
+  the SDK README and MIGRATION-INVENTORY. `examples/crush/httpclient.crush` uses
+  `net.http_get` and `str.format` and compiles. Embedders that don't want the
+  HTTP client: `default-features = false`.
+
+- **Consistent `--message-format json` diagnostics across `crushc` and `crush-run`
+  (CRUSH-315):** the same broken program now yields the same NDJSON records
+  from both. `crush-run` used to flatten every compile failure to `E-IO` with no
+  position; it now emits `E-PP0n` (syntax, with line/col) and `E-TP01`
+  (semantic), exactly as `crushc` does. Semantic errors carry line/col for
+  undefined variables/functions and type errors (the analyzer now reads the
+  AST locations, and the parser stamps `Var`/`Call`/`BinaryOp`/statement
+  locations at the construct instead of the token after it). A runtime error's
+  text is now in `message` (`E-RT05` used to leave it empty and put it in
+  `hint`); a program needing an ungranted capability is reported as `E-CAPS`
+  (hint: the grant flag) instead of `E-IO`. `file` is filled on every
+  `crushc`/`crush-run` record. The wire struct is defined once, in
+  `crush-diagnostics` (`Diagnostic`); `crush_lang_sdk::theme::JsonDiagnostic` is
+  an alias, and its `parse_error` / `runtime_error` constructors moved to the
+  `JsonDiagnosticExt` trait. New in `crush-frontend`: `ParseErrors`,
+  `SemanticError` (typed `anyhow` payloads, `Display` unchanged).
+
+- **`crush-walk-run` keeps output before a runtime error and exits non-zero
+  (CRUSH-184):** it buffered the first run's output and replaced it with
+  `Error: …` on failure, and returned `Ok`, so a failing script exited 0 and
+  everything printed before the error was lost. It now streams the first run's
+  output (so nothing is lost) and fails with a non-zero exit. `crush-run` (and
+  `crush run`, which delegates to it) already streamed and exited non-zero.
+
+- **C API reports runtime errors and routes `io.print` to stdout (CRUSH-205):**
+  `crush_vm_run_casm` treated any `Ok(FastYield)` as success, so a program that
+  raised a runtime error (a stack underflow, a bad jump, an unsupported
+  capability) returned `0` with `last_error` null; it now returns `-2` with a
+  message for a run that did not finish, and clears `last_error` on success.
+  The bare FastVM has no capabilities, so the embedded `cap_call io.print` went
+  nowhere and `examples/embed.c` printed nothing — `run_casm` now runs with a
+  stdout `io.print` capability, so the example prints `42`.
+
+- **Spawned tasks no longer outlive the VM (CRUSH-182):** `TaskState` now
+  implements `Drop`, killing and reaping every still-running task when the
+  capability registry is dropped at the end of a run — a spawned `sleep 333`
+  no longer survives `crush-run`. `--task` spawns host processes, so its help
+  text now says plainly that it grants `process/spawn`.
+
+- **Deterministic CASM function layout (CRUSH-188):** `crushc --emit casm` laid
+  the functions out into the code buffer by iterating a `HashMap`, so the same
+  source compiled to different CASM (and different label numbering) from run to
+  run — bad for reproducible builds and the AOT build cache. Functions are now
+  emitted in name order.
+
+- **Go walker: no more silent drops (CRUSH-198):** the walker matched
+  `short_variable_declaration`, but tree-sitter-go emits `short_var_declaration`,
+  so `a := 7` was dropped and `a` read as uninitialised; `var`, assignment,
+  `++`/`--`, `for` (all shapes), bare blocks and `if`/`for` initializers were
+  silently dropped too, and unknown expressions became `null`. All are lowered
+  now, and any construct the walker does not support (`switch`, `defer`, a
+  two-variable range, a multi-value `return`, unknown expressions) is a loud
+  error instead of a silent drop. The README feature table matches reality.
+
+- **Stdlib caps no longer panic or abort the host on bad arguments
+  (CRUSH-181):** `str.repeat`, `str.pad_left`/`pad_right` and
+  `collections.chunk` cast negative lengths to `usize` (wrapping to a huge
+  value → "capacity overflow" / OOM abort); `conv.parse_int` panicked on a
+  radix outside 2..=36; `buffer.alloc` and `str.repeat` could request an
+  unbounded allocation. All now give a runtime error, and every
+  allocation-growing cap (`str.repeat`/`pad_*`/`join`, `buffer.alloc`) is
+  bounded by a fixed 64 MiB limit.
+
+- **FastVM/JIT print heap values, not the arena ref (CRUSH-294, GitHub #267):**
+  `io.print` of an array, map or struct printed the arena index (`@259`) on
+  FastVM and the JIT and finished successfully, while every other engine
+  printed the value. `runtime_value_to_text` (the `io.print` formatter both
+  fast engines use) resolved a ref only for strings; it now renders every heap
+  kind exactly like the VM's `Display` (`[a, b]`, `{k: v}`, `Vector[…]`, …).
+  Covered by an all-engine print test (`stdout_parity::heap_values_print_…`).
+
+- **Division edge cases fail loudly on every engine (CRUSH-213):**
+  `i64::MIN / -1` (and `% -1`) panicked in the interpreter and FastVM and
+  SIGFPE'd on AOT C; the JIT trapped (SIGILL/SIGFPE) on a zero divisor and
+  silently returned `inf` for `1.0 / 0.0`. The interpreter and FastVM now use
+  `checked_div`/`checked_rem` (→ `arithmetic overflow`), and the JIT guards
+  the divisor before `sdiv`/`srem`/`fdiv`, reporting `division by zero` /
+  `arithmetic overflow` like the other engines. AOT already did the right
+  thing. All six engines agree (verified by
+  `backend_agreement::division_edge_cases_agree_across_every_engine`).
+
+- **FastVM/JIT `==`/`!=` for strings, arrays, maps, bools and null
+  (CRUSH-215):** both fast engines reported `false` for every non-numeric
+  `==` — so `"ab" == "ab"` was `false` and `"ab" != "ab"` was `false` too
+  (FastVM), and the JIT compared strings by their NaN-boxed bits so string
+  `==` was always `false` and `!=` always `true`. A single canonical equality
+  (`crush_vm::value::runtime_value_eq`) now backs FastVM (`Eq`/`Ne`) and the
+  JIT (new `OP_CMP_EQUAL` runtime helper); it mirrors the interpreter's
+  `Value::PartialEq`. All six engines now agree on `==`/`!=` for every shared
+  value kind (verified by
+  `backend_agreement::equality_agrees_across_every_engine`).
+
+- **JIT: a function with more than 8 locals lost them across a call
+  (CRUSH-295, GitHub #273):** the JIT addressed each frame with a fixed 8-slot
+  stride and did not bounds-check local indices, so a caller using local 8+
+  spilled into the callee's frame and had its locals overwritten — the run
+  finished with wrong values while VM/FastVM/AOT were correct. The frame stride
+  is now the program's largest local count, so frames cannot overlap (a frame
+  that does not fit is refused → FastVM fallback).
+
+## [0.8.0] - 2026-10-30
+
+- Merge pull request #315 from nixpt/agent/vega/fs-backend
+- Merge pull request #314 from nixpt/agent/vega/crush-web-deferred-lang
+- fix(sdk): fs paths use has_root, so the in-memory fs works on wasm32
+- feat(sdk,web): the --fs sandbox over a storage backend; an in-memory one for the browser
+- fix(crush-web): serialize report maps as plain objects (lang.env)
+- feat(crush-web): deferLang, so a page can run a @lang block asynchronously
+- Merge pull request #313 from nixpt/agent/vega/312-lower-trim
+- fix(polyglot): name an unlowered walker intrinsic by its source construct (#312)
+- Merge remote-tracking branch 'origin/main' into agent/vega/312-lower-trim
+- Merge pull request #311 from nixpt/agent/vega/crush-web-size
+- fix(polyglot): a lowered block prints and fails as EXEC_LANG does (#312)
+- docs(crush-web): JS marshaling is boa, not swc; feature sizes; build recipe; #312
+- build(crush-web): strip debuginfo only, so wasm-bindgen keeps externref glue
+- build(crush-web): drop swc and add a size-tuned release profile (9.79 -> 4.99 MB wasm)
+- Merge pull request #310 from nixpt/agent/vega/257-builtin-values
+- Merge pull request #309 from nixpt/agent/vega/256-for-var-methods
+- Merge pull request #308 from nixpt/agent/vega/254-negative-slices
+- Merge pull request #307 from nixpt/agent/vega/253-return-match
+- Merge pull request #306 from nixpt/agent/vega/260-crushc-ctor
+- fix(sema): a built-in used as a value names itself and its wrapper (#257)
+- fix(compiler): method calls on a for loop variable (#256)
+- fix(vm): negative slice bounds count from the end (#254)
+- fix(parser): return match / new / async.… return their value (#253)
+- fix(crushc): constructor calls of @kind(construct: …) Kinds compile (#260)
+- Merge pull request #305 from nixpt/agent/vega/304-crush-pkg-run
+- fix(pkg): crush-pkg runs Crush CLI programs — args, quotas, .cvm (#304)
+- Merge pull request #303 from nixpt/agent/vega/302-fs-write-bytes
+- fix(sdk): fs.write writes bytes and buffers raw (#302)
+- Merge pull request #301 from nixpt/agent/muse/CRUSH-zorro-7
+- Merge main into agent/muse/CRUSH-zorro-7 (resolve against merged boa PRs)
+- Merge pull request #300 from nixpt/agent/muse/CRUSH-293-d3
+- Merge main into agent/muse/CRUSH-293-d3 (resolve against merged boa PRs)
+- Merge pull request #299 from nixpt/agent/muse/CRUSH-293
+- Merge main into agent/muse/CRUSH-293 (resolve against merged boa PRs)
+- Merge pull request #297 from nixpt/agent/muse/CRUSH-292
+- Merge main into agent/muse/CRUSH-292 (resolve against merged boa PRs)
+- Merge pull request #294 from nixpt/agent/muse/CRUSH-289
+- Merge main into agent/muse/CRUSH-289 (resolve against merged boa PRs)
+- Merge pull request #293 from nixpt/agent/muse/CRUSH-288
+- Merge main into agent/muse/CRUSH-288 (resolve against merged boa PRs)
+- Merge pull request #298 from nixpt/agent/muse/CRUSH-293-spread-probe
+- Merge pull request #296 from nixpt/agent/muse/CRUSH-zorro-5-6-probe
+- Merge pull request #295 from nixpt/agent/muse/CRUSH-290
+- Merge pull request #292 from nixpt/agent/muse/CRUSH-286
+- test(js): ctrl_finally is exact on boa — move it to BOA_FIXED (CRUSH-zorro-7)
+- CRUSH-zorro-7: boa try/finally runs on every JS-level exit
+- CRUSH-293 D3: call_value_apply opcode for value-callee spreads (boa)
+- CRUSH-290 review: === is total — identity for instances, classes, functions
+- CRUSH-293 (D2): spread arguments expand at known plain signatures
+- CRUSH-293: scope spread call arguments for the boa walker (ticket)
+- CRUSH-292: logical assignment (&&=, ||=, ??=) in the boa walker
+- CRUSH-zorro-5/6 probe: boa bare blocks proven, labeled jumps pinned loud
+- CRUSH-290: js.strict_eq capability for JS === / !== and switch case tests
+- Merge pull request #289 from nixpt/agent/muse/CRUSH-281
+- Merge pull request #288 from nixpt/agent/muse/CRUSH-284
+- CRUSH-281 review: pending classes are scoped per statement list and binding
+- CRUSH-290: file the === / !== never-compiles bug
+- CRUSH-289: optional chaining in the boa walker
+- CRUSH-288: new Map() / new Set() host constructors in the boa walker
+- CRUSH-287: destructuring declarations in the boa walker
+- CRUSH-284: drop unused variable in destructure
+- CRUSH-284 review: destructuring defaults fire on absence, not explicit null
+- Merge pull request #287 from nixpt/agent/kai/CRUSH-280-bench-fixtures-and-ticket-hygiene
+- Merge pull request #284 from nixpt/agent/nixp/CRUSH-275
+- CRUSH-281: new C() inside top-level functions sees module classes
+- docs(planning): wheel CI ticket is CRUSH-285 (CRUSH-275 is #281's 1.0 criteria)
+- docs(planning): load-of-program-function ticket is CRUSH-266a (a residue suffix; CRUSH-284 is #288's)
+- CRUSH-284: destructuring parameters in the boa walker
+- Merge pull request #286 from nixpt/agent/muse/CRUSH-280
+- Merge pull request #285 from nixpt/agent/muse/CRUSH-277-s5
+- docs(planning): load-of-program-function ticket is CRUSH-284 (CRUSH-283 is #285's print-hooks ticket)
+- CRUSH-286 re-review: kind forgetting covers logical/nested/loop/closure assignment
+- CRUSH-286 review 3: instance kind tracking forgets
+- CRUSH-286 review 1+2+4: member-call shapes validated after lowering
+- CRUSH-280: default/rest parameters on boa class members
+- CRUSH-285 re-review: statics chain walk stops at first holder; member_call bail ahead of grant split
+- docs(planning): load-of-program-function ticket is CRUSH-283 (CRUSH-281 is #285's)
+- Merge origin/main into CRUSH-277-s5 (CRUSH-266 exported declarations)
+- Merge remote-tracking branch 'origin/main' into agent/muse/CRUSH-277-s5
+- CRUSH-285 review 7+8: walk-time refusals stay walk-time; loader validates opcodes
+- CRUSH-285 review 6/6: class fields define, don't set; capture/branch guards
+- CRUSH-285 review 5/6: optimizer sees writes inside new arguments
+- CRUSH-285 review 3/6: statics are inherited, shared, and class-only
+- CRUSH-285 review 4/6: a missing method is a refusal, not a granted capability
+- CRUSH-285 review 2/6: block-bound instances call their own binding
+- CRUSH-285 review 1/6: accessors run on the caller's own stack
+- docs(planning): bench fixture ticket is CRUSH-282 (CRUSH-280 is #286's)
+- docs(planning): ticket hygiene — zorro-40/41 done, CRUSH-275 collision, zorro-44 status
+- test(bench): cast_compile fixtures re-recorded; CAST_FIXTURES_UPDATE mode (CRUSH-280)
+- Merge pull request #283 from nixpt/agent/muse/CRUSH-266
+- CRUSH-277 S5: super.m(), class fields, statics, corpus
+- CRUSH-277 S4: accessors run on the COSM VMs
+- CRUSH-277 S3: new, this and method calls end to end (boa)
+- feat(casm,vm): prototype_chain kinds run on the COSM VMs (CRUSH-277 S2)
+- test(sdk): a class field is the refused JS construct now (CRUSH-277 S1)
+- feat(cast,frontend,js): COSM transport + boa class emission (CRUSH-277 S1)
+- docs(planning): scope COSM K3 JS slice as CRUSH-277
+- docs: record the wheel decision and file CRUSH-275 (wheel CI coverage)
+- docs(crush-vm-py): document the ABI switch and the return_value contract
+- test(crush-vm-py): add a wheel smoke test
+- feat(crush-vm-py): surface VmResult.return_value from run_blob
+- fix(crush-vm-py): build the wheel against the stable ABI
+- test(js): boa exported function end-to-end; file CRUSH-276 blocker queue
+- fix(crush-lang-js): boa lowering keeps exported function declarations (CRUSH-266)
+- docs(planning): CRUSH-267 superseded by CRUSH-250 function values
+- fix(crush-lang-js): keep exported declarations when lowering to CAST (CRUSH-266)
+
+
+
 - **CASM/CVM1 versioning (CRUSH-277/278/280, CRUSH-285 review):** every
   program's CASM is now stamped with the current format version
   (CRUSH-278) — this applies to *all* programs, not only ones using

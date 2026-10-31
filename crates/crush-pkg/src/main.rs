@@ -150,22 +150,58 @@ struct GrantArgs {
     /// Grant one named export from --rust-plugin (repeatable).
     #[arg(long = "plugin-export", value_name = "EXPORT", requires = "rust_plugin")]
     plugin_exports: Vec<String>,
+    /// Maximum VM instruction steps (default: the manifest's
+    /// `[resources] gas`, else the VM default).
+    #[arg(long, value_name = "N")]
+    max_steps: Option<usize>,
+    /// Maximum VM stack slots.
+    #[arg(long, value_name = "N")]
+    max_stack: Option<usize>,
+    /// Maximum VM call depth.
+    #[arg(long, value_name = "N")]
+    max_call_depth: Option<usize>,
 }
 
 impl GrantArgs {
-    fn host_caps(&self) -> crush_vm::HostCaps {
+    /// The run's host capabilities; `args` is what `sys.args()` returns.
+    fn host_caps(&self, args: &[String]) -> crush_vm::HostCaps {
         crush_lang_sdk::HostCapsBuilder::new()
             .fs(self.fs)
             .fs_root(self.fs_root.to_string_lossy())
             .env(self.env)
             .time(self.time)
             .stdlib(true)
+            .args(args.to_vec())
             .build()
     }
 
-    fn runner(&self) -> crush_pkg::runners::CrushRunner {
+    /// VM quotas: the VM default, then the manifest's `[resources] gas` as
+    /// the step budget, then any `--max-*` flag (#304).
+    fn quotas(&self, manifest: &crush_pkg::manifest::Manifest) -> crush_vm::Quotas {
+        let mut quotas = crush_vm::Quotas::default();
+        if let Some(gas) = manifest.resources.gas {
+            quotas.max_steps = usize::try_from(gas).unwrap_or(usize::MAX);
+        }
+        if let Some(n) = self.max_steps {
+            quotas.max_steps = n;
+        }
+        if let Some(n) = self.max_stack {
+            quotas.max_stack = n;
+        }
+        if let Some(n) = self.max_call_depth {
+            quotas.max_call_depth = n;
+        }
+        quotas
+    }
+
+    fn runner(
+        &self,
+        manifest: &crush_pkg::manifest::Manifest,
+        args: &[String],
+    ) -> crush_pkg::runners::CrushRunner {
         crush_pkg::runners::CrushRunner {
-            host_caps: Some(self.host_caps()),
+            host_caps: Some(self.host_caps(args)),
+            quotas: self.quotas(manifest),
         }
     }
 
@@ -683,7 +719,7 @@ fn handle_run(args: Vec<String>, grants: &GrantArgs, strict_mode: bool) -> anyho
 
     let plugin_grants = grants.plugin_grants()?;
     let capsule_type = capsule_type_for_format(&manifest, format);
-    let runner = get_runner_with(&capsule_type, grants.runner());
+    let runner = get_runner_with(&capsule_type, grants.runner(&manifest, &args));
     let run_banner = || {
         println!(
             "running {} v{} ({})",
@@ -698,7 +734,7 @@ fn handle_run(args: Vec<String>, grants: &GrantArgs, strict_mode: bool) -> anyho
             anyhow::bail!("--rust-plugin is supported only for Crush packages");
         }
         grants
-            .runner()
+            .runner(&manifest, &args)
             .run_payload_with_plugins_before(&payload, &plugin_grants, run_banner)?
     };
     match result {
@@ -818,6 +854,8 @@ fn handle_default(
 
     let name = manifest.capsule.name.clone();
     let version = manifest.capsule.version.clone();
+    // The program's arguments ride in the runner's host caps (`sys.args()`).
+    let runner = grants.runner(&manifest, &args);
     let builder = PackageBuilder::new(manifest, root);
     // No separate `check` pass: `build` compiles the whole package (entry +
     // path deps), which is the stronger check. `PackageBuilder::check`
@@ -828,12 +866,8 @@ fn handle_default(
     builder
         .write_output(&output)
         .map_err(DefaultFailure::Builder)?;
-    // CrushRunner has no argv channel for Crush programs (same as
-    // `crush-pkg run -- ARGS` on a Crush capsule), so `args` stop here.
-    let _ = args;
     let plugin_grants = grants.plugin_grants().map_err(DefaultFailure::Run)?;
-    grants
-        .runner()
+    runner
         .run_program_with_plugins_before(&output.program, &plugin_grants, || {
             println!("running {name} v{version}");
         })

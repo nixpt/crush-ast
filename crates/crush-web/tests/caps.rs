@@ -157,8 +157,34 @@ fn env_grant_in_a_browser_is_an_empty_environment() {
 
 #[test]
 fn hosts_grants_stay_ungrantable() {
-    for grant in ["fs", "process", "net", "polyglot.bash"] {
+    for grant in ["process", "net", "polyglot.bash"] {
         let result = execute_with_options("io.print(1)\n", &granted(&[grant]));
         assert!(result.error.unwrap_or_default().contains("can't be granted in a browser"), "{grant}");
     }
+}
+
+/// `fs` (`--fs`): the file caps over an empty in-memory directory of the run's
+/// own, answering as an empty `--fs-root` does (crush-lang-sdk's
+/// `fs_memory_parity` test holds the two to the same answers). The programs
+/// are the language guide's `--fs` examples.
+#[test]
+fn fs_is_an_empty_directory_of_the_runs_own() {
+    for (source, out) in [
+        ("if fs.exists(\"notes.txt\") {\n    print(fs.read(\"notes.txt\"))\n} else {\n    print(\"no notes\")\n}\n", "no notes\n"),
+        ("print(fs.exists(\"missing.txt\"))\n", "0\n"),
+        (
+            "fs.write(\"out.txt\", \"hello\")\nprint(fs.read(\"out.txt\"))\nfs.mkdir(\"sub\")\nfs.write(\"sub/a.txt\", \"a\")\nprint(fs.list(\"sub\"))\n",
+            "hello\n[a.txt]\n",
+        ),
+    ] {
+        let result = execute_with_options(source, &granted(&["fs"]));
+        assert!(result.ok, "{source}: {:?}", result.error);
+        assert_eq!(result.output, out, "{source}");
+    }
+    let escape = execute_with_options("print(fs.read(\"../outside.txt\"))\n", &granted(&["fs"]));
+    assert!(escape.error.unwrap_or_default().contains("path escapes sandbox root: ../outside.txt"));
+    // a new run starts empty again
+    execute_with_options("fs.write(\"left.txt\", \"x\")\n", &granted(&["fs"]));
+    let next = execute_with_options("print(fs.exists(\"left.txt\"))\n", &granted(&["fs"]));
+    assert_eq!(next.output, "0\n");
 }

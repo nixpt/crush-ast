@@ -10,6 +10,7 @@ use std::ops::ControlFlow;
 
 use boa_ast::expression::access::{PropertyAccess, PropertyAccessField};
 use boa_ast::expression::{Expression, Identifier};
+use boa_ast::pattern::{ArrayPatternElement, ObjectPatternElement, Pattern};
 use boa_ast::function::FunctionDeclaration;
 use boa_ast::function::{FormalParameterList, FunctionBody};
 use boa_ast::statement::LabelledItem;
@@ -24,7 +25,7 @@ use crush_cast::{
 use super::builtins;
 use super::scope::{self, Sig, lexical_syms, param_syms, sig_of, var_syms};
 use super::{Lower, Meta, group};
-use crate::lower_common::{contains_loop_continue, for_in_guarded, rewrite_continue};
+use crate::lower_common::{contains_loop_continue, for_in_guarded, js_cap};
 
 /// Where `function` declarations are hoisted.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -126,6 +127,17 @@ impl Lower<'_> {
             let name = self.name(sym);
             self.scopes.declare_root(sym, name);
         }
+        // Classes register (names + signatures) before any function
+        // body lowers: the bodies only run after the whole module, so
+        // they may construct classes declared after them (CRUSH-281).
+        for item in &list {
+            self.preregister_kinds(std::slice::from_ref(*item));
+        }
+        for item in items {
+            if let TopItem::Module(ModuleItem::ExportDeclaration(e)) = item {
+                self.preregister_export(e);
+            }
+        }
 
         let mut body = Vec::new();
         for item in &list {
@@ -133,7 +145,7 @@ impl Lower<'_> {
         }
         let mut owned: Vec<StatementListItem> = list.iter().map(|i| (*i).clone()).collect();
         // An exported `function` declaration hoists exactly like a bare one
-        // (CRUSH-266): without this it never reached the hoisting pass, and
+        // (CRUSH-340): without this it never reached the hoisting pass, and
         // `export()` refused it, so no ES module's functions lowered at all.
         for item in items {
             if let TopItem::Module(ModuleItem::ExportDeclaration(e)) = item
@@ -234,7 +246,7 @@ impl Lower<'_> {
             ExportDeclaration::ReExport { .. } => {
                 Err(self.unsupported("a re-export (`export … from …`)", None))
             }
-            // Hoisted by `top_level` like a bare declaration (CRUSH-266);
+            // Hoisted by `top_level` like a bare declaration (CRUSH-340);
             // only the export itself is emitted here.
             ExportDeclaration::Declaration(Declaration::FunctionDeclaration(f)) => {
                 let name = self.resolve(f.name().sym());
@@ -278,12 +290,26 @@ impl Lower<'_> {
         let saved = std::mem::replace(&mut self.this_bound, false);
         let saved_super = self.super_ctor.take();
         let saved_instances = std::mem::take(&mut self.instance_kinds);
+        let saved_hosts = std::mem::take(&mut self.host_kinds);
         let saved_home = self.home_class.take();
         let saved_static = std::mem::replace(&mut self.in_static, false);
+        let saved_finally = std::mem::take(&mut self.finally_stack);
+        let saved_jumps = std::mem::take(&mut self.jump_targets);
+        let saved_signals = std::mem::take(&mut self.completion_signals);
+        let saved_try_depth = std::mem::replace(&mut self.try_depth, 0);
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        let saved_switch_floors = std::mem::take(&mut self.switch_loop_floors);
         let r = self.function_in_scope(params, body, span, declared);
+        self.finally_stack = saved_finally;
+        self.jump_targets = saved_jumps;
+        self.completion_signals = saved_signals;
+        self.try_depth = saved_try_depth;
+        self.loop_depth = saved_loop_depth;
+        self.switch_loop_floors = saved_switch_floors;
         self.this_bound = saved;
         self.super_ctor = saved_super;
         self.instance_kinds = saved_instances;
+        self.host_kinds = saved_hosts;
         self.home_class = saved_home;
         self.in_static = saved_static;
         self.scopes.leave_fn();
@@ -307,9 +333,23 @@ impl Lower<'_> {
         self.scopes.enter_fn();
         let saved = std::mem::replace(&mut self.this_bound, true);
         let saved_instances = std::mem::take(&mut self.instance_kinds);
+        let saved_hosts = std::mem::take(&mut self.host_kinds);
+        let saved_finally = std::mem::take(&mut self.finally_stack);
+        let saved_jumps = std::mem::take(&mut self.jump_targets);
+        let saved_signals = std::mem::take(&mut self.completion_signals);
+        let saved_try_depth = std::mem::replace(&mut self.try_depth, 0);
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        let saved_switch_floors = std::mem::take(&mut self.switch_loop_floors);
         let r = self.function_in_scope(params, body, span, true);
+        self.finally_stack = saved_finally;
+        self.jump_targets = saved_jumps;
+        self.completion_signals = saved_signals;
+        self.try_depth = saved_try_depth;
+        self.loop_depth = saved_loop_depth;
+        self.switch_loop_floors = saved_switch_floors;
         self.this_bound = saved;
         self.instance_kinds = saved_instances;
+        self.host_kinds = saved_hosts;
         self.scopes.leave_fn();
         let (mut lowered_params, body) = r?;
         lowered_params.insert(0, ("this".to_string(), CastType::Any));
@@ -332,11 +372,25 @@ impl Lower<'_> {
         let saved = std::mem::replace(&mut self.this_bound, true);
         let saved_super = self.super_ctor.take();
         let saved_instances = std::mem::take(&mut self.instance_kinds);
+        let saved_hosts = std::mem::take(&mut self.host_kinds);
         let saved_static = std::mem::replace(&mut self.in_static, true);
+        let saved_finally = std::mem::take(&mut self.finally_stack);
+        let saved_jumps = std::mem::take(&mut self.jump_targets);
+        let saved_signals = std::mem::take(&mut self.completion_signals);
+        let saved_try_depth = std::mem::replace(&mut self.try_depth, 0);
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        let saved_switch_floors = std::mem::take(&mut self.switch_loop_floors);
         let r = self.function_in_scope(params, body, span, true);
+        self.finally_stack = saved_finally;
+        self.jump_targets = saved_jumps;
+        self.completion_signals = saved_signals;
+        self.try_depth = saved_try_depth;
+        self.loop_depth = saved_loop_depth;
+        self.switch_loop_floors = saved_switch_floors;
         self.this_bound = saved;
         self.super_ctor = saved_super;
         self.instance_kinds = saved_instances;
+        self.host_kinds = saved_hosts;
         self.in_static = saved_static;
         self.scopes.leave_fn();
         let (lowered_params, mut lowered_body) = r?;
@@ -372,7 +426,15 @@ impl Lower<'_> {
         declared: bool,
     ) -> anyhow::Result<LoweredFn> {
         let mut lowered_params = Vec::new();
-        let mut defaults = Vec::new();
+        // Prologue steps in parameter order: a default runs when its
+        // hidden flag says no argument was given, and a destructuring
+        // parameter then binds its names from the (possibly defaulted)
+        // value (CRUSH-284).
+        enum Prologue<'x> {
+            Default(String, &'x Expression),
+            Destructure(String, &'x Pattern),
+        }
+        let mut steps: Vec<Prologue<'_>> = Vec::new();
         for p in params.as_ref() {
             if !declared && p.is_rest_param() {
                 return Err(self.unsupported(
@@ -388,14 +450,32 @@ impl Lower<'_> {
                     Some(init.span()),
                 ));
             }
-            let Binding::Identifier(id) = p.variable().binding() else {
-                return Err(self.unsupported("a destructuring parameter", span));
-            };
-            let name = self.name(id.sym());
-            self.scopes.declare_root(id.sym(), name.clone());
-            lowered_params.push((name.clone(), CastType::Any));
-            if let Some(init) = p.init() {
-                defaults.push((name, init));
+            match p.variable().binding() {
+                Binding::Identifier(id) => {
+                    let name = self.name(id.sym());
+                    self.scopes.declare_root(id.sym(), name.clone());
+                    lowered_params.push((name.clone(), CastType::Any));
+                    if let Some(init) = p.init() {
+                        steps.push(Prologue::Default(name, init));
+                    }
+                }
+                Binding::Pattern(pat) => {
+                    // A destructuring parameter is one visible
+                    // parameter holding the value; the prologue binds
+                    // its names from it (CRUSH-284).
+                    let value = self.hidden("__destr");
+                    let mut syms = Vec::new();
+                    scope::binding_syms(p.variable().binding(), &mut syms);
+                    for sym in syms {
+                        let name = self.name(sym);
+                        self.scopes.declare_root(sym, name);
+                    }
+                    lowered_params.push((value.clone(), CastType::Any));
+                    if let Some(init) = p.init() {
+                        steps.push(Prologue::Default(value.clone(), init));
+                    }
+                    steps.push(Prologue::Destructure(value, pat));
+                }
             }
         }
         // Defaults run first, in parameter order, each when its argument
@@ -403,7 +483,18 @@ impl Lower<'_> {
         // lowered before the body's names are declared, so they see the
         // parameters and the enclosing scope, as in JS.
         let mut prologue = Vec::new();
-        for (name, init) in defaults {
+        for step in steps {
+            let (name, init) = match step {
+                Prologue::Default(name, init) => (name, init),
+                Prologue::Destructure(value, pat) => {
+                    let source = CastExpr::Var {
+                        name: value,
+                        meta: self.meta(span),
+                    };
+                    self.destructure(source, pat, None, span, &mut prologue)?;
+                    continue;
+                }
+            };
             let flag = self.hidden(&format!("__has_{name}_"));
             let m = self.meta(Some(init.span()));
             let value = self.expr(init)?;
@@ -444,11 +535,318 @@ impl Lower<'_> {
             let name = self.name(sym);
             self.scopes.declare_root(sym, name);
         }
+        // Classes in this body register before its functions lower,
+        // as at the top level (CRUSH-281). The registration is this
+        // list's alone: it is restored away when the body is done, so
+        // a class local to one function is invisible to its siblings.
+        let saved_kinds = self.visible_kinds.clone();
+        let saved_bindings = self.class_bindings.clone();
+        self.preregister_kinds(items);
         let mut out = prologue;
         out.extend(self.uninit_vars(items));
         out.extend(self.hoisted_functions(items, Hoist::Function)?);
         out.extend(self.items(items)?);
+        self.visible_kinds = saved_kinds;
+        self.class_bindings = saved_bindings;
         Ok((lowered_params, out))
+    }
+
+    /// Bind a destructuring pattern's names from its value
+    /// (CRUSH-284): each property or element is read once, a
+    /// per-element default replaces an *absent* value — JS's
+    /// `undefined`; a value present as null keeps null, so absence is
+    /// tested (a has-key check, the length guard), never `== null` —
+    /// and nested patterns recurse. Object/array rest elements and
+    /// assignment targets stay loud.
+    ///
+    /// `decl` says how a leaf name is bound: `None` for a parameter
+    /// (a plain local), `Some(block)` for a declaration (CRUSH-287),
+    /// which assigns instead when the binding was created on entry
+    /// to its block, exactly like an identifier declaration.
+    fn destructure(
+        &mut self,
+        source: CastExpr,
+        pattern: &Pattern,
+        decl: Option<bool>,
+        span: Option<Span>,
+        out: &mut Vec<CastStmt>,
+    ) -> anyhow::Result<()> {
+        match pattern {
+            Pattern::Object(o) => {
+                for el in o.bindings() {
+                    match el {
+                        ObjectPatternElement::SingleName {
+                            name,
+                            ident,
+                            default_init,
+                        } => {
+                            let field = self.property_name(name, span)?;
+                            let value = self.object_element_value(
+                                &source,
+                                &field,
+                                default_init.as_ref(),
+                                span,
+                                out,
+                            )?;
+                            self.bind_leaf(ident.sym(), value, decl, span, out);
+                        }
+                        ObjectPatternElement::Pattern {
+                            name,
+                            pattern,
+                            default_init,
+                        } => {
+                            let field = self.property_name(name, span)?;
+                            let value = self.object_element_value(
+                                &source,
+                                &field,
+                                default_init.as_ref(),
+                                span,
+                                out,
+                            )?;
+                            self.destructure(value, pattern, decl, span, out)?;
+                        }
+                        ObjectPatternElement::RestProperty { .. } => {
+                            return Err(self.unsupported(
+                                "an object rest property (`{...rest}`) in a destructuring parameter",
+                                span,
+                            ));
+                        }
+                        ObjectPatternElement::AssignmentPropertyAccess { .. }
+                        | ObjectPatternElement::AssignmentRestPropertyAccess { .. } => {
+                            return Err(self.unsupported(
+                                "an assignment target in a destructuring parameter",
+                                span,
+                            ));
+                        }
+                    }
+                }
+            }
+            Pattern::Array(a) => {
+                for (i, el) in a.bindings().iter().enumerate() {
+                    match el {
+                        ArrayPatternElement::Elision => {}
+                        ArrayPatternElement::SingleName {
+                            ident,
+                            default_init,
+                        } => {
+                            let value = self.array_element_value(
+                                &source,
+                                i,
+                                default_init.as_ref(),
+                                span,
+                                out,
+                            )?;
+                            self.bind_leaf(ident.sym(), value, decl, span, out);
+                        }
+                        ArrayPatternElement::Pattern {
+                            pattern,
+                            default_init,
+                        } => {
+                            let value = self.array_element_value(
+                                &source,
+                                i,
+                                default_init.as_ref(),
+                                span,
+                                out,
+                            )?;
+                            self.destructure(value, pattern, decl, span, out)?;
+                        }
+                        ArrayPatternElement::SingleNameRest { .. }
+                        | ArrayPatternElement::PatternRest { .. } => {
+                            return Err(self.unsupported(
+                                "an array rest element (`[...rest]`) in a destructuring parameter",
+                                span,
+                            ));
+                        }
+                        ArrayPatternElement::PropertyAccess { .. }
+                        | ArrayPatternElement::PropertyAccessRest { .. } => {
+                            return Err(self.unsupported(
+                                "an assignment target in a destructuring parameter",
+                                span,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Bind one destructured name to its value: a declaration of an
+    /// entry-created (predeclared) block binding assigns it, anything
+    /// else declares it — mirroring an identifier declaration
+    /// (CRUSH-287).
+    fn bind_leaf(
+        &mut self,
+        sym: Sym,
+        value: CastExpr,
+        decl: Option<bool>,
+        span: Option<Span>,
+        out: &mut Vec<CastStmt>,
+    ) {
+        let name = self.resolve(sym);
+        match decl {
+            None => out.push(self.var_decl_stmt(name, value, false, span)),
+            Some(block) if block && self.scopes.is_predeclared(sym) => {
+                let m = self.meta(span);
+                out.push(CastStmt::ExprStmt {
+                    expr: CastExpr::Call {
+                        function: "__crush_assign__".to_string(),
+                        args: vec![
+                            CastExpr::Var {
+                                name,
+                                meta: m.clone(),
+                            },
+                            value,
+                        ],
+                        meta: m.clone(),
+                    },
+                    meta: m,
+                });
+            }
+            Some(block) => out.push(self.var_decl_stmt(name, value, block, span)),
+        }
+    }
+
+    /// An object property for destructuring (CRUSH-284): read once
+    /// into a hidden temporary; the per-property default applies only
+    /// when the property is *absent* (`__crush_has__`, the CASM
+    /// `has_member`) — a property present with value null keeps its
+    /// null, exactly as JS's `undefined` test behaves.
+    fn object_element_value(
+        &mut self,
+        source: &CastExpr,
+        field: &str,
+        default_init: Option<&Expression>,
+        span: Option<Span>,
+        out: &mut Vec<CastStmt>,
+    ) -> anyhow::Result<CastExpr> {
+        let m = self.meta(span);
+        let temp = self.hidden("__dval");
+        out.push(self.var_decl_stmt(
+            temp.clone(),
+            CastExpr::GetField {
+                target: Box::new(source.clone()),
+                field: field.to_string(),
+                meta: m.clone(),
+            },
+            false,
+            span,
+        ));
+        let temp_var = CastExpr::Var {
+            name: temp.clone(),
+            meta: m.clone(),
+        };
+        if let Some(init) = default_init {
+            let value = self.expr(init)?;
+            out.push(CastStmt::If {
+                condition: CastExpr::UnaryOp {
+                    operator: "!".to_string(),
+                    operand: Box::new(CastExpr::Call {
+                        function: "__crush_has__".to_string(),
+                        args: vec![
+                            source.clone(),
+                            CastExpr::StringLiteral {
+                                value: field.to_string(),
+                                meta: m.clone(),
+                            },
+                        ],
+                        meta: m.clone(),
+                    }),
+                    meta: m.clone(),
+                },
+                then_body: vec![CastStmt::ExprStmt {
+                    expr: CastExpr::Call {
+                        function: "__crush_assign__".to_string(),
+                        args: vec![temp_var.clone(), value],
+                        meta: m.clone(),
+                    },
+                    meta: m.clone(),
+                }],
+                else_body: None,
+                meta: m,
+            });
+        }
+        Ok(temp_var)
+    }
+
+    /// An array element for destructuring (CRUSH-284): the read is
+    /// guarded by the length — past the end the element is absent
+    /// (JS's `undefined`, never a bounds error) and the per-element
+    /// default applies in the guard's `else`; an element present as
+    /// null keeps its null.
+    fn array_element_value(
+        &mut self,
+        source: &CastExpr,
+        i: usize,
+        default_init: Option<&Expression>,
+        span: Option<Span>,
+        out: &mut Vec<CastStmt>,
+    ) -> anyhow::Result<CastExpr> {
+        let m = self.meta(span);
+        let temp = self.hidden("__dval");
+        out.push(self.var_decl_stmt(
+            temp.clone(),
+            CastExpr::NullLiteral { meta: m.clone() },
+            false,
+            span,
+        ));
+        let temp_var = CastExpr::Var {
+            name: temp.clone(),
+            meta: m.clone(),
+        };
+        let else_body = match default_init {
+            Some(init) => {
+                let value = self.expr(init)?;
+                Some(vec![CastStmt::ExprStmt {
+                    expr: CastExpr::Call {
+                        function: "__crush_assign__".to_string(),
+                        args: vec![temp_var.clone(), value],
+                        meta: m.clone(),
+                    },
+                    meta: m.clone(),
+                }])
+            }
+            None => None,
+        };
+        out.push(CastStmt::If {
+            condition: CastExpr::BinaryOp {
+                operator: "<".to_string(),
+                left: Box::new(CastExpr::IntLiteral {
+                    value: i as i64,
+                    meta: m.clone(),
+                }),
+                right: Box::new(crate::lower_common::length_of(
+                    source.clone(),
+                    m.clone(),
+                )),
+                meta: m.clone(),
+            },
+            then_body: vec![CastStmt::ExprStmt {
+                expr: CastExpr::Call {
+                    function: "__crush_assign__".to_string(),
+                    args: vec![
+                        temp_var,
+                        CastExpr::Index {
+                            target: Box::new(source.clone()),
+                            index: Box::new(CastExpr::IntLiteral {
+                                value: i as i64,
+                                meta: m.clone(),
+                            }),
+                            meta: m.clone(),
+                        },
+                    ],
+                    meta: m.clone(),
+                },
+                meta: m.clone(),
+            }],
+            else_body,
+            meta: m,
+        });
+        Ok(CastExpr::Var {
+            name: temp,
+            meta: self.meta(span),
+        })
     }
 
     /// `function f() {}` in a scope, before the other statements of the
@@ -538,6 +936,12 @@ impl Lower<'_> {
         }
         for (i, f) in decls.iter().enumerate() {
             let span = Some(f.name().span());
+            if f.parameters().as_ref().iter().any(|p| p.is_rest_param()) {
+                let sig = &sigs[i];
+                if let Some(global) = lifted.iter().find(|(sym, _, _)| *sym == f.name().sym()).map(|(_, name, _)| name.clone()) {
+                    self.fn_sigs.insert(global, sig.clone());
+                }
+            }
             if lift[i] {
                 let saved = self.scopes.isolate();
                 self.scopes.enter_fn();
@@ -640,11 +1044,19 @@ impl Lower<'_> {
         let mut syms = Vec::new();
         lexical_syms(items, &mut syms);
         self.declare_block_syms(syms);
+        // A block is a statement list of its own (CRUSH-281): its
+        // classes pre-register for its nested functions, and the
+        // registration is restored away at the end of the block.
+        let saved_kinds = self.visible_kinds.clone();
+        let saved_bindings = self.class_bindings.clone();
+        self.preregister_kinds(items);
         let r = (|| {
             let mut out = self.hoisted_functions(items, Hoist::Block)?;
             out.extend(self.items(items)?);
             Ok(out)
         })();
+        self.visible_kinds = saved_kinds;
+        self.class_bindings = saved_bindings;
         self.scopes.pop_block();
         r
     }
@@ -711,10 +1123,11 @@ impl Lower<'_> {
     }
 
     fn variable(&mut self, v: &Variable, block: bool) -> anyhow::Result<Vec<CastStmt>> {
+        if let Binding::Pattern(pat) = v.binding() {
+            return self.destructuring_decl(v, pat, block);
+        }
         let Binding::Identifier(id) = v.binding() else {
-            return Err(
-                self.unsupported("a destructuring declaration", v.init().map(Spanned::span))
-            );
+            unreachable!("bindings are identifiers or patterns");
         };
         let name = self.resolve(id.sym());
         // `const c = new Counter()`: the binding holds an instance of a
@@ -724,6 +1137,12 @@ impl Lower<'_> {
         }
         if let Some(kind) = v.init().and_then(|init| self.new_kind(init)) {
             self.instance_kinds.insert(name.clone(), kind);
+            self.host_kinds.remove(&name);
+        } else if let Some(kind) = v.init().and_then(|init| self.host_kind_of(init)) {
+            // `const m = new Map()`: a proven host collection, so
+            // `m.set(...)` lowers to the helpers (CRUSH-288).
+            self.host_kinds.insert(name.clone(), kind);
+            self.instance_kinds.remove(&name);
         }
         let span = v.init().map(Spanned::span);
         let mut value = match v.init() {
@@ -768,6 +1187,47 @@ impl Lower<'_> {
         }
         prefix.push(self.var_decl_stmt(name, value, block, span));
         Ok(prefix)
+    }
+
+    /// A destructuring declaration (CRUSH-287): the initializer is
+    /// evaluated once into a hidden temporary, then the pattern binds
+    /// its names from it. Without an initializer the names bind null
+    /// (JS's `undefined`) — no destructuring happens.
+    fn destructuring_decl(
+        &mut self,
+        v: &Variable,
+        pat: &Pattern,
+        block: bool,
+    ) -> anyhow::Result<Vec<CastStmt>> {
+        let span = v.init().map(Spanned::span);
+        let mut syms = Vec::new();
+        scope::binding_syms(v.binding(), &mut syms);
+        // What a branch assigns must be forgotten after it, as for
+        // identifier declarations.
+        if self.branch_depth > 0 {
+            for sym in &syms {
+                self.flow_assigned.insert(self.resolve(*sym));
+            }
+        }
+        let mut out = Vec::new();
+        let Some(init) = v.init() else {
+            for sym in syms {
+                let value = CastExpr::NullLiteral {
+                    meta: self.meta(span),
+                };
+                self.bind_leaf(sym, value, Some(block), span, &mut out);
+            }
+            return Ok(out);
+        };
+        let value = self.expr(init)?;
+        let temp = self.hidden("__dsrc");
+        out.push(self.var_decl_stmt(temp.clone(), value, false, span));
+        let source = CastExpr::Var {
+            name: temp,
+            meta: self.meta(span),
+        };
+        self.destructure(source, pat, Some(block), span, &mut out)?;
+        Ok(out)
     }
 
     /// `x = null` at the start of a function for each `var x;` without an
@@ -815,6 +1275,121 @@ impl Lower<'_> {
 
     // ── Statements ──────────────────────────────────────────────────────────
 
+    /// Emit the active finally bodies from the top of the stack down to
+    /// `keep_depth` (innermost first). `cleanup(0)` runs every active finally.
+    fn cleanup(&self, keep_depth: usize) -> Vec<CastStmt> {
+        let keep = keep_depth.min(self.finally_stack.len());
+        self.finally_stack[keep..]
+            .iter()
+            .rev()
+            .flat_map(|body| body.iter().cloned())
+            .collect()
+    }
+
+    fn jump(&mut self, is_continue: bool, meta: Meta) -> anyhow::Result<Vec<CastStmt>> {
+        if is_continue
+            && self.switch_loop_floors.last().is_some_and(|floor| self.loop_depth <= *floor)
+        {
+            return Err(self.unsupported("`continue` inside a `switch`", None));
+        }
+        let target = if is_continue {
+            self.jump_targets.iter().rev().find(|target| target.is_loop)
+        } else {
+            self.jump_targets.last()
+        }
+        .cloned()
+        .ok_or_else(|| self.unsupported("a `break` or `continue` without a target", None))?;
+        if is_continue && target.is_switch {
+            return Err(self.unsupported("`continue` inside a `switch`", None));
+        }
+        let action = if is_continue { target.continue_action } else { target.break_action };
+        if target.try_depth == self.try_depth && target.finally_depth == self.finally_stack.len() {
+            return Ok(action);
+        }
+        // Unique string token (not an empty object): CAST `===` lowers to
+        // Value::eq, and two empty records compare equal structurally.
+        let token = self.hidden("__crush_completion_");
+        self.completion_signals.push(super::CompletionSignal {
+            token: token.clone(),
+            target_try_depth: target.try_depth,
+            action,
+        });
+        Ok(vec![CastStmt::Throw {
+            value: CastExpr::StringLiteral { value: token, meta: meta.clone() },
+            meta,
+        }])
+    }
+
+    fn completion_condition(&self, name: &str, signals: &[super::CompletionSignal], meta: &Meta) -> Option<CastExpr> {
+        signals.iter().map(|signal| CastExpr::BinaryOp {
+            operator: "==".to_string(),
+            left: Box::new(CastExpr::Var { name: name.to_string(), meta: meta.clone() }),
+            right: Box::new(CastExpr::StringLiteral { value: signal.token.clone(), meta: meta.clone() }),
+            meta: meta.clone(),
+        }).reduce(|left, right| CastExpr::BinaryOp {
+            operator: "||".to_string(), left: Box::new(left), right: Box::new(right), meta: meta.clone(),
+        })
+    }
+
+    fn dispatch_finally(
+        &self,
+        error_var: &str,
+        finalizer: &[CastStmt],
+        boundary_try_depth: usize,
+        signals: &[super::CompletionSignal],
+        meta: &Meta,
+    ) -> Vec<CastStmt> {
+        let rethrow = CastStmt::Throw {
+            value: CastExpr::Var { name: error_var.to_string(), meta: meta.clone() }, meta: meta.clone(),
+        };
+        let mut handler = finalizer.to_vec();
+        handler.push(rethrow.clone());
+        for signal in signals.iter().rev() {
+            let mut action = finalizer.to_vec();
+            if signal.target_try_depth == boundary_try_depth {
+                action.extend(signal.action.iter().cloned());
+            } else {
+                action.push(rethrow.clone());
+            }
+            handler = vec![CastStmt::If {
+                condition: CastExpr::BinaryOp {
+                    operator: "==".to_string(),
+                    left: Box::new(CastExpr::Var { name: error_var.to_string(), meta: meta.clone() }),
+                    right: Box::new(CastExpr::StringLiteral { value: signal.token.clone(), meta: meta.clone() }),
+                    meta: meta.clone(),
+                },
+                then_body: action,
+                else_body: Some(handler),
+                meta: meta.clone(),
+            }];
+        }
+        handler
+    }
+
+    fn loop_target(&mut self, continue_prefix: &[CastStmt]) -> super::JumpTarget {
+        let meta = self.meta(None);
+        let mut continue_action = continue_prefix.to_vec();
+        continue_action.push(CastStmt::Continue { meta: meta.clone() });
+        super::JumpTarget {
+            finally_depth: self.finally_stack.len(),
+            try_depth: self.try_depth,
+            is_switch: false,
+            is_loop: true,
+            break_action: vec![CastStmt::Break { meta: meta.clone() }],
+            continue_action,
+        }
+    }
+
+    fn loop_body_with_prefix(&mut self, body: &Statement, prefix: &[CastStmt]) -> anyhow::Result<Vec<CastStmt>> {
+        let target = self.loop_target(prefix);
+        self.jump_targets.push(target);
+        self.loop_depth += 1;
+        let result = self.body(body);
+        self.loop_depth -= 1;
+        self.jump_targets.pop();
+        result
+    }
+
     pub(super) fn stmt(&mut self, s: &Statement) -> anyhow::Result<Vec<CastStmt>> {
         let span = stmt_span(s);
         let m = self.meta(span);
@@ -837,6 +1412,7 @@ impl Lower<'_> {
                 | Statement::Try(_)
         );
         let saved_kinds = control.then(|| self.instance_kinds.clone());
+        let saved_hosts = control.then(|| self.host_kinds.clone());
         if control {
             self.branch_depth += 1;
         }
@@ -859,15 +1435,18 @@ impl Lower<'_> {
             for sym in syms {
                 let name = self.resolve(sym);
                 self.instance_kinds.remove(&name);
+                self.host_kinds.remove(&name);
             }
         }
         let r = self.stmt_dispatch(s, span, m);
         if control {
             self.branch_depth -= 1;
             self.instance_kinds = saved_kinds.expect("control statements save the kinds");
+            self.host_kinds = saved_hosts.expect("control statements save the kinds");
             let assigned = std::mem::take(&mut self.flow_assigned);
             for name in &assigned {
                 self.instance_kinds.remove(name);
+                self.host_kinds.remove(name);
             }
             if self.branch_depth > 0 {
                 // An enclosing control statement forgets them too.
@@ -904,7 +1483,7 @@ impl Lower<'_> {
             }
             Statement::WhileLoop(w) => {
                 let condition = self.expr(w.condition())?;
-                let body = self.body(w.body())?;
+                let body = self.loop_body_with_prefix(w.body(), &[])?;
                 vec![CastStmt::While {
                     condition: Box::new(condition),
                     body,
@@ -924,8 +1503,7 @@ impl Lower<'_> {
                     else_body: None,
                     meta: m.clone(),
                 };
-                let mut body =
-                    rewrite_continue(self.body(dw.body())?, std::slice::from_ref(&exit_check));
+                let mut body = self.loop_body_with_prefix(dw.body(), std::slice::from_ref(&exit_check))?;
                 body.push(exit_check);
                 vec![CastStmt::While {
                     condition: Box::new(CastExpr::BoolLiteral {
@@ -954,7 +1532,13 @@ impl Lower<'_> {
             Statement::ForInLoop(fi) => {
                 let is_object = matches!(unparen(fi.target()), Expression::ObjectLiteral(_));
                 let iterable = self.expr(fi.target())?;
-                let (variable, body, scoped) = self.for_head(fi.initializer(), fi.body(), span)?;
+                let target = self.loop_target(&[]);
+                self.jump_targets.push(target);
+                self.loop_depth += 1;
+                let result = self.for_head(fi.initializer(), fi.body(), span);
+                self.loop_depth -= 1;
+                self.jump_targets.pop();
+                let (variable, body, scoped) = result?;
                 let out = if is_object {
                     CastStmt::For {
                         variable,
@@ -976,7 +1560,13 @@ impl Lower<'_> {
                     return Err(self.unsupported("`for await`", span));
                 }
                 let iterable = self.expr(fo.iterable())?;
-                let (variable, body, scoped) = self.for_head(fo.initializer(), fo.body(), span)?;
+                let target = self.loop_target(&[]);
+                self.jump_targets.push(target);
+                self.loop_depth += 1;
+                let result = self.for_head(fo.initializer(), fo.body(), span);
+                self.loop_depth -= 1;
+                self.jump_targets.pop();
+                let (variable, body, scoped) = result?;
                 if scoped {
                     self.scopes.pop_block();
                 }
@@ -995,30 +1585,50 @@ impl Lower<'_> {
             Statement::Continue(c) if c.label().is_some() => {
                 return Err(self.unsupported("a labeled `continue` (`continue label`)", span));
             }
-            Statement::Break(_) => vec![CastStmt::Break { meta: m }],
-            Statement::Continue(_) => vec![CastStmt::Continue { meta: m }],
+            Statement::Break(_) => self.jump(false, m)?,
+            Statement::Continue(_) => self.jump(true, m)?,
             Statement::Return(r) => {
                 let value = match r.target() {
-                    Some(e) => Some(self.expr(e)?),
+                    Some(e) => {
+                        let captured = self.hidden("__crush_return_");
+                        let evaluated = self.expr(e)?;
+                        let mut out = vec![self.var_decl_stmt(captured.clone(), evaluated, false, span)];
+                        out.extend(self.cleanup(0));
+                        out.push(CastStmt::Return { value: Some(CastExpr::Var { name: captured, meta: m.clone() }), meta: m });
+                        return Ok(out);
+                    }
                     None => None,
                 };
-                vec![CastStmt::Return { value, meta: m }]
+                let mut out = self.cleanup(0);
+                out.push(CastStmt::Return { value, meta: m });
+                out
             }
-            Statement::Throw(t) => vec![CastStmt::Throw {
-                value: self.expr(t.target())?,
-                meta: m,
-            }],
+            Statement::Throw(t) => {
+                let value = self.expr(t.target())?;
+                vec![CastStmt::Throw { value, meta: m }]
+            }
             Statement::Try(t) => {
-                // `finally` must run on return and on throw.
-                if t.finally().is_some() {
-                    return Err(self.unsupported("`try … finally`", span));
+                // Runtime VmErrors are returned directly by fallible VM ops
+                // and bypass CAST TryCatch (and this duplicated-finally route),
+                // matching existing try/catch behavior. Typed runtime-error
+                // exceptions are CRUSH-zorro-34, not this walker change.
+                let saved_signal_count = self.completion_signals.len();
+                let outer_try_depth = self.try_depth;
+                let outer_finally_depth = self.finally_stack.len();
+                let finalizer = match t.finally() {
+                    Some(f) => Some(self.block(f.block().statement_list().statements())?),
+                    None => None,
+                };
+                if let Some(body) = &finalizer {
+                    self.finally_stack.push(body.clone());
                 }
+                self.try_depth += 1;
                 let body = self.block(t.block().statement_list().statements())?;
                 let (error_var, handler) = match t.catch() {
                     Some(c) => {
                         self.scopes.push_block();
                         let r = (|| {
-                            let var = match c.parameter() {
+                                let var = match c.parameter() {
                                 Some(Binding::Identifier(id)) => {
                                     let fresh = self.fresh_name(id.sym());
                                     self.scopes.declare_block(id.sym(), fresh.clone());
@@ -1031,19 +1641,67 @@ impl Lower<'_> {
                                 }
                                 None => self.hidden("__catch_"),
                             };
-                            Ok((var, self.block(c.block().statement_list().statements())?))
+                            let handler = self.block(c.block().statement_list().statements())?;
+                            Ok((var, handler))
                         })();
                         self.scopes.pop_block();
                         r?
                     }
                     None => (self.hidden("__catch_"), vec![]),
                 };
-                vec![CastStmt::TryCatch {
-                    body,
-                    error_var,
-                    handler,
-                    meta: m,
-                }]
+                self.try_depth = outer_try_depth;
+                let local_signals = self.completion_signals.split_off(saved_signal_count);
+                let signals_outward: Vec<_> = local_signals
+                    .iter()
+                    .filter(|signal| signal.target_try_depth < outer_try_depth)
+                    .cloned()
+                    .collect();
+                let mut user_handler = handler;
+                if t.catch().is_some()
+                    && let Some(condition) = self.completion_condition(&error_var, &local_signals, &m)
+                {
+                    user_handler.insert(0, CastStmt::If {
+                        condition,
+                        then_body: vec![CastStmt::Throw {
+                            value: CastExpr::Var { name: error_var.clone(), meta: m.clone() },
+                            meta: m.clone(),
+                        }],
+                        else_body: Some(vec![]),
+                        meta: m.clone(),
+                    });
+                }
+                let source_try = if t.catch().is_some() {
+                    vec![CastStmt::TryCatch { body, error_var, handler: user_handler, meta: m.clone() }]
+                } else {
+                    body
+                };
+                let mut out = if finalizer.is_some() || !local_signals.is_empty() {
+                    let marker = self.hidden("__crush_completion_error_");
+                    let mut dispatch = self.dispatch_finally(
+                        &marker,
+                        finalizer.as_deref().unwrap_or(&[]),
+                        outer_try_depth,
+                        &local_signals,
+                        &m,
+                    );
+                    if finalizer.is_none() {
+                        // No cleanup at this level: pass the private completion
+                        // through the CAST handler unchanged to the loop boundary.
+                        dispatch = vec![CastStmt::Throw {
+                            value: CastExpr::Var { name: marker.clone(), meta: m.clone() },
+                            meta: m.clone(),
+                        }];
+                    }
+                    vec![CastStmt::TryCatch { body: source_try, error_var: marker, handler: dispatch, meta: m.clone() }]
+                } else {
+                    source_try
+                };
+                if let Some(finally_body) = finalizer {
+                    out.extend(finally_body);
+                }
+                self.completion_signals.extend(signals_outward);
+                self.finally_stack.truncate(outer_finally_depth);
+                out
             }
             // A label nothing jumps to is harmless (labeled jumps are refused).
             Statement::Labelled(l) => match l.item() {
@@ -1109,7 +1767,7 @@ impl Lower<'_> {
         if let Some(u) = fl.final_expr() {
             update.extend(self.expr_to_stmts(u)?);
         }
-        let mut body = rewrite_continue(self.body(fl.body())?, &update);
+        let mut body = self.loop_body_with_prefix(fl.body(), &update)?;
         body.extend(update);
         out.push(CastStmt::While {
             condition: Box::new(condition),
@@ -1219,14 +1877,10 @@ impl Lower<'_> {
             let Some(test) = case.condition() else {
                 continue;
             };
-            let test = self.expr(test)?;
+            // JS case matching is strict equality (CRUSH-290).
+            let test = js_cap("js.strict_eq", vec![var(&val), self.expr(test)?], m.clone());
             chain = Some(vec![CastStmt::If {
-                condition: CastExpr::BinaryOp {
-                    operator: "===".to_string(),
-                    left: Box::new(var(&val)),
-                    right: Box::new(test),
-                    meta: m.clone(),
-                },
+                condition: test,
                 then_body: vec![assign_start(i)],
                 else_body: Some(chain.take().unwrap_or_else(|| fallback.clone())),
                 meta: m.clone(),
@@ -1241,6 +1895,16 @@ impl Lower<'_> {
         out.extend(chain.unwrap_or(fallback));
 
         self.scopes.push_block();
+        let switch_target = super::JumpTarget {
+            finally_depth: self.finally_stack.len(),
+            try_depth: self.try_depth,
+            is_loop: false,
+            is_switch: true,
+            break_action: vec![CastStmt::Break { meta: m.clone() }],
+            continue_action: vec![],
+        };
+        self.jump_targets.push(switch_target);
+        self.switch_loop_floors.push(self.loop_depth);
         let r = (|| {
             let mut syms = Vec::new();
             for c in cases {
@@ -1272,6 +1936,8 @@ impl Lower<'_> {
             Ok(body)
         })();
         self.scopes.pop_block();
+        self.switch_loop_floors.pop();
+        self.jump_targets.pop();
         out.push(CastStmt::While {
             condition: Box::new(CastExpr::BoolLiteral {
                 value: true,

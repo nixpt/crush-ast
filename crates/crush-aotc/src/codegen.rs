@@ -510,7 +510,7 @@ impl AotcCompiler {
                 }
                 // Function values (CRUSH-251) run on the VMs only: refuse
                 // them here rather than drop them as an unhandled op.
-                "make_closure" | "call_value" => {
+                "make_closure" | "call_value" | "call_value_apply" => {
                     anyhow::bail!(
                         "crush-aotc: `{}` (function values, CRUSH-251) isn't supported by this backend",
                         instr.op

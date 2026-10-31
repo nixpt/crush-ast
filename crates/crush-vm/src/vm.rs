@@ -49,6 +49,8 @@ pub enum VmError {
     NotCallable(&'static str),
     #[error("function `{function}` takes {expected} argument(s), got {got}")]
     FuncArity { function: String, expected: usize, got: usize },
+    #[error("call_value_apply expects an array of arguments, got {0}")]
+    ApplyArgsType(&'static str),
     /// A language-styled printer (`py.print`, `conv.text`) met a function
     /// value; its format isn't pinned by any corpus yet (CRUSH-251).
     #[error("printing a function value (`{0}`) isn't supported in this language's print yet (CRUSH-251)")]
@@ -775,6 +777,8 @@ pub struct GreenThread {
     pub return_value: Option<Value>,
     pub out_parts: Vec<String>,
     pub out_len: usize,
+    /// Open `lang.capture_begin`s of inline-lowered polyglot blocks (#312).
+    pub captures: Vec<crate::block_capture::OutputCapture>,
 }
 
 impl GreenThread {
@@ -791,6 +795,7 @@ impl GreenThread {
             return_value: None,
             out_parts: Vec::new(),
             out_len: 0,
+            captures: Vec::new(),
         }
     }
 
@@ -808,6 +813,7 @@ impl GreenThread {
             return_value: None,
             out_parts: Vec::new(),
             out_len: 0,
+            captures: Vec::new(),
         }
     }
 }

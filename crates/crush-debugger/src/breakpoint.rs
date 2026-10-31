@@ -84,14 +84,10 @@ impl BreakpointSet {
 
     /// Remove by ID. Returns `true` if the breakpoint was registered.
     pub fn remove(&mut self, id: BreakpointId) -> bool {
-        let key = self
-            .by_location
-            .keys()
-            .find(|(_, bid)| *bid == id)
-            .cloned();
+        let key = self.by_location.keys().find(|(_, bid)| *bid == id).cloned();
         match key {
             Some(k) => {
-                self.by_location.remove(&k);
+                self.by_location.shift_remove(&k);
                 true
             }
             None => false,
@@ -118,7 +114,7 @@ impl BreakpointSet {
     pub fn matches(&self, file: &std::path::Path, line: u32) -> bool {
         self.by_location
             .keys()
-.any(|(loc, _)| loc.file == file && loc.line == line)
+            .any(|(loc, _)| loc.file == file && loc.line == line)
     }
 }
 

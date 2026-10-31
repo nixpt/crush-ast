@@ -104,6 +104,7 @@ struct TaskCtx {
     call_stack: Vec<Frame>,
     ip: usize,
     try_stack: Vec<crate::vm::TryHandler>,
+    captures: Vec<crate::block_capture::OutputCapture>,
 }
 
 /// One cooperative green task (#161).
@@ -148,6 +149,15 @@ pub struct PortableVm {
     input: crate::io_read::InputSource,
     /// Runs `@lang` blocks instead of a subprocess when set (#91).
     lang_executor: Option<LangExecutor>,
+    /// Deferred `@lang` blocks: an EXEC_LANG yields
+    /// `VmYield::HostCall { capability: "lang.exec", .. }` and runs again, with
+    /// the result, once the host calls [`PortableVm::provide_lang_result`].
+    lang_deferred: bool,
+    /// The host's result for the pending deferred block: its stdout, or what it
+    /// reported on failure.
+    lang_result: Option<Result<String, String>>,
+    /// Set by EXEC_LANG when it defers its block: the `lang.exec` arguments.
+    lang_yield: Option<Vec<Value>>,
     /// Instruction pointer.
     ip: usize,
     /// Total instruction steps executed.
@@ -160,6 +170,9 @@ pub struct PortableVm {
     privileged_allowed: bool,
     /// Active try blocks, innermost last.
     try_stack: Vec<crate::vm::TryHandler>,
+    /// Open `lang.capture_begin`s of inline-lowered polyglot blocks (#312),
+    /// innermost last; per task, like `try_stack`.
+    captures: Vec<crate::block_capture::OutputCapture>,
     /// Green tasks (#161), indexed by handle id; `tasks[0]` is main. Empty
     /// until the first `SPAWN`, so programs that never spawn pay nothing.
     /// The running task's context lives in `stack` / `call_stack` / `ip` /
@@ -255,12 +268,16 @@ impl PortableVm {
             out_taken: 0,
             input: crate::io_read::InputSource::Stdin,
             lang_executor: None,
+            lang_deferred: false,
+            lang_result: None,
+            lang_yield: None,
             ip: start_ip,
             steps: 0,
             jumped: false,
             halted: false,
             privileged_allowed: false,
             try_stack: Vec::new(),
+            captures: Vec::new(),
             tasks: Vec::new(),
             current_task: 0,
             slice_remaining: TASK_SLICE,
@@ -292,6 +309,26 @@ impl PortableVm {
     /// only decides *where* granted code runs.
     pub fn set_lang_executor(&mut self, executor: LangExecutor) {
         self.lang_executor = Some(executor);
+    }
+
+    /// Hand `@lang` blocks to the host instead of running them during a step,
+    /// for a host that runs a block asynchronously (a browser running
+    /// JavaScript with promises and timers). A granted block's EXEC_LANG makes
+    /// `step()` return `VmYield::HostCall { capability: "lang.exec", args:
+    /// [lang, code, env] }` (`env` a map of the block's inputs, as a
+    /// subprocess would get them) without advancing; the host runs it, calls
+    /// [`PortableVm::provide_lang_result`], and the next `step()` finishes the
+    /// EXEC_LANG with that result: its output, its `->` values, or its error.
+    /// Takes precedence over [`PortableVm::set_lang_executor`].
+    pub fn set_lang_deferred(&mut self, deferred: bool) {
+        self.lang_deferred = deferred;
+    }
+
+    /// The result of the block a `lang.exec` yield handed out: `Ok(stdout)`, or
+    /// `Err(message)` for a block that failed (what a subprocess would print
+    /// on stderr).
+    pub fn provide_lang_result(&mut self, result: Result<String, String>) {
+        self.lang_result = Some(result);
     }
 
     /// Choose where `io.read` lines come from. The default is process stdin.
@@ -635,6 +672,11 @@ impl PortableVm {
         // (a recursive call in tail position, #94) or `loop: JMP loop`.
         self.jumped = false;
         self.execute_instruction(opcode, next_ip)?;
+        if let Some(args) = self.lang_yield.take() {
+            // A deferred `@lang` block: this EXEC_LANG runs again once the
+            // host provides its result (see `set_lang_deferred`).
+            return Ok(Some(VmYield::HostCall { capability: "lang.exec".to_string(), args }));
+        }
         if !self.jumped {
             self.ip = next_ip;
         }
@@ -1058,7 +1100,7 @@ impl PortableVm {
                 if self.out_len > self.quotas.max_output {
                     return Err(VmError::OutputQuota(self.quotas.max_output));
                 }
-                self.out_parts.push(s);
+                self.emit_part(s);
             }
             CAP_CALL => {
                 let idx = u16::from_be_bytes(
@@ -1111,7 +1153,7 @@ impl PortableVm {
                         if self.out_len > self.quotas.max_output {
                             return Err(VmError::OutputQuota(self.quotas.max_output));
                         }
-                        self.out_parts.push(output);
+                        self.emit_part(output);
                     }
                     self.push(results);
                 } else {
@@ -1193,6 +1235,27 @@ impl PortableVm {
                 // Captured values are the callee's leading parameters.
                 for v in func.captured.iter().rev() {
                     self.push(v.clone());
+                }
+                self.call_stack.push(Frame::new(Some(next_ip)));
+                self.jump_to(func_entry);
+            }
+            CALL_VALUE_APPLY => {
+                // Stack: callee, then its argument array.
+                let args = match self.pop()? {
+                    Value::Array(values) => values.borrow().clone(),
+                    other => return Err(VmError::ApplyArgsType(other.type_name())),
+                };
+                let callee = self.pop()?;
+                let func = crate::vm::callable(&callee, args.len())?;
+                let func_entry = self.get_function_entry(&func.name)?;
+                if self.call_stack.len() >= self.quotas.max_call_depth {
+                    return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
+                }
+                for value in args.iter().rev() {
+                    self.push(value.clone());
+                }
+                for value in func.captured.iter().rev() {
+                    self.push(value.clone());
                 }
                 self.call_stack.push(Frame::new(Some(next_ip)));
                 self.jump_to(func_entry);
@@ -1602,6 +1665,15 @@ impl PortableVm {
             }
             THROW => {
                 let err_val = self.pop()?;
+                // A throw out of an inline-lowered polyglot block fails the
+                // block, as a failing EXEC_LANG does: fatal, its output
+                // dropped (#312).
+                let handler_depth = self.try_stack.last().map(|h| h.call_depth);
+                if let Some(err) =
+                    crate::block_capture::escaping_throw(&mut self.captures, handler_depth, &err_val)
+                {
+                    return Err(err);
+                }
                 if let Some(handler) = self.try_stack.pop() {
                     // Unwind to the frame and stack height that entered the try.
                     self.call_stack.truncate(handler.call_depth);
@@ -1736,38 +1808,60 @@ impl PortableVm {
                 // `SubprocessExecutor` (`crate::scheduler::run_exec_lang_stdout` — see its doc
                 // comment for the CRUSH-20 buckets-sandboxing wiring). A `LangExecutor` set with
                 // `set_lang_executor` (#91) takes precedence over both.
-                let outcome = match self.lang_executor.as_mut() {
-                    // #91: the host runs the block (e.g. a browser Worker).
-                    Some(executor) => match executor(lang, code_str, &env_vars) {
-                        Ok(stdout) => crate::scheduler::parse_exec_lang_stdout(&stdout),
-                        // What the guest reported, as a subprocess's stderr is: the
-                        // same error, and message, as a native run of the block.
-                        Err(message) => {
+                let outcome = if self.lang_deferred {
+                    match self.lang_result.take() {
+                        Some(Ok(stdout)) => crate::scheduler::parse_exec_lang_stdout(&stdout),
+                        Some(Err(message)) => {
                             return Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line));
                         }
-                    },
-                    None => {
-                        let outputs = crate::lang_exec::declared_outputs(&spec);
-                        let request = crate::lang_exec::PolyglotRequest {
-                            lang,
-                            code: code_str,
-                            vars: &env_vars,
-                            outputs: &outputs,
-                            deps: &deps,
-                            gate: &gate,
-                            deadline_ms: self.quotas.max_wall_time_ms,
-                            crush_line,
-                        };
-                        let executor =
-                            self.host_caps.as_ref().and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
-                        crate::lang_exec::run_block(executor, &request)?
+                        None => {
+                            // Hand the block to the host: put the inputs back,
+                            // so this EXEC_LANG runs again with its result.
+                            let env = Value::new_map(
+                                env_vars.iter().map(|(k, v)| (k.clone(), Value::Str(v.clone()))),
+                            );
+                            for value in var_values {
+                                self.push(value);
+                            }
+                            self.lang_yield =
+                                Some(vec![Value::Str(lang.to_string()), Value::Str(code_str.to_string()), env]);
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    match self.lang_executor.as_mut() {
+                        // #91: the host runs the block (e.g. a browser Worker).
+                        Some(executor) => match executor(lang, code_str, &env_vars) {
+                            Ok(stdout) => crate::scheduler::parse_exec_lang_stdout(&stdout),
+                            // What the guest reported, as a subprocess's stderr is: the
+                            // same error, and message, as a native run of the block.
+                            Err(message) => {
+                                return Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line));
+                            }
+                        },
+                        None => {
+                            let outputs = crate::lang_exec::declared_outputs(&spec);
+                            let request = crate::lang_exec::PolyglotRequest {
+                                lang,
+                                code: code_str,
+                                vars: &env_vars,
+                                outputs: &outputs,
+                                deps: &deps,
+                                gate: &gate,
+                                deadline_ms: self.quotas.max_wall_time_ms,
+                                crush_line,
+                            };
+                            let executor =
+                                self.host_caps.as_ref().and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
+                            crate::lang_exec::run_block(executor, &request)?
+                        }
                     }
                 };
                 self.out_len += outcome.visible.len();
                 if self.out_len > self.quotas.max_output {
                     return Err(VmError::OutputQuota(self.quotas.max_output));
                 }
-                self.out_parts.push(outcome.visible);
+                self.emit_part(outcome.visible);
                 // Push declared outputs in reverse so the first `store`
                 // (`out_0`) sees the first declared value on top (CRUSH-270).
                 let out_values =
@@ -1854,6 +1948,7 @@ impl PortableVm {
                                 call_stack: vec![Frame::new(None)],
                                 ip: entry,
                                 try_stack: Vec::new(),
+            captures: Vec::new(),
                             }),
                             ..GreenTask::default()
                         });
@@ -1983,7 +2078,7 @@ impl PortableVm {
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(line);
+                    self.emit_part(line);
                     Ok(None)
                 }
                 // Like io.print but without the newline (C printf, Rust print!).
@@ -1993,7 +2088,7 @@ impl PortableVm {
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(text);
+                    self.emit_part(text);
                     Ok(None)
                 }
                 "py.print_sep_end" => {
@@ -2003,7 +2098,7 @@ impl PortableVm {
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(line);
+                    self.emit_part(line);
                     Ok(None)
                 }
                 "py.print" => {
@@ -2014,7 +2109,7 @@ impl PortableVm {
                     if self.out_len > self.quotas.max_output {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
-                    self.out_parts.push(line);
+                    self.emit_part(line);
                     Ok(None)
                 }
                 "math.truediv" => {
@@ -2026,11 +2121,16 @@ impl PortableVm {
                 "js.add" => crate::js_ops::add(&args[0], &args[1]).map(Some),
                 "js.truthy" => Ok(Some(crate::js_ops::truthy(&args[0]))),
                 "js.loose_eq" => crate::js_ops::loose_eq(&args[0], &args[1]).map(Some),
+                "js.strict_eq" => crate::js_ops::strict_eq(&args[0], &args[1]).map(Some),
                 "js.format" => crate::js_ops::format(&args).map(Some),
                 "conv.text" => {
                     crate::num_text::text_as(&args[0], &args[1]).map(Some)
                 }
                 "lang.marshal" => crate::marshal::marshal_cap(&args),
+                "lang.capture_begin" => {
+                    crate::block_capture::begin(&mut self.captures, &args, self.call_stack.len())
+                }
+                "lang.capture_end" => crate::block_capture::end(&mut self.captures, &mut self.out_parts),
                 "seq.slice" => {
                     crate::seq::slice_values(&args[0], &args[1], &args[2], &args[3]).map(Some)
                 }
@@ -2111,34 +2211,7 @@ impl PortableVm {
                     }
                     Ok(Some(Value::Int(character as i64)))
                 }
-                                "arr_slice" => {
-                                    if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
-                                    match &args[0] {
-                                        Value::Array(elems) => {
-                                            let arr = elems.borrow();
-                                            let len = arr.len() as i64;
-                                            let start = match &args[1] {
-                                                Value::Int(i) => *i,
-                                                Value::Null => 0i64,
-                                                _ => return Err(VmError::TypeError { expected: "int or null", got: args[1].type_name() }),
-                                            };
-                                            let end = if args.len() > 2 {
-                                                match &args[2] {
-                                                    Value::Int(i) => *i,
-                                                    Value::Null => len,
-                                                    _ => return Err(VmError::TypeError { expected: "int or null", got: args[2].type_name() }),
-                                                }
-                                            } else {
-                                                len
-                                            };
-                                            let start = start.max(0).min(len);
-                                            let end = end.max(start).min(len);
-                                            let sliced: Vec<Value> = arr[start as usize..end as usize].to_vec();
-                                            Ok(Some(Value::new_array(sliced)))
-                                        }
-                                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
-                                    }
-                                }
+                                "arr_slice" => crate::seq::arr_slice_values(cap, &args).map(Some),
                 "make_range" => crate::make_range::make_range_values(&args).map(Some),
                 "append" | "push" => {
                     if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
@@ -2264,7 +2337,7 @@ impl PortableVm {
                 if self.out_len > self.quotas.max_output {
                     return Err(VmError::OutputQuota(self.quotas.max_output));
                 }
-                self.out_parts.push(result.output);
+                self.emit_part(result.output);
             }
             Ok(result.stack.last().cloned().unwrap_or(Value::Null))
         };
@@ -2427,6 +2500,7 @@ impl PortableVm {
             call_stack: std::mem::take(&mut self.call_stack),
             ip: self.ip,
             try_stack: std::mem::take(&mut self.try_stack),
+            captures: std::mem::take(&mut self.captures),
         };
         if !self.tasks[cur].done {
             self.tasks[cur].ctx = Some(parked);
@@ -2436,7 +2510,14 @@ impl PortableVm {
         self.call_stack = ctx.call_stack;
         self.ip = ctx.ip;
         self.try_stack = ctx.try_stack;
+        self.captures = ctx.captures;
         self.current_task = next;
+    }
+
+    /// One piece of program output: held by an open block capture, if any
+    /// (#312), else appended to the output.
+    fn emit_part(&mut self, part: String) {
+        crate::block_capture::emit(&mut self.captures, &mut self.out_parts, part);
     }
 
     fn take_result(&self) -> VmResult {

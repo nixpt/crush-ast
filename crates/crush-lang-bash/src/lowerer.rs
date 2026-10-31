@@ -92,8 +92,43 @@ fn command(c: &Command, line: usize) -> Cmd {
             };
             Cmd::FuncDef { name: fd.fname.value.clone(), body, line }
         }
-        Command::ExtendedTest(..) => unsupported("`[[ … ]]` (use `[ … ]`)", line),
+        Command::ExtendedTest(t, _) => match cond(&t.expr, line) {
+            Ok(cond) => Cmd::ExtendedTest { cond, line },
+            Err(unsupported) => unsupported,
+        },
     }
+}
+
+/// brush's `[[ … ]]` tree → the shared shell IR's conditional expression.
+fn cond(e: &ast::ExtendedTestExpr, line: usize) -> Result<shell::Cond, Cmd> {
+    use ast::{BinaryPredicate as BP, ExtendedTestExpr as X, UnaryPredicate as UP};
+    Ok(match e {
+        X::And(a, b) => shell::Cond::And(Box::new(cond(a, line)?), Box::new(cond(b, line)?)),
+        X::Or(a, b) => shell::Cond::Or(Box::new(cond(a, line)?), Box::new(cond(b, line)?)),
+        X::Not(x) => shell::Cond::Not(Box::new(cond(x, line)?)),
+        X::Parenthesized(x) => cond(x, line)?,
+        X::UnaryTest(p, w) => match p {
+            UP::StringHasZeroLength => shell::Cond::Unary("-z", word(w)),
+            UP::StringHasNonZeroLength => shell::Cond::Unary("-n", word(w)),
+            other => return Err(unsupported(&format!("`{other}` in `[[ … ]]` (file and shell-option tests)"), line)),
+        },
+        X::BinaryTest(p, l, r) => {
+            let op = match p {
+                BP::StringExactlyMatchesPattern | BP::StringExactlyMatchesString => "==",
+                BP::StringDoesNotExactlyMatchPattern | BP::StringDoesNotExactlyMatchString => "!=",
+                BP::LeftSortsBeforeRight => "<",
+                BP::LeftSortsAfterRight => ">",
+                BP::ArithmeticEqualTo => "-eq",
+                BP::ArithmeticNotEqualTo => "-ne",
+                BP::ArithmeticLessThan => "-lt",
+                BP::ArithmeticLessThanOrEqualTo => "-le",
+                BP::ArithmeticGreaterThan => "-gt",
+                BP::ArithmeticGreaterThanOrEqualTo => "-ge",
+                other => return Err(unsupported(&format!("`{other}` in `[[ … ]]` (regex and file tests)"), line)),
+            };
+            shell::Cond::Binary(op, word(l), word(r))
+        }
+    })
 }
 
 fn simple(sc: &ast::SimpleCommand, line: usize) -> Cmd {
@@ -127,13 +162,26 @@ fn simple(sc: &ast::SimpleCommand, line: usize) -> Cmd {
 
 fn assignment(a: &ast::Assignment) -> Result<Assign, Cmd> {
     let line = line_of(a);
-    let name = match &a.name {
-        ast::AssignmentName::VariableName(n) => n.clone(),
-        ast::AssignmentName::ArrayElementName(n, _) => return Err(unsupported(&format!("array element assignment `{n}[…]=`"), line)),
+    let (name, index) = match &a.name {
+        ast::AssignmentName::VariableName(n) => (n.clone(), None),
+        ast::AssignmentName::ArrayElementName(n, sub) => (n.clone(), Some(Word { raw: sub.clone(), line })),
     };
     match &a.value {
-        ast::AssignmentValue::Scalar(w) => Ok(Assign { name, value: word(w), append: a.append, line }),
-        ast::AssignmentValue::Array(_) => Err(unsupported(&format!("array assignment `{name}=(…)`"), line)),
+        ast::AssignmentValue::Scalar(w) => Ok(Assign { name, index, array: None, value: word(w), append: a.append, line }),
+        ast::AssignmentValue::Array(items) => {
+            if let Some((i, _)) = items.iter().find(|(i, _)| i.is_some()) {
+                let at = i.as_ref().map(|w| w.value.clone()).unwrap_or_default();
+                return Err(unsupported(&format!("an indexed array literal `{name}=([{at}]=…)`"), line));
+            }
+            Ok(Assign {
+                name,
+                index,
+                array: Some(items.iter().map(|(_, w)| word(w)).collect()),
+                value: Word { raw: String::new(), line },
+                append: a.append,
+                line,
+            })
+        }
     }
 }
 

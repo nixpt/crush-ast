@@ -1,8 +1,12 @@
-# CRUSH-266 — JS walker drops the bodies of exported declarations
+# CRUSH-340 — JS walker drops the bodies of exported declarations
+
+> **Renumbered** 2026-10-31 (planning survey) from `CRUSH-266`, which collided with the older
+> `CRUSH-266-rust-crush-interop.md` (filed 2026-10-15; this one 2026-10-20). Branch `agent/muse/CRUSH-266`,
+> PR #283, and commit messages that say CRUSH-266 about JS exported declarations mean this ticket.
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-266 |
+| **ID** | CRUSH-340 |
 | **Priority** | P1 |
 | **Status** | Done |
 | **Phase** | M4 |

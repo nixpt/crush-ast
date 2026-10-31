@@ -31,7 +31,7 @@
 
 This repository was extracted from the [exosphere](https://github.com/nixpt/exosphere) agent-native OS monorepo on 2026-06-12. The walker crate tree (the polyglot source → CAST translators) was split out so it could compile independently without pulling in the full exosphere kernel runtime. Exosphere retains a subprocess-based `WalkerRegistry` that invokes the walker binaries produced here.
 
-The repos are **peer projects** — no path dependencies run in either direction. Exosphere pins its own `crush-cast`/`casm` at v1.0.0; crush-ast's own crates are released together (the workspace version, `0.6.0` on crates.io as of 2026-10-15).
+The repos are **peer projects** — no path dependencies run in either direction. Exosphere pins its own `crush-cast`/`casm` at v1.0.0; crush-ast's own crates are released together (the workspace version: `0.8.0`, tagged `v0.8.0` and published to crates.io on 2026-10-30).
 
 ## 🏗️ Repository Structure
 
@@ -138,9 +138,12 @@ print(next())
 
 Capabilities are opt-in per run. The standard library (`str.*`, `math.*`,
 `json.*`, …) is on by default; everything that touches the host needs a flag
-(`--fs`, `--net`, `--env`, `--time`, `--process`, `--polyglot`, …), and a program
+(`--fs`, `--net`, `--tcp`, `--env`, `--time`, `--process`, `--polyglot`, …), and a program
 that needs an ungranted capability is refused before it runs.
 `crush-run caps FILE` shows what a program needs without running it.
+Raw sockets (`tcp.*`, crate `crush-net`) have their own grants: `--tcp` for
+outbound client sockets and a separate, stronger `--tcp-listen` for being a
+server; `--net` is HTTP-client only and grants neither.
 
 ## ⚙️ Compilation Pipeline
 

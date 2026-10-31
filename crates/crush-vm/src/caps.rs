@@ -68,6 +68,20 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             summary: "lang.marshal(value, name): copy a value across an inline-lowered polyglot block's boundary as JSON would; loud for a value JSON can't carry (CRUSH-272)",
         });
         reg(CapabilitySpec {
+            name: "lang.capture_begin",
+            argc: Some(2),
+            returns: false,
+            privileged: false,
+            summary: "lang.capture_begin(lang, line): hold this thread's output for an inline-lowered polyglot block, so it prints what EXEC_LANG prints (#312)",
+        });
+        reg(CapabilitySpec {
+            name: "lang.capture_end",
+            argc: Some(0),
+            returns: false,
+            privileged: false,
+            summary: "lang.capture_end(): emit the block's held output trimmed, with no trailing newline, as EXEC_LANG does (#312)",
+        });
+        reg(CapabilitySpec {
             name: "parallel_map",
             argc: Some(2),
             returns: true,
@@ -101,6 +115,13 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             returns: true,
             privileged: false,
             summary: "JavaScript a == b for primitives (abstract equality); objects by identity",
+        });
+        reg(CapabilitySpec {
+            name: "js.strict_eq",
+            argc: Some(2),
+            returns: true,
+            privileged: false,
+            summary: "JavaScript a === b (strict equality): no coercion, different types are false, objects by identity",
         });
         reg(CapabilitySpec {
             name: "js.format",

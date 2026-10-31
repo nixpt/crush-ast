@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-1 |
 | **Priority** | P1 |
-| **Status** | In Review |
+| **Status** | Done — PR #196 merged 2026-10-15 |
 | **Phase** | M0 |
 | **Assignee** | nixp |
 | **Branch** | agent/nixp/CRUSH-xps-1 |
@@ -44,3 +44,7 @@
 - Loading plugin paths or export grants declared by `capsule.toml`.
 - Sandboxing or claiming that native Rust plugins are safe to load from untrusted sources.
 - Changing the FFI ABI or adding general Rust-to-Crush source translation.
+
+## Survey 2026-10-31 (status)
+
+PR #196 (`agent/nixp/CRUSH-xps-1`) merged 2026-10-15; all criteria ticked. Previous status: `In Review`.
