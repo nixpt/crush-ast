@@ -247,6 +247,14 @@ enum Commands {
         /// Output directory (defaults to ./<name>)
         #[arg(short, long)]
         dir: Option<PathBuf>,
+        /// Scaffold a command-line program: category `cli`, a `main.crush`
+        /// with a working argument spec, and facet as a git dependency
+        #[arg(long)]
+        cli: bool,
+        /// With --cli: use a local facet checkout (path dependency) instead
+        /// of the published git tag
+        #[arg(long, value_name = "DIR", requires = "cli")]
+        facet_path: Option<PathBuf>,
     },
     /// Build the current package
     Build,
@@ -635,7 +643,7 @@ fn dispatch(
             .map_err(|e| e.into_failure());
     };
     match command {
-        Commands::New { name, dir } => handle_new(name, dir)
+        Commands::New { name, dir, cli, facet_path } => handle_new(name, dir, cli, facet_path)
             .map_err(|e| CommandFailure::New(format!("{e:#}"))),
         Commands::Build => handle_build()
             .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
@@ -672,10 +680,29 @@ fn dispatch(
     }
 }
 
-fn handle_new(name: String, dir: Option<PathBuf>) -> anyhow::Result<()> {
+fn handle_new(
+    name: String,
+    dir: Option<PathBuf>,
+    cli: bool,
+    facet_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
     let target = dir.unwrap_or_else(|| PathBuf::from(&name));
     if target.exists() {
         anyhow::bail!("directory {} already exists", target.display());
+    }
+    if cli {
+        let facet = match facet_path {
+            Some(p) => crush_pkg::manifest::FacetSource::Path(p),
+            None => crush_pkg::manifest::FacetSource::Published,
+        };
+        crush_pkg::manifest::scaffold_cli_package(&target, &name, &facet)?;
+        println!(
+            "created new Crush CLI package at {}",
+            target.join("capsule.toml").display()
+        );
+        println!("  entry:   main.crush");
+        println!("  next:    cd {} && crush-pkg run -- --help", target.display());
+        return Ok(());
     }
     let manifest = crush_pkg::manifest::scaffold_package(&target, &name)?;
     println!(

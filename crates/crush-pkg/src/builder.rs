@@ -499,6 +499,7 @@ impl PackageBuilder {
         for dep in &self.manifest.dependencies {
             let name = &dep.name;
             dep.validate()?;
+            dep.require_source()?;
             // Where the dependency came from, for error messages.
             let (dep_path, origin) = if let Some(path) = &dep.path {
                 (self.root_dir.join(path), String::new())

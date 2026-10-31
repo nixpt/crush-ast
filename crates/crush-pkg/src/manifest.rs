@@ -182,12 +182,9 @@ impl Dependency {
             (Some(_), Some(_)) => anyhow::bail!(
                 "dependency '{n}': set either `path` or `git`, not both"
             ),
-            // A bare `version` row is the legacy registry-style shape; the
-            // builder has never resolved it (it is skipped), so it stays legal.
-            (None, None) if self.version.is_some() => {}
-            (None, None) => anyhow::bail!(
-                "dependency '{n}': needs a source, either `path = \"...\"` or `git = \"...\"`"
-            ),
+            // Neither source: legal to *parse* (`crush-pkg lint` reads such
+            // rows); `Dependency::require_source` rejects it when building.
+            (None, None) => {}
             (Some(_), None) => {
                 if self.tag.is_some() || self.rev.is_some() || self.branch.is_some() {
                     anyhow::bail!("dependency '{n}': `tag`/`rev`/`branch` only apply to a `git` dependency");
@@ -204,6 +201,18 @@ impl Dependency {
                     );
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Building needs a source: reject a row with neither `path` nor `git`
+    /// (a legacy bare `version` row is skipped by the builder, as before).
+    pub fn require_source(&self) -> anyhow::Result<()> {
+        if self.path.is_none() && self.git.is_none() && self.version.is_none() {
+            anyhow::bail!(
+                "dependency '{}': needs a source, either `path = \"...\"` or `git = \"...\"`",
+                self.name
+            );
         }
         Ok(())
     }
@@ -656,6 +665,77 @@ pub fn scaffold_package(dir: &Path, name: &str) -> anyhow::Result<Manifest> {
 
     manifest.write_to_dir(dir)?;
     Ok(manifest)
+}
+
+/// facet, the CLI library `crush-pkg new --cli` depends on.
+pub const FACET_GIT_URL: &str = "https://github.com/nixpt/facet";
+/// The facet release the scaffold pins.
+pub const FACET_TAG: &str = "v0.1.1";
+
+/// Where a `--cli` scaffold gets facet from.
+#[derive(Debug, Clone)]
+pub enum FacetSource {
+    /// The published git tag ([`FACET_GIT_URL`] @ [`FACET_TAG`]).
+    Published,
+    /// A local checkout (`--facet-path DIR`), as a path dependency.
+    Path(PathBuf),
+}
+
+/// Scaffold a runnable CLI program (CRUSH-352): a `capsule.toml` with category
+/// `cli`, the capabilities facet needs and facet as a dependency, plus a
+/// `main.crush` whose spec has a flag, a typed option with a default, a
+/// positional and the automatic `--help`.
+pub fn scaffold_cli_package(dir: &Path, name: &str, facet: &FacetSource) -> anyhow::Result<()> {
+    if name.is_empty() || name.chars().any(|c| c == '"' || c == '\\' || c.is_control()) {
+        anyhow::bail!("invalid package name {name:?}: no quotes, backslashes or control characters");
+    }
+    let dep = match facet {
+        FacetSource::Published => format!("git = \"{FACET_GIT_URL}\"\ntag = \"{FACET_TAG}\""),
+        FacetSource::Path(p) => {
+            if !p.join("capsule.toml").is_file() {
+                anyhow::bail!("--facet-path {}: no capsule.toml there (expected a facet checkout)", p.display());
+            }
+            let abs = std::fs::canonicalize(p)?;
+            format!("path = \"{}\"", abs.display())
+        }
+    };
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(
+        dir.join("capsule.toml"),
+        format!(
+            "[capsule]\nname = \"{name}\"\nversion = \"0.1.0\"\ndescription = \"{name} \u{2014} a Crush command-line program\"\n\
+             entry = \"main.crush\"\nlanguage = \"crush\"\ncategory = \"cli\"\n\n\
+             [capabilities]\nrequired = [\"io.print\", \"sys.args\", \"sys.exit\"]\n\n\
+             # facet parses the command line from the spec in main.crush.\n\
+             [[dependencies]]\nname = \"facet\"\n{dep}\n"
+        ),
+    )?;
+    std::fs::write(
+        dir.join("main.crush"),
+        format!(
+            "// {name} \u{2014} a command-line program. The `spec` map drives parsing, defaults,\n\
+             // errors (exit 2) and --help. `facet_parse` comes from the facet dependency.\n\
+             //   crush-pkg run -- --help\n\
+             //   crush-pkg run -- -v --repeat 2 hello world\n\
+             fn main() {{\n\
+             \x20   let spec = {{ name: \"{name}\", usage: \"{name} [options] [words...]\", flags: [ {{ short: \"-v\", long: \"--verbose\", help: \"print extra detail\" }} ], options: [ {{ long: \"--repeat\", short: \"-r\", type: \"int\", default: 1, help: \"how many times to print\" }} ], positionals: [ {{ name: \"words\", repeat: true, help: \"what to print\" }} ] }}\n\
+             \x20   let args = facet_parse(spec)\n\
+             \x20   let line = \"hello from {name}\"\n\
+             \x20   if len(args.words) > 0 {{ line = str.join(args.words, \" \") }}\n\
+             \x20   let i = 0\n\
+             \x20   while i < args.repeat {{\n\
+             \x20       io.print(line)\n\
+             \x20       i = i + 1\n\
+             \x20   }}\n\
+             \x20   if args.verbose == true {{ io.print(\"(repeat=\" + conv.to_str(args.repeat) + \")\") }}\n\
+             }}\n"
+        ),
+    )?;
+    let gi = dir.join(".gitignore");
+    if !gi.exists() {
+        std::fs::write(gi, "target/\n")?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

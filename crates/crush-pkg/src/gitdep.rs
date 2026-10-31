@@ -148,7 +148,7 @@ fn repo_cache_dir(url: &str) -> PathBuf {
     } else {
         sanitize(parts.next().unwrap_or("unknown"))
     };
-    let repo = parts.last().unwrap_or("repo").trim_end_matches(".git");
+    let repo = parts.next_back().unwrap_or("repo").trim_end_matches(".git");
     let hash = hex::encode(Sha256::digest(url.as_bytes()));
     cache_root().join("git").join(host).join(format!("{}-{}", sanitize(repo), &hash[..8]))
 }

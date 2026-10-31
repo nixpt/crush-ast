@@ -29,6 +29,60 @@ path = "../util"                  # path deps are compiled into the package
 `crush-pkg show` prints the parsed manifest, including `category` and
 `platforms` when they're set.
 
+## Dependencies
+
+Crush has no source-level `import` (CRUSH-110), so a dependency's entry file
+is concatenated into the consumer's program: the consumer calls the
+dependency's functions directly (`facet_parse(spec)`), and `crush-pkg run`,
+`build`, `check` and a bare `crush-pkg` all see them. A row has exactly one
+source:
+
+```toml
+[[dependencies]]                  # a directory on disk
+name = "util"
+path = "../util"
+
+[[dependencies]]                  # a git repository: exactly one of tag / rev / branch
+name = "facet"
+git  = "https://github.com/nixpt/facet"
+tag  = "v0.1.1"                   # or rev = "<sha>" / branch = "main"
+```
+
+Git dependencies (CRUSH-351) are fetched with the `git` command, so git must
+be installed. The checkout is cached, then treated like a path dependency (its
+`capsule.toml` `entry` is what gets concatenated).
+
+- **Cache:** `$CRUSH_PKG_CACHE`, else `$XDG_CACHE_HOME/crush-pkg`, else
+  `~/.cache/crush-pkg`; one tree per commit at
+  `git/<host>/<repo>-<urlhash>/<full-sha>/` (no `.git`). `rev`/`tag`/`branch`
+  all end up as a full commit sha; the fetch is shallow where the server allows.
+- **Lockfile:** the first build writes `capsule.lock` beside `capsule.toml`
+  (commit it). It pins each git dependency's `tag`/`branch`/`rev` to the
+  commit it resolved to, so later builds ignore a moved tag or a branch that
+  advanced. Delete the file (or the entry) to re-resolve.
+- **`--offline`** (or `CRUSH_PKG_OFFLINE=1`): never touch the network;
+  resolve from `capsule.lock` and the cache only, and fail saying so if the
+  commit isn't cached.
+- **Errors:** an unknown tag/branch/revision names the remote; a network
+  failure suggests `--offline`; a dependency whose `capsule.toml` has no
+  readable `entry` says which one.
+- Dependencies of dependencies are not followed yet; list each one.
+
+## Starting a command-line program
+
+```sh
+crush-pkg new mytool --cli            # facet from https://github.com/nixpt/facet @ v0.1.1
+crush-pkg new mytool --cli --facet-path ~/src/facet   # a local checkout instead
+cd mytool && crush-pkg run -- --help
+```
+
+`--cli` (CRUSH-352) writes `capsule.toml` (category `cli`, capabilities
+`io.print`, `sys.args`, `sys.exit`, facet as a dependency), a `main.crush`
+with a working spec (a `--verbose` flag, a typed `--repeat` option with a
+default, a `words` positional, automatic `--help`) and a `.gitignore`. A
+program ends with `sys.exit(n)` and `crush-pkg` exits with `n`, so
+`--help` is 0 and a usage error is 2.
+
 ## `[capabilities]` and `crush-pkg check`
 
 `required` (and `optional`) list the capabilities the program calls.

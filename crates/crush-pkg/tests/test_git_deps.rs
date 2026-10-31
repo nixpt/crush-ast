@@ -109,12 +109,7 @@ fn tag_dependency_builds_runs_and_is_pinned_in_the_lockfile() {
 }
 
 fn walk_for(root: &Path, name: &str) -> Option<PathBuf> {
-    for e in walkdir_lite(root) {
-        if e.file_name().is_some_and(|n| n == name) {
-            return Some(e);
-        }
-    }
-    None
+    walkdir_lite(root).into_iter().find(|e| e.file_name().is_some_and(|n| n == name))
 }
 
 fn walkdir_lite(root: &Path) -> Vec<PathBuf> {
