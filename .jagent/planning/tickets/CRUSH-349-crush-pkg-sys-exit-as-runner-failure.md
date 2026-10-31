@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-349 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M4 |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-348 (same entry point) |
@@ -78,3 +78,7 @@ crush-pkg          # expect: "before exit", exit status 0
 - Changing `crush-run`'s own exit-code contract (already correct: help 0,
   usage errors 2).
 - Signal handling / timeouts.
+
+## Resolution
+
+Done on `agent/nova/CRUSH-348-350` (2026-10-31). `CrushRunner::run_program_with_plugins_before` streams output via `run_with_caps_streaming` (so output before an exit or error survives) and maps `VmError::Exit(n)` to the new `ExecutionResult::Exit(n)`; `finish_execution` ends the process with status `n` (0 = success), no `E-RUN`. Genuine runtime errors keep `E-RUN` (exit 1) and now also keep earlier output. Tests: `test_run_exit.rs` (`sys_exit_zero_is_success_and_keeps_output`, `sys_exit_n_is_the_process_status_without_a_crash_banner`, `genuine_runtime_errors_keep_e_run_and_earlier_output`), each through `run` and bare.

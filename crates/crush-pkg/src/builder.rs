@@ -293,7 +293,13 @@ fn parse_generic_kv(line: &str) -> Option<(&str, &str)> {
 /// token. This is intentionally lossy — the lint should be cheap.
 pub fn scan_entry_file_references(path: &Path) -> Option<HashSet<String>> {
     let content = std::fs::read_to_string(path).ok()?;
-    let mut refs = HashSet::new();
+    Some(identifier_tokens(&content).into_iter().collect())
+}
+
+/// The identifier-like tokens of Crush source, in order, comments stripped
+/// (the tokenizer behind [`scan_entry_file_references`]).
+fn identifier_tokens(content: &str) -> Vec<String> {
+    let mut refs: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut in_comment = false;
     // Track the previous character so the `#` → comment
@@ -308,7 +314,7 @@ pub fn scan_entry_file_references(path: &Path) -> Option<HashSet<String>> {
         if c == '\n' {
             in_comment = false;
             if !cur.is_empty() {
-                refs.insert(std::mem::take(&mut cur));
+                refs.push(std::mem::take(&mut cur));
             }
             prev = Some('\n');
             continue;
@@ -337,14 +343,58 @@ pub fn scan_entry_file_references(path: &Path) -> Option<HashSet<String>> {
         if c.is_alphanumeric() || c == '_' || c == '-' {
             cur.push(c);
         } else if !cur.is_empty() {
-            refs.insert(std::mem::take(&mut cur));
+            refs.push(std::mem::take(&mut cur));
         }
         prev = Some(c);
     }
     if !cur.is_empty() {
-        refs.insert(cur);
+        refs.push(cur);
+    }
+    refs
+}
+
+
+/// Names of the functions a Crush source file defines (`fn name`).
+fn defined_functions(content: &str) -> Vec<String> {
+    let tokens = identifier_tokens(content);
+    tokens
+        .windows(2)
+        .filter(|w| w[0] == "fn")
+        .map(|w| w[1].clone())
+        .collect()
+}
+
+/// The reference set the unused-dependency lint checks declared dependency
+/// names against (CRUSH-350).
+///
+/// crush-pkg concatenates path dependencies into one program and Crush has no
+/// `import`, so a consumer reaches a dependency by calling the *functions* it
+/// defines (`facet_parse()`), never by writing the dependency's name. A
+/// dependency therefore counts as referenced when the entry file mentions any
+/// function the dependency's own entry defines. The dependency's *name*
+/// token stays as the fallback when its source can't be read (the entry's own
+/// tokens are kept in the set, so a name written verbatim still matches).
+/// `None` when the entry file itself can't be read.
+pub fn entry_references_with_deps(manifest: &Manifest, root: &Path) -> Option<HashSet<String>> {
+    let entry = root.join(&manifest.capsule.entry);
+    let mut refs = scan_entry_file_references(&entry)?;
+    for dep in &manifest.dependencies {
+        let Some(src) = read_dep_source(root, dep) else {
+            continue;
+        };
+        if defined_functions(&src).iter().any(|f| refs.contains(f)) {
+            refs.insert(dep.name.clone());
+        }
     }
     Some(refs)
+}
+
+/// A path dependency's entry source, `None` when it can't be located or read.
+fn read_dep_source(root: &Path, dep: &crate::manifest::Dependency) -> Option<String> {
+    let dep_path = root.join(dep.path.as_ref()?);
+    let manifest_path = crate::manifest::manifest_path(&dep_path)?;
+    let dep_manifest = Manifest::from_file(&manifest_path).ok()?;
+    std::fs::read_to_string(dep_path.join(&dep_manifest.capsule.entry)).ok()
 }
 
 impl PackageBuilder {
@@ -1130,5 +1180,82 @@ ANOTHER_REAL = \"value\"
                 refs
             );
         }
+    }
+
+    // --- CRUSH-350: a dependency is referenced by calling its functions ---
+
+    /// Write a dependency crate `dep_name` defining `dep_src` and a consumer
+    /// whose entry is `entry_src`; return the lint findings for the consumer.
+    fn dep_lint(dep_name: &str, dep_src: &str, entry_src: &str) -> Vec<LintFinding> {
+        let dir = tempfile::tempdir().unwrap();
+        let dep = dir.path().join(dep_name);
+        std::fs::create_dir_all(&dep).unwrap();
+        std::fs::write(
+            dep.join("capsule.toml"),
+            format!("[capsule]\nname = \"{dep_name}\"\nversion = \"0.1.0\"\nentry = \"dep.crush\"\nlanguage = \"crush\"\n"),
+        )
+        .unwrap();
+        std::fs::write(dep.join("dep.crush"), dep_src).unwrap();
+
+        let app = dir.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        let toml = format!(
+            "[capsule]\nname = \"app\"\nversion = \"0.1.0\"\nentry = \"main.crush\"\nlanguage = \"crush\"\n\n[[dependencies]]\nname = \"{dep_name}\"\npath = \"../{dep_name}\"\n"
+        );
+        std::fs::write(app.join("capsule.toml"), &toml).unwrap();
+        std::fs::write(app.join("main.crush"), entry_src).unwrap();
+
+        let manifest = Manifest::from_file(&app.join("capsule.toml")).unwrap();
+        let refs = entry_references_with_deps(&manifest, &app);
+        lint_capsule_toml_with_entry(&toml, refs.as_ref())
+    }
+
+    #[test]
+    fn dep_used_through_its_function_is_not_flagged() {
+        let findings = dep_lint(
+            "dep",
+            "fn dep_hello() {\n    return \"hi\"\n}\n",
+            "fn main() {\n    print(dep_hello())\n}\n",
+        );
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    #[test]
+    fn dep_never_called_is_still_flagged() {
+        let findings = dep_lint(
+            "dep",
+            "fn dep_hello() {\n    return \"hi\"\n}\n",
+            "fn main() {\n    print(\"unrelated\")\n}\n",
+        );
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].message.contains("dependency `dep`"));
+    }
+
+    #[test]
+    fn hyphenated_dep_used_through_its_function_is_not_flagged() {
+        let findings = dep_lint(
+            "my-lib",
+            "fn my_lib_hello() {\n    return \"hi\"\n}\n",
+            "fn main() {\n    print(my_lib_hello())\n}\n",
+        );
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    #[test]
+    fn dep_name_token_is_the_fallback_when_its_source_is_unreadable() {
+        // The dependency path doesn't exist, so its functions can't be read:
+        // only the name token can match.
+        let dir = tempfile::tempdir().unwrap();
+        let toml = "[capsule]\nname = \"app\"\nversion = \"0.1.0\"\nentry = \"main.crush\"\nlanguage = \"crush\"\n\n[[dependencies]]\nname = \"ghost\"\npath = \"../ghost\"\n";
+        std::fs::write(dir.path().join("capsule.toml"), toml).unwrap();
+        let manifest = Manifest::from_file(&dir.path().join("capsule.toml")).unwrap();
+
+        std::fs::write(dir.path().join("main.crush"), "fn main() {\n    ghost()\n}\n").unwrap();
+        let refs = entry_references_with_deps(&manifest, dir.path());
+        assert!(lint_capsule_toml_with_entry(toml, refs.as_ref()).is_empty());
+
+        std::fs::write(dir.path().join("main.crush"), "fn main() {\n    other()\n}\n").unwrap();
+        let refs = entry_references_with_deps(&manifest, dir.path());
+        assert_eq!(lint_capsule_toml_with_entry(toml, refs.as_ref()).len(), 1);
     }
 }

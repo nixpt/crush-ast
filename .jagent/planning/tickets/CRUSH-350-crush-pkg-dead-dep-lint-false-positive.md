@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-350 |
 | **Priority** | P3 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M4 |
 | **Assignee** | unassigned |
 | **Dependencies** | none (found with CRUSH-348) |
@@ -40,3 +40,7 @@ The CRUSH-348 fixture (checked on the v0.9.0 release binaries, 2026-10-31):
 - [ ] The name-token check stays only as a fallback when the dependency's source can't be read.
 - [ ] Tests: dependency used through a function → no finding; declared and never called →
       finding; hyphenated dependency name.
+
+## Resolution
+
+Done on `agent/nova/CRUSH-348-350` (2026-10-31). New `builder::entry_references_with_deps` adds a dependency's name to the reference set when the entry mentions any `fn` its own entry defines; the name-token check remains the fallback when the dependency source can't be read. Known limit: tokenizing is comment-naive for `//`, so a function name only in a comment counts as a reference (false negative, benign). Tests in `builder.rs`: `dep_used_through_its_function_is_not_flagged`, `dep_never_called_is_still_flagged`, `hyphenated_dep_used_through_its_function_is_not_flagged`, `dep_name_token_is_the_fallback_when_its_source_is_unreadable`.

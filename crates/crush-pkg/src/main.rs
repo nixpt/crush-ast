@@ -578,8 +578,7 @@ fn emit_post_dispatch_lint(
             .ok()
             .and_then(|manifest| {
                 let root = manifest_path.parent()?;
-                let entry_path = root.join(&manifest.capsule.entry);
-                crush_pkg::builder::scan_entry_file_references(&entry_path)
+                crush_pkg::builder::entry_references_with_deps(&manifest, root)
             });
     let findings = crush_pkg::builder::lint_capsule_toml_with_entry(&content, entry_refs.as_ref());
     if json_mode {
@@ -625,7 +624,7 @@ fn dispatch(
         Commands::Build => handle_build()
             .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
         Commands::Run { args, grants } => handle_run(args, &grants, strict_mode)
-            .map_err(|e| CommandFailure::Run(format!("{e:#}"))),
+            .map_err(|e| e.into_failure()),
         Commands::Check => handle_check(json_mode, strict_mode)
             .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
         Commands::Pack { output } => handle_pack(output)
@@ -691,13 +690,48 @@ fn handle_build() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_run(args: Vec<String>, grants: &GrantArgs, strict_mode: bool) -> anyhow::Result<()> {
-    let (manifest, root) = load_manifest()?;
+/// `crush-pkg run`: the same build-then-run code path as a bare `crush-pkg`
+/// for Crush-source capsules ([`build_and_run`], CRUSH-348); Script/Native
+/// capsules and pre-compiled (`.casm`/`.sno`) entries have nothing to
+/// concatenate and go to their runner directly.
+fn handle_run(
+    args: Vec<String>,
+    grants: &GrantArgs,
+    strict_mode: bool,
+) -> Result<(), DefaultFailure> {
+    let (manifest, root) = load_manifest().map_err(DefaultFailure::Run)?;
     let payload = root.join(&manifest.capsule.entry);
     if !payload.exists() {
-        anyhow::bail!("entry file not found: {}", payload.display());
+        return Err(DefaultFailure::Run(anyhow::anyhow!(
+            "entry file not found: {}",
+            payload.display()
+        )));
     }
+    let format = detect_payload_format(&payload);
+    // Pre-compiled entries have nothing to concatenate; strict mode's
+    // unknown-format refusal lives in `run_payload`, ahead of any build.
+    let precompiled = format == crush_pkg::manifest::PayloadFormat::Casm
+        || (strict_mode && format == crush_pkg::manifest::PayloadFormat::Unknown);
+    if !precompiled
+        && matches!(
+            crush_pkg::flow::buildability(&manifest, &root),
+            crush_pkg::flow::Buildability::Crush
+        )
+    {
+        return build_and_run(manifest, root, args, grants);
+    }
+    run_payload(manifest, payload, args, grants, strict_mode).map_err(DefaultFailure::Run)
+}
 
+/// Run the capsule's entry payload as-is (no build step): Script/Native
+/// capsules, and pre-compiled Crush entries.
+fn run_payload(
+    manifest: crush_pkg::manifest::Manifest,
+    payload: PathBuf,
+    args: Vec<String>,
+    grants: &GrantArgs,
+    strict_mode: bool,
+) -> anyhow::Result<()> {
     let format = detect_payload_format(&payload);
 
     if format == crush_pkg::manifest::PayloadFormat::Unknown && strict_mode {
@@ -737,17 +771,31 @@ fn handle_run(args: Vec<String>, grants: &GrantArgs, strict_mode: bool) -> anyho
             .runner(&manifest, &args)
             .run_payload_with_plugins_before(&payload, &plugin_grants, run_banner)?
     };
+    finish_execution(result)
+}
+
+/// Act on how a run ended. `sys.exit(n)` ends this process with status `n`
+/// (CRUSH-349): the program chose its code, so no error banner; a child
+/// process's non-zero status is passed through the same way.
+fn finish_execution(result: ExecutionResult) -> anyhow::Result<()> {
     match result {
-        ExecutionResult::Vm => {}
+        ExecutionResult::Vm | ExecutionResult::None => Ok(()),
+        ExecutionResult::Exit(code) => {
+            let _ = std::io::stdout().flush();
+            if code == 0 {
+                Ok(())
+            } else {
+                std::process::exit(code)
+            }
+        }
         ExecutionResult::Process(mut child) => {
             let status = child.wait()?;
             if !status.success() {
                 std::process::exit(status.code().unwrap_or(1));
             }
+            Ok(())
         }
-        ExecutionResult::None => {}
     }
-    Ok(())
 }
 
 fn handle_check(json_mode: bool, strict_mode: bool) -> anyhow::Result<()> {
@@ -825,6 +873,16 @@ enum DefaultFailure {
     Run(anyhow::Error),
 }
 
+impl std::fmt::Display for DefaultFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DefaultFailure::Manifest(e) | DefaultFailure::Builder(e) | DefaultFailure::Run(e) => {
+                write!(f, "{e:#}")
+            }
+        }
+    }
+}
+
 impl DefaultFailure {
     fn into_failure(self) -> CommandFailure {
         match self {
@@ -849,9 +907,22 @@ fn handle_default(
     if let crush_pkg::flow::Buildability::NotCrush(_) =
         crush_pkg::flow::buildability(&manifest, &root)
     {
-        return handle_run(args, grants, strict_mode).map_err(DefaultFailure::Run);
+        let payload = root.join(&manifest.capsule.entry);
+        return run_payload(manifest, payload, args, grants, strict_mode).map_err(DefaultFailure::Run);
     }
 
+    build_and_run(manifest, root, args, grants)
+}
+
+/// The one "compile entry + path deps, then execute" path, shared by a bare
+/// `crush-pkg` and `crush-pkg run` (CRUSH-348): build → write `target/` →
+/// run the program `build` produced.
+fn build_and_run(
+    manifest: crush_pkg::manifest::Manifest,
+    root: PathBuf,
+    args: Vec<String>,
+    grants: &GrantArgs,
+) -> Result<(), DefaultFailure> {
     let name = manifest.capsule.name.clone();
     let version = manifest.capsule.version.clone();
     // The program's arguments ride in the runner's host caps (`sys.args()`).
@@ -867,12 +938,12 @@ fn handle_default(
         .write_output(&output)
         .map_err(DefaultFailure::Builder)?;
     let plugin_grants = grants.plugin_grants().map_err(DefaultFailure::Run)?;
-    runner
+    let result = runner
         .run_program_with_plugins_before(&output.program, &plugin_grants, || {
             println!("running {name} v{version}");
         })
         .map_err(DefaultFailure::Run)?;
-    Ok(())
+    finish_execution(result).map_err(DefaultFailure::Run)
 }
 
 fn handle_pack(output: Option<PathBuf>) -> anyhow::Result<()> {
