@@ -27,11 +27,32 @@
 
 👉 **[crushlang.org](https://crushlang.org)** for the landing page and a live example, or **[docs.crushlang.org](https://docs.crushlang.org)** for the full language guide (syntax, capability system, polyglot programming, stdlib, CAST/CASM, worked examples).
 
-## 🌌 Relationship to Exosphere
+## 📦 Install
 
-This repository was extracted from the [exosphere](https://github.com/nixpt/exosphere) agent-native OS monorepo on 2026-06-12. The walker crate tree (the polyglot source → CAST translators) was split out so it could compile independently without pulling in the full exosphere kernel runtime. Exosphere retains a subprocess-based `WalkerRegistry` that invokes the walker binaries produced here.
+```bash
+cargo install crush-lang-sdk    # crush, crushc, crush-run, crush-repl, crush-compile, crush-diff, crush-debug
+```
 
-The repos are **peer projects** — no path dependencies run in either direction. Exosphere pins its own `crush-cast`/`casm` at v1.0.0; crush-ast's own crates are released together (the workspace version: `0.8.0`, tagged `v0.8.0` and published to crates.io on 2026-10-30).
+> **Not `cargo install crush`** — the `crush` crate on crates.io is an unrelated project. The
+> toolchain is published as **`crush-lang-sdk`** (plus `crush-pkg`, `crush-installer`, and the
+> library crates). There is no `crush-ast` crate; that's this repository's name.
+
+**Prebuilt binaries.** Starting with v0.9.0, every `vX.Y.Z` tag has a GitHub **pre-release** with a
+Linux x86_64 tarball (`crush`, `crushc`, `crush-run`, `crush-compile`, `crush-repl`, `crush-debug`,
+`crush-pkg`, `crush-gui`), the browser runtime (`crush-web-<ver>-pkg.tar.gz`) and `SHA256SUMS`, so
+`cargo binstall crush-lang-sdk` downloads instead of compiling. (Pre-releases until 1.0: see
+[`docs/planning/RELEASE-1.0-CRITERIA.md`](docs/planning/RELEASE-1.0-CRITERIA.md).)
+
+All crates are released together at the workspace version in `Cargo.toml`.
+
+| Command | What it does |
+|---|---|
+| `crush` / `crush repl` | interactive REPL |
+| `crush run FILE` | run a `.crush` / `.casm` / `.cvm1` program |
+| `crush build FILE` | compile to `.cvm1` |
+| `crush debug FILE --step --inspect` | breakpoints by source line, step, watch, print (grant-gated) |
+| `crush gui run FILE --ui` | run a program that draws a window with `ui.*` (needs `crush-gui`) |
+| `crush doctor` | check the host runtimes polyglot blocks need |
 
 ## 🏗️ Repository Structure
 
@@ -64,23 +85,24 @@ crates/
 ├── crush-lang-custom/    # Custom/user-defined language adapter scaffold
 │
 ├── crush-frontend/       # Crush language parser, semantic analyzer, optimizer, and CASM compiler
-├── crush-lang-sdk/       # Rust SDK for hosting the CVM1 runtime (produces: crushc, crush-run, crush-compile, crush-repl)
+├── crush-lang-sdk/       # Rust SDK for hosting the CVM1 runtime (bins: crush, crushc, crush-run, crush-compile, crush-repl, crush-diff, crush-debug)
 ├── crush-vm/             # CVM1 bytecode assembler, disassembler, and sandboxed interpreter (incl. polyglot exec + capability gates)
 ├── crush-vm-capi/        # C API shared library for embedding CrushVM in C/C++ programs
-├── crush-vm-py/          # Python extension module (PyO3) exposing the canonical CVM1 VM
+├── crush-vm-py/          # Python extension module (PyO3) exposing the canonical CVM1 VM (outside the workspace)
 ├── crush-jit/            # Cranelift-based JIT backend (native execution tier)
 ├── crush-aot/            # AOT: CASM → Rust (rustc) or C (gcc/clang) → native .so (bins: crush-aotc, crush-walk-run)
 ├── crush-aotc/           # Typed AOT compiler library: CASM → C source → shared library (.so)
 ├── crush-ptx/            # CASM → PTX (NVIDIA GPU assembly) emission backend
-├── crush-web/            # Browser WebAssembly runtime (compiles/runs CAST via crush-frontend + crush-vm's portable interpreter)
+├── crush-web/            # Browser WebAssembly runtime (outside the workspace; its pkg ships with each tag's pre-release)
 ├── crush-ffi/            # C-ABI plugin interface
 ├── crush-plugin-example/ # Example native plugin built on crush-ffi
 ├── crush-python/         # PyO3 bindings exposing crush-cast to Python
-├── crush-debugger/       # Debugger hooks over crush-vm
+├── crush-debugger/       # Debugger engine over crush-vm (breakpoints, step, watch, grant-gated inspection); `crush debug` / `crush-debug`
 ├── crush-lint/           # Static lint pass over CAST/CASM
 ├── crush-macros/         # Proc-macros shared across the workspace
-├── crush-net/            # Mesh/network-facing bindings (crush-lang-sdk over mesh-proto)
+├── crush-net/            # Raw TCP/TLS sockets as `tcp.*` capabilities (`--tcp`, `--tcp-listen`)
 ├── crush-tui/            # Terminal UI front-end
+├── crush-gui/            # Desktop GUI: `ui.*` capabilities on arniko/bliss (`crush gui run`, `--ui`; not a default member, needs fontconfig)
 ├── crush-pkg/            # Package manager — cargo-like build tool for Crush (uses buckets for sandboxed script runtimes)
 └── crush-installer/      # Toolchain installer and uninstaller
 ```
@@ -100,7 +122,8 @@ git clone https://github.com/nixpt/buckets ../buckets
 ```
 
 ```bash
-# Build the core SDK and package manager
+# Build the core SDK and package manager (`cargo build` alone builds every
+# default member; `crush-gui` is left out because it needs `libfontconfig1-dev`)
 cargo build -p crush-lang-sdk -p crush-pkg
 
 # Install to ~/.crush using the included installer
@@ -117,7 +140,7 @@ cargo run --bin crushc -- --help
 cargo run --bin crush-run -- run my-program.crush
 ```
 
-A first program, with what it prints (verified against `3ae0b4a`):
+A first program, with what it prints (verified against `faeb86e8`, 2026-10-31):
 
 ```crush
 fn make_counter() {
