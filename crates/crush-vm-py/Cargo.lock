@@ -46,10 +46,11 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "casm"
-version = "0.3.0"
+version = "0.7.1"
 dependencies = [
  "bitflags",
  "byteorder",
+ "crush-cosm",
  "crush-errors",
  "hex",
  "rmp-serde",
@@ -74,8 +75,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "crush-cosm"
+version = "0.7.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+]
+
+[[package]]
 name = "crush-diagnostics"
-version = "0.3.0"
+version = "0.7.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -83,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "crush-errors"
-version = "0.3.0"
+version = "0.7.1"
 dependencies = [
  "regex",
  "serde",
@@ -92,13 +102,15 @@ dependencies = [
 
 [[package]]
 name = "crush-vm"
-version = "0.3.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "casm",
+ "crush-cosm",
  "crush-diagnostics",
  "crush-errors",
  "hex",
+ "indexmap",
  "libc",
  "parking_lot",
  "serde",
@@ -135,6 +147,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "equivalent"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -143,6 +161,12 @@ dependencies = [
  "typenum",
  "version_check",
 ]
+
+[[package]]
+name = "hashbrown"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "heck"
@@ -155,6 +179,16 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "indexmap"
+version = "2.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
+dependencies = [
+ "equivalent",
+ "hashbrown",
+]
 
 [[package]]
 name = "indoc"
@@ -436,6 +470,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_path_to_error"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+dependencies = [
+ "itoa",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-201 |
 | **Priority** | P0 |
-| **Status** | In review |
+| **Status** | Done — PR #170 merged 2026-10-12 |
 | **Phase** | M6 |
 | **Assignee** | vega |
 | **Dependencies** | none |
@@ -36,3 +36,7 @@ values, `char` literals, comparisons/`!` yield ints 1/0. Unknown statements and 
 errors instead of being dropped / becoming null. New `io.write` capability (no newline) in both
 VMs and both AOT backends — usable by Rust `print!` and bash `echo -n` next. Pointers, `sizeof`,
 `goto`, `%f` remain unsupported (loud).
+
+## Survey 2026-10-31 (status)
+
+PR #170 (`agent/vega/CRUSH-201-c-walker-loud`) merged 2026-10-12; all criteria ticked. Previous status: `In review`.

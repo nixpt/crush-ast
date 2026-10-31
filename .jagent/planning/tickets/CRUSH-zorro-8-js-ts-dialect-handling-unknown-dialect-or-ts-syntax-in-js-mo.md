@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-8 |
 | **Priority** | P0 |
-| **Status** | Backlog |
+| **Status** | Partially done (extension handling; TS-strip remains) |
 | **Phase** | JS/TS parity spike |
-| **Assignee** | unassigned |
+| **Assignee** | nixp |
 | **Dependencies** | CRUSH-250 |
 | **Estimated effort** | S |
 | **Filed by** | vega — 2026-10-15 JS/TS parity spike (baseline measured on main `5f223a9`) |
@@ -18,10 +18,43 @@
 ## Success criteria
 
 - [ ] TypeScript syntax under an ES extension is a loud parse error with the location, never a `null` program.
-- [ ] An unknown extension is a loud error naming the accepted set (`js mjs cjs jsx ts tsx mts cts`).
-- [ ] `cts` parses as TypeScript.
-- [ ] The walker registry passes the real extension through (e.g. `walker_N.ts`), so a `.ts` file walked via `language_walkers` is parsed as TS.
-- [ ] A regression test for each case.
+- [x] An unknown extension is a loud error naming the accepted set (`js mjs cjs jsx ts tsx mts cts`).
+- [x] `cts` parses as TypeScript.
+- [x] The walker registry passes the real extension through (e.g. `walker_N.ts`), so a `.ts` file walked via `language_walkers` is parsed as TS.
+- [x] A regression test for each case.
+
+## Resolution (2026-10-30, `agent/nixp/CRUSH-zorro-8`)
+
+`crates/crush-lang-js/src/lib.rs`:
+
+- `JsLowering::for_ext` now accepts exactly `js mjs cjs jsx ts tsx mts cts`
+  (`cts` is TypeScript) and **refuses an unknown extension** naming that set.
+  Before, every unrecognised extension was treated as plain JS, so a `.ts` file
+  reached as `.tmp` (or a typo like `typescript`) parsed TypeScript as ES.
+- The `JsFrontend`/`JsAdapter` extension lists gained `.cts`/`jsx`.
+
+`crates/crush-frontend/src/language_walkers.rs`: `SubprocessWalker::parse`
+carries the filename to `walk`, which names its temp file `walker_N.<ext>` — a
+`.ts` walked through the subprocess path keeps its dialect instead of getting a
+`.tmp` name.
+
+`crates/crush-lang-js/src/backend/swc.rs`: `cts` is parsed as TypeScript.
+
+### Evidence
+
+- `crates/crush-lang-js/src/lib.rs::tests::unknown_extension_is_refused_and_cts_is_typescript`
+  (verified RED: reverting the unknown-extension arm fails it).
+- `cargo test --workspace --lib --tests`: 2580 passed, 0 failed.
+
+## Remaining (not this PR)
+
+- **TS syntax under an ES extension.** swc's ES parser *accepts* `const n: number
+  = 7;` (it strips the annotation), so this is not the `null` program the ticket
+  describes, but it is also not the loud error the criterion asks for. Making it
+  loud (or making TS work under any extension) needs the ticket's technical
+  approach: parse with swc in TS mode and strip the type spans into the boa
+  lowering (the optional `ts` feature). Left for a follow-up.
+
 
 ## Technical approach
 

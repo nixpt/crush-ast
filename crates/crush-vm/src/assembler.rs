@@ -408,6 +408,7 @@ pub fn disassemble(program: &Program) -> String {
         (CELL_NEW, "CELL_NEW"),
         (CELL_GET, "CELL_GET"),
         (CELL_SET, "CELL_SET"),
+        (CALL_VALUE_APPLY, "CALL_VALUE_APPLY"),
         (RET, "RET"),
         (ENTER_TRY, "ENTER_TRY"),
         (EXIT_TRY, "EXIT_TRY"),
@@ -472,6 +473,7 @@ pub fn disassemble(program: &Program) -> String {
         (IS_KIND, "IS_KIND"),
         (COPY, "COPY"),
         (NEW_RECORD, "NEW_RECORD"),
+        (LOAD_KIND, "LOAD_KIND"),
         (HALT, "HALT"),
     ]
     .iter()
@@ -597,6 +599,7 @@ fn opcode_for(name: &str) -> Option<u8> {
         "CELL_NEW" => Some(CELL_NEW),
         "CELL_GET" => Some(CELL_GET),
         "CELL_SET" => Some(CELL_SET),
+        "CALL_VALUE_APPLY" => Some(CALL_VALUE_APPLY),
         "RET" => Some(RET),
         "EXEC_LANG" => Some(EXEC_LANG),
         "ENTER_TRY" => Some(ENTER_TRY),
@@ -663,6 +666,7 @@ fn opcode_for(name: &str) -> Option<u8> {
         "IS_KIND" => Some(IS_KIND),
         "COPY" => Some(COPY),
         "NEW_RECORD" => Some(NEW_RECORD),
+        "LOAD_KIND" => Some(LOAD_KIND),
         "HALT" => Some(HALT),
         _ => None,
     }

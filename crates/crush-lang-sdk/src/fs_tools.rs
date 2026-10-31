@@ -14,10 +14,12 @@
 //! `chdir`s the host process. `fs.pwd` reports it relative to the sandbox
 //! root (`"."` at the root), never as a host path.
 //!
-//! Re-implemented over `std::fs`; the names and argument orders follow the
-//! older exosphere / `nixpt/crush` coreutils.
+//! Every file operation goes through the sandbox's [`FsBackend`](crate::fs_backend::FsBackend)
+//! (the disk, or memory); the names and argument orders follow the older
+//! exosphere / `nixpt/crush` coreutils.
 
-use crate::host_caps::{FsSandbox, open_for_write};
+use crate::fs_backend::Kind;
+use crate::host_caps::FsSandbox;
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use std::path::Path;
@@ -78,7 +80,8 @@ impl HostCap for FsToolCap {
             "fs.cat" => {
                 let path = fs.resolve(&args[0])?;
                 Value::Str(
-                    std::fs::read_to_string(&path)
+                    fs.backend()
+                        .read_to_string(&path)
                         .map_err(|e| format!("{name} {}: {e}", fs.display(&path)))?,
                 )
             }
@@ -91,9 +94,9 @@ impl HostCap for FsToolCap {
                 arity(name, &args, 1, 2)?;
                 let path = fs.resolve(&args[0])?;
                 let result = if flag(&args, 1) {
-                    std::fs::create_dir_all(&path)
+                    fs.backend().create_dir_all(&path)
                 } else {
-                    std::fs::create_dir(&path)
+                    fs.backend().create_dir(&path)
                 };
                 result.map_err(|e| format!("{name} {}: {e}", fs.display(&path)))?;
                 Value::Null
@@ -102,18 +105,18 @@ impl HostCap for FsToolCap {
                 arity(name, &args, 1, 2)?;
                 let path = fs.resolve_nofollow(&args[0])?;
                 fs.refuse_working_dir(name, &path)?;
-                let meta = std::fs::symlink_metadata(&path)
+                let kind = fs.backend().symlink_kind(&path)
                     .map_err(|e| format!("{name} {}: {e}", fs.display(&path)))?;
-                let result = if meta.is_dir() {
+                let result = if kind == Kind::Dir {
                     if !flag(&args, 1) {
                         return Err(format!(
                             "{name} {}: is a directory (pass true as the second argument to remove it recursively)",
                             fs.display(&path)
                         ));
                     }
-                    std::fs::remove_dir_all(&path)
+                    fs.backend().remove_dir_all(&path)
                 } else {
-                    std::fs::remove_file(&path)
+                    fs.backend().remove_file(&path)
                 };
                 result.map_err(|e| format!("{name} {}: {e}", fs.display(&path)))?;
                 Value::Null
@@ -122,7 +125,7 @@ impl HostCap for FsToolCap {
                 arity(name, &args, 2, 3)?;
                 let src = fs.resolve(&args[0])?;
                 let dst = fs.resolve(&args[1])?;
-                if src.is_dir() {
+                if fs.is_dir(&src) {
                     if !flag(&args, 2) {
                         return Err(format!(
                             "{name} {}: is a directory (pass true as the third argument to copy it recursively)",
@@ -137,7 +140,7 @@ impl HostCap for FsToolCap {
                     }
                     copy_tree(fs, &src, &dst)?;
                 } else {
-                    copy_file(&src, &dst).map_err(|e| {
+                    fs.backend().copy_file(&src, &dst).map_err(|e| {
                         format!("{name} {} -> {}: {e}", fs.display(&src), fs.display(&dst))
                     })?;
                 }
@@ -147,16 +150,15 @@ impl HostCap for FsToolCap {
                 let src = fs.resolve_nofollow(&args[0])?;
                 let dst = fs.resolve_nofollow(&args[1])?;
                 fs.refuse_working_dir(name, &src)?;
-                std::fs::rename(&src, &dst).map_err(|e| {
+                fs.backend().rename(&src, &dst).map_err(|e| {
                     format!("{name} {} -> {}: {e}", fs.display(&src), fs.display(&dst))
                 })?;
                 Value::Null
             }
             "fs.touch" => {
                 let path = fs.resolve(&args[0])?;
-                let file = open_for_write(&path, false)
-                    .map_err(|e| format!("{name} {}: {e}", fs.display(&path)))?;
-                file.set_modified(std::time::SystemTime::now())
+                fs.backend()
+                    .touch(&path)
                     .map_err(|e| format!("{name} {}: {e}", fs.display(&path)))?;
                 Value::Null
             }
@@ -166,7 +168,7 @@ impl HostCap for FsToolCap {
                 let dir = fs.resolve(&args[0])?;
                 let pattern = args.get(1).map(crate::caps::value_as_text);
                 let mut found = Vec::new();
-                find(&dir, Path::new(&base), pattern.as_deref(), &mut found)
+                find(fs, &dir, Path::new(&base), pattern.as_deref(), &mut found)
                     .map_err(|e| format!("{name} {base}: {e}"))?;
                 found.sort();
                 Value::new_array(found.into_iter().map(Value::Str).collect())
@@ -197,25 +199,18 @@ fn flag(args: &[Value], index: usize) -> bool {
 /// Directory entry names, sorted so output does not depend on the host
 /// filesystem's iteration order. Shared with `fs.list`.
 pub(crate) fn list_dir(cap: &str, dir: &Path, fs: &FsSandbox) -> Result<Value, String> {
-    let mut names: Vec<String> = std::fs::read_dir(dir)
+    let mut names: Vec<String> = fs
+        .backend()
+        .read_dir(dir)
         .map_err(|e| format!("{cap} {}: {e}", fs.display(dir)))?
+        .into_iter()
         .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().into_string().ok())
+        .filter_map(|e| e.name.into_string().ok())
         .collect();
     names.sort();
     Ok(Value::new_array(
         names.into_iter().map(Value::Str).collect(),
     ))
-}
-
-/// Copy one file's contents and permissions, as `std::fs::copy` does, but
-/// open the destination with [`open_for_write`] so it is never a symlink.
-fn copy_file(src: &Path, dst: &Path) -> std::io::Result<()> {
-    let mut from = std::fs::File::open(src)?;
-    let permissions = from.metadata()?.permissions();
-    let mut to = open_for_write(dst, true)?;
-    std::io::copy(&mut from, &mut to)?;
-    to.set_permissions(permissions)
 }
 
 /// Recursive copy that never follows a symlink: a link inside the tree could
@@ -224,27 +219,27 @@ fn copy_file(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// already sitting at any path below it is refused too (CRUSH-180).
 fn copy_tree(fs: &FsSandbox, src: &Path, dst: &Path) -> Result<(), String> {
     let err = |p: &Path, e: std::io::Error| format!("fs.cp {}: {e}", fs.display(p));
-    if dst.is_symlink() {
+    if matches!(fs.backend().symlink_kind(dst), Ok(Kind::Symlink)) {
         return Err(format!(
             "fs.cp {}: refusing to copy onto a symlink in a recursive copy",
             fs.display(dst)
         ));
     }
-    std::fs::create_dir_all(dst).map_err(|e| err(dst, e))?;
-    for entry in std::fs::read_dir(src).map_err(|e| err(src, e))? {
+    fs.backend().create_dir_all(dst).map_err(|e| err(dst, e))?;
+    for entry in fs.backend().read_dir(src).map_err(|e| err(src, e))? {
         let entry = entry.map_err(|e| err(src, e))?;
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        let kind = entry.file_type().map_err(|e| err(&from, e))?;
-        if kind.is_symlink() {
+        let from = src.join(&entry.name);
+        let to = dst.join(&entry.name);
+        let kind = entry.kind.map_err(|e| err(&from, e))?;
+        if kind == Kind::Symlink {
             return Err(format!(
                 "fs.cp {}: refusing to copy a symlink in a recursive copy",
                 fs.display(&from)
             ));
-        } else if kind.is_dir() {
+        } else if kind == Kind::Dir {
             copy_tree(fs, &from, &to)?;
         } else {
-            copy_file(&from, &to).map_err(|e| err(&to, e))?;
+            fs.backend().copy_file(&from, &to).map_err(|e| err(&to, e))?;
         }
     }
     Ok(())
@@ -254,14 +249,15 @@ fn copy_tree(fs: &FsSandbox, src: &Path, dst: &Path) -> Result<(), String> {
 /// `base/<relative path>` — the form the caller can pass straight back to
 /// another `fs.*` call — optionally filtered by a `*`/`?` name glob.
 fn find(
+    fs: &FsSandbox,
     dir: &Path,
     base: &Path,
     pattern: Option<&str>,
     found: &mut Vec<String>,
 ) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
+    for entry in fs.backend().read_dir(dir)? {
         let entry = entry?;
-        let name = entry.file_name();
+        let name = entry.name;
         let shown = base.join(&name);
         if pattern.is_none_or(|p| glob_match(p, &name.to_string_lossy())) {
             if found.len() >= FIND_MAX_RESULTS {
@@ -271,8 +267,8 @@ fn find(
             }
             found.push(clean(&shown));
         }
-        if entry.file_type()?.is_dir() {
-            find(&entry.path(), &shown, pattern, found)?;
+        if entry.kind? == Kind::Dir {
+            find(fs, &dir.join(&name), &shown, pattern, found)?;
         }
     }
     Ok(())

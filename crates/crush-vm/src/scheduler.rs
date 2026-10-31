@@ -266,17 +266,11 @@ pub(crate) struct ExecLangOutcome {
 /// value (the `CRUSH_RESULT_SENTINEL` line). Shared by the subprocess path
 /// and host-provided executors ([`crate::portable_vm::LangExecutor`]).
 pub(crate) fn parse_exec_lang_stdout(raw: &str) -> ExecLangOutcome {
-    let mut visible_lines: Vec<&str> = Vec::new();
-    let mut result_payload: Option<&str> = None;
-    for line in raw.lines() {
-        match line.strip_prefix(CRUSH_RESULT_SENTINEL) {
-            // Last one wins, matching "the block's final bound output" if it
-            // somehow printed the sentinel more than once.
-            Some(payload) => result_payload = Some(payload),
-            None => visible_lines.push(line),
-        }
-    }
-    let visible = visible_lines.join("\n").trim().to_string();
+    // Last one wins, matching "the block's final bound output" if it somehow
+    // printed the sentinel more than once.
+    let result_payload = raw.lines().filter_map(|line| line.strip_prefix(CRUSH_RESULT_SENTINEL)).next_back();
+    // Shared with inline-lowered blocks (#312), so both modes print the same.
+    let visible = crate::block_capture::visible_text(raw);
     let result_value = match result_payload {
         Some(payload) => serde_json::from_str::<Value>(payload)
             .unwrap_or_else(|_| Value::Str(payload.to_string())),
@@ -697,6 +691,8 @@ fn execute_one(
     // produced wrong order.)
     let out_parts = shared_out_parts;
     let out_len = shared_out_len;
+    // An inline-lowered polyglot block's output is held here (#312).
+    let captures = &mut thread.captures;
 
     macro_rules! pop {
         () => {{ stack.pop().ok_or(VmError::StackUnderflow)? }};
@@ -740,6 +736,7 @@ fn execute_one(
             call_stack.push(Frame {
                 return_ip: Some(next_ip),
                 memory: HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
             });
             thread.ip = entry;
             return Ok(StepAction::Jump);
@@ -759,11 +756,68 @@ fn execute_one(
                         if *out_len > quotas.max_output {
                             return Err(VmError::OutputQuota(quotas.max_output));
                         }
-                        out_parts.push(r.output);
+                        crate::block_capture::emit(captures, out_parts, r.output);
                     }
                     Ok(r.return_value.unwrap_or(Value::Null))
                 };
                 crate::cosm_rt::render_hooked(&$v, &mut hook)?
+            }
+        }};
+    }
+    // COSM S4 (CRUSH-277), reworked by the CRUSH-285 review: a
+    // getter/setter runs as an ordinary call ON THIS THREAD, where the
+    // member op stands — the same frame stack, step count, call-depth
+    // budget and try handlers as the code around it. (It previously ran
+    // in a nested `run_from` with fresh budgets: a self-reading getter
+    // recursed through native frames until the process aborted, a
+    // getter loop could spend the whole step quota per call, and a
+    // getter's throw bypassed the program's own `try`/`catch`.) The
+    // callee's `RET` leaves its return value where the member op's
+    // result belongs; the frame's `on_ret` drops or replaces it for
+    // writes. Diverges: never falls through.
+    macro_rules! call_accessor {
+        ($call:expr, $on_ret:expr) => {{
+            let call: crate::cosm_rt::AccessorCall = $call;
+            let entry = func_entry
+                .get(call.func.as_str())
+                .copied()
+                .ok_or_else(|| VmError::UnknownFunction(call.func.clone()))?;
+            if call_stack.len() >= quotas.max_call_depth {
+                return Err(VmError::CallDepthQuota(quotas.max_call_depth));
+            }
+            for v in call.args.iter().rev() {
+                push!(v.clone());
+            }
+            call_stack.push(Frame {
+                return_ip: Some(next_ip),
+                memory: HashMap::new(),
+                on_ret: $on_ret,
+            });
+            thread.ip = entry;
+            return Ok(StepAction::Jump);
+        }};
+    }
+    // A member read that may be an accessor call (CRUSH-277 S4).
+    macro_rules! get_member {
+        ($target:expr, $name:expr, $strict:expr) => {{
+            match crate::cosm_rt::get_member($target, $name, $strict)? {
+                crate::cosm_rt::MemberRead::Done(v) => v,
+                crate::cosm_rt::MemberRead::Call(call) => {
+                    call_accessor!(call, crate::vm::RetValue::Keep)
+                }
+            }
+        }};
+    }
+    // A member write that may be an accessor call (CRUSH-277 S4). The
+    // write op's result is `$leave` (the record written), which the
+    // frame leaves on the stack when a setter ran.
+    macro_rules! set_member {
+        ($target:expr, $name:expr, $val:expr, $leave:expr) => {{
+            match crate::cosm_rt::set_member($target, $name, $val)? {
+                crate::cosm_rt::MemberWrite::Done => {}
+                crate::cosm_rt::MemberWrite::Call(call) => {
+                    call_accessor!(call, crate::vm::RetValue::Replace($leave));
+                }
             }
         }};
     }
@@ -1062,7 +1116,12 @@ fn execute_one(
                     let key = crate::map_ops::map_key_string(&idx_v)?;
                     push!(crate::map_ops::map_get(&map_rc.borrow(), &key)?);
                 }
-                Value::Record(r) => push!(crate::cosm_rt::index_get(&r, &idx_v)?),
+                Value::Record(r) => match crate::cosm_rt::index_get(&r, &idx_v)? {
+                    crate::cosm_rt::IndexAccess::Done(v) => push!(v),
+                    crate::cosm_rt::IndexAccess::Call { call, .. } => {
+                        call_accessor!(call, crate::vm::RetValue::Keep)
+                    }
+                },
                 Value::Array(arr_rc) => {
                     let idx = need_array_index(&idx_v)?;
                     let arr = arr_rc.borrow();
@@ -1092,7 +1151,7 @@ fn execute_one(
                 }
                 rec @ Value::Record(_) => {
                     let key = crate::map_ops::map_key_string(&idx_v)?;
-                    crate::cosm_rt::set_member(&rec, &key, val)?;
+                    set_member!(&rec, &key, val, rec.clone());
                     push!(rec);
                 }
                 other => {
@@ -1253,7 +1312,7 @@ fn execute_one(
             if *out_len > quotas.max_output {
                 return Err(VmError::OutputQuota(quotas.max_output));
             }
-            out_parts.push(s);
+            crate::block_capture::emit(captures, out_parts, s);
         }
         CAP_CALL => {
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
@@ -1277,7 +1336,16 @@ fn execute_one(
             }
             if crate::cosm_rt::is_index_cap(&cap, &args) {
                 check_cap_permitted(&cap, declared.contains(cap.as_str()), quotas)?;
-                push!(crate::cosm_rt::index_cap(&cap, &args)?);
+                match crate::cosm_rt::index_cap(&cap, &args)? {
+                    crate::cosm_rt::IndexAccess::Done(v) => push!(v),
+                    crate::cosm_rt::IndexAccess::Call { call, after } => {
+                        let on_ret = match after {
+                            Some(v) => crate::vm::RetValue::Replace(v),
+                            None => crate::vm::RetValue::Keep,
+                        };
+                        call_accessor!(call, on_ret);
+                    }
+                }
                 return Ok(StepAction::Continue);
             }
             let args = crate::cosm_rt::cap_args(&cap, args)?;
@@ -1290,12 +1358,12 @@ fn execute_one(
                     if *out_len > quotas.max_output {
                         return Err(VmError::OutputQuota(quotas.max_output));
                     }
-                    out_parts.push(output);
+                    crate::block_capture::emit(captures, out_parts, output);
                 }
                 push!(results);
             } else {
                 let result = dispatch_cap(
-                    &cap, args, declared, quotas, out_parts, out_len, host_caps,
+                    &cap, args, declared, quotas, out_parts, out_len, host_caps, captures, call_stack.len(),
                 )?;
                 if let Some(v) = result {
                     push!(v);
@@ -1318,6 +1386,7 @@ fn execute_one(
             call_stack.push(Frame {
                 return_ip: Some(next_ip),
                 memory: HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
             });
             thread.ip = entry;
             return Ok(StepAction::Jump);
@@ -1373,6 +1442,35 @@ fn execute_one(
             call_stack.push(Frame {
                 return_ip: Some(next_ip),
                 memory: HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
+            });
+            thread.ip = entry;
+            return Ok(StepAction::Jump);
+        }
+        CALL_VALUE_APPLY => {
+            // Stack: callee, then its argument array.
+            let args = match pop!() {
+                Value::Array(values) => values.borrow().clone(),
+                other => return Err(VmError::ApplyArgsType(other.type_name())),
+            };
+            let func = crate::vm::callable(&pop!(), args.len())?;
+            let entry = func_entry
+                .get(func.name.as_str())
+                .copied()
+                .ok_or_else(|| VmError::UnknownFunction(func.name.clone()))?;
+            if call_stack.len() >= quotas.max_call_depth {
+                return Err(VmError::CallDepthQuota(quotas.max_call_depth));
+            }
+            for value in args.iter().rev() {
+                push!(value.clone());
+            }
+            for value in func.captured.iter().rev() {
+                push!(value.clone());
+            }
+            call_stack.push(Frame {
+                return_ip: Some(next_ip),
+                memory: HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
             });
             thread.ip = entry;
             return Ok(StepAction::Jump);
@@ -1387,6 +1485,19 @@ fn execute_one(
                     return Ok(StepAction::Done(stack.pop()));
                 }
                 Some(ret) => {
+                    // An accessor frame (CRUSH-285 review): its return
+                    // value stands where the member op's result belongs,
+                    // adjusted per the frame (see `RetValue`).
+                    match frame.on_ret {
+                        crate::vm::RetValue::Keep => {}
+                        crate::vm::RetValue::Drop => {
+                            stack.pop();
+                        }
+                        crate::vm::RetValue::Replace(v) => {
+                            stack.pop();
+                            stack.push(v);
+                        }
+                    }
                     thread.ip = ret;
                     return Ok(StepAction::Jump);
                 }
@@ -1467,7 +1578,7 @@ fn execute_one(
             if *out_len > quotas.max_output {
                 return Err(VmError::OutputQuota(quotas.max_output));
             }
-            out_parts.push(outcome.visible);
+            crate::block_capture::emit(captures, out_parts, outcome.visible);
             // Push the declared outputs in reverse so the first `store` the
             // compiler emits (for `out_0`) sees the first declared value on
             // top of the stack (CRUSH-270 multi-output protocol).
@@ -1543,6 +1654,12 @@ fn execute_one(
         }
         THROW => {
             let err_val = pop!();
+            // A throw out of an inline-lowered polyglot block fails the block,
+            // as a failing EXEC_LANG does: fatal, its output dropped (#312).
+            let handler_depth = try_stack.last().map(|h| h.call_depth);
+            if let Some(err) = crate::block_capture::escaping_throw(captures, handler_depth, &err_val) {
+                return Err(err);
+            }
             if let Some(handler) = try_stack.pop() {
                 // Unwind to the frame and stack height that entered the try.
                 call_stack.truncate(handler.call_depth);
@@ -1628,7 +1745,7 @@ fn execute_one(
                 Value::Map(m) => m,
                 // A struct instance (COSM K1.4): SET_MEMBER.
                 rec @ Value::Record(_) => {
-                    crate::cosm_rt::set_member(&rec, &field, val)?;
+                    set_member!(&rec, &field, val, rec.clone());
                     push!(rec);
                     return Ok(StepAction::Continue);
                 }
@@ -1645,7 +1762,7 @@ fn execute_one(
                 // A struct instance (COSM K1.4): GET_MEMBER, but a name the
                 // instance doesn't have reads `null`, as on a map.
                 target @ (Value::Record(_) | Value::Kind(_)) => {
-                    push!(crate::cosm_rt::get_member(&target, &field, false)?);
+                    push!(get_member!(&target, &field, false));
                     return Ok(StepAction::Continue);
                 }
                 other => { return Err(VmError::TypeError { expected: "map", got: other.type_name() }); }
@@ -1657,13 +1774,13 @@ fn execute_one(
         GET_MEMBER => {
             let name = const_str!();
             let target = pop!();
-            push!(crate::cosm_rt::get_member(&target, &name, true)?);
+            push!(get_member!(&target, &name, true));
         }
         SET_MEMBER => {
             let name = const_str!();
             let val = pop!();
             let target = pop!();
-            crate::cosm_rt::set_member(&target, &name, val)?;
+            set_member!(&target, &name, val, target.clone());
             push!(target);
         }
         HAS_MEMBER => {
@@ -1685,6 +1802,11 @@ fn execute_one(
                 crate::cosm_rt::MemberCall::Call(callee) => call_fn!(callee),
                 crate::cosm_rt::MemberCall::Done(v) => push!(v),
             }
+        }
+        // CRUSH-277 D8: a class name as a value.
+        LOAD_KIND => {
+            let kind = kinds.get(&const_str!())?.clone();
+            push!(Value::Kind(kind));
         }
         CONSTRUCT => {
             let kind = kinds.get(&const_str!())?.clone();
@@ -1956,6 +2078,7 @@ pub(crate) fn parallel_map_counted(
     Ok((output, results, rebuilds))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch_cap(
     cap: &str,
     args: Vec<Value>,
@@ -1964,6 +2087,8 @@ fn dispatch_cap(
     out_parts: &mut Vec<String>,
     out_len: &mut usize,
     host_caps: Option<&HostCaps>,
+    captures: &mut Vec<crate::block_capture::OutputCapture>,
+    call_depth: usize,
 ) -> Result<Option<Value>, VmError> {
     check_cap_permitted(cap, declared.contains(cap), quotas)?;
 
@@ -1981,7 +2106,7 @@ fn dispatch_cap(
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
-                out_parts.push(line);
+                crate::block_capture::emit(captures, out_parts, line);
                 Ok(None)
             }
             // Like io.print but without the newline (C printf, Rust print!).
@@ -1991,7 +2116,7 @@ fn dispatch_cap(
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
-                out_parts.push(text);
+                crate::block_capture::emit(captures, out_parts, text);
                 Ok(None)
             }
             "py.print_sep_end" => {
@@ -2001,7 +2126,7 @@ fn dispatch_cap(
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
-                out_parts.push(line);
+                crate::block_capture::emit(captures, out_parts, line);
                 Ok(None)
             }
             "py.print" => {
@@ -2012,7 +2137,7 @@ fn dispatch_cap(
                 if *out_len > quotas.max_output {
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
-                out_parts.push(line);
+                crate::block_capture::emit(captures, out_parts, line);
                 Ok(None)
             }
             "math.truediv" => {
@@ -2024,11 +2149,14 @@ fn dispatch_cap(
             "js.add" => crate::js_ops::add(&args[0], &args[1]).map(Some),
             "js.truthy" => Ok(Some(crate::js_ops::truthy(&args[0]))),
             "js.loose_eq" => crate::js_ops::loose_eq(&args[0], &args[1]).map(Some),
+            "js.strict_eq" => crate::js_ops::strict_eq(&args[0], &args[1]).map(Some),
             "js.format" => crate::js_ops::format(&args).map(Some),
             "conv.text" => {
                 crate::num_text::text_as(&args[0], &args[1]).map(Some)
             }
             "lang.marshal" => crate::marshal::marshal_cap(&args),
+            "lang.capture_begin" => crate::block_capture::begin(captures, &args, call_depth),
+            "lang.capture_end" => crate::block_capture::end(captures, out_parts),
             "seq.slice" => {
                 crate::seq::slice_values(&args[0], &args[1], &args[2], &args[3]).map(Some)
             }
@@ -2112,34 +2240,7 @@ fn dispatch_cap(
                 }
                 Ok(Some(Value::Int(character as i64)))
             }
-            "arr_slice" => {
-                if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
-                match &args[0] {
-                    Value::Array(elems) => {
-                        let arr = elems.borrow();
-                        let len = arr.len() as i64;
-                        let start = match &args[1] {
-                            Value::Int(i) => *i,
-                            Value::Null => 0i64,
-                            _ => return Err(VmError::TypeError { expected: "int or null", got: args[1].type_name() }),
-                        };
-                        let end = if args.len() > 2 {
-                            match &args[2] {
-                                Value::Int(i) => *i,
-                                Value::Null => len,
-                                _ => return Err(VmError::TypeError { expected: "int or null", got: args[2].type_name() }),
-                            }
-                        } else {
-                            len
-                        };
-                        let start = start.max(0).min(len);
-                        let end = end.max(start).min(len);
-                        let sliced: Vec<Value> = arr[start as usize..end as usize].to_vec();
-                        Ok(Some(Value::new_array(sliced)))
-                    }
-                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
-                }
-            }
+            "arr_slice" => crate::seq::arr_slice_values(cap, &args).map(Some),
             "make_range" => crate::make_range::make_range_values(&args).map(Some),
             "append" | "push" => {
                 if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }

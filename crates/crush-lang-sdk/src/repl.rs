@@ -10,7 +10,7 @@ use crush_vm::{PortableVm, Quotas};
 
 use crate::cli::MessageFormat;
 use crate::compile;
-use crate::theme::JsonDiagnostic;
+use crate::theme::{JsonDiagnostic, JsonDiagnosticExt};
 
 pub struct ReplConfig {
     pub quotas: Quotas,
@@ -708,21 +708,16 @@ pub fn run(config: ReplConfig) -> anyhow::Result<()> {
             match config.message_format {
                 MessageFormat::Text => eprintln!("{}", err),
                 MessageFormat::Json => {
-                    // If the underlying anyhow chain still carries a typed
-                    // `RuntimeError` (rare — only when callers rewrap the
-                    // SDK VM path), surface it; otherwise fall back to the
-                    // generic I/O code.
-                    let diag = if let Some(runtime_err) =
-                        err.downcast_ref::<crate::RuntimeError>()
-                    {
-                        JsonDiagnostic::runtime_error(runtime_err)
-                    } else {
-                        JsonDiagnostic::generic_error(
-                            &err.to_string(),
-                            JsonDiagnostic::CODE_IO,
-                        )
-                    };
-                    eprint!("{}\n", diag.to_line());
+                    // Parse, semantic and runtime errors keep their own codes
+                    // and positions (the same records `crushc` / `crush-run`
+                    // emit); anything else is the generic I/O code.
+                    for diag in crate::theme::diagnostics_for_error(
+                        &err,
+                        None,
+                        JsonDiagnostic::CODE_IO,
+                    ) {
+                        eprintln!("{}", diag.to_line());
+                    }
                 }
             }
         }

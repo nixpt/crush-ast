@@ -15,17 +15,29 @@
             "left": {
               "type": "IntLiteral",
               "value": 1,
-              "meta": {}
+              "meta": {
+                "line": 2,
+                "col": 15
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 3,
-              "meta": {}
+              "meta": {
+                "line": 2,
+                "col": 18
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 2,
+              "col": 18
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "line": 2,
+            "col": 18
+          }
         },
         {
           "type": "VarDecl",
@@ -36,17 +48,29 @@
             "left": {
               "type": "IntLiteral",
               "value": 2,
-              "meta": {}
+              "meta": {
+                "line": 3,
+                "col": 15
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 5,
-              "meta": {}
+              "meta": {
+                "col": 18,
+                "line": 3
+              }
             },
-            "meta": {}
+            "meta": {
+              "col": 18,
+              "line": 3
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "col": 18,
+            "line": 3
+          }
         },
         {
           "type": "VarDecl",
@@ -57,17 +81,29 @@
             "left": {
               "type": "IntLiteral",
               "value": 3,
-              "meta": {}
+              "meta": {
+                "line": 4,
+                "col": 15
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 7,
-              "meta": {}
+              "meta": {
+                "line": 4,
+                "col": 18
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 4,
+              "col": 18
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "col": 18,
+            "line": 4
+          }
         },
         {
           "type": "VarDecl",
@@ -81,24 +117,42 @@
               "left": {
                 "type": "Var",
                 "name": "a",
-                "meta": {}
+                "meta": {
+                  "line": 5,
+                  "col": 19
+                }
               },
               "right": {
                 "type": "Var",
                 "name": "b",
-                "meta": {}
+                "meta": {
+                  "line": 5,
+                  "col": 23
+                }
               },
-              "meta": {}
+              "meta": {
+                "line": 5,
+                "col": 23
+              }
             },
             "right": {
               "type": "Var",
               "name": "c",
-              "meta": {}
+              "meta": {
+                "line": 5,
+                "col": 26
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 5,
+              "col": 26
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "col": 26,
+            "line": 5
+          }
         },
         {
           "type": "VarDecl",
@@ -112,24 +166,42 @@
               "left": {
                 "type": "Var",
                 "name": "first",
-                "meta": {}
+                "meta": {
+                  "line": 6,
+                  "col": 24
+                }
               },
               "right": {
                 "type": "IntLiteral",
                 "value": 2,
-                "meta": {}
+                "meta": {
+                  "line": 6,
+                  "col": 28
+                }
               },
-              "meta": {}
+              "meta": {
+                "line": 6,
+                "col": 28
+              }
             },
             "right": {
               "type": "Var",
               "name": "a",
-              "meta": {}
+              "meta": {
+                "line": 6,
+                "col": 31
+              }
             },
-            "meta": {}
+            "meta": {
+              "col": 31,
+              "line": 6
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "col": 31,
+            "line": 6
+          }
         },
         {
           "type": "Return",
@@ -139,20 +211,34 @@
             "left": {
               "type": "Var",
               "name": "first",
-              "meta": {}
+              "meta": {
+                "line": 7,
+                "col": 18
+              }
             },
             "right": {
               "type": "Var",
               "name": "second",
-              "meta": {}
+              "meta": {
+                "col": 26,
+                "line": 7
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 7,
+              "col": 26
+            }
           },
-          "meta": {}
+          "meta": {
+            "line": 7,
+            "col": 26
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "col": 1,
+        "line": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }

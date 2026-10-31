@@ -1,9 +1,9 @@
 use anyhow::Result;
 use crush_cast::{self as ast, CastType, Expression, Statement};
+use crush_walker_core::{BaseWalker, Walker};
 use serde_json::json;
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
-use crush_walker_core::{BaseWalker, Walker};
 
 pub struct GoWalker {
     pub file_name: String,
@@ -26,9 +26,7 @@ impl Walker for GoWalker {
         };
 
         for child in root_node.children(&mut root_node.walk()) {
-            if let Some(stmt) = visitor.visit_statement(child)? {
-                main_body.push(stmt);
-            }
+            main_body.extend(visitor.visit_statements(child)?);
         }
 
         if !functions.contains_key("main") || !main_body.is_empty() {
@@ -62,7 +60,14 @@ struct Visitor<'a> {
 }
 
 impl<'a> Visitor<'a> {
-    fn visit_statement(&mut self, node: Node) -> Result<Option<Statement>> {
+    /// The statements a node lowers to.
+    ///
+    /// `function_declaration` hoists into `functions` and yields none; a bare
+    /// `block` yields its inner statements; a C-style `for` yields its
+    /// initializer plus a `while`; `if`/`for` with an initializer yield it
+    /// first. Every statement kind this walker does not support is a loud
+    /// error — never a silent drop (CRUSH-198).
+    fn visit_statements(&mut self, node: Node) -> Result<Vec<Statement>> {
         let meta = self.base.create_meta(node, "go", self.file_name);
         match node.kind() {
             "function_declaration" => {
@@ -79,94 +84,265 @@ impl<'a> Visitor<'a> {
                 let body = self.visit_block(body_node)?;
                 self.functions.insert(
                     name,
-                    ast::Function {
-                        params,
-                        body,
-                        meta,
-                        ..Default::default()
-                    },
+                    ast::Function { params, body, meta, ..Default::default() },
                 );
-                Ok(None)
+                Ok(vec![])
             }
-            "short_variable_declaration" => {
-                let left = node.child_by_field_name("left").unwrap(); // expression_list
-                let right = node.child_by_field_name("right").unwrap(); // expression_list
-                                                                        // Minimal: take first of each
-                let name = self.base.text(left.child(0).unwrap())?.to_string();
-                let value = self.visit_expression(right.child(0).unwrap())?;
-                Ok(Some(Statement::VarDecl {
-                    name,
-                    value,
-                    type_hint: CastType::Any,
-                    meta,
-                }))
+            "short_var_declaration" => {
+                // tree-sitter-go calls this `short_var_declaration`; the walker
+                // matched `short_variable_declaration`, so `a := 7` was dropped
+                // and `a` then read as uninitialised (CRUSH-198).
+                let left = node.child_by_field_name("left").unwrap();
+                let right = node.child_by_field_name("right").unwrap();
+                let names = self.names_in(left)?;
+                let values = self.values_in(right)?;
+                if names.len() != values.len() {
+                    anyhow::bail!(
+                        "go: `:=` with {} name(s) and {} value(s) is not supported",
+                        names.len(),
+                        values.len()
+                    );
+                }
+                Ok(names
+                    .into_iter()
+                    .zip(values)
+                    .map(|(name, value)| Statement::VarDecl {
+                        name,
+                        value,
+                        type_hint: CastType::Any,
+                        meta: meta.clone(),
+                    })
+                    .collect())
+            }
+            "var_declaration" => {
+                let mut out = Vec::new();
+                for spec in node.children(&mut node.walk()) {
+                    if spec.kind() != "var_spec" {
+                        continue;
+                    }
+                    let name = self.base.child_text(spec, "name")?.to_string();
+                    let value = match spec.child_by_field_name("value") {
+                        Some(list) => self
+                            .values_in(list)?
+                            .into_iter()
+                            .next()
+                            .ok_or_else(|| anyhow::anyhow!("go: `var {name}` with no value"))?,
+                        None => Expression::NullLiteral { meta: meta.clone() },
+                    };
+                    out.push(Statement::VarDecl {
+                        name,
+                        value,
+                        type_hint: CastType::Any,
+                        meta: meta.clone(),
+                    });
+                }
+                Ok(out)
+            }
+            "assignment_statement" => {
+                let left = node.child_by_field_name("left").unwrap();
+                let right = node.child_by_field_name("right").unwrap();
+                let names = self.names_in(left)?;
+                let values = self.values_in(right)?;
+                if names.len() != values.len() {
+                    anyhow::bail!(
+                        "go: assignment with {} target(s) and {} value(s) is not supported",
+                        names.len(),
+                        values.len()
+                    );
+                }
+                Ok(names
+                    .into_iter()
+                    .zip(values)
+                    .map(|(target, value)| Statement::Assign { target, value, meta: meta.clone() })
+                    .collect())
+            }
+            "inc_statement" | "dec_statement" => {
+                let target = self
+                    .base
+                    .text(node.named_child(0).ok_or_else(|| {
+                        anyhow::anyhow!("go: malformed `{}`", node.kind())
+                    })?)?
+                    .to_string();
+                let operator = if node.kind() == "inc_statement" { "+" } else { "-" };
+                let value = Expression::BinaryOp {
+                    operator: operator.to_string(),
+                    left: Box::new(Expression::Var { name: target.clone(), meta: meta.clone() }),
+                    right: Box::new(Expression::IntLiteral { value: 1, meta: meta.clone() }),
+                    meta: meta.clone(),
+                };
+                Ok(vec![Statement::Assign { target, value, meta }])
             }
             "expression_statement" => {
                 let expr_node = node.child(0).unwrap();
                 let expr = self.visit_expression(expr_node)?;
-
-                // Special check for __crush_export__ call
-                if let Expression::Call {
-                    ref function,
-                    ref args,
-                    ..
-                } = expr
-                {
+                if let Expression::Call { ref function, ref args, .. } = expr {
                     if function == "__crush_export__" && args.len() == 2 {
-                        if let Expression::StringLiteral {
-                            value: export_name, ..
-                        } = &args[0]
-                        {
-                            return Ok(Some(Statement::Export {
+                        if let Expression::StringLiteral { value: export_name, .. } = &args[0] {
+                            return Ok(vec![Statement::Export {
                                 name: export_name.clone(),
                                 value: args[1].clone(),
                                 meta,
-                            }));
+                            }]);
                         }
                     }
                 }
-
-                Ok(Some(Statement::ExprStmt { expr, meta }))
+                Ok(vec![Statement::ExprStmt { expr, meta }])
             }
             "return_statement" => {
-                let value = if let Some(child) = node.child(1) {
-                    if child.kind() == "expression_list" {
-                        Some(self.visit_expression(child.child(0).unwrap())?)
-                    } else {
-                        Some(self.visit_expression(child)?)
+                let value = match node.named_child(0) {
+                    Some(child) if child.kind() == "expression_list" => {
+                        let exprs = self.values_in(child)?;
+                        if exprs.len() != 1 {
+                            anyhow::bail!(
+                                "go: `return` of {} values is not supported",
+                                exprs.len()
+                            );
+                        }
+                        exprs.into_iter().next()
                     }
-                } else {
-                    None
+                    Some(child) => Some(self.visit_expression(child)?),
+                    None => None,
                 };
-                Ok(Some(Statement::Return { value, meta }))
+                Ok(vec![Statement::Return { value, meta }])
             }
             "if_statement" => {
+                let mut out = Vec::new();
+                if let Some(init) = node.child_by_field_name("initializer") {
+                    out.extend(self.visit_statements(init)?);
+                }
                 let cond_node = node.child_by_field_name("condition").unwrap();
                 let condition = self.visit_expression(cond_node)?;
                 let cons_node = node.child_by_field_name("consequence").unwrap();
                 let then_body = self.visit_block(cons_node)?;
-
-                let mut else_body = None;
-                if let Some(alt_node) = node.child_by_field_name("alternative") {
-                    else_body = Some(self.visit_block(alt_node)?);
-                }
-                Ok(Some(Statement::If {
-                    condition,
-                    then_body,
-                    else_body,
-                    meta,
-                }))
+                let else_body = match node.child_by_field_name("alternative") {
+                    Some(alt) => Some(self.visit_block(alt)?),
+                    None => None,
+                };
+                out.push(Statement::If { condition, then_body, else_body, meta });
+                Ok(out)
             }
-            _ => Ok(None),
+            "for_statement" => self.visit_for(node, meta),
+            "block" => self.visit_block(node),
+            // Structural / trivia nodes that produce no Crush statement.
+            "package_clause" | "import_declaration" | "comment" | ";" | "{" | "}" => Ok(vec![]),
+            other => anyhow::bail!(
+                "go: `{other}` is not supported by the Crush Go walker (it would otherwise be silently dropped)"
+            ),
         }
+    }
+
+    /// `for` in all its Go shapes: `for {}`, `for cond {}`, the C-style
+    /// `for init; cond; update {}` (lowered to `init` then
+    /// `while cond { …; update }`) and `for x := range xs {}`.
+    fn visit_for(
+        &mut self,
+        node: Node,
+        meta: HashMap<String, serde_json::Value>,
+    ) -> Result<Vec<Statement>> {
+        let body_node = node
+            .child_by_field_name("body")
+            .ok_or_else(|| anyhow::anyhow!("go: `for` without a body"))?;
+        let body = self.visit_block(body_node)?;
+
+        if let Some(range) = node
+            .children(&mut node.walk())
+            .find(|c| c.kind() == "range_clause")
+        {
+            let left = range
+                .child_by_field_name("left")
+                .ok_or_else(|| anyhow::anyhow!("go: `range` without a target"))?;
+            let names = self.names_in(left)?;
+            if names.len() != 1 {
+                anyhow::bail!(
+                    "go: `for {} := range` (more than one variable) is not supported",
+                    names.join(", ")
+                );
+            }
+            let iterable = self.visit_expression(
+                range
+                    .child_by_field_name("right")
+                    .ok_or_else(|| anyhow::anyhow!("go: `range` without an operand"))?,
+            )?;
+            return Ok(vec![Statement::For {
+                variable: names.into_iter().next().unwrap(),
+                iterable: Box::new(iterable),
+                body,
+                meta,
+            }]);
+        }
+
+        if let Some(clause) = node
+            .children(&mut node.walk())
+            .find(|c| c.kind() == "for_clause")
+        {
+            let mut out = Vec::new();
+            if let Some(init) = clause.child_by_field_name("initializer") {
+                out.extend(self.visit_statements(init)?);
+            }
+            let condition = match clause.child_by_field_name("condition") {
+                Some(c) => self.visit_expression(c)?,
+                None => Expression::BoolLiteral {
+                    value: true,
+                    meta: meta.clone(),
+                },
+            };
+            let mut loop_body = body;
+            if let Some(update) = clause.child_by_field_name("update") {
+                loop_body.extend(self.visit_statements(update)?);
+            }
+            out.push(Statement::While {
+                condition: Box::new(condition),
+                body: loop_body,
+                meta,
+            });
+            return Ok(out);
+        }
+
+        // `for cond {}` or `for {}`: the condition, if present, is the first
+        // named child that is not the body block.
+        let condition = match node.named_child(0) {
+            Some(c) if c.kind() != "block" => self.visit_expression(c)?,
+            _ => Expression::BoolLiteral {
+                value: true,
+                meta: meta.clone(),
+            },
+        };
+        Ok(vec![Statement::While {
+            condition: Box::new(condition),
+            body,
+            meta,
+        }])
+    }
+
+    /// The identifier names in an `expression_list` (or a single identifier).
+    fn names_in(&self, node: Node) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        for c in node.children(&mut node.walk()) {
+            match c.kind() {
+                "identifier" => out.push(self.base.text(c)?.to_string()),
+                "," | "expression_list" => {}
+                other => anyhow::bail!("go: unsupported assignment target `{other}`"),
+            }
+        }
+        Ok(out)
+    }
+
+    /// The expressions in an `expression_list` (or a single expression).
+    fn values_in(&mut self, node: Node) -> Result<Vec<Expression>> {
+        let mut out = Vec::new();
+        for c in node.children(&mut node.walk()) {
+            match c.kind() {
+                "," | "expression_list" => {}
+                _ => out.push(self.visit_expression(c)?),
+            }
+        }
+        Ok(out)
     }
 
     fn visit_block(&mut self, node: Node) -> Result<Vec<Statement>> {
         let mut body = Vec::new();
         for child in node.children(&mut node.walk()) {
-            if let Some(stmt) = self.visit_statement(child)? {
-                body.push(stmt);
-            }
+            body.extend(self.visit_statements(child)?);
         }
         Ok(body)
     }
@@ -258,18 +434,20 @@ impl<'a> Visitor<'a> {
                 if node.child_count() == 1 {
                     self.visit_expression(node.child(0).unwrap())
                 } else {
-                    Ok(Expression::NullLiteral { meta })
+                    anyhow::bail!(
+                        "go: `{}` expressions are not supported by the Crush Go walker",
+                        node.kind()
+                    )
                 }
             }
         }
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use crush_walker_core::{TreeSitterFrontend, frontend_pipeline};
+    use crush_walker_core::{frontend_pipeline, TreeSitterFrontend};
 
     #[test]
     fn test_treesitter_frontend_adapter() {
@@ -300,9 +478,107 @@ func main() {
         };
         let frontend = TreeSitterFrontend::new(walker, "go", &[".go"]);
 
-        // Invalid Go should still parse (tree-sitter is error-tolerant)
-        let (_, program) = frontend_pipeline(&frontend, "this is not go").unwrap();
-        assert_eq!(program.lang.unwrap(), "go");
+        // Invalid Go fails loudly now: it used to lower to `null` silently.
+        assert!(frontend_pipeline(&frontend, "this is not go").is_err());
+    }
+
+    /// Parse `src` as Go and run the walker.
+    fn walk_go(src: &str) -> anyhow::Result<crush_cast::Program> {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_go::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        GoWalker {
+            file_name: "t.go".to_string(),
+        }
+        .walk(&tree, src.as_bytes())
+    }
+
+    fn main_body(src: &str) -> Vec<Statement> {
+        walk_go(src)
+            .unwrap()
+            .functions
+            .get("main")
+            .unwrap()
+            .body
+            .clone()
+    }
+
+    // CRUSH-198: `a := 7` was dropped (the walker matched the wrong node name),
+    // so `a` read as uninitialised. It must lower to a `VarDecl` now.
+    #[test]
+    fn short_var_declaration_is_not_dropped() {
+        let body = main_body("package main\nfunc main() {\n a := 7\n fmt.Println(a)\n}\n");
+        assert!(
+            matches!(body.first(), Some(Statement::VarDecl { name, .. }) if name == "a"),
+            "got {body:?}"
+        );
+    }
+
+    // CRUSH-198: `var`, assignment and C-style `for` must lower, not drop.
+    #[test]
+    fn var_assignment_and_for_lower() {
+        let body = main_body(
+            "package main\nfunc main() {\n var b = 3\n b = b + 1\n for i := 0; i < 3; i++ {\n  b = b + i\n }\n}\n",
+        );
+        assert!(
+            matches!(body[0], Statement::VarDecl { .. }),
+            "var: {body:?}"
+        );
+        assert!(
+            matches!(body[1], Statement::Assign { .. }),
+            "assign: {body:?}"
+        );
+        // `for i := 0; i < 3; i++` lowers to the initializer then a `while`.
+        assert!(
+            matches!(body[2], Statement::VarDecl { .. }),
+            "for init: {body:?}"
+        );
+        assert!(
+            matches!(body[3], Statement::While { .. }),
+            "for body: {body:?}"
+        );
+    }
+
+    // CRUSH-198: unsupported statements are a loud error, never a silent drop.
+    #[test]
+    fn unsupported_statements_are_loud() {
+        for src in [
+            "package main\nfunc main() {\n switch 1 {\n case 1:\n }\n}\n",
+            "package main\nfunc main() {\n defer f()\n}\n",
+            "package main\nfunc main() {\n for i, v := range xs {\n }\n}\n",
+        ] {
+            let err = walk_go(src).unwrap_err().to_string();
+            assert!(
+                err.contains("not supported"),
+                "expected a loud error, got: {err}"
+            );
+        }
+    }
+
+    // CRUSH-198: unknown expressions are a loud error, not `NullLiteral`.
+    #[test]
+    fn unsupported_expressions_are_loud() {
+        let err = walk_go("package main\nfunc main() {\n a := []int{1}\n}\n")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("not supported"),
+            "expected a loud error, got: {err}"
+        );
+    }
+
+    // CRUSH-198: `return a, b` used to keep only `a` silently.
+    #[test]
+    fn multiple_return_values_are_loud() {
+        let err = walk_go("package main\nfunc f() (int, int) {\n return 1, 2\n}\n")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("not supported"),
+            "expected a loud error, got: {err}"
+        );
     }
 }
 
@@ -312,16 +588,35 @@ use crush_walker_core::LanguageAdapter;
 
 pub struct GoAdapter;
 impl LanguageAdapter for GoAdapter {
-    fn language_name(&self) -> &'static str { "go" }
-    fn file_extensions(&self) -> &[&'static str] { &["go"] }
-    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
+    fn language_name(&self) -> &'static str {
+        "go"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &["go"]
+    }
+    fn walk(
+        &self,
+        source: &str,
+        filename: &str,
+    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_go::LANGUAGE.into())
+        parser
+            .set_language(&tree_sitter_go::LANGUAGE.into())
             .map_err(|e| anyhow::anyhow!("tree-sitter-go init: {e}"))?;
-        let tree = parser.parse(source, None).ok_or_else(|| anyhow::anyhow!("Go parse failed"))?;
-        let walker = crate::GoWalker { file_name: filename.to_string() };
+        let tree = parser
+            .parse(source, None)
+            .ok_or_else(|| anyhow::anyhow!("Go parse failed"))?;
+        let walker = crate::GoWalker {
+            file_name: filename.to_string(),
+        };
         let program = walker.walk(&tree, source.as_bytes())?;
-        Ok((crush_walker_core::FeatureReport { lang: "go".to_string(), ..Default::default() }, program))
+        Ok((
+            crush_walker_core::FeatureReport {
+                lang: "go".to_string(),
+                ..Default::default()
+            },
+            program,
+        ))
     }
 }
 pub mod sdk;

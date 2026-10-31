@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-42 |
 | **Priority** | P1 |
-| **Status** | Done (PR: agent/vega/CRUSH-zorro-42) |
+| **Status** | Done (PR #219 merged 2026-10-15) |
 | **Phase** | COSM K1 |
 | **Assignee** | vega |
 | **Dependencies** | CRUSH-zorro-40 |

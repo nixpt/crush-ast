@@ -91,5 +91,40 @@ fn test_c_embed() {
             run.status.code().unwrap_or(-1)
         );
     }
+    // The embedded program's `io.print` must actually reach stdout (CRUSH-205).
+    assert!(
+        stdout.contains("42"),
+        "the embedded io.print output (42) must reach stdout:\n{stdout}"
+    );
     let _ = std::fs::remove_file(&out_exe);
+}
+
+// CRUSH-205: a runtime error must be reported, not silently treated as success.
+#[test]
+fn run_casm_reports_runtime_errors() {
+    use std::ffi::CString;
+    // `add` on an empty stack underflows at run time.
+    let bad = CString::new(
+        "{\"version\":\"1.0\",\"functions\":{\"main\":{\"params\":[],\"locals\":[],\"body\":[{\"op\":\"add\"},{\"op\":\"ret\"}]}}}",
+    )
+    .unwrap();
+    let ok = CString::new(
+        "{\"version\":\"1.0\",\"functions\":{\"main\":{\"params\":[],\"locals\":[],\"body\":[{\"op\":\"push_int\",\"value\":7},{\"op\":\"ret\"}]}}}",
+    )
+    .unwrap();
+    unsafe {
+        crush_vm_capi::crush_vm_init();
+        let rc = crush_vm_capi::crush_vm_run_casm(bad.as_ptr());
+        assert_ne!(rc, 0, "a runtime error must not return 0");
+        assert!(
+            !crush_vm_capi::crush_vm_last_error().is_null(),
+            "last_error must be set on a runtime error"
+        );
+        // A valid program returns 0 and clears the error.
+        assert_eq!(crush_vm_capi::crush_vm_run_casm(ok.as_ptr()), 0);
+        assert!(
+            crush_vm_capi::crush_vm_last_error().is_null(),
+            "a successful run must clear last_error"
+        );
+    }
 }

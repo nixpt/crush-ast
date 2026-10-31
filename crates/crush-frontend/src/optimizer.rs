@@ -305,6 +305,12 @@ impl Optimizer {
                     Self::replace_vars_expr(arg, consts);
                 }
             }
+            Expression::MethodCall { target, args, .. } => {
+                Self::replace_vars_expr(target, consts);
+                for arg in args {
+                    Self::replace_vars_expr(arg, consts);
+                }
+            }
             Expression::ArrayLiteral { elements, .. } => {
                 for el in elements {
                     Self::replace_vars_expr(el, consts);
@@ -466,6 +472,12 @@ impl Optimizer {
                     Self::optimize_expr(arg);
                 }
             }
+            Expression::MethodCall { target, args, .. } => {
+                Self::optimize_expr(target);
+                for arg in args {
+                    Self::optimize_expr(arg);
+                }
+            }
             Expression::ArrayLiteral { elements, .. } => {
                 for el in elements {
                     Self::optimize_expr(el);
@@ -545,8 +557,15 @@ impl Optimizer {
                 Self::collect_mutated_in_expr(target, out);
                 Self::collect_mutated_in_expr(index, out);
             }
+            Expression::MethodCall { target, args, .. } => {
+                Self::collect_mutated_in_expr(target, out);
+                for a in args {
+                    Self::collect_mutated_in_expr(a, out);
+                }
+            }
             Expression::Call { args: es, .. }
             | Expression::CapabilityCall { args: es, .. }
+            | Expression::Construct { args: es, .. }
             | Expression::VectorMath { args: es, .. }
             | Expression::Spawn { args: es, .. }
             | Expression::Pipeline { segments: es, .. }

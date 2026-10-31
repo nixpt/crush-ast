@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-173 |
 | **Priority** | P4 |
-| **Status** | Done (PR pending review) |
+| **Status** | Done — landed via merge wave PR #116 (2026-10-07, `9f6ed4a`; commit `6e8b5b7`); PR #110 itself was closed unmerged |
 | **Phase** | M0 |
 | **Assignee** | panini-e |
 | **Dependencies** | none |
@@ -60,3 +60,7 @@ incubator) were opened — structure only from MIGRATION-INVENTORY's summaries.
 
 Found and captured (`dejavue plan`): top-level `stdlib/README.md` claims `import` loads modules at
 compile time; `crush-walker-core/README.md` example doesn't compile; extension tables duplicated 4x.
+
+## Survey 2026-10-31 (status)
+
+Commit `6e8b5b7` (docs(design): import system, compile pipeline, …) reached main through PR #116. PR #110 was closed without merging. Previous status: `Done (PR pending review)`.

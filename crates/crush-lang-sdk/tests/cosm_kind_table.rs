@@ -88,9 +88,9 @@ fn a_kind_table_the_vms_cant_honour_is_refused_at_load() {
     let loaded = through_every_form(&casm);
     assert_eq!(crush_vm::run(&loaded, &Quotas::default()).expect("runs").output, "129\n");
 
-    casm.cosm.as_mut().unwrap().kinds[0].resolution = crush_cosm::Resolution::PrototypeChain;
+    casm.cosm.as_mut().unwrap().kinds[0].resolution = crush_cosm::Resolution::EmbeddingPromotion;
     let loaded = through_every_form(&casm);
     let e = crush_vm::run(&loaded, &Quotas::default()).unwrap_err().to_string();
     assert!(e.contains("COSM strategies not supported on this VM yet"), "{e}");
-    assert!(e.contains("`Point` declares resolution: prototype_chain"), "{e}");
+    assert!(e.contains("`Point` declares resolution: embedding_promotion"), "{e}");
 }

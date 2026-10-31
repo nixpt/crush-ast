@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-6 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Backlog — loud on boa (pinned, #296); a real implementation needs CAST labels — decision pending |
 | **Phase** | JS/TS parity spike |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-250 (the new lowering) |
@@ -45,3 +45,23 @@
 - Reference implementation: `node` on PATH (v26; TypeScript runs with built-in type stripping). Never hand-write a `.out`.
 - `crates/crush-lang-js/src/lower_swc.rs` is shared by most tickets. Until CRUSH-zorro-11 lands, keep edits local to the area you own and merge `origin/main` often; after it lands, add entries to the builtin/method table instead of new match arms.
 - Gates before the PR: `cargo test -p crush-lang-js -p crush-lang-sdk -p crush-aot`, the walker set, and clippy. A new loud error must say what isn't supported, never "load from uninitialised slot".
+
+## Status under the boa walker (probe, 2026-10-22, freebuff/muse)
+
+The boa walker is LOUD, never silently wrong: labeled `break` and
+labeled `continue` refuse at walk time naming the construct
+(pinned by `test_boa_labeled_break_is_loud` and
+`test_boa_labeled_continue_is_loud`, the latter covering this
+ticket's nested-loop program and `break` out of a labeled block).
+
+Real labeled jumps need CAST support, not walker work: a
+`label: Option<String>` on CAST `Break`/`Continue` (serde default,
+so existing JSON stays readable) and on the frontend's `LoopInfo`,
+with the compiler resolving `break label` / `continue label` by
+scanning its loop stack for the matching label. `break label` out
+of a labeled non-loop block additionally needs a jumpable block
+scope (the ticket's non-goal — keep loud). A label-free desugaring
+inside the walker (flag local + propagation guards per nesting
+level) was considered and rejected as not-small and fragile around
+switch/do-while rewriting. Decision needed: schedule the CAST
+route as its own cross-crate ticket, or accept loud indefinitely.

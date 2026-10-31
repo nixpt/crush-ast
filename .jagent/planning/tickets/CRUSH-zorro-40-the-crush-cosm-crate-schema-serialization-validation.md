@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-40 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done (PR #211, agent/vega/CRUSH-zorro-40, merged 2026-10-15) |
 | **Phase** | COSM K1 |
-| **Assignee** | unassigned |
+| **Assignee** | vega |
 | **Dependencies** | none — start here |
 | **Estimated effort** | M |
 | **Filed by** | vega — 2026-10-15, COSM phase K1 (owner decisions recorded in the design doc and dejavue) |

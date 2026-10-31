@@ -74,7 +74,8 @@ fn main() {
 "#;
     let r = execute_with_options(src, &lower());
     assert!(r.ok, "{:?}", r.error);
-    assert_eq!(r.output, "sum 10\n10\n");
+    // What `crush-run --polyglot` prints: the block's output trimmed (#312).
+    assert_eq!(r.output, "sum 1010\n");
 }
 
 #[cfg(not(feature = "polyglot-python"))]

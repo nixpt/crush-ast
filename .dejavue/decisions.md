@@ -1245,3 +1245,110 @@ Rejected alternatives:
 Outcome:
 Every engine is loud on unassigned reads; STILL_SILENT empty; 0/2054 example loads checked
 
+
+## 2026-10-20T16:55:43-05:00 — [STRATEGIC] [ADOPTED] crush-vm-py builds against the stable ABI (abi3-py311) and surfaces VmResult.return_value
+
+Reason:
+Two independent gaps in the Python wheel, both found from the chroma side
+(chroma's VM prefers the wheel by default via backend="auto").
+
+1. pyo3 0.23 refuses to build on a Python 3.14 interpreter ("configured
+   Python interpreter version (3.14) is newer than PyO3's maximum supported
+   version (3.13)"), so the wheel could only be built where an older
+   interpreter happened to be available. Adopting abi3 + abi3-py311 — the
+   same pair crush-python already uses — builds against the stable ABI, lifts
+   that ceiling, and lets one wheel serve every interpreter from 3.11 up.
+   Verified: the wheel builds on 3.14 (cp311-abi3 tag) and the same artefact
+   imports and runs on 3.12.
+
+2. run_blob returned {output, result, stack, steps, halted}, where "result" is
+   stack.last(). A program with an explicit `return` leaves an EMPTY stack and
+   puts its value in VmResult.return_value, so the wheel reported result=None
+   for exactly the programs whose value matters — chroma saw a RET-contract
+   divergence against its Python reference tier. The Rust VmResult and the
+   crush-lang-sdk VmResult both carry return_value; the wheel now surfaces it
+   as a new "return_value" key. The change is additive: the key is absent
+   from older wheels and present (None when there is no explicit return) in
+   new ones.
+
+The wheel's version line is deliberately left alone: the crate is excluded from
+the workspace, so bump-version never touches it, and the 0.3.0-vs-workspace
+drift is already tracked as its own backlog item (CRUSH-206). AGENTS.md forbids
+hand-editing versions.
+
+Artifacts: crates/crush-vm-py/Cargo.toml,crates/crush-vm-py/pyproject.toml,crates/crush-vm-py/src/lib.rs
+
+
+## 2026-10-30T18:36:26-05:00 — [ARCHITECTURAL] Stdlib caps reject negative lengths and bound every allocation (CRUSH-181)
+
+Reason:
+Default-on stdlib caps had unchecked casts and no size bound, so a program could abort the host: str.repeat/pad_left/pad_right/collections.chunk cast a negative length to usize (wrapping huge -> capacity overflow), conv.parse_int panicked on a radix outside 2..=36, and str.repeat/buffer.alloc/str.join could request an unbounded allocation. Fix: a shared MAX_STDLIB_ALLOC_BYTES (64 MiB) bound plus a get_bounded_len helper; repeat checks the product with checked_mul, parse_int validates the radix, buffer.alloc bounds size*size_of::<Value>, join sums the lengths before allocating. The bound is fixed, not configurable per run: HostCap::call(&self, args) has no run context, so a --max-memory quota needs an ABI change (follow-up).
+## 2026-10-30T18:04:54-05:00 — [ARCHITECTURAL] The FastVM/JIT print formatter resolves every heap kind through the arena (CRUSH-294, GitHub #267)
+
+Reason:
+runtime_value_to_text (used by PrintCap, the io.print capability on FastVM and the JIT) resolved a RuntimeValue::Ref only when it pointed at Object::Str; every other object kind printed @N (the arena index) and the run finished successfully, so FastVM/JIT silently printed the wrong thing for arrays, maps and structs. It now matches the VM's impl Display for Value: arrays [a, b], tuples (a, b), Vector/Set/List prefixes, maps and structs {k: v, ...}, bytes/handles/tagged/results tagged, strings raw including inside a container. One formatter, both fast engines; pinned by an all-engine stdout test.
+## 2026-10-30T05:29:24-05:00 — [ARCHITECTURAL] Division/remainder edge cases are one rule across engines; the JIT must guard the divisor (CRUSH-213)
+
+Reason:
+The interp and FastVM did int / and % unchecked, so i64::MIN / -1 panicked in Rust and AOT C SIGFPE'd; the JIT lowered Div/Mod straight to sdiv/srem (which trap: SIGILL/SIGFPE) and fdiv (which silently yields inf for 1.0/0.0). AOT Rust/C already used checked_div/checked_rem. Fixed: interp and FastVM use checked_div/checked_rem -> ArithmeticOverflow; the JIT guards the divisor before sdiv/srem/fdiv and reports via two new ctx.error codes (ERR_DIV_ZERO, ERR_ARITH_OVERFLOW) mapped to the same text as the other engines. The JIT's 48-bit int payload means i64::MIN is unrepresentable, so it refuses to compile and falls back to FastVM (which errors) - an acceptable loud refusal, not a wrong result. Pinned by a six-engine differential test.
+## 2026-10-30T05:07:40-05:00 — [ARCHITECTURAL] One canonical equality backs FastVM and the JIT (CRUSH-215)
+
+Reason:
+FastVM's compare_op was arena-blind: it fell through to _ => false for every non-numeric kind (strings, arrays, maps) and its Bool arm computed x == y even for !=. The JIT's inline do_cmp compared NaN-boxed strings/bools/refs by their float bits, so string == was always false and != always true. Added crush_vm::value::runtime_value_eq, mirroring the interpreter's Value::PartialEq, and routed FastVM Eq/Ne and a new JIT OP_CMP_EQUAL helper through it. FastVM keeps its RuntimeValue+Arena representation; the JIT converts its operands to RuntimeValue and shares the function, so the two fast engines cannot drift again. A six-engine differential test (backend_agreement::equality_agrees_across_every_engine) pins agreement.
+## 2026-10-30T18:17:19-05:00 — [ARCHITECTURAL] The JIT frame stride is the program's largest local count, not a fixed 8 (CRUSH-295, GitHub #273)
+
+Reason:
+The JIT emulates frames in one flat 64-slot locals array, addressed as locals[call_stack_top * FRAME_LOCALS + idx] with FRAME_LOCALS fixed at 8, and LoadLocal/StoreLocal did not bounds-check idx. A function using local 8+ spilled into the next frame, so a callee clobbered the caller's locals and the JIT finished with wrong values while every other engine was correct. Fix: program_frame_locals computes the max local slot used anywhere (LoadLocal/StoreLocal/LoadLocalChecked) + 1 and threads it through build_fn/emit_one/lload/lstore/unassign_frame as the stride; a program whose frame exceeds the 64-slot array is refused (FastVM fallback) and the call-depth guard becomes JIT_MAX_LOCALS / frame_locals. This also removes the need for the old LoadLocalChecked-past-8 refusal (CRUSH-zorro-55).
+
+
+## 2026-10-30T19:19:49-05:00 — [ARCHITECTURAL] A CLI reports a runtime error after the output it produced, and exits non-zero (CRUSH-184)
+
+Reason:
+crush-walk-run buffered the first run's output and, on a runtime error, replaced it with the error text and returned Ok - so a failing walked program exited 0 and lost everything it had printed. Fix: stream the first run's output through run_with_caps_streaming so it reaches stdout as the program runs, and return an error (non-zero exit) when the run fails. crush-run already streamed via Runtime::run_streaming and exited non-zero, and crush run delegates to crush-run, so only crush-walk-run needed the change. Pinned by a CLI test that spawns the binary.
+## 2026-10-30T19:07:57-05:00 — [ARCHITECTURAL] Function layout is name-ordered, so the same source assembles byte-identically (CRUSH-188)
+
+Reason:
+crushc --emit casm changed between runs: the compiler sorted functions by name for compilation, but crush_lang_sdk::compile::casm_to_vm laid them into the code buffer by iterating casm::Program.functions, a HashMap, so the code layout, the disassembly order and the unique-label numbering all varied per process (Rust HashMap iteration order is seed-randomized). Fix: collect the functions and sort by name before emitting. Verified: crushc --emit casm on a three-function program 12 times now gives one unique output (was four). Reproducible builds and the AOT build cache depend on this.
+## 2026-10-30T18:52:17-05:00 — [ARCHITECTURAL] A walker never silently drops: unsupported statements/expressions are loud errors (CRUSH-198)
+
+Reason:
+The Go walker matched tree-sitter-go's node `short_variable_declaration`, which does not exist (it is `short_var_declaration`), so `a := 7` fell through the `_ => Ok(None)` catch-all and `a` read as uninitialised; var/assignment/inc/for/block were dropped the same way, and unknown expressions became NullLiteral. Fix: visit_statement -> visit_statements returning Vec (one node can yield several statements, e.g. a C-style for -> init + while), implement var/assignment/inc/dec/for(all shapes)/block, and make the catch-all a loud error. The same rule as the rest of the repo: exact or loud, never silently wrong. A multi-value return and unknown expressions also error now. Known divergence left as a follow-up: fmt.Println(a, b) maps to io.print which concatenates, while Go joins with spaces.
+
+
+## 2026-10-30T20:28:28-05:00 — [ARCHITECTURAL] A walker lowers a node or refuses it loudly; it never fabricates null or an empty program (CRUSH-203)
+
+Reason:
+Several walkers silently produced wrong or empty programs: the Zig walker matched tree-sitter-zig node names that do not exist (IntegerLiteral instead of integer, BinaryExpr instead of binary_expression, CallExpr instead of call_expression), so every literal became null and programs printed nothing; the Dart walker discarded every node and returned an empty program; the Java walker returned Program::default() and panicked with a bare unreachable! in language()/parse(); the Wasm walker dropped every non-call operator and lowered fd_write to an arg-less io.print. Fix: Zig node names and wrappers corrected and its null/empty fallbacks made loud errors naming the node kind and position; Dart and Java fail with not implemented; Wasm errors on unhandled operators and imported calls; crush-walk-run reads .wasm as bytes; the Nepali walker's false native-keyword comment corrected. Same rule as CRUSH-198: exact or loud.
+## 2026-10-30T19:31:21-05:00 — [ARCHITECTURAL] A run that did not finish is not success, and an embedded io.print reaches stdout (CRUSH-205)
+
+Reason:
+crush_vm_run_casm matched any Ok(FastYield) as success, so a runtime error (stack underflow, bad jump, unsupported capability) returned rc 0 with last_error null - the C embedder could not tell a crashed program from a successful one. It now maps FastYield::Error, BudgetExhausted and unserviceable host requests to rc -2 with a message, and clears last_error on success (run_asm too). Separately, the bare FastVM has no capabilities, so cap_call io.print in an embedded program went nowhere; run_casm now uses run_fastvm_with_caps with a stdout io.print capability that formats through the shared crush_vm::io_print::runtime_value_to_text (made pub), so examples/embed.c prints 42. The FastVM still does not enforce the CASM manifest permissions - a follow-up.
+## 2026-10-30T19:40:05-05:00 — [ARCHITECTURAL] A spawned task is killed when the run ends, and --task states its process grant (CRUSH-182)
+
+Reason:
+task.start spawned a std::process::Command child that was tracked in a TaskState but never killed on drop, so a program that ran task.start and exited left the child running (sleep 333 outlived crush-run; touch created files). TaskState now implements Drop, killing and reaping every still-running task when the capability registry drops at the end of the run - a host that wants a detached task can stop tracking it first. Also, --task spawns host processes but its help never said so; the help text now states that --task grants process/spawn, which the effects catalog already listed for task.start.
+
+
+## 2026-10-30T21:05:20-05:00 — Raw sockets are tcp.* caps with their own grants (--tcp, --tcp-listen), not net.*
+
+Reason:
+net.* is a family prefix: effects_of maps net.* to net/http, covers() makes a 'net' declaration cover every net.<x>, and --net grants the whole namespace. Raw sockets, and above all listen/accept (being a server), must not ride along with the HTTP grant. tcp.* sits outside that family. Two flags: --tcp (connect, tls_wrap) and --tcp-listen (listen, accept); send/recv/close/ping act only on ids a granted cap produced so either flag registers them; --tcp-listen does not include connect. crush-net now depends on crush-vm only (was crush-lang-sdk, a cycle); the SDK depends on it behind features tcp/tcp-tls, on by default (never granted by default).
+
+Artifacts: crates/crush-net, crates/crush-lang-sdk/src/host_caps.rs, crates/crush-lang-sdk/src/effects.rs
+
+Rejected alternatives:
+- **net.tcp_* names (swept in by net/http effect label and net family declarations)**
+- **one --sockets grant for client+server (a server needs a stronger opt-in)**
+- **host:port allow-list (no precedent; overbuild)**
+
+Outcome:
+CRUSH-318 PR agent/nova/CRUSH-318
+## 2026-10-30T20:45:44-05:00 — [ARCHITECTURAL] A JS/TS dialect comes from the real file extension; an unknown one is refused, not treated as JS (CRUSH-zorro-8)
+
+Reason:
+JsLowering::for_ext mapped every unrecognised extension to plain JS, so a .ts file reached through a temp path (walker_N.tmp) or a typo like 'typescript' was parsed as ES - TypeScript syntax then either failed oddly or silently dropped types. Fix: for_ext accepts exactly js mjs cjs jsx ts tsx mts cts (cts is TypeScript) and refuses anything else naming that set; the JsFrontend/JsAdapter extension lists gained cts/jsx; swc parses cts as TypeScript; and SubprocessWalker::parse carries the filename so walk names its temp file walker_N.<ext>, keeping the dialect. Remaining: TS syntax under an ES extension is accepted (types stripped) by swc rather than a loud error - that needs the swc TS-mode strip-into-boa approach (the optional ts feature).
+## 2026-10-30T20:54:05-05:00 — net on by default, db opt-in; http.* renamed with no alias; time.now is seconds
+
+Reason:
+CRUSH-264 (owner, 2026-10-31): net joins crush-lang-sdk default features (grant-gated, still needs --net; per-package features mean bins can't take it alone, so library default-feature consumers get ureq too); db stays --features db. exosphere http.* is refused up front via effects::RENAMED_CAPS naming net.http_* rather than aliased, so a rename is explicit and one table feeds every runner. time.now stays seconds, time.now_ms is ms, documented because exosphere's was ms.
+

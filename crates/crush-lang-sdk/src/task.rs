@@ -77,6 +77,18 @@ impl TaskState {
     }
 }
 
+impl Drop for TaskState {
+    /// Kill any still-running task when the capability registry is dropped — the
+    /// run is over. Otherwise a spawned `sleep 333` outlives the VM (CRUSH-182).
+    /// A host that wants a detached task can stop tracking it before the drop.
+    fn drop(&mut self) {
+        for child in self.tasks.values_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 struct TaskStartCap {
     state: Arc<Mutex<TaskState>>,
 }
@@ -191,5 +203,34 @@ mod tests {
         assert!(matches!(ids, Value::Array(_)));
 
         stop.call(vec![id]).unwrap();
+    }
+
+    // CRUSH-182: a spawned task must not outlive the VM — dropping the
+    // `TaskState` kills every tracked child.
+    #[test]
+    fn dropping_the_task_state_kills_children() {
+        let dir = std::env::temp_dir().join(format!("crush_task_drop_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("marker");
+        {
+            let state = Arc::new(Mutex::new(TaskState::new()));
+            let start = TaskStartCap::new(Arc::clone(&state));
+            // Writes `marker` after 1s; it must be killed before it can.
+            start
+                .call(vec![
+                    Value::Str("t".to_string()),
+                    Value::Str("sh".to_string()),
+                    Value::Str("-c".to_string()),
+                    Value::Str(format!("sleep 1; touch {}", marker.display())),
+                ])
+                .unwrap();
+        } // the last `Arc` drops here → `TaskState::drop` kills the child
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        assert!(
+            !marker.exists(),
+            "the child must be killed when the task state drops"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

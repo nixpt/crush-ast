@@ -452,7 +452,6 @@ fn strategies_no_engine_runs_are_refused_at_compile_time() {
     // The VMs run Kinds since K1.4; what even they can't run is the shared
     // rule at `casm::CosmSupport::Kinds`.
     for (kind, shown) in [
-        ("resolution: prototype_chain", "resolution: prototype_chain"),
         ("resolution: embedding_promotion", "resolution: embedding_promotion"),
     ] {
         let src = format!("@kind({kind})\nstruct V {{ x }}\nlet a = V {{ x: 1 }}\n");
@@ -463,7 +462,7 @@ fn strategies_no_engine_runs_are_refused_at_compile_time() {
         );
     }
     // …and everything the VMs run compiles.
-    for kind in ["semantics: value(copy)", "semantics: value(move)", "equality: identity", "construct: ctor(mk)"] {
+    for kind in ["semantics: value(copy)", "semantics: value(move)", "equality: identity", "construct: ctor(mk)", "resolution: prototype_chain"] {
         let src = format!("fn mk(self, x) {{ self.x = x }}\n@kind({kind})\nstruct V {{ x }}\nlet a = V {{ x: 1 }}\n");
         crush_frontend::compile_crush_source(&src).unwrap_or_else(|e| panic!("{kind}: {e:#}"));
     }

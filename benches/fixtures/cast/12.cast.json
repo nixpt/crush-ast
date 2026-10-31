@@ -15,24 +15,39 @@
             "left": {
               "type": "IntLiteral",
               "value": 5,
-              "meta": {}
+              "meta": {
+                "line": 2,
+                "col": 18
+              }
             },
             "right": {
               "type": "IntLiteral",
               "value": 3,
-              "meta": {}
+              "meta": {
+                "line": 2,
+                "col": 21
+              }
             },
-            "meta": {}
+            "meta": {
+              "line": 2,
+              "col": 21
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "col": 21,
+            "line": 2
+          }
         },
         {
           "type": "If",
           "condition": {
             "type": "Var",
             "name": "flag",
-            "meta": {}
+            "meta": {
+              "line": 3,
+              "col": 13
+            }
           },
           "then_body": [
             {
@@ -40,9 +55,15 @@
               "value": {
                 "type": "IntLiteral",
                 "value": 100,
-                "meta": {}
+                "meta": {
+                  "col": 19,
+                  "line": 4
+                }
               },
-              "meta": {}
+              "meta": {
+                "line": 4,
+                "col": 19
+              }
             }
           ],
           "else_body": [
@@ -51,16 +72,27 @@
               "value": {
                 "type": "IntLiteral",
                 "value": 200,
-                "meta": {}
+                "meta": {
+                  "line": 6,
+                  "col": 19
+                }
               },
-              "meta": {}
+              "meta": {
+                "line": 6,
+                "col": 19
+              }
             }
           ],
-          "meta": {}
+          "meta": {
+            "col": 6,
+            "line": 7
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "line": 1,
+        "col": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }

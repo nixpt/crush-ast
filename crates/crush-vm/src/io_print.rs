@@ -129,18 +129,24 @@ pub fn py_str_repr(s: &str) -> String {
     out
 }
 
-/// Render a [`RuntimeValue`] the same way `io.print` expects for its argument.
+/// Render a [`RuntimeValue`] the way `io.print` expects for its argument.
 ///
-/// Mirrors the canonical `Value` Display used by the scheduler/portable VM:
+/// This is the FastVM/JIT `io.print` formatter; a host that wires its own
+/// `io.print` capability (e.g. the C API) should use it so output matches the
+/// other engines. It mirrors the canonical `Value` Display used by the
+/// scheduler/portable VM:
 /// - `Null` → `"null"`
 /// - `Bool` → `"true""/""false""`
 /// - `Int` → bare digits
 /// - `Float` → bare `f64` Display, with a forced `.0` suffix when the value
 ///   is finite and has no fractional part (so `3.0` prints as `3.0`, not `3`)
 /// - `String` → the raw string content (no quotes)
-/// - `Ref` → the arena reference index as `"@<idx>"`, or the referenced
-///   string if the arena contains `Object::Str`.
-pub(crate) fn runtime_value_to_text(v: &RuntimeValue, arena: &crate::memory::Arena) -> String {
+/// - `Ref` → the arena object rendered the way the VM's `Display` renders the
+///   equivalent `Value`: strings raw, arrays `[a, b]`, tuples `(a, b)`, maps and
+///   structs `{k: v, …}`, `Vector[…]` / `Set{…}` / `List[…]`, bytes and handles
+///   tagged. A dead slot still falls back to `"@<idx>"`.
+pub fn runtime_value_to_text(v: &RuntimeValue, arena: &crate::memory::Arena) -> String {
+    use crate::memory::Object;
     match v {
         RuntimeValue::Null => "null".to_string(),
         RuntimeValue::Bool(b) => b.to_string(),
@@ -153,14 +159,74 @@ pub(crate) fn runtime_value_to_text(v: &RuntimeValue, arena: &crate::memory::Are
             }
         }
         RuntimeValue::String(s) => s.clone(),
-        RuntimeValue::Ref(idx) => {
-            if let Some(crate::memory::Object::Str(s)) = arena.get(*idx) {
-                s.clone()
-            } else {
-                format!("@{idx}")
+        // Resolve the arena reference and render the heap value the way the
+        // VM's `impl Display for Value` does (CRUSH-294 / GitHub #267). Before
+        // this, every non-string ref printed as `@N` — silently wrong output
+        // for arrays, maps and structs on FastVM and the JIT.
+        RuntimeValue::Ref(idx) => match arena.get(*idx) {
+            Some(Object::Str(s)) => s.clone(),
+            Some(Object::Array(items)) => seq_text("[", "]", items, arena),
+            Some(Object::Tuple(items)) => seq_text("(", ")", items, arena),
+            Some(Object::Vector(items)) => seq_text("Vector[", "]", items, arena),
+            Some(Object::Set(items)) => seq_text("Set{", "}", items, arena),
+            Some(Object::List(items)) => {
+                let inner: Vec<String> = items
+                    .iter()
+                    .map(|v| runtime_value_to_text(v, arena))
+                    .collect();
+                format!("List[{}]", inner.join(", "))
             }
-        }
+            Some(Object::Map(map)) => {
+                let inner: Vec<String> = map
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {}", runtime_value_to_text(v, arena)))
+                    .collect();
+                format!("{{{}}}", inner.join(", "))
+            }
+            // A struct/object value prints as the map it is (the VM's
+            // `Value::Record` / `Value::Map` render `{k: v, ...}`).
+            Some(Object::Object { fields, .. }) => {
+                let inner: Vec<String> = fields
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {}", runtime_value_to_text(v, arena)))
+                    .collect();
+                format!("{{{}}}", inner.join(", "))
+            }
+            Some(Object::Bytes(b)) => format!("<{} bytes>", b.len()),
+            Some(Object::Buffer(b)) => format!("<{} bytes>", b.len()),
+            Some(Object::Handle(id)) => format!("<handle {id}>"),
+            Some(Object::InterfaceHandle(id)) => format!("<handle {id}>"),
+            Some(Object::Tagged { tag, value }) => {
+                format!("{tag}({})", runtime_value_to_text(value, arena))
+            }
+            Some(Object::Result { ok, value }) => {
+                let inner = runtime_value_to_text(value, arena);
+                if *ok {
+                    format!("ok({inner})")
+                } else {
+                    format!("err({inner})")
+                }
+            }
+            // A dead slot is not reachable from a live program; keep the loud
+            // marker rather than fabricating a value.
+            None => format!("@{idx}"),
+        },
     }
+}
+
+/// Render a sequence-like heap value (`[...]`, `(...)`, `Vector[...]`, …) with
+/// the same element rendering as the VM's `Display`.
+fn seq_text(
+    open: &str,
+    close: &str,
+    items: &[RuntimeValue],
+    arena: &crate::memory::Arena,
+) -> String {
+    let inner: Vec<String> = items
+        .iter()
+        .map(|v| runtime_value_to_text(v, arena))
+        .collect();
+    format!("{open}{}{close}", inner.join(", "))
 }
 
 #[cfg(feature = "native-plugins")]
@@ -269,6 +335,47 @@ mod tests {
         assert_eq!(runtime_value_to_text(&RuntimeValue::Bool(true), &arena), "true");
         assert_eq!(runtime_value_to_text(&RuntimeValue::Int(42), &arena), "42");
         assert_eq!(runtime_value_to_text(&RuntimeValue::String("hi".to_string()), &arena), "hi");
+    }
+
+    // CRUSH-294 / GitHub #267: heap values render their value, not `@N`.
+    #[test]
+    fn runtime_value_to_text_renders_heap_values_like_the_vm() {
+        use crate::memory::{Arena, Object};
+        let mut arena = Arena::new();
+        let ints = |a: &mut Arena, xs: &[i64]| {
+            RuntimeValue::Ref(a.alloc(Object::Array(
+                xs.iter().map(|i| RuntimeValue::Int(*i)).collect(),
+            )))
+        };
+        let one = ints(&mut arena, &[1]);
+        let two_three = ints(&mut arena, &[2, 3]);
+        let nested = RuntimeValue::Ref(arena.alloc(Object::Array(vec![one, two_three])));
+        assert_eq!(runtime_value_to_text(&nested, &arena), "[[1], [2, 3]]");
+
+        let map = RuntimeValue::Ref(
+            arena.alloc(Object::Map(
+                [("a".to_string(), RuntimeValue::Int(1))]
+                    .into_iter()
+                    .collect(),
+            )),
+        );
+        assert_eq!(runtime_value_to_text(&map, &arena), "{a: 1}");
+
+        let obj = RuntimeValue::Ref(
+            arena.alloc(Object::Object {
+                lang: "crush".into(),
+                class_name: "P".into(),
+                fields: [("x".to_string(), RuntimeValue::Int(5))]
+                    .into_iter()
+                    .collect(),
+            }),
+        );
+        assert_eq!(runtime_value_to_text(&obj, &arena), "{x: 5}");
+
+        // A string renders raw (no quotes), including inside a container.
+        let s = RuntimeValue::Ref(arena.alloc(Object::Str("hi".to_string())));
+        let arr_s = RuntimeValue::Ref(arena.alloc(Object::Array(vec![s])));
+        assert_eq!(runtime_value_to_text(&arr_s, &arena), "[hi]");
     }
 
     #[cfg(feature = "native-plugins")]
