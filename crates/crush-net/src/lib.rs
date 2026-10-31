@@ -41,19 +41,19 @@ pub mod reactor;
 pub mod tcp;
 pub mod transport;
 
+#[cfg(feature = "tls")]
+pub use caps::TcpTlsWrapCap;
 pub use caps::{
-    build_state, TcpAcceptCap, TcpCloseCap, TcpConnectCap, TcpListenCap, TcpPingCap,
-    TcpRecvCap, TcpSendCap, NetState, SharedConn, ConnId,
+    ConnId, NetState, SharedConn, TcpAcceptCap, TcpCloseCap, TcpConnectCap, TcpListenCap,
+    TcpPingCap, TcpRecvCap, TcpSendCap, build_state, register_client, register_io, register_listen,
 };
 pub use codec::{
-    decode_request, encode_frame, encode_request, try_decode_frame, Frame, NetError,
-    FRAME_TYPE_MESH_REQUEST, MAX_FRAME_SIZE,
+    FRAME_TYPE_MESH_REQUEST, Frame, MAX_FRAME_SIZE, NetError, decode_request, encode_frame,
+    encode_request, try_decode_frame,
 };
 pub use reactor::{PollerHandle, Reactor, Source, SourceId};
 pub use tcp::{TcpConnection, TcpListener, TcpTransport};
-pub use transport::{
-    parse_uri, AsyncAccept, AsyncRead, AsyncWrite, Endpoint, Transport,
-};
+pub use transport::{AsyncAccept, AsyncRead, AsyncWrite, Endpoint, Transport, parse_uri};
 
 use crush_vm::HostCaps;
 

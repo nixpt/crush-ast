@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Portable, std-only TCP/TLS network stack exposed as CRUSH host capabilities."
-readme = "../../README.md"
+readme = "README.md"
 
 [features]
 tls = ["dep:rustls", "dep:webpki-roots"]

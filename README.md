@@ -138,9 +138,12 @@ print(next())
 
 Capabilities are opt-in per run. The standard library (`str.*`, `math.*`,
 `json.*`, …) is on by default; everything that touches the host needs a flag
-(`--fs`, `--net`, `--env`, `--time`, `--process`, `--polyglot`, …), and a program
+(`--fs`, `--net`, `--tcp`, `--env`, `--time`, `--process`, `--polyglot`, …), and a program
 that needs an ungranted capability is refused before it runs.
 `crush-run caps FILE` shows what a program needs without running it.
+Raw sockets (`tcp.*`, crate `crush-net`) have their own grants: `--tcp` for
+outbound client sockets and a separate, stronger `--tcp-listen` for being a
+server; `--net` is HTTP-client only and grants neither.
 
 ## ⚙️ Compilation Pipeline
 

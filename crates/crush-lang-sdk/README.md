@@ -169,6 +169,18 @@ feature, which is on by default — with `default-features = false` the stdlib
 is absent and `--stdlib` is an error. Capabilities with real authority
 (`--fs`, `--env`, `--time`, `--net`, …) are always opt-in.
 
+Raw TCP/TLS sockets (the `tcp` / `tcp-tls` cargo features, on by default, via
+[`crush-net`](../crush-net)) are two further grants, neither implied by
+`--net` (which stays HTTP-client-only):
+
+| flag | capabilities | builder |
+|---|---|---|
+| `--tcp` | `tcp.connect`, `tcp.tls_wrap`, and `tcp.send`/`recv`/`close`/`ping` | `HostCapsBuilder::tcp(true)` |
+| `--tcp-listen` | `tcp.listen`, `tcp.accept`, and `tcp.send`/`recv`/`close`/`ping` on the connections they return; **not** `tcp.connect` | `HostCapsBuilder::tcp_listen(true)` |
+
+A program that needs one without its grant is refused before it runs, naming
+the flag.
+
 ## License
 
 Licensed under either of MIT or Apache-2.0 at your option.

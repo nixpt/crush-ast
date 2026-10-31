@@ -1324,3 +1324,19 @@ crush_vm_run_casm matched any Ok(FastYield) as success, so a runtime error (stac
 Reason:
 task.start spawned a std::process::Command child that was tracked in a TaskState but never killed on drop, so a program that ran task.start and exited left the child running (sleep 333 outlived crush-run; touch created files). TaskState now implements Drop, killing and reaping every still-running task when the capability registry drops at the end of the run - a host that wants a detached task can stop tracking it first. Also, --task spawns host processes but its help never said so; the help text now states that --task grants process/spawn, which the effects catalog already listed for task.start.
 
+
+## 2026-10-30T21:05:20-05:00 — Raw sockets are tcp.* caps with their own grants (--tcp, --tcp-listen), not net.*
+
+Reason:
+net.* is a family prefix: effects_of maps net.* to net/http, covers() makes a 'net' declaration cover every net.<x>, and --net grants the whole namespace. Raw sockets, and above all listen/accept (being a server), must not ride along with the HTTP grant. tcp.* sits outside that family. Two flags: --tcp (connect, tls_wrap) and --tcp-listen (listen, accept); send/recv/close/ping act only on ids a granted cap produced so either flag registers them; --tcp-listen does not include connect. crush-net now depends on crush-vm only (was crush-lang-sdk, a cycle); the SDK depends on it behind features tcp/tcp-tls, on by default (never granted by default).
+
+Artifacts: crates/crush-net, crates/crush-lang-sdk/src/host_caps.rs, crates/crush-lang-sdk/src/effects.rs
+
+Rejected alternatives:
+- **net.tcp_* names (swept in by net/http effect label and net family declarations)**
+- **one --sockets grant for client+server (a server needs a stronger opt-in)**
+- **host:port allow-list (no precedent; overbuild)**
+
+Outcome:
+CRUSH-318 PR agent/nova/CRUSH-318
+

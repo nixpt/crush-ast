@@ -81,7 +81,7 @@ Two independent checks gate every `CAP_CALL` at run time (`crates/crush-vm/src/s
 1. **Declared** — the name must be in the program's manifest. For `.crush` input the compiler and
    `casm_to_vm` collect it automatically; for `.casm` text it comes from `--cap`.
 2. **Granted** — VM built-ins (`io.print`, `str.len`, …) are always there; everything else must be
-   registered in the `HostCaps` the CLI builds from its flags (`--fs`, `--time`, `--env`, `--net`,
+   registered in the `HostCaps` the CLI builds from its flags (`--fs`, `--time`, `--env`, `--net`, `--tcp`/`--tcp-listen`,
    `--polyglot`, `--stdlib`, …). Missing → `unknown capability: <name>`.
 
 A `@python { }` block compiles to `EXEC_LANG` and additionally needs the `polyglot.python` grant

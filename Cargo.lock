@@ -1288,6 +1288,7 @@ dependencies = [
  "crush-lang-js",
  "crush-lang-python",
  "crush-lang-rust",
+ "crush-net",
  "crush-ptx",
  "crush-vm",
  "crush-walker-core",

@@ -133,6 +133,17 @@ struct RunArgs {
     #[arg(long, value_name = "N", default_value = "1048576")]
     net_max_response_bytes: usize,
 
+    /// Enable raw TCP client sockets (tcp.connect/send/recv/close/ping/tls_wrap). Separate from
+    /// --net (HTTP only); does not allow tcp.listen/accept.
+    #[arg(long)]
+    tcp: bool,
+
+    /// Enable raw TCP SERVER sockets (tcp.listen/accept, plus send/recv/close/ping on the
+    /// connections they return): the program becomes reachable from other hosts. Does not
+    /// allow outbound tcp.connect; add --tcp for that.
+    #[arg(long = "tcp-listen")]
+    tcp_listen: bool,
+
     /// Enable database host capabilities (db.query, db.execute) on this path.
     #[arg(long, value_name = "PATH")]
     db: Option<PathBuf>,
@@ -426,6 +437,22 @@ fn list_caps() {
             "  net.http_request METHOD URL BODY HEADERS  any method; returns {{status, body}}"
         );
     }
+    #[cfg(feature = "tcp")]
+    {
+        println!("Raw TCP client capabilities (enable with --tcp; NOT granted by --net):");
+        println!("  tcp.connect URI        connect to tcp://IP:PORT, return a connection id");
+        println!("  tcp.tls_wrap ID SNI    upgrade a connection to TLS (client side)");
+        println!("  tcp.send ID DATA       write a string, return bytes written");
+        println!("  tcp.recv ID            blocking read, return a string");
+        println!("  tcp.close ID           drop the connection");
+        println!("  tcp.ping X             returns \"pong\"");
+        println!(
+            "Raw TCP server capabilities (enable with --tcp-listen; a separate, stronger grant):"
+        );
+        println!("  tcp.listen URI         bind tcp://IP:PORT, return a listener id");
+        println!("  tcp.accept LISTENER    blocking accept, return a connection id");
+        println!("  (tcp.send/recv/close/ping also work under --tcp-listen; tcp.connect does not)");
+    }
     #[cfg(feature = "db")]
     {
         println!("Database capabilities (enable with --db PATH):");
@@ -546,6 +573,17 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     #[cfg(not(feature = "net"))]
     if args.net {
         eprintln!("warning: --net requires the 'net' feature (not enabled in this build)");
+    }
+
+    #[cfg(feature = "tcp")]
+    {
+        builder = builder.tcp(args.tcp).tcp_listen(args.tcp_listen);
+    }
+    #[cfg(not(feature = "tcp"))]
+    if args.tcp || args.tcp_listen {
+        eprintln!(
+            "warning: --tcp/--tcp-listen require the 'tcp' feature (not enabled in this build)"
+        );
     }
 
     #[cfg(feature = "db")]

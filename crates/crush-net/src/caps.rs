@@ -18,11 +18,14 @@
 //! registry. Caps are synchronous (blocking-accept on the listener
 //! side); the async path is wired through `reactor::Source::try_accept`.
 
-use std::{collections::HashMap, sync::{Arc, Mutex}};
-#[cfg(feature = "tls")]
-use std::sync::OnceLock;
 #[cfg(feature = "tls")]
 use rustls::pki_types::ServerName;
+#[cfg(feature = "tls")]
+use std::sync::OnceLock;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 /// Cache of leaked SNI `&'static str`s, indexed by the originating `&str`.
 /// Each distinct SNI is leaked at most once across the program lifetime
@@ -70,9 +73,7 @@ pub struct NetState {
     pub tls_client_conns: HashMap<
         ConnId,
         std::sync::Arc<
-            std::sync::Mutex<
-                rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>,
-            >,
+            std::sync::Mutex<rustls::StreamOwned<rustls::ClientConnection, std::net::TcpStream>>,
         >,
     >,
 }
@@ -119,13 +120,19 @@ fn id_arg(args: &[Value], i: usize) -> Result<ConnId, String> {
 pub struct TcpConnectCap(pub Arc<Mutex<NetState>>);
 impl HostCap for TcpConnectCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "tcp.connect".into(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "tcp.connect".into(),
+            argc: Some(1),
+            returns: true,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let uri = str_arg(&args, 0)?;
         let ep = parse_uri(&uri).map_err(|e| format!("tcp.connect: uri: {e}"))?;
         let mut s = self.0.lock().unwrap();
-        let conn = s.transport.connect_endpoint(&ep)
+        let conn = s
+            .transport
+            .connect_endpoint(&ep)
             .map_err(|e| format!("tcp.connect: {e}"))?;
         let id = s.next();
         s.conns.insert(id, Arc::new(Mutex::new(conn)));
@@ -136,13 +143,19 @@ impl HostCap for TcpConnectCap {
 pub struct TcpListenCap(pub Arc<Mutex<NetState>>);
 impl HostCap for TcpListenCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "tcp.listen".into(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "tcp.listen".into(),
+            argc: Some(1),
+            returns: true,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let uri = str_arg(&args, 0)?;
         let ep = parse_uri(&uri).map_err(|e| format!("tcp.listen: uri: {e}"))?;
         let mut s = self.0.lock().unwrap();
-        let listener = s.transport.listen_endpoint(&ep)
+        let listener = s
+            .transport
+            .listen_endpoint(&ep)
             .map_err(|e| format!("tcp.listen: {e}"))?;
         let id = s.next();
         s.listeners.insert(id, Arc::new(Mutex::new(listener)));
@@ -153,18 +166,26 @@ impl HostCap for TcpListenCap {
 pub struct TcpAcceptCap(pub Arc<Mutex<NetState>>);
 impl HostCap for TcpAcceptCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "tcp.accept".into(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "tcp.accept".into(),
+            argc: Some(1),
+            returns: true,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let listener_id = id_arg(&args, 0)?;
         let listener = {
             let s = self.0.lock().unwrap();
-            s.listeners.get(&listener_id)
+            s.listeners
+                .get(&listener_id)
                 .ok_or_else(|| format!("tcp.accept: unknown listener {listener_id}"))?
                 .clone()
         };
         // The state lock is NOT held across the blocking accept.
-        let tcp_conn = listener.lock().unwrap().accept_blocking()
+        let tcp_conn = listener
+            .lock()
+            .unwrap()
+            .accept_blocking()
             .map_err(|e| format!("tcp.accept: {e}"))?;
         let mut s = self.0.lock().unwrap();
         let id = s.next();
@@ -176,7 +197,11 @@ impl HostCap for TcpAcceptCap {
 pub struct TcpSendCap(pub Arc<Mutex<NetState>>);
 impl HostCap for TcpSendCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "tcp.send".into(), argc: Some(2), returns: true }
+        HostCapSpec {
+            name: "tcp.send".into(),
+            argc: Some(2),
+            returns: true,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let id = id_arg(&args, 0)?;
@@ -187,15 +212,21 @@ impl HostCap for TcpSendCap {
             if let Some(tls) = tls {
                 use std::io::Write;
                 let mut g = tls.lock().unwrap();
-                g.write_all(&bytes).and_then(|_| g.flush())
+                g.write_all(&bytes)
+                    .and_then(|_| g.flush())
                     .map_err(|e| format!("tcp.send: {e}"))?;
                 return Ok(Some(Value::Int(bytes.len() as i64)));
             }
         }
         let s = self.0.lock().unwrap();
-        let conn = s.conns.get(&id)
+        let conn = s
+            .conns
+            .get(&id)
             .ok_or_else(|| format!("tcp.send: unknown conn {id}"))?;
-        let n = conn.lock().unwrap().blocking_write(&bytes)
+        let n = conn
+            .lock()
+            .unwrap()
+            .blocking_write(&bytes)
             .map_err(|e| format!("tcp.send: {e}"))?;
         Ok(Some(Value::Int(n as i64)))
     }
@@ -204,7 +235,11 @@ impl HostCap for TcpSendCap {
 pub struct TcpRecvCap(pub Arc<Mutex<NetState>>);
 impl HostCap for TcpRecvCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "tcp.recv".into(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "tcp.recv".into(),
+            argc: Some(1),
+            returns: true,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let id = id_arg(&args, 0)?;
@@ -215,7 +250,10 @@ impl HostCap for TcpRecvCap {
             match tls {
                 Some(tls) => {
                     use std::io::Read;
-                    let n = tls.lock().unwrap().read(&mut buf)
+                    let n = tls
+                        .lock()
+                        .unwrap()
+                        .read(&mut buf)
                         .map_err(|e| format!("tcp.recv: {e}"))?;
                     Some(n)
                 }
@@ -228,11 +266,15 @@ impl HostCap for TcpRecvCap {
             Some(n) => n,
             None => {
                 let s = self.0.lock().unwrap();
-                let conn = s.conns.get(&id)
+                let conn = s
+                    .conns
+                    .get(&id)
                     .ok_or_else(|| format!("tcp.recv: unknown conn {id}"))?
                     .clone();
                 drop(s);
-                conn.lock().unwrap().blocking_read(&mut buf)
+                conn.lock()
+                    .unwrap()
+                    .blocking_read(&mut buf)
                     .map_err(|e| format!("tcp.recv: {e}"))?
             }
         };
@@ -245,7 +287,11 @@ impl HostCap for TcpRecvCap {
 pub struct TcpCloseCap(pub Arc<Mutex<NetState>>);
 impl HostCap for TcpCloseCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "tcp.close".into(), argc: Some(1), returns: false }
+        HostCapSpec {
+            name: "tcp.close".into(),
+            argc: Some(1),
+            returns: false,
+        }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let id = id_arg(&args, 0)?;
@@ -260,7 +306,11 @@ impl HostCap for TcpCloseCap {
 pub struct TcpPingCap;
 impl HostCap for TcpPingCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "tcp.ping".into(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "tcp.ping".into(),
+            argc: Some(1),
+            returns: true,
+        }
     }
     fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
         Ok(Some(Value::Str("pong".to_string())))
@@ -315,7 +365,7 @@ pub struct TcpTlsWrapCap {
     /// routes through the public `TcpTlsWrapCap::with_extra_roots(...)`
     /// constructor rather than reading this field directly.
     pub(crate) extra_roots: Vec<rustls::pki_types::CertificateDer<'static>>,
-    }
+}
 
 #[cfg(feature = "tls")]
 impl TcpTlsWrapCap {
@@ -361,8 +411,8 @@ impl TcpTlsWrapCap {
         let config = rustls::ClientConfig::builder()
             .with_root_certificates(roots)
             .with_no_client_auth();
-        let server_name = ServerName::try_from(sni)
-            .map_err(|e| format!("invalid SNI `{sni}`: {e}"))?;
+        let server_name =
+            ServerName::try_from(sni).map_err(|e| format!("invalid SNI `{sni}`: {e}"))?;
 
         // Take the original conn out of state.conns; clone the TcpStream; drop
         // the lock; drive the handshake; re-take the lock to alloc + insert.

@@ -59,6 +59,12 @@ pub fn effects_of(name: &str) -> Option<&'static [&'static str]> {
         "gpu.launch" => &["gpu/launch"],
         // --graphics: an in-memory canvas
         n if n.starts_with("graphics.") => &[],
+        // --tcp / --tcp-listen: raw sockets (CRUSH-318). Deliberately not
+        // `net/*`, so nothing that allows HTTP allows these.
+        "tcp.connect" | "tcp.tls_wrap" => &["tcp/connect"],
+        "tcp.listen" | "tcp.accept" => &["tcp/listen"],
+        "tcp.send" | "tcp.recv" | "tcp.close" => &["tcp/io"],
+        "tcp.ping" => &[],
         // --net
         n if n.starts_with("net.") => &["net/http"],
         // --db
@@ -89,6 +95,9 @@ pub struct CapInfo {
 
 /// The `grant` of the pure standard library in [`catalog`].
 pub const STDLIB_GRANT: &str = "stdlib (default; --no-stdlib)";
+
+/// The `grant` of `tcp.send`/`recv`/`close`/`ping` in [`catalog`]: either flag.
+pub const TCP_IO_GRANT: &str = "--tcp or --tcp-listen";
 
 impl CapInfo {
     /// Available without any grant: a VM built-in, always registered, or the
@@ -128,6 +137,11 @@ pub fn catalog() -> Vec<CapInfo> {
     grants.push(("--graphics", new().graphics(true)));
     #[cfg(feature = "net")]
     grants.push(("--net", new().net(true)));
+    #[cfg(feature = "tcp")]
+    grants.extend([
+        ("--tcp", new().tcp(true)),
+        ("--tcp-listen", new().tcp_listen(true)),
+    ]);
     #[cfg(feature = "db")]
     grants.push(("--db PATH", new().db(":memory:")));
 
@@ -155,6 +169,12 @@ pub fn catalog() -> Vec<CapInfo> {
             if out.contains_key(name) {
                 continue;
             }
+            // Either tcp grant unlocks the connection-id operations.
+            let grant = if matches!(name, "tcp.send" | "tcp.recv" | "tcp.close" | "tcp.ping") {
+                TCP_IO_GRANT
+            } else {
+                grant
+            };
             let cap = caps.get(name).expect("listed name");
             let spec = cap.spec();
             out.insert(
@@ -384,6 +404,10 @@ mod tests {
         #[cfg(feature = "net")]
         {
             b = b.net(true);
+        }
+        #[cfg(feature = "tcp")]
+        {
+            b = b.tcp(true).tcp_listen(true);
         }
         #[cfg(feature = "db")]
         {
