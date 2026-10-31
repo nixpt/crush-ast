@@ -1,0 +1,1 @@
+{"code":"E-TP01","level":"error","file":"undef_var.crush","line":2,"col":7,"message":"Undefined variable: undefined_name","hint":null}

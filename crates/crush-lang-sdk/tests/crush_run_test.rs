@@ -18,10 +18,9 @@ fn run_crush_run(args: &[&str]) -> std::process::Output {
 fn crush_run_emits_json_diagnostic_for_vm_runtime_error() {
     // A source with an infinite loop + a tight step quota produces a
     // RuntimeError::Vm(VmError::StepQuota(..)) which surfaces as
-    // {code: "E-RT05", message: "", hint: "instruction quota exceeded..."}.
-    // Because the variant uses `#[error(transparent)]` the inner VmError
-    // Display equals `RuntimeError::Display`, so we put the full text in
-    // `hint` and leave `message` empty to avoid editor-side redundancy.
+    // {code: "E-RT05", message: "instruction quota exceeded...", hint: null}
+    // with the program's path in `file` (CRUSH-315: the text used to be in
+    // `hint` with an empty `message`, unlike every other code).
     let dir = tempfile::tempdir().unwrap();
     let src = dir.path().join("loop.crush");
     std::fs::write(
@@ -53,32 +52,18 @@ fn crush_run_emits_json_diagnostic_for_vm_runtime_error() {
     assert_eq!(parsed["code"].as_str(), Some("E-RT05"));
     assert_eq!(parsed["level"].as_str(), Some("error"));
     assert!(
-        parsed["file"].is_null(),
-        "RuntimeError::Vm carries no source file path"
+        parsed["file"].as_str().is_some_and(|f| f.ends_with("loop.crush")),
+        "a runtime error names the program that ran, got: {}",
+        parsed["file"]
     );
-    assert!(parsed["line"].is_null());
+    assert!(parsed["line"].is_null(), "the VM does not report source lines");
     assert!(parsed["col"].is_null());
-    // `message` is empty to avoid duplicating `hint` (the Vm variant uses
-    // `#[error(transparent)]`, so Display is identical).
-    assert_eq!(
-        parsed["message"].as_str().unwrap_or(""),
-        "",
-        "expected empty message on the Vm arm to avoid duplicating the VmError text"
-    );
-    let hint = parsed["hint"].as_str().unwrap_or("");
+    let message = parsed["message"].as_str().unwrap_or("");
     assert!(
-        hint.contains("instruction quota"),
-        "expected hint to carry the full VmError display, got: {hint}"
+        message.contains("instruction quota"),
+        "expected message to carry the VmError display, got: {message}"
     );
-    // Lockdown: message and hint must not be byte-identical. Without this
-    // guardrail a future contributor "helpfully" restoring the duplication
-    // (e.g. by reverting the Vm arm to message: err.to_string()) would
-    // silently regress the editor-facing schema without breaking these
-    // independent assertions above.
-    assert_ne!(
-        parsed["message"], parsed["hint"],
-        "RuntimeError::Vm records must put the full VmError text in only one field (message OR hint, not both)"
-    );
+    assert!(parsed["hint"].is_null(), "the Vm arm carries no hint");
 }
 
 #[test]
@@ -104,7 +89,11 @@ fn crush_run_emits_json_diagnostic_for_io_fallback() {
         serde_json::from_str(stderr.lines().next().unwrap()).expect("must be valid JSON");
     assert_eq!(parsed["code"].as_str(), Some("E-IO"));
     assert_eq!(parsed["level"].as_str(), Some("error"));
-    assert!(parsed["file"].is_null());
+    assert!(
+        parsed["file"].as_str().is_some_and(|f| f.ends_with("missing.crush")),
+        "the record names the file that could not be run, got: {}",
+        parsed["file"]
+    );
     assert!(parsed["line"].is_null());
     assert!(parsed["col"].is_null());
 }
@@ -174,7 +163,7 @@ fn crush_run_emits_rt01_for_invalid_cvm1_blob() {
         serde_json::from_str(stderr.lines().next().unwrap()).expect("must be valid JSON");
     assert_eq!(parsed["code"].as_str(), Some("E-RT01"));
     assert_eq!(parsed["level"].as_str(), Some("error"));
-    assert!(parsed["file"].is_null());
+    assert!(parsed["file"].as_str().is_some(), "the record names the blob");
     assert!(parsed["line"].is_null());
     assert!(parsed["col"].is_null());
     // `LoadBlob` carries no inner source right now (`Program::from_blob`'s
