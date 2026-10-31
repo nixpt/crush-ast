@@ -35,9 +35,23 @@ fn locate(err: anyhow::Error, meta: Option<&HashMap<String, serde_json::Value>>)
         Some(pos) => anyhow::Error::new(crate::SemanticError {
             pos: Some(pos),
             message: err.to_string(),
+            file: None,
         }),
         None => err,
     }
+}
+
+/// Attribute an error raised while checking `func` to the file `func` was
+/// imported from (`meta["source_file"]`, CRUSH-110), keeping its position.
+/// Errors in the compiled file itself pass through unchanged.
+fn in_source_file(err: anyhow::Error, func: &Function) -> anyhow::Error {
+    let Some(file) = crate::import_system::source_file(func) else { return err };
+    let (pos, message) = match err.downcast_ref::<crate::SemanticError>() {
+        Some(e) if e.file.is_some() => return err,
+        Some(e) => (e.pos, e.message.clone()),
+        None => (None, err.to_string()),
+    };
+    anyhow::Error::new(crate::SemanticError { pos, message, file: Some(file) })
 }
 
 /// The `meta` of the expression kinds the parser stamps with a position of
@@ -118,12 +132,17 @@ impl SemanticAnalyzer {
         // consults `walker_intrinsics::BUILTINS`, the same table `compile_call`
         // lowers from, so the two lists cannot drift apart (CRUSH-111).
 
+        // An import no compile path can lower — a Crush module import that
+        // was never resolved (no file path), `import @http`, `use @mcp` — is
+        // refused here, before an imported name reads as undefined (CRUSH-110).
+        crate::import_system::refuse_unsupported_imports(program)?;
+
         // Pass 1: Collect definitions
         self.collect_definitions(program)?;
 
         // Pass 2: Check function bodies
         for func in program.functions.values() {
-            self.check_function(func)?;
+            self.check_function(func).map_err(|e| in_source_file(e, func))?;
         }
 
         Ok(())
@@ -209,7 +228,9 @@ impl SemanticAnalyzer {
                 // Non-recursive: every callee is already final, so a single
                 // walk is authoritative — errors surface here.
                 let name = names[scc[0]].as_str();
-                let inferred = self.infer_function_return_type(&program.functions[name])?;
+                let inferred = self
+                    .infer_function_return_type(&program.functions[name])
+                    .map_err(|e| in_source_file(e, &program.functions[name]))?;
                 if let Some((_, ret)) = self.functions.get_mut(name) {
                     *ret = inferred;
                 }
@@ -241,8 +262,9 @@ impl SemanticAnalyzer {
                     }
                 }
                 for &i in &scc {
+                    let func = &program.functions[names[i].as_str()];
                     let inferred =
-                        self.infer_function_return_type(&program.functions[names[i].as_str()])?;
+                        self.infer_function_return_type(func).map_err(|e| in_source_file(e, func))?;
                     if let Some((_, ret)) = self.functions.get_mut(names[i].as_str()) {
                         *ret = inferred;
                     }

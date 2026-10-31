@@ -462,31 +462,43 @@ fn compiles_polyglot_lang_block_with_variable_mapping() {
     assert_eq!(exec.args["var_0"], "x");
 }
 
+/// External, MCP and unresolved Crush-module imports have no lowering: the
+/// compiler refuses them instead of emitting a capability call no host
+/// registers (`external.load`, `mcp.connect`, `module.load`; CRUSH-110).
 #[test]
-fn import_statement_is_accepted_by_compiler() {
-    let casm = compile_program(vec![Statement::Import {
-        import: ImportStatement::External {
-            uri: "https://example.com/data.json".to_string(),
-            resource_type: ExternalResourceType::Http,
-            alias: Some("data".to_string()),
-        },
-        meta: meta(),
-    }]);
-
-    let ops = main_ops(&casm);
-    // External imports lower to: push uri, external.load cap_call, store alias.
-    assert_eq!(
-        ops,
-        vec!["push_str", "cap_call", "store", "push_null", "ret"]
-    );
-
-    let main = casm.functions.get("main").unwrap();
-    let cap = main
-        .body
-        .iter()
-        .find(|ins| ins.op == "cap_call")
-        .expect("cap_call missing");
-    assert_eq!(cap.args["name"], "external.load");
+fn imports_without_a_lowering_are_compile_errors() {
+    let cases = [
+        (
+            ImportStatement::External {
+                uri: "https://example.com/data.json".to_string(),
+                resource_type: ExternalResourceType::Http,
+                alias: Some("data".to_string()),
+            },
+            "`import @http \"https://example.com/data.json\"` is not supported yet",
+        ),
+        (
+            ImportStatement::MCPImport {
+                server_url: "https://mcp.example".to_string(),
+                tools: vec!["t".to_string()],
+                alias: None,
+            },
+            "`use @mcp \"https://mcp.example\"` is not supported yet",
+        ),
+        (
+            ImportStatement::CrushModule {
+                module_path: "helpers".to_string(),
+                alias: None,
+                selective: vec![],
+            },
+            "`import helpers` was not resolved",
+        ),
+    ];
+    for (import, expected) in cases {
+        let err = Compiler::new()
+            .compile(create_program(vec![Statement::Import { import, meta: meta() }]))
+            .expect_err("must be refused");
+        assert!(err.to_string().contains(expected), "{err}");
+    }
 }
 
 #[test]

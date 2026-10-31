@@ -1255,33 +1255,19 @@ impl Compiler {
                 bail!("{at}`impl` / `trait` blocks are only allowed at the top level of a file");
             }
             Statement::Import { import, meta } => {
-                // Compile import statements to capability/module load instructions.
-                // The ImportResolver handles resolution at runtime via capabilities.
+                // Crush module imports are resolved before compilation
+                // (`import_system`, CRUSH-110) and are gone by now; one that
+                // is still here, like an external or MCP import, has no
+                // lowering and is refused — never compiled to a runtime call
+                // no host provides.
+                if let Some(why) = crate::import_system::unsupported_import(import) {
+                    let at = match (meta.get("line").and_then(|v| v.as_u64()), meta.get("col").and_then(|v| v.as_u64())) {
+                        (Some(l), Some(c)) if l > 0 => format!("line {l}, col {c}: "),
+                        _ => String::new(),
+                    };
+                    bail!("{at}{why}");
+                }
                 match import {
-                    ImportStatement::CrushModule {
-                        module_path,
-                        alias,
-                        selective: _,
-                    } => {
-                        // Load a Crush module via the module.load capability
-                        // The capability is expected to push the module object onto the stack
-                        instrs.push(self.create_instr(
-                            "push_str",
-                            serde_json::json!({"value": module_path}),
-                            meta,
-                        ));
-                        instrs.push(self.create_instr(
-                            "cap_call",
-                            serde_json::json!({"name": "module.load", "argc": 1}),
-                            meta,
-                        ));
-                        let store_name = alias.as_deref().unwrap_or(module_path.as_str());
-                        instrs.push(self.create_instr(
-                            "store",
-                            serde_json::json!({"name": store_name}),
-                            meta,
-                        ));
-                    }
                     ImportStatement::Capability {
                         capability_path,
                         permissions: _,
@@ -1355,77 +1341,9 @@ impl Compiler {
                             }
                         }
                     }
-                    ImportStatement::MCPImport {
-                        server_url,
-                        tools,
-                        alias,
-                    } => {
-                        // Connect to MCP server and load tools
-                        self.all_permissions.insert("mcp.client".to_string());
-                        instrs.push(self.create_instr(
-                            "push_str",
-                            serde_json::json!({"value": server_url}),
-                            meta,
-                        ));
-                        instrs.push(self.create_instr(
-                            "cap_call",
-                            serde_json::json!({"name": "mcp.connect", "argc": 1}),
-                            meta,
-                        ));
-                        let store_name = alias.as_deref().unwrap_or("mcp");
-                        instrs.push(self.create_instr(
-                            "store",
-                            serde_json::json!({"name": store_name}),
-                            meta,
-                        ));
-                        // Register each tool as a named variable
-                        for tool in tools {
-                            instrs.push(self.create_instr(
-                                "load",
-                                serde_json::json!({"name": store_name}),
-                                meta,
-                            ));
-                            instrs.push(self.create_instr(
-                                "push_str",
-                                serde_json::json!({"value": tool}),
-                                meta,
-                            ));
-                            instrs.push(self.create_instr(
-                                "cap_call",
-                                serde_json::json!({"name": "mcp.get_tool", "argc": 2}),
-                                meta,
-                            ));
-                            instrs.push(self.create_instr(
-                                "store",
-                                serde_json::json!({"name": tool}),
-                                meta,
-                            ));
-                        }
-                    }
-                    ImportStatement::External {
-                        uri,
-                        resource_type: _,
-                        alias,
-                    } => {
-                        // Load external resource via the external.load capability
-                        self.all_permissions.insert("external.load".to_string());
-                        instrs.push(self.create_instr(
-                            "push_str",
-                            serde_json::json!({"value": uri}),
-                            meta,
-                        ));
-                        instrs.push(self.create_instr(
-                            "cap_call",
-                            serde_json::json!({"name": "external.load", "argc": 1}),
-                            meta,
-                        ));
-                        let store_name = alias.as_deref().unwrap_or("imported_resource");
-                        instrs.push(self.create_instr(
-                            "store",
-                            serde_json::json!({"name": store_name}),
-                            meta,
-                        ));
-                    }
+                    ImportStatement::CrushModule { .. }
+                    | ImportStatement::MCPImport { .. }
+                    | ImportStatement::External { .. } => unreachable!("refused above"),
                 }
             }
             Statement::DomMutate {

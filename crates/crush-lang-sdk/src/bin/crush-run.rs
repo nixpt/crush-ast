@@ -49,6 +49,10 @@ enum Commands {
         /// A program (.crush, .casm, .cvm1 or .cvm) to inspect instead of listing
         /// every capability.
         path: Option<PathBuf>,
+
+        /// Add a directory to the import search path (repeatable; see `run -L`).
+        #[arg(short = 'L', long = "lib-path", value_name = "DIR")]
+        lib_paths: Vec<PathBuf>,
     },
 }
 
@@ -66,6 +70,12 @@ struct RunArgs {
     /// Grant a capability permission (repeatable).
     #[arg(long = "cap", value_name = "CAP")]
     caps: Vec<String>,
+
+    /// Add a directory to the import search path (repeatable). `import a.b`
+    /// looks for `a/b.crush` in the program's directory, then each `-L`
+    /// directory in order, then each `CRUSH_PATH` directory (CRUSH-110).
+    #[arg(short = 'L', long = "lib-path", value_name = "DIR")]
+    lib_paths: Vec<PathBuf>,
 
     /// Enable filesystem host capabilities (fs.read/write/exists/list, fs.ls/cat/pwd/cd/mkdir/rm/cp/mv/touch/find, text.head/tail/wc/cut/grep), confined to --fs-root.
     #[arg(long)]
@@ -177,14 +187,14 @@ fn main() {
     let cli = Cli::parse();
     crush_lang_sdk::theme::init_styling();
     match cli.command {
-        Commands::Caps { json, path: Some(path) } => {
-            if let Err(e) = show_program_caps(&path, json) {
+        Commands::Caps { json, path: Some(path), lib_paths } => {
+            if let Err(e) = show_program_caps(&path, json, &lib_paths) {
                 eprint!("{}", crush_lang_sdk::theme::render_anyhow_error(&e, "compile"));
                 std::process::exit(1);
             }
         }
-        Commands::Caps { json: false, path: None } => list_caps(),
-        Commands::Caps { json: true, path: None } => list_caps_json(),
+        Commands::Caps { json: false, path: None, .. } => list_caps(),
+        Commands::Caps { json: true, path: None, .. } => list_caps_json(),
         Commands::Run(args) => {
             if let Err(e) = run_file(&args) {
                 match args.message_format {
@@ -282,7 +292,12 @@ impl std::error::Error for NotGranted {}
 
 /// Compile `path` to bytecode, plus the `@capabilities` it declares
 /// (`.crush` only).
-fn load_program(path: &std::path::Path, casm_caps: &[String], polyglot: bool) -> anyhow::Result<(crush_vm::Program, Option<Vec<String>>)> {
+fn load_program(
+    path: &std::path::Path,
+    casm_caps: &[String],
+    polyglot: bool,
+    lib_paths: &[PathBuf],
+) -> anyhow::Result<(crush_vm::Program, Option<Vec<String>>)> {
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
     match ext {
         "crush" => {
@@ -291,8 +306,13 @@ fn load_program(path: &std::path::Path, casm_caps: &[String], polyglot: bool) ->
                 .ok()
                 .and_then(|p| p.manifest)
                 .and_then(|m| m.capabilities);
-            let program =
-                crush_lang_sdk::compile::compile_crush_source(&source).map_err(CompileFailed)?;
+            let imports = import_options(lib_paths);
+            let program = crush_lang_sdk::compile::compile_crush_file(
+                path,
+                &imports,
+                &crush_lang_sdk::compile::CompileOptions::default(),
+            )
+            .map_err(CompileFailed)?;
             Ok((program, declared))
         }
         "casm" => {
@@ -311,10 +331,15 @@ fn load_program(path: &std::path::Path, casm_caps: &[String], polyglot: bool) ->
     }
 }
 
+/// The import search path: `-L` directories, then `CRUSH_PATH`.
+fn import_options(lib_paths: &[PathBuf]) -> crush_frontend::import_system::ImportOptions {
+    crush_frontend::import_system::ImportOptions::with_crush_path(lib_paths.iter().cloned())
+}
+
 /// `crush-run caps FILE`: what the program can use, grouped by what grants
 /// it, without running it.
-fn show_program_caps(path: &std::path::Path, json: bool) -> anyhow::Result<()> {
-    let (program, declared) = load_program(path, &[], false)?;
+fn show_program_caps(path: &std::path::Path, json: bool, lib_paths: &[PathBuf]) -> anyhow::Result<()> {
+    let (program, declared) = load_program(path, &[], false, lib_paths)?;
     let used = crush_lang_sdk::effects::used_by(&program)?;
     let catalog = crush_lang_sdk::effects::catalog();
     let grant_of = |cap: &str| -> &'static str {
@@ -598,8 +623,12 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     if args.gpu {
         builder = builder.gpu(true);
         if ext == "crush" {
-            let source = std::fs::read_to_string(&args.path)?;
-            let casm = crush_lang_sdk::compile::compile_crush_to_casm(&source).map_err(CompileFailed)?;
+            let (casm, _) = crush_lang_sdk::compile::compile_crush_file_to_casm(
+                &args.path,
+                &import_options(&args.lib_paths),
+                &crush_lang_sdk::compile::CompileOptions::default(),
+            )
+            .map_err(CompileFailed)?;
             builder = builder.gpu_program(std::sync::Arc::new(casm));
         }
     }
@@ -679,7 +708,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
             .ok()
             .and_then(|blob| crush_vm::Program::from_blob(&blob).ok()),
         _ => {
-            let (program, _declared) = load_program(&args.path, &args.caps, args.polyglot)?;
+            let (program, _declared) = load_program(&args.path, &args.caps, args.polyglot, &args.lib_paths)?;
             // Compile warnings (CRUSH-270's polyglot implicit-output/clobber
             // warnings) go to stderr, never the program's stdout.
             for warning in &program.warnings {

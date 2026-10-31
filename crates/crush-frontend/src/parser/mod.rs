@@ -30,6 +30,11 @@ pub struct Parser {
     /// Declared structs (name → field names), pre-scanned so `Name { ... }` is
     /// a struct literal only for a declared struct — never for `if x { ... }`.
     structs: HashMap<String, Vec<String>>,
+    /// Module mode ([`Parser::parse_module`]): keep the file's top-level
+    /// statements apart instead of folding them into `main` (CRUSH-110).
+    module_mode: bool,
+    /// The top-level statements a module-mode parse collected.
+    toplevel: Vec<Statement>,
 }
 
 impl Parser {
@@ -40,6 +45,8 @@ impl Parser {
             pos: 0,
             errors: Vec::new(),
             structs,
+            module_mode: false,
+            toplevel: Vec::new(),
         }
     }
 
@@ -182,6 +189,30 @@ impl Parser {
                     Err(parser.errors)
                 }
             }
+        }
+    }
+
+    /// Parse a file that is being **imported** (CRUSH-110): like
+    /// [`Parser::parse`], but the file's top-level statements (its imports,
+    /// `struct` / `impl` / `trait` declarations, and anything else written
+    /// outside a function) are returned on their own instead of being folded
+    /// into `main`, and an explicit `fn main` stays in `functions` untouched.
+    /// The import resolver needs the two apart: a module's `main` is ignored,
+    /// and a top-level executable statement in a module is an error.
+    pub fn parse_module(source: &str) -> Result<(Program, Vec<Statement>), Vec<ParseError>> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().map_err(|e| vec![e])?;
+        let mut parser = Self::new(tokens);
+        parser.module_mode = true;
+        match parser.parse_program() {
+            Ok(program) if parser.errors.is_empty() => {
+                let toplevel = std::mem::take(&mut parser.toplevel);
+                Ok((program, toplevel))
+            }
+            _ if parser.errors.is_empty() => {
+                Err(vec![ParseError::UnexpectedEOF { line: 0, col: 0 }])
+            }
+            _ => Err(parser.errors),
         }
     }
 
@@ -708,6 +739,9 @@ impl Parser {
         //
         // Merge instead of clobber: top-level statements run first (they are module-init:
         // struct decls, constants, setup), then the explicit `main` body. Nothing is discarded.
+        if self.module_mode {
+            self.toplevel = std::mem::take(&mut statements);
+        }
         if !statements.is_empty() {
             match functions.get_mut("main") {
                 Some(existing) => {
@@ -2498,6 +2532,10 @@ impl Parser {
     }
 
     fn parse_import_statement(&mut self) -> Result<Statement, ()> {
+        // The position of the `import` / `use` keyword itself — stamped
+        // before parsing, since the peek has moved past the statement (to
+        // the next line) by the end (CRUSH-110: import errors name this line).
+        let meta = self.make_meta();
         let is_use = matches!(self.peek(), Token::Use(_));
         self.advance();
 
@@ -2549,7 +2587,7 @@ impl Parser {
 
         Ok(Statement::Import {
             import: import_stmt,
-            meta: self.make_meta(),
+            meta,
         })
     }
 

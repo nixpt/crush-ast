@@ -30,11 +30,21 @@ pub struct SemanticError {
     pub pos: Option<(usize, usize)>,
     /// The error text, without any position prefix.
     pub message: String,
+    /// The file the error is in, when it is not the file being compiled:
+    /// code merged from an imported module (CRUSH-110) records its file, and
+    /// errors in it name that file. `None` for the compiled file itself.
+    pub file: Option<String>,
 }
 
 impl std::fmt::Display for SemanticError {
+    /// The bare message; for an error inside an imported file, prefixed with
+    /// `file:line:col: ` so text output points at the right file.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
+        match (&self.file, self.pos) {
+            (Some(file), Some((line, col))) => write!(f, "{file}:{line}:{col}: {}", self.message),
+            (Some(file), None) => write!(f, "{file}: {}", self.message),
+            (None, _) => f.write_str(&self.message),
+        }
     }
 }
 
@@ -49,6 +59,7 @@ pub fn semantic_error(err: anyhow::Error) -> anyhow::Error {
     anyhow::Error::new(SemanticError {
         pos: None,
         message: err.to_string(),
+        file: None,
     })
 }
 
@@ -84,6 +95,32 @@ impl std::error::Error for ParseErrors {}
 /// For warnings (e.g. exhaustiveness), use [`check_source`] instead.
 pub fn parse_source(source: &str) -> Result<crush_cast::Program> {
     let mut program = parser::Parser::parse(source).map_err(ParseErrors)?;
+    cast_enrich::enrich_cast(&mut program);
+    Ok(program)
+}
+
+/// Read, parse and enrich the Crush file at `path`, resolving its imports
+/// (CRUSH-110): every `import a.b` is loaded from `a/b.crush` in the file's
+/// directory or a directory of `opts`, and merged into the returned program
+/// (see [`import_system`]). The entry point for compiling a file.
+pub fn parse_file(path: &std::path::Path, opts: &import_system::ImportOptions) -> Result<crush_cast::Program> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("cannot read '{}': {e}", path.display()))?;
+    parse_source_with_imports(&source, path, opts)
+}
+
+/// [`parse_source`] for source that has a location: imports are resolved
+/// relative to `origin` (the file's path — only its directory is searched,
+/// so it need not exist) and then `opts`. [`parse_source`] itself resolves
+/// nothing, and a program that still has a module import when it is compiled
+/// is refused with an error saying so.
+pub fn parse_source_with_imports(
+    source: &str,
+    origin: &std::path::Path,
+    opts: &import_system::ImportOptions,
+) -> Result<crush_cast::Program> {
+    let mut program = parser::Parser::parse(source).map_err(ParseErrors)?;
+    import_system::resolve_imports(&mut program, origin, opts)?;
     cast_enrich::enrich_cast(&mut program);
     Ok(program)
 }

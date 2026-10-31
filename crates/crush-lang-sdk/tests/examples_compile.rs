@@ -11,7 +11,17 @@
 
 use std::path::{Path, PathBuf};
 
-use crush_lang_sdk::{compile::compile_crush_source, effects::used_by, Quotas, Runtime};
+use crush_lang_sdk::{compile::CompileOptions, effects::used_by, Quotas, Runtime};
+
+/// Compile an example as a file, so its imports resolve from its own
+/// directory (CRUSH-110: `examples/crush/imports/`). No `-L`, no `CRUSH_PATH`.
+fn compile_example(path: &Path) -> anyhow::Result<crush_vm::Program> {
+    crush_lang_sdk::compile::compile_crush_file(
+        path,
+        &crush_frontend::import_system::ImportOptions::default(),
+        &CompileOptions::default(),
+    )
+}
 
 /// Where the examples live: the workspace root's `examples/` directory.
 fn examples_root() -> PathBuf {
@@ -113,7 +123,7 @@ fn every_example_compiles_or_has_valid_expect_error_marker() {
         match expect_error_marker(&source) {
             None => {
                 // Unmarked: it must compile.
-                if let Err(err) = compile_crush_source(&source) {
+                if let Err(err) = compile_example(&path) {
                     failures.push(format!(
                         "{name}: example fails to compile (no expect-error marker):\n  {}",
                         first_error_line(&err.to_string())
@@ -123,7 +133,7 @@ fn every_example_compiles_or_has_valid_expect_error_marker() {
             Some(marker) => {
                 // Marked: it must fail to compile, or compile but fail at run
                 // time, with an error containing <marker>.
-                match compile_crush_source(&source) {
+                match compile_example(&path) {
                     Err(err) => {
                         let text = err.to_string();
                         if !text.contains(&marker) {

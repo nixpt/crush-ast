@@ -1,5 +1,14 @@
-// expect-error: [runtime] unknown capability: module.load
-# Test explicit module imports
+// expect-error: `import io`: module not found
+# Every import form the grammar accepts. What each does when compiled (CRUSH-110):
+#   import a.b [as x] [{ f, g }]  - loads a/b.crush at compile time from this
+#                                   file's dir, -L dirs, CRUSH_PATH. No io.crush /
+#                                   fs.crush / net.crush exists here, so the first
+#                                   one fails with "module not found" (the stdlib is
+#                                   reached without import: io.print, str.*, ...).
+#   use @mcp "…"                  - compile error: not supported yet
+#   use @cap "…"                  - adds the manifest permission (unchanged)
+#   use @lang python "…"          - imports into later @python blocks (unchanged)
+#   import @git / @http "…"       - compile error: not supported yet
 
 # CrushModule import
 import io;

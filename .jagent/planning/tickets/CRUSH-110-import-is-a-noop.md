@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-110 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | In review |
 | **Phase** | M4 |
-| **Assignee** | unassigned |
+| **Assignee** | satya |
 | **Dependencies** | none |
 | **Estimated effort** | L |
 
@@ -54,10 +54,10 @@ failure as `// expect-error: [runtime] unknown capability: module.load`.
 
 ## Success criteria
 
-- [ ] `import <file>.crush` makes that file's `fn`s callable from the importing program via the standalone `crushc`/`crush-run`.
-- [ ] `import strings` (and the other `stdlib/` modules) resolves to working functions.
-- [ ] No import path emits an unregistered `module.load` capability.
-- [ ] Import cycles are detected and reported (`ImportError::ImportCycle` exists but is never produced).
+- [x] `import <file>.crush` makes that file's `fn`s callable from the importing program via the standalone `crushc`/`crush-run`.
+- [ ] ~~`import strings` (and the other `stdlib/` modules) resolves to working functions.~~ Dropped: the `stdlib/` directory was removed 2026-10-31; the stdlib is reached without `import` (`str.*`, `math.*`, … are host capabilities). `import strings` now looks for `strings.crush` like any module.
+- [x] No import path emits an unregistered `module.load` capability (nor `external.load` / `mcp.connect`: those forms are compile errors).
+- [x] Import cycles are detected and reported (with the cycle shown).
 
 ## Technical approach
 
@@ -93,3 +93,26 @@ failure as `// expect-error: [runtime] unknown capability: module.load`.
   not (C/Rust backends reject unsupported ops/caps in unused functions too).
   Relevant if the import implementation ever lands via runtime `module.load`:
   dead module bodies will still gate AOT builds.
+
+## Resolution (2026-10-31, satya, branch `agent/satya/CRUSH-110`)
+
+Captain's model: **qualified + selective**, resolved at compile time.
+
+- `import a.b [as x] [{ f, g }]` loads `a/b.crush` from the importing file's directory, then `-L DIR`
+  (crushc / crush-run / crush-debug / crush-repl), then `CRUSH_PATH`; the module's definitions are merged
+  into the `Program` before `SemanticAnalyzer::check`, its functions mangled to `a::b::f`. `x.f(…)` /
+  bare `f(…)` resolve to them; inside a module its own functions resolve first.
+- Modules hold definitions only (fn/struct/impl/trait + Crush imports); their `main` is ignored; any other
+  top-level statement is a compile error with file:line. Diamonds dedupe, cycles and depth > 64 are
+  errors, not-found lists every searched directory.
+- `import_system.rs` was rewritten as the one resolver (`resolve_imports`, `ImportOptions`,
+  `ImportError`); the old registry/`SecurityPolicy`/`ImportError` types are gone. `module.load`,
+  `external.load` and `mcp.connect` are no longer emitted: an unresolved module import, `import @http/@git/@file`
+  and `use @mcp` are compile errors.
+- Errors in imported files report that file (`ImportError`, JSON `E-IM01`; `SemanticError::file`).
+- New API: `crush_frontend::parse_file`, `parse_source_with_imports`; SDK
+  `compile::compile_crush_file[_to_casm]`, `compile_crush_file_for_debug`; `ReplConfig::import_paths`.
+- Tests: `crates/crush-lang-sdk/tests/imports_cli.rs` (21, through the binaries); facet end to end
+  verified by hand. Docs: `docs/design/import-system.md`.
+
+Follow-up: crush-pkg passes its dependency directories as `ImportOptions::search_paths`.
