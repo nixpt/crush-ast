@@ -232,6 +232,26 @@ fn value_to_string(v: &Value) -> String {
     v.to_string()
 }
 
+/// Upper bound on a single stdlib allocation (a produced string or buffer), in
+/// bytes. A cap that would exceed it fails with a runtime error instead of
+/// aborting the host on an out-of-memory allocation (CRUSH-181). This is a
+/// fixed bound; a configurable per-run `--max-memory` quota is a follow-up.
+pub(crate) const MAX_STDLIB_ALLOC_BYTES: usize = 64 * 1024 * 1024;
+
+/// A non-negative length or count argument, bounded so a cap cannot wrap a
+/// negative into a huge `usize` or request an allocation that aborts the host
+/// (CRUSH-181). `cap` names the capability for the error message.
+fn get_bounded_len(args: &[Value], idx: usize, cap: &str) -> Result<usize, String> {
+    let n = get_int(args, idx)?;
+    let n = usize::try_from(n).map_err(|_| format!("{cap}: length must be >= 0, got {n}"))?;
+    if n > MAX_STDLIB_ALLOC_BYTES {
+        return Err(format!(
+            "{cap}: length {n} exceeds the {MAX_STDLIB_ALLOC_BYTES}-byte limit"
+        ));
+    }
+    Ok(n)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // String Capabilities
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,8 +288,19 @@ str_cap!(StrJoinCap, "join", 2, |args: &[Value]| {
     };
     let delim = get_str(args, 1)?;
     let strings: Result<Vec<String>, String> = arr.borrow().iter().map(|v| Ok(value_to_string(v))).collect();
-    let joined = strings?.join(&delim);
-    Ok(Some(Value::Str(joined)))
+    let strings = strings?;
+    // Bound the result before allocating it (CRUSH-181): the elements and the
+    // delimiter are already allocated, but their join can still be enormous.
+    let total = strings
+        .iter()
+        .fold(0usize, |acc, s| acc.saturating_add(s.len()))
+        .saturating_add(delim.len().saturating_mul(strings.len().saturating_sub(1)));
+    if total > MAX_STDLIB_ALLOC_BYTES {
+        return Err(format!(
+            "str.join: result would be {total} bytes, over the {MAX_STDLIB_ALLOC_BYTES}-byte limit"
+        ));
+    }
+    Ok(Some(Value::Str(strings.join(&delim))))
 });
 
 str_cap!(StrTrimCap, "trim", 1, |args: &[Value]| {
@@ -321,7 +352,7 @@ str_cap!(StrToLowerCap, "to_lower", 1, |args: &[Value]| {
 
 str_cap!(StrPadLeftCap, "pad_left", 3, |args: &[Value]| {
     let s = get_str(args, 0)?;
-    let len = get_int(args, 1)? as usize;
+    let len = get_bounded_len(args, 1, "str.pad_left")?;
     let ch = get_str(args, 2).unwrap_or_else(|_| " ".to_string());
     let pad_char = ch.chars().next().unwrap_or(' ');
     if s.len() >= len {
@@ -333,7 +364,7 @@ str_cap!(StrPadLeftCap, "pad_left", 3, |args: &[Value]| {
 
 str_cap!(StrPadRightCap, "pad_right", 3, |args: &[Value]| {
     let s = get_str(args, 0)?;
-    let len = get_int(args, 1)? as usize;
+    let len = get_bounded_len(args, 1, "str.pad_right")?;
     let ch = get_str(args, 2).unwrap_or_else(|_| " ".to_string());
     let pad_char = ch.chars().next().unwrap_or(' ');
     if s.len() >= len {
@@ -345,8 +376,16 @@ str_cap!(StrPadRightCap, "pad_right", 3, |args: &[Value]| {
 
 str_cap!(StrRepeatCap, "repeat", 2, |args: &[Value]| {
     let s = get_str(args, 0)?;
-    let count = get_int(args, 1)? as usize;
-    Ok(Some(Value::Str(s.repeat(count))))
+    let count = get_int(args, 1)?;
+    let count = usize::try_from(count)
+        .map_err(|_| format!("str.repeat: count must be >= 0, got {count}"))?;
+    match s.len().checked_mul(count) {
+        Some(n) if n <= MAX_STDLIB_ALLOC_BYTES => Ok(Some(Value::Str(s.repeat(count)))),
+        Some(n) => Err(format!(
+            "str.repeat: result would be {n} bytes, over the {MAX_STDLIB_ALLOC_BYTES}-byte limit"
+        )),
+        None => Err("str.repeat: result size overflows".to_string()),
+    }
 });
 
 str_cap!(StrSubstringCap, "substring", 3, |args: &[Value]| {
@@ -658,8 +697,11 @@ conv_cap!(ConvToBoolCap, "to_bool", 1, |args: &[Value]| {
 
 conv_cap!(ConvParseIntCap, "parse_int", 2, |args: &[Value]| {
     let s = get_str(args, 0)?;
-    let radix = get_int(args, 1).unwrap_or(10) as u32;
-    let result = i64::from_str_radix(s.trim(), radix)
+    let radix = get_int(args, 1).unwrap_or(10);
+    if !(2..=36).contains(&radix) {
+        return Err(format!("conv.parse_int: radix must be 2..=36, got {radix}"));
+    }
+    let result = i64::from_str_radix(s.trim(), radix as u32)
         .map(Value::Int)
         .unwrap_or(Value::Null);
     Ok(Some(result))
@@ -771,10 +813,11 @@ coll_cap!(CollFlattenCap, "flatten", 1, |args: &[Value]| {
 
 coll_cap!(CollChunkCap, "chunk", 2, |args: &[Value]| {
     let v = &args[0];
-    let size = get_int(args, 1)? as usize;
-    if size == 0 {
-        return Err("collections.chunk: size must be > 0".to_string());
+    let size = get_int(args, 1)?;
+    if size <= 0 {
+        return Err(format!("collections.chunk: size must be > 0, got {size}"));
     }
+    let size = size as usize;
     match v {
         Value::Array(a) => {
             let chunks: Vec<Value> = a.borrow().chunks(size).map(|c| Value::new_array(c.to_vec())).collect();
@@ -1094,6 +1137,124 @@ mod tests {
         let mut caps = HostCaps::new();
         register(&mut caps);
         caps
+    }
+
+    // CRUSH-181: boundary arguments must give a runtime error, never panic or
+    // abort the host on an unbounded allocation.
+    #[test]
+    fn stdlib_caps_reject_negative_and_huge_arguments() {
+        let caps = setup_caps();
+        let call = |name: &str, args: Vec<Value>| caps.get(name).expect(name).call(args);
+
+        // Negatives must error, not wrap to a huge `usize` and abort.
+        for n in [-1i64, i64::MIN] {
+            assert!(
+                call("str.repeat", vec![Value::Str("ab".into()), Value::Int(n)]).is_err(),
+                "repeat({n})"
+            );
+            assert!(
+                call(
+                    "str.pad_left",
+                    vec![
+                        Value::Str("x".into()),
+                        Value::Int(n),
+                        Value::Str(" ".into())
+                    ]
+                )
+                .is_err(),
+                "pad_left({n})"
+            );
+            assert!(
+                call(
+                    "str.pad_right",
+                    vec![
+                        Value::Str("x".into()),
+                        Value::Int(n),
+                        Value::Str(" ".into())
+                    ]
+                )
+                .is_err(),
+                "pad_right({n})"
+            );
+            assert!(
+                call("buffer.alloc", vec![Value::Int(n)]).is_err(),
+                "buffer.alloc({n})"
+            );
+            assert!(
+                call(
+                    "collections.chunk",
+                    vec![Value::new_array(vec![Value::Int(1)]), Value::Int(n)]
+                )
+                .is_err(),
+                "chunk({n})"
+            );
+        }
+
+        // Huge sizes must error before allocating (they used to abort the host).
+        for n in [i64::MAX, 4_000_000_000] {
+            assert!(
+                call("str.repeat", vec![Value::Str("a".into()), Value::Int(n)]).is_err(),
+                "repeat({n})"
+            );
+            assert!(
+                call(
+                    "str.pad_left",
+                    vec![
+                        Value::Str("x".into()),
+                        Value::Int(n),
+                        Value::Str(" ".into())
+                    ]
+                )
+                .is_err(),
+                "pad_left({n})"
+            );
+            assert!(
+                call("buffer.alloc", vec![Value::Int(n)]).is_err(),
+                "buffer.alloc({n})"
+            );
+        }
+
+        // A bad radix must error, not panic inside `from_str_radix`.
+        for r in [0i64, 1, 37, -1, i64::MAX] {
+            assert!(
+                call(
+                    "conv.parse_int",
+                    vec![Value::Str("10".into()), Value::Int(r)]
+                )
+                .is_err(),
+                "parse_int radix {r}"
+            );
+        }
+
+        // Valid calls still work.
+        assert_eq!(
+            call("str.repeat", vec![Value::Str("ab".into()), Value::Int(2)]).unwrap(),
+            Some(Value::Str("abab".into()))
+        );
+        assert_eq!(
+            call(
+                "str.pad_left",
+                vec![
+                    Value::Str("x".into()),
+                    Value::Int(3),
+                    Value::Str("-".into())
+                ]
+            )
+            .unwrap(),
+            Some(Value::Str("--x".into()))
+        );
+        assert_eq!(
+            call(
+                "conv.parse_int",
+                vec![Value::Str("ff".into()), Value::Int(16)]
+            )
+            .unwrap(),
+            Some(Value::Int(255))
+        );
+        assert_eq!(
+            call("buffer.alloc", vec![Value::Int(4)]).unwrap().unwrap(),
+            Value::new_vector(vec![Value::Int(0); 4])
+        );
     }
 
     #[test]

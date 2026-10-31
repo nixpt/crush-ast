@@ -239,3 +239,87 @@ fn io_write_has_no_implicit_newline() {
         assert_eq!(program_stdout(&so), "0 1 2 |x\n", "c backend");
     }
 }
+
+// ── CRUSH-294 (GitHub #267): heap values print their value, not the arena ref ──
+
+/// Printed stdout from the scheduler VM (the reference every backend must match).
+fn vm_stdout(source: &str) -> String {
+    use crush_lang_sdk::{Quotas, Runtime};
+    let program = crush_lang_sdk::compile::compile_crush_source(source).expect("frontend");
+    let quotas = Quotas {
+        max_steps: 50_000_000,
+        ..Quotas::default()
+    };
+    let result = Runtime::with_quotas(quotas).run(&program).expect("vm run");
+    result.output
+}
+
+/// Printed stdout captured from FastVM via `PrintCap`.
+fn fastvm_stdout(source: &str) -> String {
+    use std::sync::Arc;
+    #[derive(Debug)]
+    struct DummyHal;
+    impl crush_vm::fastvm::Hal for DummyHal {}
+    let program = crush_frontend::compile_crush_source(source).expect("frontend");
+    let lowered = crush_vm::fastvm::lower_program(&program).expect("lower_program");
+    let cap = Arc::new(crush_vm::io_print::PrintCap::new());
+    let caps: Vec<Arc<dyn crush_vm::fastvm::Capability>> = vec![cap.clone()];
+    let mut vm = crush_vm::fastvm::FastVM::new(lowered, caps, Arc::new(DummyHal));
+    let _ = vm.run(50_000_000);
+    cap.output()
+}
+
+/// Printed stdout captured from the JIT via `PrintCap`.
+fn jit_stdout(source: &str) -> String {
+    use std::sync::Arc;
+    let program = crush_frontend::compile_crush_source(source).expect("frontend");
+    let lowered = crush_vm::fastvm::lower_program(&program).expect("lower_program");
+    let cap = Arc::new(crush_vm::io_print::PrintCap::new());
+    let engine = crush_jit::JitEngine::new()
+        .expect("JitEngine")
+        .with_capabilities(vec![cap.clone()]);
+    let _ = engine.run(&lowered);
+    cap.output()
+}
+
+/// `source` must print exactly `expected` on the VM, FastVM, JIT and both AOT
+/// backends. (The AOT-only `assert_prints` above could not see the FastVM/JIT
+/// print path, which is what CRUSH-294 fixes.)
+fn assert_prints_everywhere(name: &str, source: &str, expected: &str) {
+    assert_eq!(vm_stdout(source), expected, "vm: {name}");
+    assert_eq!(fastvm_stdout(source), expected, "fastvm: {name}");
+    assert_eq!(jit_stdout(source), expected, "jit: {name}");
+    assert_prints(name, source, expected);
+}
+
+// CRUSH-294 / GitHub #267: FastVM and the JIT printed `@N` — the arena index —
+// for any non-string heap value, and finished successfully. Every engine must
+// print the value itself, formatted exactly like the VM.
+#[test]
+fn heap_values_print_their_value_not_the_arena_ref() {
+    assert_prints_everywhere(
+        "p_array",
+        r#"fn main() { io.print([1, 2, 3]); return 0; }"#,
+        "[1, 2, 3]\n",
+    );
+    assert_prints_everywhere(
+        "p_map",
+        r#"fn main() { io.print({a: 1}); return 0; }"#,
+        "{a: 1}\n",
+    );
+    assert_prints_everywhere(
+        "p_nested",
+        r#"fn main() { let xs = [[1], [2, 3]]; io.print(xs); return 0; }"#,
+        "[[1], [2, 3]]\n",
+    );
+    assert_prints_everywhere(
+        "p_struct",
+        r#"struct P { x: int } fn main() { io.print(P { x: 5 }); return 0; }"#,
+        "{x: 5}\n",
+    );
+    assert_prints_everywhere(
+        "p_scalar",
+        r#"fn main() { io.print(42); return 0; }"#,
+        "42\n",
+    );
+}
