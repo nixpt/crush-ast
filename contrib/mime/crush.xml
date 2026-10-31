@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  freedesktop.org shared-mime-info package for the Crush file formats (CRUSH-366).
+
+  Install:  cp crush.xml ~/.local/share/mime/packages/ && update-mime-database ~/.local/share/mime
+  (system-wide: /usr/share/mime/packages/, then `sudo update-mime-database /usr/share/mime`)
+
+  Licensed MIT OR Apache-2.0, like the rest of crush-ast.
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+
+  <!-- Crush source -->
+  <mime-type type="text/x-crush">
+    <comment>Crush source code</comment>
+    <sub-class-of type="text/plain"/>
+    <generic-icon name="text-x-script"/>
+    <glob pattern="*.crush"/>
+  </mime-type>
+
+  <!-- CAST: the Crush syntax tree, JSON (has a top-level "cast_version" key) -->
+  <mime-type type="application/x-crush-cast+json">
+    <comment>Crush CAST syntax tree (JSON)</comment>
+    <sub-class-of type="application/json"/>
+    <generic-icon name="text-x-generic"/>
+    <glob pattern="*.cast.json" weight="60"/>
+    <glob pattern="*.cast"/>
+    <alias type="application/x-crush-cast"/>
+  </mime-type>
+
+  <!-- CAST, CBOR encoding (no magic: CBOR maps have no fixed header) -->
+  <mime-type type="application/x-crush-cast+cbor">
+    <comment>Crush CAST syntax tree (CBOR)</comment>
+    <sub-class-of type="application/cbor"/>
+    <generic-icon name="application-x-executable"/>
+    <glob pattern="*.castb"/>
+  </mime-type>
+
+  <!-- CASM: the Crush VM program, JSON ("version" + "functions" keys) -->
+  <mime-type type="application/x-crush-casm+json">
+    <comment>Crush CASM program (JSON)</comment>
+    <sub-class-of type="application/json"/>
+    <generic-icon name="text-x-generic"/>
+    <glob pattern="*.casm"/>
+    <glob pattern="*.sno"/>
+    <glob pattern="*.casm.json" weight="60"/>
+  </mime-type>
+
+  <!-- CASM, MessagePack, behind the shebang `#!/usr/bin/env crush run\n` (casm::Program::serialize) -->
+  <mime-type type="application/x-crush-casm+msgpack">
+    <comment>Crush CASM program (MessagePack)</comment>
+    <generic-icon name="application-x-executable"/>
+    <magic priority="60">
+      <match type="string" value="#!/usr/bin/env crush run&#10;" offset="0"/>
+    </magic>
+    <glob pattern="*.casmb"/>
+  </mime-type>
+
+  <!-- CVM1 assembly text (what crush-compile assembles) -->
+  <mime-type type="text/x-crush-cvms">
+    <comment>Crush CVM1 assembly</comment>
+    <sub-class-of type="text/plain"/>
+    <generic-icon name="text-x-script"/>
+    <glob pattern="*.cvms"/>
+  </mime-type>
+
+  <!-- CVM1 bytecode: "CVM1" at offset 0, then a version byte (crush-vm bytecode.rs) -->
+  <mime-type type="application/x-crush-cvm1">
+    <comment>Crush CVM1 bytecode</comment>
+    <generic-icon name="application-x-executable"/>
+    <magic priority="70">
+      <match type="string" value="CVM1" offset="0"/>
+    </magic>
+    <glob pattern="*.cvm1"/>
+    <glob pattern="*.cvm"/>
+  </mime-type>
+
+  <!-- crush-pkg manifest -->
+  <mime-type type="application/x-crush-capsule+toml">
+    <comment>Crush capsule manifest</comment>
+    <sub-class-of type="application/toml"/>
+    <generic-icon name="text-x-generic"/>
+    <glob pattern="capsule.toml" weight="80"/>
+  </mime-type>
+
+  <!-- crush-pkg packages. .cap/.crush-pack are zip archives; .ecap is a zip
+       bundle OR a bincode EcapPackage, so there is deliberately no zip magic
+       match here: the extension decides. -->
+  <mime-type type="application/x-crush-package">
+    <comment>Crush capsule package</comment>
+    <sub-class-of type="application/zip"/>
+    <generic-icon name="package-x-generic"/>
+    <glob pattern="*.cap"/>
+    <glob pattern="*.crush-pack"/>
+    <glob pattern="*.ecap"/>
+  </mime-type>
+
+</mime-info>

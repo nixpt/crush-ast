@@ -1,0 +1,39 @@
+# magic(5) rules for the Crush file formats (CRUSH-366).
+#
+# Try it:   file -m contrib/magic/crush.magic:/usr/share/misc/magic.mgc FILE
+# Install:  cat contrib/magic/crush.magic >> ~/.magic     (file(1) reads ~/.magic;
+#           crush-installer install --desktop-integration puts a copy at
+#           $XDG_DATA_HOME/crush/crush.magic and prints this hint)
+#
+# Text formats that are identified by extension only (.crush, .cvms,
+# capsule.toml, .cast.json/.casm without a recognisable key) are covered by the
+# shared-mime-info package in contrib/mime/crush.xml, not here.
+
+# --- CVM1 bytecode (crush-vm bytecode.rs): "CVM1", then a version byte --------
+0	string		CVM1		Crush CVM1 bytecode
+!:mime	application/x-crush-cvm1
+!:ext	cvm1/cvm
+>4	ubyte		x		\b, container version %d
+
+# --- CASM, MessagePack (casm::Program::serialize): shebang + msgpack ---------
+0	string		#!/usr/bin/env\ crush\ run\n	Crush CASM program (MessagePack, executable script)
+!:mime	application/x-crush-casm+msgpack
+!:ext	casmb
+
+# --- JSON forms. NOTE: file(1) >= 5.35 runs its built-in JSON detector *before*
+# magic rules, so these two only fire when it is disabled: `file -e json FILE`.
+# (Plain `file` still prints "JSON text data" for them; the MIME package, which
+# matches on the extension, is the reliable route for the JSON forms.)
+# Only objects that carry the format's own keys match, so
+# ordinary JSON (package.json, ...) is left alone. The object has to open the
+# file (pretty-printed output from the crush tools always does).
+0	string		{
+# CAST: top-level "cast_version" (crush-cast)
+>0	search/4096	"cast_version"	Crush CAST syntax tree (JSON)
+!:mime	application/x-crush-cast+json
+# CASM: "version" + "functions" + an instruction "op" (casm::Program). The
+# quote before `version` keeps this from matching "cast_version".
+>0	search/4096	"version"
+>>0	search/65536	"functions"
+>>>0	search/65536	"op"		Crush CASM program (JSON)
+!:mime	application/x-crush-casm+json
