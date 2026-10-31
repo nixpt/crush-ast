@@ -286,9 +286,13 @@ impl Compiler {
 
     /// Builder: enable (`true`) or disable (`false`) emission of
     /// `cap_call "invariant.evaluate"` instructions for matching
-    /// `@invariant` blocks. Default: `false` (compiler is an offline tool;
-    /// runtime invariant evaluation is opt-in to avoid surprising existing
-    /// callers).
+    /// `@invariant` blocks. Default: `false`.
+    ///
+    /// **Deprecated (CRUSH-370):** no capability named `invariant.evaluate`
+    /// exists in any host, and the call is emitted with no arguments, so a
+    /// program compiled with this on fails at run time. `crushc
+    /// --invariant-runtime` was removed for that reason.
+    #[deprecated(note = "emits a call to an `invariant.evaluate` capability no host provides (CRUSH-370)")]
     pub fn with_invariant_runtime(mut self, enabled: bool) -> Self {
         self.invariant_runtime = enabled;
         self

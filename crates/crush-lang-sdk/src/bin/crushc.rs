@@ -73,12 +73,11 @@ struct Cli {
     #[arg(short = 'O', long)]
     optimize: bool,
 
-    /// Emit `cap_call "invariant.evaluate"` instructions at the top of every
-    /// function targeted by an `@invariant` block with a non-empty
-    /// `check_source`. Default: off (invariant.check_source is stored, not
-    /// executed, at compile-time). When enabled, the compiler also registers
-    /// the `invariant.evaluate` capability permission automatically.
-    #[arg(long)]
+    /// Removed (CRUSH-370): it emitted a call to an `invariant.evaluate`
+    /// capability that no host provides, so the program failed at run time.
+    /// Passing it is an error. `@invariant` blocks are documentation plus
+    /// `codebase.invariants(name)` queries; nothing evaluates `check_source`.
+    #[arg(long, hide = true)]
     invariant_runtime: bool,
 
     /// Declare a capability permission (repeatable).
@@ -199,6 +198,14 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         anyhow::bail!(
             "--emit types is not implemented yet (#371): it used to print the same \
              source render as --emit ast, with no types"
+        );
+    }
+    if cli.invariant_runtime {
+        anyhow::bail!(
+            "--invariant-runtime was removed (CRUSH-370): it emitted a call to an \
+             `invariant.evaluate` capability that no host provides, so the compiled program \
+             failed at run time. `@invariant` blocks are not evaluated; see \
+             `codebase.invariants(name)` to read them"
         );
     }
     use crush_lang_sdk::formats::{self, InputFormat};
@@ -387,7 +394,6 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         // program the real build would refuse.
         if let Some(declared) = lowered.manifest.as_ref().and_then(|m| m.capabilities.clone()) {
             let casm_prog = crush_frontend::compiler::Compiler::new()
-                .with_invariant_runtime(cli.invariant_runtime)
                 .compile_lowered(lowered.clone(), cosm.clone())?;
             enforce_declared_capabilities(cli, &casm_prog, Some(&declared));
         }
@@ -408,11 +414,7 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     }
 
     // ── Step 4: Compile to CASM then VM ─────────────────────────────
-    if cli.verbose && cli.invariant_runtime {
-        eprintln!("crushc: invariant runtime checks enabled");
-    }
-    let mut compiler =
-        crush_frontend::compiler::Compiler::new().with_invariant_runtime(cli.invariant_runtime);
+    let mut compiler = crush_frontend::compiler::Compiler::new();
     let declared = lowered.manifest.as_ref().and_then(|m| m.capabilities.clone());
     let casm_prog = compiler.compile_lowered(lowered, cosm)?;
     // #258: `@capabilities` is the reviewable contract; enforce it here the way
