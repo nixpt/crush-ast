@@ -1949,6 +1949,13 @@ fn emit_c_instr(
                     out.push_str(&format!("                {{ Value __pa[{n}]; for (int __i = {n} - 1; __i >= 0; __i--) __pa[__i] = _pop(); for (int __i = 0; __i < {n}; __i++) {{ char __tb[TEXTBUF_SIZE]; fputs(_to_text_buf(__pa[__i], __tb), stdout); }} putchar('\\n'); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n"));
                     }
                 }
+                "io.eprint" => {
+                    // stdout's twin on stderr (CRUSH-241); pushes null like io.print.
+                    let n = argc;
+                    if n == 0 { out.push_str(&format!("                {{ fputc('\\n', stderr); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.eprint\n")); } else {
+                    out.push_str(&format!("                {{ Value __pa[{n}]; for (int __i = {n} - 1; __i >= 0; __i--) __pa[__i] = _pop(); for (int __i = 0; __i < {n}; __i++) {{ char __tb[TEXTBUF_SIZE]; fputs(_to_text_buf(__pa[__i], __tb), stderr); }} fputc('\\n', stderr); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.eprint\n"));
+                    }
+                }
                 "io.write" => {
                     out.push_str(&format!("                {{ Value __pv = _pop(); char __tb[TEXTBUF_SIZE]; fputs(_to_text_buf(__pv, __tb), stdout); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.write\n"));
                 }

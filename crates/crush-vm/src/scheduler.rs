@@ -442,11 +442,25 @@ pub fn run_scheduled_streaming(
     host_caps: Option<&HostCaps>,
     sink: Option<&mut dyn FnMut(&str)>,
 ) -> Result<VmResult, VmError> {
+    run_scheduled_streaming_split(program, quotas, host_caps, sink, None)
+}
+
+/// [`run_scheduled_streaming`] with stderr as a second stream (CRUSH-241):
+/// `out_sink` gets everything printed by `io.print`/`py.print`/…, `err_sink`
+/// everything `io.eprint` wrote, each as soon as the printing instruction has
+/// run. `VmResult::output` and `VmResult::stderr` still hold all of it.
+pub fn run_scheduled_streaming_split(
+    program: &crate::bytecode::Program,
+    quotas: &Quotas,
+    host_caps: Option<&HostCaps>,
+    out_sink: Option<&mut dyn FnMut(&str)>,
+    err_sink: Option<&mut dyn FnMut(&str)>,
+) -> Result<VmResult, VmError> {
     // A plain run inside a transcribed one (e.g. a host cap running a program
     // of its own) records nothing into the outer transcript (CRUSH-165).
     #[cfg(feature = "transcript")]
     let _paused = crate::transcript::active::Scope::enter(None);
-    run_from(program, quotas, host_caps, sink, None)
+    run_from(program, quotas, host_caps, out_sink, err_sink, None)
 }
 
 /// [`run_scheduled_streaming`], also hash-chaining every executed instruction
@@ -462,7 +476,7 @@ pub fn run_scheduled_with_transcript(
     sink: Option<&mut dyn FnMut(&str)>,
 ) -> (Result<VmResult, VmError>, crate::transcript::TranscriptDigest) {
     let scope = crate::transcript::active::Scope::enter(Some(crate::transcript::Transcript::new(program)));
-    let result = run_from(program, quotas, host_caps, sink, None);
+    let result = run_from(program, quotas, host_caps, sink, None, None);
     let transcript = scope.finish().expect("the run's transcript is still installed");
     (result, transcript.digest())
 }
@@ -475,6 +489,7 @@ fn run_from(
     quotas: &Quotas,
     host_caps: Option<&HostCaps>,
     mut sink: Option<&mut dyn FnMut(&str)>,
+    mut err_sink: Option<&mut dyn FnMut(&str)>,
     start: Option<(&str, Vec<Value>)>,
 ) -> Result<VmResult, VmError> {
     // COSM K1.4: the program's Kinds, built (or refused, see `cosm_gate`)
@@ -490,6 +505,7 @@ fn run_from(
         // exists; short-circuit here instead of panicking on `code[0]`.
         return Ok(VmResult {
             output: String::new(),
+            stderr: String::new(),
             steps: 0,
             halted: true,
             stack: Vec::new(),
@@ -531,12 +547,17 @@ fn run_from(
     let mut current: usize = 0;
     // How many of the main thread's output parts `sink` has seen.
     let mut streamed: usize = 0;
+    // How many of its stderr parts `err_sink` has seen (CRUSH-241).
+    let mut streamed_err: usize = 0;
     let mut slice_remaining = SLICE_SIZE;
     // Shared output buffer: all threads' prints go here in execution order,
     // so interleaved output appears in the right sequence. (Fixes #174 review:
     // per-thread buffers merged on finish produced wrong order.)
     let mut shared_out_parts: Vec<String> = Vec::new();
     let mut shared_out_len: usize = 0;
+    // `io.eprint` parts, kept off `shared_out_parts` so stdout stays clean
+    // (CRUSH-241). Same shared-across-threads ordering rule.
+    let mut shared_err_parts: Vec<String> = Vec::new();
 
     loop {
         // --- round-robin: find a runnable thread ---
@@ -571,6 +592,7 @@ fn run_from(
             let main = &threads[0];
             return Ok(VmResult {
                 output: shared_out_parts.concat(),
+                stderr: shared_err_parts.concat(),
                 steps: main.steps,
                 halted: true,
                 stack: main.stack.clone(),
@@ -610,7 +632,7 @@ fn run_from(
         let action = execute_one(
             &mut threads[current], code, ip, next_ip, n, program, quotas,
             &declared, host_caps, &func_entry, &mut shared_out_parts, &mut shared_out_len,
-            &kinds,
+            &mut shared_err_parts, &kinds,
         );
         // Before acting on an error: what the program printed so far still goes out.
         // Stream from the shared buffer so worker thread output appears live too.
@@ -619,6 +641,12 @@ fn run_from(
                 sink(part);
             }
             streamed = shared_out_parts.len();
+        }
+        if let Some(err_sink) = err_sink.as_deref_mut() {
+            for part in &shared_err_parts[streamed_err..] {
+                err_sink(part);
+            }
+            streamed_err = shared_err_parts.len();
         }
         let action = action?;
         // HALT in a spawned task ends only that task (owner decision
@@ -668,6 +696,7 @@ fn run_from(
                 if current == 0 {
                     return Ok(VmResult {
                         output: shared_out_parts.concat(),
+                        stderr: shared_err_parts.concat(),
                         steps: threads[0].steps,
                         halted: true,
                         stack: threads[0].stack.clone(),
@@ -703,6 +732,7 @@ fn execute_one(
     func_entry: &HashMap<&str, usize>,
     shared_out_parts: &mut Vec<String>,
     shared_out_len: &mut usize,
+    shared_err_parts: &mut Vec<String>,
     kinds: &crate::cosm_rt::KindTable,
 ) -> Result<StepAction, VmError> {
     // Convenience aliases for thread state
@@ -714,6 +744,7 @@ fn execute_one(
     // produced wrong order.)
     let out_parts = shared_out_parts;
     let out_len = shared_out_len;
+    let err_parts = shared_err_parts;
     // An inline-lowered polyglot block's output is held here (#312).
     let captures = &mut thread.captures;
 
@@ -773,7 +804,7 @@ fn execute_one(
                 None
             } else {
                 let mut hook = |f: &str, recv: Value| -> Result<Value, VmError> {
-                    let r = run_from(program, quotas, host_caps, None, Some((f, vec![recv])))?;
+                    let r = run_from(program, quotas, host_caps, None, None, Some((f, vec![recv])))?;
                     if !r.output.is_empty() {
                         *out_len += r.output.len();
                         if *out_len > quotas.max_output {
@@ -1404,7 +1435,7 @@ fn execute_one(
                 #[cfg(feature = "transcript")]
                 let recorded_args = args.clone();
                 let result = dispatch_cap(
-                    &cap, args, declared, quotas, out_parts, out_len, host_caps, captures, call_stack.len(),
+                    &cap, args, declared, quotas, out_parts, out_len, err_parts, host_caps, captures, call_stack.len(),
                 );
                 // CRUSH-165 hook: every other CAP_CALL (built-in and host caps).
                 #[cfg(feature = "transcript")]
@@ -1950,6 +1981,7 @@ fn execute_one(
         HALT => {
             return Ok(StepAction::Finish(VmResult {
                 output: out_parts.concat(),
+                stderr: err_parts.concat(),
                 steps: thread.steps,
                 halted: true,
                 stack: stack.clone(),
@@ -2068,7 +2100,7 @@ fn run_item(
     // This matters on the sequential (same-thread) path.
     #[cfg(feature = "transcript")]
     let paused = crate::transcript::active::Scope::enter(None);
-    let result = run_from(program, quotas, None, None, Some((function, worker.stack(i))));
+    let result = run_from(program, quotas, None, None, None, Some((function, worker.stack(i))));
     #[cfg(feature = "transcript")]
     drop(paused);
     worker.check()?;
@@ -2155,6 +2187,7 @@ fn dispatch_cap(
     quotas: &Quotas,
     out_parts: &mut Vec<String>,
     out_len: &mut usize,
+    err_parts: &mut Vec<String>,
     host_caps: Option<&HostCaps>,
     captures: &mut Vec<crate::block_capture::OutputCapture>,
     call_depth: usize,
@@ -2176,6 +2209,18 @@ fn dispatch_cap(
                     return Err(VmError::OutputQuota(quotas.max_output));
                 }
                 crate::block_capture::emit(captures, out_parts, line);
+                Ok(None)
+            }
+            // stdout's twin on stderr (CRUSH-241): same line shape, own buffer.
+            // Counts against the same output quota.
+            "io.eprint" => {
+                let parts: Vec<String> = args.iter().map(|a| a.as_text()).collect();
+                let line = crate::io_print::format_io_print_line(&parts);
+                *out_len += line.len();
+                if *out_len > quotas.max_output {
+                    return Err(VmError::OutputQuota(quotas.max_output));
+                }
+                err_parts.push(line);
                 Ok(None)
             }
             // Like io.print but without the newline (C printf, Rust print!).
@@ -2373,7 +2418,7 @@ fn dispatch_cap(
                 limit_ms: quotas.max_wall_time_ms,
             }),
             Err(crate::host::HostCapError::Message(msg)) => {
-                Err(VmError::UnknownCap(format!("{cap}: {msg}")))
+                Err(VmError::CapFailed { cap: cap.to_string(), message: msg })
             }
             Err(crate::host::HostCapError::Exit(code)) => Err(VmError::Exit(code)),
         };

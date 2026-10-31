@@ -141,6 +141,10 @@ pub struct PortableVm {
     stack: Vec<Value>,
     /// Output parts.
     out_parts: Vec<String>,
+    /// Everything `io.eprint` wrote, in print order (CRUSH-241).
+    err_parts: Vec<String>,
+    /// How many `err_parts` entries `take_stderr()` has already returned.
+    err_taken: usize,
     /// Current output length.
     out_len: usize,
     /// How many `out_parts` entries `take_output()` has already returned.
@@ -269,6 +273,8 @@ impl PortableVm {
             call_stack,
             stack: Vec::new(),
             out_parts: Vec::new(),
+            err_parts: Vec::new(),
+            err_taken: 0,
             out_len: 0,
             out_taken: 0,
             input: crate::io_read::InputSource::Stdin,
@@ -373,6 +379,14 @@ impl PortableVm {
     pub fn take_output(&mut self) -> String {
         let fresh = self.out_parts[self.out_taken..].concat();
         self.out_taken = self.out_parts.len();
+        fresh
+    }
+
+    /// Stderr text (`io.eprint`) written since the previous `take_stderr()`
+    /// call (or since the start). `VmResult::stderr` holds the whole thing.
+    pub fn take_stderr(&mut self) -> String {
+        let fresh = self.err_parts[self.err_taken..].concat();
+        self.err_taken = self.err_parts.len();
         fresh
     }
 
@@ -2152,6 +2166,17 @@ impl PortableVm {
                     self.emit_part(line);
                     Ok(None)
                 }
+                // stdout's twin on stderr (CRUSH-241).
+                "io.eprint" => {
+                    let parts: Vec<String> = args.iter().map(value_to_text).collect();
+                    let line = crate::io_print::format_io_print_line(&parts);
+                    self.out_len += line.len();
+                    if self.out_len > self.quotas.max_output {
+                        return Err(VmError::OutputQuota(self.quotas.max_output));
+                    }
+                    self.err_parts.push(line);
+                    Ok(None)
+                }
                 // Like io.print but without the newline (C printf, Rust print!).
                 "io.write" => {
                     let text: String = args.iter().map(|a| a.as_text()).collect();
@@ -2358,7 +2383,7 @@ impl PortableVm {
                     limit_ms: self.quotas.max_wall_time_ms,
                 }),
                 Err(crate::host::HostCapError::Message(msg)) => {
-                    Err(VmError::UnknownCap(format!("{cap}: {msg}")))
+                    Err(VmError::CapFailed { cap: cap.to_string(), message: msg })
                 }
                 Err(crate::host::HostCapError::Exit(code)) => Err(VmError::Exit(code)),
             };
@@ -2605,6 +2630,7 @@ impl PortableVm {
     fn take_result(&self) -> VmResult {
         VmResult {
             output: self.out_parts.concat(),
+            stderr: self.err_parts.concat(),
             steps: self.steps,
             halted: self.halted,
             stack: self.stack.clone(),

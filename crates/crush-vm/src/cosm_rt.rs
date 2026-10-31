@@ -1005,7 +1005,7 @@ pub fn construct(kind: &Rc<Kind>, args: &[Value]) -> Result<Construction, VmErro
 pub fn is_text_cap(cap: &str) -> bool {
     matches!(
         cap,
-        "io.print" | "io.write" | "py.print" | "py.print_sep_end" | "str.concat" | "str.format" | "conv.to_str"
+        "io.print" | "io.eprint" | "io.write" | "py.print" | "py.print_sep_end" | "str.concat" | "str.format" | "conv.to_str"
             | "js.format"
     )
 }

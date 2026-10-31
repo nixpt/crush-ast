@@ -14,6 +14,10 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- feat: `io.eprint(...)` writes to stderr (same concatenation + newline as `io.print`), on the scheduler, PortableVm and both AOT backends (`crush-aotc` refuses it with a named error); `crush-run` streams it to the real stderr, and `VmResult::stderr` / `PortableVm::take_stderr` carry it (CRUSH-241, #370)
+- fix: `crush-run run` no longer prints `[steps=N, stack=M]` on every run; pass `--stats` or set `CRUSH_DEBUG` to get it back (CRUSH-241, closes #386)
+- fix: a registered capability that fails reads `<cap>: <message>` (new `VmError::CapFailed`), not `unknown capability: <cap>: <message>` (CRUSH-241, #370)
+
 ## [0.10.0] - 2026-10-31
 
 - Merge pull request #377 from nixpt/agent/satya/CRUSH-squeeze-roots
