@@ -14,6 +14,11 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Deterministic CASM function layout (CRUSH-188):** `crushc --emit casm` laid
+  the functions out into the code buffer by iterating a `HashMap`, so the same
+  source compiled to different CASM (and different label numbering) from run to
+  run — bad for reproducible builds and the AOT build cache. Functions are now
+  emitted in name order.
 - **FastVM/JIT print heap values, not the arena ref (CRUSH-294, GitHub #267):**
   `io.print` of an array, map or struct printed the arena index (`@259`) on
   FastVM and the JIT and finished successfully, while every other engine
