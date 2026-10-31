@@ -149,17 +149,28 @@ impl CrushRunner {
     where
         F: FnOnce(),
     {
-        let ext = payload_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        let program = if ext == "casm" || ext == "sno" {
-            let content = std::fs::read_to_string(payload_path)?;
-            let casm_program: ::casm::Program = serde_json::from_str(&content)?;
-            crush_lang_sdk::compile::casm_to_vm(&casm_program)?
-        } else {
-            let source = std::fs::read_to_string(payload_path)?;
-            crush_lang_sdk::compile::compile_crush_source(&source)?
+        // CASM JSON payloads — `.casm`, Sona's `.sno` (its compiled CASM JSON) and,
+        // for one release, `.casm.json` — load through the version-gated loader;
+        // `.casmb` is the MessagePack form; `.cvm1` / `.cvm` are CVM1 bytecode (#365).
+        use crush_lang_sdk::formats::{self, InputFormat};
+        let detected = formats::detect(payload_path)?;
+        if let Some(note) = detected.as_ref().and_then(|d| d.note.as_ref()) {
+            eprintln!("{note}");
+        }
+        let format = detected.map(|d| d.format);
+        let program = match format {
+            Some(f) if f.is_casm() => {
+                let casm_program = formats::load_casm(payload_path, f)?;
+                crush_lang_sdk::compile::casm_to_vm(&casm_program)?
+            }
+            Some(InputFormat::Cvms) => {
+                crush_lang_sdk::assemble(&std::fs::read_to_string(payload_path)?, None, None)?
+            }
+            Some(InputFormat::Cvm1) => crush_vm::Program::from_blob(&std::fs::read(payload_path)?)?,
+            _ => {
+                let source = std::fs::read_to_string(payload_path)?;
+                crush_lang_sdk::compile::compile_crush_source(&source)?
+            }
         };
         self.run_program_with_plugins_before(&program, plugins, before_run)
     }

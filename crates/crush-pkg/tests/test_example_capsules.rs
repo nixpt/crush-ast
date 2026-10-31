@@ -80,7 +80,7 @@ fn squad_bridge_peek_builds_and_runs_under_a_scoped_fs_grant() {
 
     let build = crush_pkg(&dir, &["build"], &[]);
     assert!(build.status.success(), "build failed:\n{}", text(&build));
-    assert!(dir.join("target/squad-bridge-peek.cvm").is_file());
+    assert!(dir.join("target/squad-bridge-peek.cvm1").is_file());
 
     let run = crush_pkg(
         &dir,

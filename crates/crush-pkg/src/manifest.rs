@@ -287,7 +287,9 @@ impl PayloadFormat {
     pub fn from_path(path: &std::path::Path) -> Self {
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             match ext.to_lowercase().as_str() {
-                "casm" | "casmb" | "sno" => PayloadFormat::Casm,
+                // `.sno` is Sona's compiled output: CASM JSON under its own name (#365).
+                // `.cvms` / `.cvm1` / `.cvm` are compiled Crush too (CVM1 assembly / bytecode).
+                "casm" | "casmb" | "sno" | "cvms" | "cvm1" | "cvm" => PayloadFormat::Casm,
                 "js" | "mjs" | "cjs" => PayloadFormat::JavaScript,
                 "ts" | "mts" | "cts" | "tsx" => PayloadFormat::TypeScript,
                 "py" => PayloadFormat::Python,

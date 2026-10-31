@@ -57,8 +57,8 @@ fn bare_builds_writes_target_and_runs_the_built_program() {
     assert!(out.status.success(), "bare crush-pkg failed:\n{all}");
     assert!(all.contains("building app v0.1.0"), "{all}");
     assert!(all.contains("hi from util"), "program output missing:\n{all}");
-    assert!(app.join("target/app.cvm").is_file(), "target/app.cvm not written");
-    assert!(app.join("target/app.casm.json").is_file());
+    assert!(app.join("target/app.cvm1").is_file(), "target/app.cvm1 not written");
+    assert!(app.join("target/app.casm").is_file(), "target/app.casm not written");
 
     // `run` is the same build-then-run path (CRUSH-348): the dep's function is there.
     let run = crush_pkg(&app, &["run"]);
@@ -76,7 +76,7 @@ fn bare_reports_compile_errors_with_the_builder_code() {
     let all = text(&out);
     assert!(!out.status.success());
     assert!(all.contains("crush-pkg[E-BUILDER]"), "{all}");
-    assert!(!app.join("target/app.cvm").exists(), "failed build must not write target/");
+    assert!(!app.join("target/app.cvm1").exists(), "failed build must not write target/");
 }
 
 fn python_capsule(root: &Path) -> std::path::PathBuf {

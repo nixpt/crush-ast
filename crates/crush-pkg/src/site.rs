@@ -3,7 +3,7 @@
 //! Bundle a directory of static web assets (html/css/js/media) into a single
 //! signed ECAP capsule — a portable, tamper-evident, distributable artifact.
 //! This is the "publish a site as a capsule" path; it needs no exosphere and no
-//! Crush bytecode (unlike [`crate::builder`], which packages compiled `.cvm`).
+//! Crush bytecode (unlike [`crate::builder`], which packages compiled `.cvm1`).
 //!
 //! - [`build_site_capsule`] walks the asset tree, hashing each file into an
 //!   [`EcapSection`] (SHA-256) and recording it in the manifest.
