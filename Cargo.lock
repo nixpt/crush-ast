@@ -1652,9 +1652,13 @@ dependencies = [
  "clap",
  "crush-diagnostics",
  "dirs",
+ "flate2",
  "serde",
  "serde_json",
+ "sha2",
+ "tar",
  "tempfile",
+ "ureq",
 ]
 
 [[package]]

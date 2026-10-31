@@ -14,6 +14,11 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- `crush update` / `crush-installer update` (CRUSH-344): update a tarball or installer install from
+  the GitHub release binaries — SHA256SUMS-verified before extraction, all-or-nothing rename swap,
+  `--check` (exit 10 = update available), `--version` pin, `--dir`, refuses cargo-managed installs
+  unless `--force`. x86_64 Linux only.
+
 ## [0.9.0] - 2026-10-31
 
 - Merge pull request #281 from nixpt/agent/vega/1.0-criteria
