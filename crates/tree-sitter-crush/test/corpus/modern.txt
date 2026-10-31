@@ -1,0 +1,253 @@
+==================
+Comments
+==================
+// line comment
+/* block
+   comment */
+# hash comment (alias for //)
+fn main() { }
+
+---
+
+(program
+  (comment)
+  (comment)
+  (comment)
+  (fn_def
+    name: (identifier)
+    parameters: (parameter_list)
+    body: (block)))
+
+==================
+Assignment Targets
+==================
+fn main() {
+  x = 1;
+  p.x = 2;
+  xs[0] = 3;
+}
+
+---
+
+(program
+  (fn_def
+    name: (identifier)
+    parameters: (parameter_list)
+    body: (block
+      (assignment
+        target: (identifier)
+        value: (expression
+          (int_literal)))
+      (assignment
+        target: (field_access
+          target: (identifier)
+          field: (identifier))
+        value: (expression
+          (int_literal)))
+      (assignment
+        target: (index_expression
+          target: (identifier)
+          index: (expression
+            (int_literal)))
+        value: (expression
+          (int_literal))))))
+
+==================
+Return Type
+==================
+fn fib(n: Int) -> Int {
+  return n;
+}
+
+---
+
+(program
+  (fn_def
+    name: (identifier)
+    parameters: (parameter_list
+      (lambda_parameter
+        name: (identifier)
+        type: (identifier)))
+    return_type: (type
+      (identifier))
+    body: (block
+      (return_statement
+        value: (expression
+          (identifier))))))
+
+==================
+Annotations
+==================
+@module {
+    purpose: "demo"
+    exports: [main]
+}
+
+@decision "use-x" {
+    chose: "x"
+    over: ["y"]
+    revisit-if: ["z"]
+}
+
+---
+
+(program
+  (annotation
+    body: (annotation_body
+      (annotation_entry
+        key: (annotation_key)
+        value: (annotation_value
+          (string_literal)))
+      (annotation_entry
+        key: (annotation_key)
+        value: (annotation_value
+          (array_literal
+            (expression
+              (identifier)))))))
+  (annotation
+    id: (string_literal)
+    body: (annotation_body
+      (annotation_entry
+        key: (annotation_key)
+        value: (annotation_value
+          (string_literal)))
+      (annotation_entry
+        key: (annotation_key)
+        value: (annotation_value
+          (array_literal
+            (expression
+              (string_literal)))))
+      (annotation_entry
+        key: (annotation_key)
+        value: (annotation_value
+          (array_literal
+            (expression
+              (string_literal))))))))
+
+==================
+Object And Struct Literals
+==================
+let o = {"a": 1, name: "x"}
+let p = Point { x: 2, y: 3 }
+let q = new Point { x: 7, y: 8 }
+
+---
+
+(program
+  (var_decl
+    name: (identifier)
+    value: (object_literal
+      (object_property
+        key: (string_literal)
+        value: (expression
+          (int_literal)))
+      (object_property
+        key: (identifier)
+        value: (expression
+          (string_literal)))))
+  (var_decl
+    name: (identifier)
+    value: (struct_literal
+      name: (identifier)
+      (struct_field_init
+        name: (identifier)
+        value: (expression
+          (int_literal)))
+      (struct_field_init
+        name: (identifier)
+        value: (expression
+          (int_literal)))))
+  (var_decl
+    name: (identifier)
+    value: (struct_literal
+      name: (identifier)
+      (struct_field_init
+        name: (identifier)
+        value: (expression
+          (int_literal)))
+      (struct_field_init
+        name: (identifier)
+        value: (expression
+          (int_literal))))))
+
+==================
+Unary And Logical Operators
+==================
+if -x == 5 && !done || not ready { }
+
+---
+
+(program
+  (if_statement
+    condition: (expression
+      (binary_op
+        left: (binary_op
+          left: (binary_op
+            left: (unary_op
+              operand: (identifier))
+            right: (int_literal))
+          right: (unary_op
+            operand: (identifier)))
+        right: (unary_op
+          operand: (identifier))))
+    consequence: (block)))
+
+==================
+Semantic Switch
+==================
+semantic_switch intent {
+    case "refund":
+        return "r"
+    fallback:
+        return "?"
+}
+
+---
+
+(program
+  (semantic_switch_statement
+    value: (expression
+      (identifier))
+    (semantic_case
+      concept: (string_literal)
+      (return_statement
+        value: (expression
+          (string_literal))))
+    (semantic_fallback
+      (return_statement
+        value: (expression
+          (string_literal))))))
+
+==================
+Named Arguments
+==================
+ai_synthesize("X", constraints=["polite"])
+
+---
+
+(program
+  (expr_stmt
+    (expression
+      (capability_call
+        name: (identifier)
+        arguments: (argument_list
+          (expression
+            (string_literal))
+          (named_argument
+            name: (identifier)
+            value: (expression
+              (array_literal
+                (expression
+                  (string_literal))))))))))
+
+==================
+Capability Declaration
+==================
+capability system readonly
+
+---
+
+(program
+  (capability_decl
+    name: (identifier)
+    access: (identifier)))
