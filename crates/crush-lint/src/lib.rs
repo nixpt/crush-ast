@@ -77,33 +77,25 @@ impl AiLinter {
     ///
     /// The hint is printed to stderr (not returned on the record) because
     /// [`DiagRecord<'a>`] borrows from the caller — synthesized `String`
-    /// hints cannot outlive this function without an arena.
-    pub fn augment_diagnostic<'a>(&self, diag: DiagRecord<'a>, source_context: &str) -> DiagRecord<'a> {
+    /// hints cannot outlive this function without an arena. Callers that own
+    /// their strings (the `crush-lint` binary) use [`AiLinter::hint_for`]
+    /// and [`AiLinter::log_to_timeline`] and put the hint on the record.
+    pub fn augment_diagnostic<'a>(
+        &self,
+        diag: DiagRecord<'a>,
+        source_context: &str,
+    ) -> DiagRecord<'a> {
         if !self.enabled {
             return diag;
         }
 
-        // --- Dejavue Context Protocol (DCP) Integration ---
-        // An AI-Native linter should be aware of project memory.
-        let dejavue_context = self.load_dejavue_context();
-
-        // --- Simulated AI Inference ---
-        // All three arms always produce a hint, so the `Option<String>`
-        // wrapper would be pointless ceremony — use a plain `String`.
-        let hint = if diag.message.contains("Missing semicolon") {
-            format!("Hint: It looks like you forgot a semicolon after '{}'.{}", source_context.trim(), dejavue_context)
-        } else if diag.message.contains("Unexpected token") {
-            format!("Hint: Check for unmatched brackets near '{}'.{}", source_context.trim(), dejavue_context)
-        } else {
-            // General embedding-based similarity hint
-            format!("Hint: Based on typical patterns, you might need to refactor '{}'.{}", source_context.trim(), dejavue_context)
+        let Some(hint) = self.hint_for(diag.message, source_context) else {
+            // No applicable hint: say nothing rather than invent advice.
+            let file_path = diag.file.unwrap_or("unknown");
+            self.append_dejavue_timeline(file_path, diag.message, "");
+            return diag;
         };
-        // ------------------------------
-
-        // ---
-        // For the sake of this SDK demo, we just print the AI hint to stderr,
-        // because DiagRecord only accepts `&'a str`.
-        eprintln!("\n🤖 [AI Linter] {}", hint);
+        eprintln!("\n[crush-lint] {}", hint);
 
         // --- Dejavue Context Protocol (DCP) Write Integration ---
         // We log compiler/linter errors directly to the project memory!
@@ -114,21 +106,37 @@ impl AiLinter {
         diag
     }
 
-    /// Load the first 100 chars of `<dejavue_dir>/decisions.md` as a
-    /// summary snippet to inject into AI hints. Empty string when the
-    /// file is absent or unreadable — callers append without conditionals.
-    ///
-    /// The directory comes from `self.dejavue_dir` (default `.dejavue`,
-    /// overridable for tests via `with_dejavue_dir`).
-    fn load_dejavue_context(&self) -> String {
-        let path = format!("{}/decisions.md", self.dejavue_dir);
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            return String::new();
-        };
-        let mut s = String::from(" Project Context from .dejavue: ");
-        s.push_str(&content.chars().take(100).collect::<String>());
-        s.push_str("...");
-        s
+    /// Suggest a fix for a diagnostic, or `None` when there is nothing
+    /// useful to say. Hints are advice attached to a diagnostic (the
+    /// `hint` field), never a diagnostic of their own: they cannot raise
+    /// an error and only ever elaborate on a message the real parser or
+    /// semantic checker already produced. (Until CRUSH-316 a "Missing
+    /// semicolon" arm here turned valid Crush into an `error`; Crush has
+    /// no semicolons.)
+    pub fn hint_for(&self, message: &str, source_context: &str) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+        if let Some(name) = message.strip_prefix("Undefined variable: ") {
+            Some(format!(
+                "declare `{name}` with `let {name} = ...` before using it, or check its spelling."
+            ))
+        } else if message.starts_with("Unexpected token") || message.starts_with("Expected ") {
+            Some(format!(
+                "check for unmatched brackets or a misspelled keyword near '{}'.",
+                source_context.trim()
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Append a `lint_error` event to the Dejavue timeline (best effort;
+    /// see [`AiLinter::augment_diagnostic`]).
+    pub fn log_to_timeline(&self, source_path: &str, summary: &str, hint: &str) {
+        if self.enabled {
+            self.append_dejavue_timeline(source_path, summary, hint);
+        }
     }
 
     /// Append a `lint_error` event to `<dejavue_dir>/timeline.jsonl` via
@@ -155,13 +163,114 @@ impl AiLinter {
             summary,
             hint,
         };
-        let Ok(json) = serde_json::to_string(&entry) else { return };
+        let Ok(json) = serde_json::to_string(&entry) else {
+            return;
+        };
         use std::io::Write;
         let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true).append(true).open(&timeline)
-        else { return };
+            .create(true)
+            .append(true)
+            .open(&timeline)
+        else {
+            return;
+        };
         writeln!(file, "{}", json).ok();
     }
+}
+
+/// One finding from [`lint_source`], with owned strings so the caller can
+/// render it as human text or as a `crush_diagnostics::DiagRecord`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Finding {
+    /// Canonical code: `E-SYNTAX` (parser), `E-SEMA` (semantic check), or
+    /// the code a `crush-frontend` analysis pass assigns (`E-EXH-001`, ...).
+    pub code: String,
+    /// `"error"` or `"warning"`.
+    pub level: &'static str,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+    pub message: String,
+}
+
+fn parse_error_pos(e: &crush_frontend::parser::ParseError) -> (Option<u32>, Option<u32>) {
+    use crush_frontend::parser::ParseError as P;
+    let (l, c) = match e {
+        P::UnexpectedToken { line, col, .. }
+        | P::Expected { line, col, .. }
+        | P::UnexpectedEOF { line, col }
+        | P::InvalidNumber { line, col, .. }
+        | P::UnterminatedString { line, col }
+        | P::UnknownAnnotation { line, col, .. } => (*line, *col),
+    };
+    (Some(l as u32), Some(c as u32))
+}
+
+/// Lint Crush source with the real front end: the parser (syntax errors),
+/// the compiler's analysis passes (`check_source`), and the semantic checker
+/// (undefined variables, type errors). Nothing here guesses at syntax: a
+/// program `crush-frontend` accepts gets no `E-SYNTAX` finding.
+///
+/// The semantic checker stops at its first error and carries no source
+/// position, so an `E-SEMA` finding has `line: None`.
+pub fn lint_source(source: &str) -> Vec<Finding> {
+    let mut out = Vec::new();
+    if let Err(errors) = crush_frontend::parser::Parser::parse(source) {
+        for e in &errors {
+            let (line, col) = parse_error_pos(e);
+            out.push(Finding {
+                code: "E-SYNTAX".into(),
+                level: "error",
+                line,
+                col,
+                message: e.to_string(),
+            });
+        }
+        return out;
+    }
+    // Parsed once above for structured positions, again here so the pass
+    // list stays defined in one place (`check_source`).
+    let (program, diags) = match crush_frontend::check_source(source) {
+        Ok(v) => v,
+        Err(e) => {
+            out.push(Finding {
+                code: "E-SYNTAX".into(),
+                level: "error",
+                line: None,
+                col: None,
+                message: format!("{e:#}"),
+            });
+            return out;
+        }
+    };
+    for d in diags {
+        let level = match d.severity {
+            crush_frontend::diagnostics::DiagnosticSeverity::Error => "error",
+            crush_frontend::diagnostics::DiagnosticSeverity::Warning => "warning",
+        };
+        let line = (d.location.line > 0).then_some(d.location.line);
+        let col = (d.location.col > 0).then_some(d.location.col);
+        let mut message = d.message;
+        if let Some(h) = d.hint {
+            message = format!("{message} ({h})");
+        }
+        out.push(Finding {
+            code: d.code.to_string(),
+            level,
+            line,
+            col,
+            message,
+        });
+    }
+    if let Err(e) = crush_frontend::lower_and_check(program) {
+        out.push(Finding {
+            code: "E-SEMA".into(),
+            level: "error",
+            line: None,
+            col: None,
+            message: format!("{e:#}"),
+        });
+    }
+    out
 }
 
 #[cfg(test)]
@@ -202,48 +311,6 @@ mod tests {
         assert_eq!(out.file, Some("test.crush"));
         assert_eq!(out.line, Some(42));
         assert_eq!(out.col, None);
-    }
-
-    // ── Dejavue context loading via with_dejavue_dir redirect ─────────────────
-    //
-    // TheContext loader reads `<self.dejavue_dir>/decisions.md`. Tests use
-    // `with_dejavue_dir(scratch)` to redirect to a controlled dir so the
-    // workspace's real `.dejavue/decisions.md` doesn't contaminate the
-    // assertions.
-    fn scratch_dir(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "crush-lint-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0),
-        ))
-    }
-
-    #[test]
-    fn load_dejavue_context_returns_empty_when_dir_absent() {
-        // Scratch dir simply doesn't exist (we never create it).
-        let scratch = scratch_dir("ctx-empty");
-        let linter = AiLinter::new(false).with_dejavue_dir(scratch.to_string_lossy());
-        let ctx = linter.load_dejavue_context();
-        assert!(ctx.is_empty(), "got unexpected content: {ctx:?}");
-    }
-
-    #[test]
-    fn load_dejavue_context_populates_when_decisions_md_exists() {
-        let scratch = scratch_dir("ctx-populated");
-        std::fs::create_dir_all(&scratch).unwrap();
-        std::fs::write(
-            scratch.join("decisions.md"),
-            "// Custom context line for the test",
-        )
-        .unwrap();
-        let linter = AiLinter::new(false).with_dejavue_dir(scratch.to_string_lossy());
-        let ctx = linter.load_dejavue_context();
-        assert!(ctx.contains("Project Context from .dejavue"));
-        assert!(ctx.contains("Custom context line"));
-        std::fs::remove_dir_all(&scratch).ok();
     }
 
     #[test]
@@ -314,9 +381,18 @@ mod tests {
         // Dejavue write path operates end-to-end without pollution.
         let timeline = std::fs::read_to_string(scratch.join("timeline.jsonl"))
             .expect("scratch timeline.jsonl must exist");
-        assert!(timeline.contains("\"event\":\"lint_error\""), "missing lint_error event in: {timeline}");
-        assert!(timeline.contains("\"path\":\"src/example.crush\""), "missing source path in: {timeline}");
-        assert!(timeline.contains("Missing semicolon"), "missing summary in: {timeline}");
+        assert!(
+            timeline.contains("\"event\":\"lint_error\""),
+            "missing lint_error event in: {timeline}"
+        );
+        assert!(
+            timeline.contains("\"path\":\"src/example.crush\""),
+            "missing source path in: {timeline}"
+        );
+        assert!(
+            timeline.contains("Missing semicolon"),
+            "missing summary in: {timeline}"
+        );
 
         std::fs::remove_dir_all(&scratch).ok();
     }
@@ -349,7 +425,10 @@ mod tests {
         assert!(json.contains("\\\\backslashes\\\\"));
         // And it must round-trip back into an equivalent value.
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["summary"], "issue with \"quotes\" and \\backslashes\\");
+        assert_eq!(
+            parsed["summary"],
+            "issue with \"quotes\" and \\backslashes\\"
+        );
         assert_eq!(parsed["hint"], "line1\nline2\ttabbed");
     }
 }
