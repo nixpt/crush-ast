@@ -162,9 +162,9 @@ impl HostCap for PyHostCap {
 /// python fallback path.
 ///
 /// `allowed_caps`, if given, further restricts the program's declared
-/// permissions (maps 1:1 onto `Quotas::allowed_caps`) — matched by EXACT
-/// NAME against the CAP_CALL's base capability name, same as crush-vm's
-/// native `dispatch_cap`. It does NOT understand topic-scoped permission
+/// permissions (maps 1:1 onto `Quotas::allowed_caps`) — matched like
+/// crush-vm's native `dispatch_cap` (`Quotas::cap_allowed`): exact names or
+/// `prefix.*` patterns; a bare `*` stays inert (no opt-in is exposed here). It does NOT understand topic-scoped permission
 /// tokens (chroma's `"bus.send:chat"` convention, chromacapsule.md §4) —
 /// a caller with scoped-only grants must not pass them here (see chroma's
 /// `run()` routing guard, which keeps such programs on the Python VM).

@@ -336,11 +336,11 @@ impl Runtime {
     /// agent-written code up front instead of mid-run (CRUSH-243).
     pub fn missing_grants(&self, program: &Program) -> anyhow::Result<Vec<crate::effects::MissingGrant>> {
         let mut missing = crate::effects::missing_grants(program, self.host_caps.as_ref())?;
-        if let Some(allowed) = &self.quotas.allowed_caps {
+        if self.quotas.allowed_caps.is_some() {
             for capability in crate::effects::used_by(program)? {
                 let known = missing.iter().any(|m| m.capability == capability);
                 if !known && !crush_vm::capabilities().contains_key(capability.as_str())
-                    && !allowed.iter().any(|a| a == &capability)
+                    && !self.quotas.cap_allowed(&capability)
                 {
                     missing.push(crate::effects::MissingGrant {
                         capability,
