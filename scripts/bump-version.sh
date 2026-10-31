@@ -4,9 +4,14 @@
 # and re-run --install to update, not here — this copy will be overwritten).
 #
 # Bump type inferred from conventional-commit messages since the last v* tag:
-#   BREAKING CHANGE / `feat!:` / `fix!:`   → major
+#   BREAKING CHANGE / `feat!:` / `fix!:`   → major (→ minor while major is 0, see below)
 #   feat:                                    → minor
 #   fix: / perf: / refactor: / revert: / *   → patch  (default)
+#
+# No accidental 1.0: while the version is 0.x, a breaking change bumps MINOR
+# (0.x semver already treats 0.8 → 0.9 as breaking). 1.0.0 is minted only on
+# purpose, with BUMPVER_ALLOW_MAJOR=1 (release.yml's `allow_major` input).
+# Crush 1.0 release criterion R1 (docs/planning/RELEASE-1.0-CRITERIA.md).
 #
 # Version surface auto-detected: [workspace.package] or [package] version in
 # root Cargo.toml, else a plain top-level VERSION file. See squadron/bin/bump-version
@@ -165,6 +170,10 @@ if [ -z "$CUR" ]; then
 fi
 
 IFS='.' read -r MA MI PA <<<"$CUR"
+if [ "$bump" = "major" ] && [ "$MA" = "0" ] && [ "${BUMPVER_ALLOW_MAJOR:-0}" != "1" ]; then
+  log "breaking change on 0.x: bumping minor, not major — 1.0.0 needs BUMPVER_ALLOW_MAJOR=1"
+  bump="minor"
+fi
 case "$bump" in
   major) MA=$((MA+1)); MI=0;  PA=0  ;;
   minor) MI=$((MI+1)); PA=0  ;;
