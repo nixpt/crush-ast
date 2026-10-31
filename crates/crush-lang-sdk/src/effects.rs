@@ -93,6 +93,10 @@ pub struct CapInfo {
     pub grant: &'static str,
 }
 
+/// What a refusal names for a `ui.*` capability in a host that has none
+/// (`crush-run`): they are provided by `crush gui` / `crush-gui` (CRUSH-319).
+const UI_GRANT: &str = "--ui (run it with `crush gui run`)";
+
 /// The `grant` of the pure standard library in [`catalog`].
 pub const STDLIB_GRANT: &str = "stdlib (default; --no-stdlib)";
 
@@ -279,7 +283,13 @@ pub fn missing_grants(program: &crush_vm::Program, host_caps: Option<&HostCaps>)
     Ok(missing
         .into_iter()
         .map(|capability| {
-            let grant = catalog.iter().find(|c| c.name == capability).map(|c| c.grant);
+            let grant = catalog
+                .iter()
+                .find(|c| c.name == capability)
+                .map(|c| c.grant)
+                // `ui.*` lives in the crush-gui crate (it needs arniko), so
+                // the catalog cannot list it; say where it is granted.
+                .or_else(|| capability.starts_with("ui.").then_some(UI_GRANT));
             let renamed_to = renamed_to(&capability);
             MissingGrant {
                 capability,
@@ -445,6 +455,15 @@ mod tests {
             super::describe_missing(&none),
             "  --fs: fs.cat\n  --time: time.now"
         );
+    }
+
+    #[test]
+    fn ui_caps_point_at_crush_gui() {
+        let program =
+            crate::compile::compile_crush_source("fn main() { ui.render(\"x\"); return 0 }").unwrap();
+        let missing = super::missing_grants(&program, None).unwrap();
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].grant.is_some_and(|g| g.starts_with("--ui")), "{missing:?}");
     }
 
     /// Every grant at once — the most a builder can register.

@@ -1,0 +1,37 @@
+[package]
+name         = "crush-gui"
+version.workspace = true
+edition      = "2024"
+license      = "Apache-2.0 OR MIT"
+description  = "Grant-gated `ui.*` capability API for Crush programs, with a desktop backend on arniko and a headless backend for tests."
+repository   = "https://github.com/nixpt/crush-ast"
+homepage     = "https://github.com/nixpt/crush-ast"
+rust-version = "1.95.0"
+keywords     = ["crush", "gui", "arniko"]
+categories   = ["gui", "development-tools"]
+
+[lib]
+name = "crush_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "crush-gui"
+path = "src/bin/crush-gui.rs"
+
+[dependencies]
+anyhow         = { workspace = true }
+clap           = { workspace = true }
+crush-vm       = { workspace = true }
+crush-lang-sdk = { workspace = true }
+# arniko from crates.io, NOT a path dep (nixpt/arniko is a separate repo and
+# its arniko-crush is unusable here: nixpt/arniko#27). Pinned exactly: the
+# winit it needs is a 0.31 beta, so a loose `^0.3` could resolve differently.
+arniko         = { version = "=0.3.1", default-features = false, features = ["reactive", "components"] }
+# arniko's own deps, named so the desktop backend can build the document
+# itself (the headless backend parses with the same crates). Same versions
+# arniko 0.3.1 resolves to.
+bliss          = { package = "arniko-bliss", version = "0.3.1" }
+bliss-dom      = "0.3.1"
+parking_lot    = "0.12"
+
+[dev-dependencies]

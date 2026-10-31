@@ -48,6 +48,23 @@ add its entry after yours.
   `io.print`; it errors loudly. `crush-walk-run` reads a `.wasm` file as bytes.
   The Nepali walker's false "native Nepali keywords" comment is corrected.
 
+- **`crush-gui`: Crush programs can draw a window (CRUSH-319, phase 1):** a new
+  crate with a grant-gated `ui.*` capability API and a desktop backend on
+  [arniko](https://crates.io/crates/arniko) 0.3.1 (from crates.io; it is not in
+  `crush-lang-sdk`'s default build, since arniko pulls Stylo/vello/winit). A
+  program renders HTML with `ui.render(markup)` and *pulls* events in a loop with
+  a blocking `ui.next_event()` (a map `{kind, id, value, key}`: `click`, `input`,
+  `submit`, `key`, `close`), like `io.read` - no callbacks into the VM. Component
+  helpers: `ui.button/input/card/alert/badge/escape`. Run with
+  `crush-gui run app.crush --ui` or `crush gui run app.crush --ui`; `--ui` is
+  the grant (a program using `ui.*` without it is refused before it runs, naming
+  the flag; no other flag grants it), and `crush-run` now points such a program
+  at `crush gui`. `crush-installer` installs `crush-gui` when it is built. Tests
+  run the examples (`examples/gui/`) headlessly against a real bliss DOM. The
+  desktop window itself has not been run on a screen. Design:
+  `docs/design/ui-api.md`; the terminal (tui-easy) and browser backends are
+  follow-ups behind the same `UiBackend` seam.
+
 - **`crush debug FILE` / `crush-debug`: the debugger is runnable (CRUSH-317):**
   `crush-debugger` had breakpoints, step/next/finish, watchpoints and
   grant-gated inspection but no front end that compiled Crush source, so it could

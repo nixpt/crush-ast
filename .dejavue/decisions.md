@@ -1352,3 +1352,19 @@ JsLowering::for_ext mapped every unrecognised extension to plain JS, so a .ts fi
 Reason:
 CRUSH-264 (owner, 2026-10-31): net joins crush-lang-sdk default features (grant-gated, still needs --net; per-package features mean bins can't take it alone, so library default-feature consumers get ureq too); db stays --features db. exosphere http.* is refused up front via effects::RENAMED_CAPS naming net.http_* rather than aliased, so a rename is explicit and one table feeds every runner. time.now stays seconds, time.now_ms is ms, documented because exosphere's was ms.
 
+
+## 2026-10-30T22:20:14-05:00 — [STRATEGIC] [ADOPTED] ui.* is pull-based (render + blocking next_event) behind a UiBackend seam; crush-gui is its own crate on arniko from crates.io
+
+Reason:
+The VM cannot be re-entered from winit and Value is !Send, so the program runs on its own thread and events are pulled like io.read; one API lets desktop, tui-easy terminal and the crush-web browser Session share programs. arniko pulls Stylo/vello/winit so it stays out of crush-lang-sdk's default build; the whole ui.* family is one --ui grant.
+
+Artifacts: docs/design/ui-api.md
+
+Rejected alternatives:
+- **host-to-VM callbacks (needs VM re-entry)**
+- **arniko-crush as a dependency (yanked crush-lang-sdk, nixpt/arniko#27)**
+- **ui.* in crush-lang-sdk default features**
+
+Outcome:
+CRUSH-319 phase 1: desktop+headless backends, headless-verified; window not run on a screen
+

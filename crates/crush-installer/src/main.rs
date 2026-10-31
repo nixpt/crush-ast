@@ -48,6 +48,11 @@ const BINARIES: &[&str] = &[
     "crush-debug",
 ];
 
+/// Installed when present in the source directory, skipped when not:
+/// `crush-gui` (CRUSH-319) is a separate package whose arniko dependency tree
+/// not every build of the toolchain carries. `crush gui` finds it next to `crush`.
+const OPTIONAL_BINARIES: &[&str] = &["crush-gui"];
+
 const MANIFEST_FILE: &str = "install.json";
 const CRUSH_DIR: &str = ".crush";
 
@@ -229,8 +234,15 @@ fn install(args: InstallArgs) -> Result<()> {
         .with_context(|| format!("cannot create '{}'", dest_lib.display()))?;
 
     let mut installed = Vec::new();
-    for name in BINARIES {
+    let wanted = BINARIES
+        .iter()
+        .map(|name| (*name, true))
+        .chain(OPTIONAL_BINARIES.iter().map(|name| (*name, false)));
+    for (name, required) in wanted {
         let src = bin_dir.join(binary_name(name));
+        if !src.exists() && !required {
+            continue;
+        }
         if !src.exists() {
             bail!(
                 "binary not found: '{}' (looked in '{}')",
@@ -689,6 +701,45 @@ mod tests {
         for name in BINARIES {
             assert!(prefix.join("bin").join(binary_name(name)).exists());
         }
+    }
+
+    #[test]
+    fn test_optional_binary_is_installed_when_present_and_skipped_when_not() {
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("src_bin");
+        fs::create_dir_all(&src).unwrap();
+        for name in BINARIES {
+            fs::write(src.join(binary_name(name)), b"dummy").unwrap();
+        }
+        let args = |prefix: &Path| InstallArgs {
+            prefix: Some(prefix.to_path_buf()),
+            bin_dir: Some(src.clone()),
+            no_path: true,
+            force: false,
+            quiet: true,
+        };
+
+        // Absent: the install still succeeds, without it.
+        let without = tmp.path().join("without");
+        install(args(&without)).unwrap();
+        for name in OPTIONAL_BINARIES {
+            assert!(!without.join("bin").join(binary_name(name)).exists());
+        }
+
+        // Present: installed and recorded in the manifest (so uninstall removes it).
+        for name in OPTIONAL_BINARIES {
+            fs::write(src.join(binary_name(name)), b"dummy").unwrap();
+        }
+        let with = tmp.path().join("with");
+        install(args(&with)).unwrap();
+        for name in OPTIONAL_BINARIES {
+            assert!(with.join("bin").join(binary_name(name)).exists());
+        }
+        let manifest = InstallManifest::load(&with).unwrap().unwrap();
+        assert_eq!(
+            manifest.installed_binaries.len(),
+            BINARIES.len() + OPTIONAL_BINARIES.len()
+        );
     }
 
     #[test]
