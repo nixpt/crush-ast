@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -8,6 +9,10 @@ use crush_vm::HostCaps;
 #[derive(Debug)]
 pub enum ExecutionResult {
     Vm,
+    /// The program ended itself with `sys.exit(code)` (CRUSH-349): not a
+    /// failure of the runner, the program chose its status. Everything it
+    /// printed before the exit has already gone to stdout.
+    Exit(i32),
     Process(std::process::Child),
     None,
 }
@@ -104,13 +109,23 @@ impl CrushRunner {
             _loaded_plugins.push(loaded);
         }
         before_run();
-        let result = crush_vm::run_with_caps(program, &quotas, host_caps.as_ref())?;
-
-        if !result.output.is_empty() {
-            println!("{}", result.output);
+        // Stream output as it is printed: output before a `sys.exit` or a
+        // runtime error must not be lost with the `Err` (CRUSH-349).
+        let mut stdout = std::io::stdout();
+        let result = crush_vm::vm::run_with_caps_streaming(
+            program,
+            &quotas,
+            host_caps.as_ref(),
+            &mut |part: &str| {
+                let _ = stdout.write_all(part.as_bytes());
+            },
+        );
+        let _ = stdout.flush();
+        match result {
+            Ok(_) => Ok(ExecutionResult::Vm),
+            Err(crush_vm::VmError::Exit(code)) => Ok(ExecutionResult::Exit(code)),
+            Err(e) => Err(e.into()),
         }
-
-        Ok(ExecutionResult::Vm)
     }
 
     /// Compile and run a Crush package payload with optional host-selected

@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-348 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done |
 | **Phase** | M4 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -77,3 +77,7 @@ referenced by entry file` note here — that's CRUSH-350.)
 
 - Changing dependency resolution/concatenation for `build`.
 - Native/script capsule runners (they skip compilation by design).
+
+## Resolution
+
+Done on `agent/nova/CRUSH-348-350` (2026-10-31). `crush-pkg run` and a bare `crush-pkg` now share one `build_and_run` path (`crates/crush-pkg/src/main.rs`): build entry + path deps, write `target/`, run the built program. Script/Native capsules, `.casm` entries and strict-mode unknown formats keep the direct-payload path (`run_payload`). `run` compile errors now carry `E-BUILDER`. Tests: `crates/crush-pkg/tests/test_run_exit.rs` (`run_sees_path_dependencies_like_build_and_bare`, `run_reports_compile_errors_with_the_builder_code`); `test_default_flow` control inverted.
