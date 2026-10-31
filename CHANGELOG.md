@@ -14,6 +14,8 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(crush-python): the module imports as `crush` (pyproject `module-name`); `validate_cast` returns False instead of raising; `run_casm` raises on runtime faults; CI smoke-tests the wheel import (CRUSH-206)
+
 ## [0.10.0] - 2026-10-31
 
 - Merge pull request #377 from nixpt/agent/satya/CRUSH-squeeze-roots

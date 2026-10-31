@@ -9,4 +9,8 @@ description = "Python bindings for crush-cast — Crush AST IR"
 license = "MIT OR Apache-2.0"
 
 [tool.maturin]
+# Import name. Must match the `#[pymodule] fn crush` in src/lib.rs (PyInit_crush);
+# without this maturin looks for PyInit_crush_python from the [lib] name and the
+# module is unimportable (CRUSH-206).
+module-name = "crush"
 features = ["pyo3/extension-module", "pyo3/abi3", "pyo3/abi3-py311"]
