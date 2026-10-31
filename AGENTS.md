@@ -1,10 +1,9 @@
 # crush-ast
 
 Standalone Crush language toolchain: CAST IR, tree-sitter grammar, polyglot
-walkers, compiler frontend, VM runtime, package manager, installer.
-Extracted from `exosphere` on 2026-06-12 as a peer project — no path
-dependencies run in either direction; exosphere pins its own `crush-cast`/
-`casm` copies separately.
+walkers, compiler frontend, VM runtime (CVM1 / FastVM / JIT / AOT), debugger,
+GUI, package manager, installer. Published to crates.io as `crush-lang-sdk` and
+friends (the toolchain is **not** the unrelated `crush` crate).
 
 Full contribution rules live in `CONTRIBUTING.md` — read that first for
 anything beyond a small fix. This file is the condensed working-context
@@ -40,6 +39,14 @@ managed block below this content without clobbering it; see CONTRIBUTING.md.
   returns `""` and the game exits. To play it, pipe the moves in (`printf '10\ns\nq\n' | …`).
   The same goes for any program using `io.read`. Tests must set `Stdio::null()` or piped stdin
   (as `examples_parity.rs` does).
+- Ticket IDs: get one with `cargo run -p xtask --bin ticket-id -- next` (it
+  counts ticket files, branch names on origin and locally — every worktree —
+  and PR titles). CI fails on a duplicate (`xtask/tests/ticket_ids.rs`).
+- `.dejavue/*` (and `CHANGELOG.md`) are appended to by almost every PR. The
+  `.dejavue` files are `merge=union` in `.gitattributes`, which **GitHub does
+  not apply**: a PR whose only overlap is there shows "conflicting" on GitHub
+  while a local merge is clean. Merge `origin/main` into the branch locally and
+  push.
 - Live-verify before calling something done: compile it, run it against real
   input, check the actual output. Tests passing and CI green are both
   necessary, neither is sufficient — this repo's own history (a trailing-
@@ -49,17 +56,30 @@ managed block below this content without clobbering it; see CONTRIBUTING.md.
 
 ## Build / Test
 
+`crush-pkg` and `crush-vm` path-depend on a sibling `nixpt/buckets` checkout
+(`git clone https://github.com/nixpt/buckets ../buckets`; CI does the same).
+
 ```bash
-cargo build --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets
+cargo build                    # default members: everything but crush-gui
+cargo test
+cargo clippy --all-targets
+cargo test -p crush-gui        # needs pkg-config + libfontconfig1-dev
 cargo run --bin crushc -- --help
 cargo run --bin crush-run -- run my-program.crush
 ```
 
-Version is automatic (`bump-version` — every push to `main` bumps + tags from
-conventional-commit prefixes since the last tag). Never hand-edit the version
-in `Cargo.toml`.
+`--workspace` includes `crush-gui` (arniko/bliss: Stylo, vello, winit), so CI
+runs every `--workspace` step with `--exclude crush-gui` and has a separate
+`Test (gui)` job.
+
+Releases are manual: dispatch `release.yml`. It bumps the workspace version
+from conventional-commit prefixes since the last tag (`feat:` → minor, else
+patch; a breaking change on 0.x bumps **minor** — 1.0.0 needs the `allow_major`
+input), tags `vX.Y.Z`, creates that tag's GitHub **pre-release** and dispatches
+`artifacts.yml` (Linux binaries + crush-web pkg + `SHA256SUMS`). Then dispatch
+`publish.yml` with the tag to publish to crates.io (Trusted Publishing; a crate
+never published before needs a manual first `cargo publish`). Never hand-edit
+the version in `Cargo.toml`.
 
 ## Architecture map
 
@@ -73,15 +93,15 @@ source.(crush|py|rs|go|c|js|sh|zig|wasm|...)
               | AOT C/Rust (crush-aot, crush-aotc) | PTX (crush-ptx)
 ```
 
-43 workspace members as of 2026-10-31 (`cargo metadata --no-deps`: 42 under
-`crates/` plus `xtask`; see `README.md`'s Repository Structure for the full
-annotated list). Not members: `crates/crush-web` and `crates/crush-vm-py`
+44 workspace members as of 2026-10-31 (`cargo metadata --no-deps`: 43 under
+`crates/` plus `xtask`; 43 default members — all but `crush-gui`; see
+`README.md`'s Repository Structure for the full annotated list). Not members: `crates/crush-web` and `crates/crush-vm-py`
 (`exclude`d in the root `Cargo.toml`) and `crates/crush-bucketspike` (its own
 `[workspace]`; a throwaway spike, not release surface).
 
 ## Examples
 
-`examples/crush/` — 40+ `.crush` programs, from language-feature smoke tests
+`examples/crush/` — 50+ `.crush` programs, from language-feature smoke tests
 to full self-playing programs (games, two hosted-language interpreters)
 written by several different LLMs given the same prompt. Story + per-model
 findings: [`nixpt/awesome-crush`](https://github.com/nixpt/awesome-crush).
