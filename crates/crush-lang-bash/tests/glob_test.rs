@@ -87,6 +87,30 @@ fn directory_components_glob_through_the_grant() {
 }
 
 #[test]
+fn glob_many_matches_sorts_in_the_step_budget() {
+    // A glob over a few hundred names must fit the step budget: the sort is a
+    // merge sort (O(n log n)) and the collection appends in place, so 400
+    // matches stay well inside 1M steps instead of scaling with n².
+    let dir = std::env::temp_dir().join(format!("crush-glob-test-many-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let names: Vec<String> = (0..400).map(|i| format!("f{i}.txt")).collect();
+    for n in &names {
+        std::fs::File::create(dir.join(n)).unwrap();
+    }
+    let caps = crush_lang_sdk::HostCapsBuilder::new()
+        .fs(true)
+        .fs_root(dir.display().to_string())
+        .build();
+    let (out, code) = run("echo *.txt\n", &caps).expect("400 matches must fit the step budget");
+    let mut want = names.clone();
+    want.sort();
+    assert_eq!(out, format!("{}\n", want.join(" ")));
+    assert_eq!(code, 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn directory_glob_without_the_is_dir_probe_fails_loudly() {
     let dir = std::env::temp_dir().join(format!("crush-glob-test-nodir-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

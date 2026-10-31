@@ -179,6 +179,11 @@ fn cond(e: &ast::ExtendedTestExpr, line: usize) -> Result<shell::Cond, Cmd> {
         X::UnaryTest(p, w) => match p {
             UP::StringHasZeroLength => shell::Cond::Unary("-z", word(w)),
             UP::StringHasNonZeroLength => shell::Cond::Unary("-n", word(w)),
+            // The three the capability layer can answer: `fs.exists` and
+            // `fs.is_dir` are already granted for globs.
+            UP::FileExists => shell::Cond::Unary("-e", word(w)),
+            UP::FileExistsAndIsDir => shell::Cond::Unary("-d", word(w)),
+            UP::FileExistsAndIsRegularFile => shell::Cond::Unary("-f", word(w)),
             other => return Err(unsupported(&format!("`{other}` in `[[ … ]]` (file and shell-option tests)"), line)),
         },
         X::BinaryTest(p, l, r) => {

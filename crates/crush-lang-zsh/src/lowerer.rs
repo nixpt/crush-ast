@@ -160,6 +160,11 @@ fn cond(c: &ZshCond, line: usize) -> Result<shell::Cond, Cmd> {
             match op.as_str() {
                 "-z" => shell::Cond::Unary("-z", word(w, line)),
                 "-n" => shell::Cond::Unary("-n", word(w, line)),
+                // The three the capability layer can answer (`fs.exists`,
+                // `fs.is_dir`). `-f` is "exists and not a directory" there.
+                "-e" => shell::Cond::Unary("-e", word(w, line)),
+                "-f" => shell::Cond::Unary("-f", word(w, line)),
+                "-d" => shell::Cond::Unary("-d", word(w, line)),
                 other => return Err(unsupported(&format!("`{other}` in `[[ … ]]` (file and shell-option tests)"), line)),
             }
         }
