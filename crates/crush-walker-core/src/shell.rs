@@ -45,6 +45,31 @@ impl Dialect {
     }
 }
 
+/// Stream state, kept in the global map `__g` so a shell function sees the
+/// redirection its caller set up, the way a real shell's fds are inherited.
+/// `__sh_stream`: 0 = the host's output, 1 = `__sh_buf` (a pipeline stage or a
+/// redirected command). `__sh_in`: the text a command reads as stdin (a
+/// pipeline's previous stage, a `<` file or a here-document); `""` means "no
+/// redirection", and `read` then uses the host's stdin.
+const STREAM: &str = "__sh_stream";
+const BUF: &str = "__sh_buf";
+const IN: &str = "__sh_in";
+/// 1 when `__sh_in` is this command's stdin — including when it is empty, which
+/// is not the same as "no redirection" (`grep none f | wc -l` must not read the
+/// host's stdin just because the buffer is empty).
+const IN_SET: &str = "__sh_in_set";
+/// 1 when redirected stdin came from a file (`<`), 0 when it came from a pipe or
+/// a here-document. `wc` pads its columns by the input size for a file and to a
+/// fixed 7 for a stream, exactly as GNU `wc` does; this is the only thing that
+/// has to know the difference.
+const IN_FILE: &str = "__sh_in_file";
+/// Where a `>` / `>>` command's output goes, and whether it appends.
+const OUTF: &str = "__sh_outf";
+const APPEND: &str = "__sh_append";
+/// 1 while a pipeline stage runs: a stage is a subshell, so `exit` in one leaves
+/// that stage (the pipeline, then the script, carries on) — not the script.
+const STAGE: &str = "__sh_stage";
+
 /// One shell word, as written in the source (quotes and `$` included).
 #[derive(Clone, Debug)]
 pub struct Word {
@@ -65,9 +90,31 @@ pub struct Assign {
     pub line: usize,
 }
 
+/// One redirection: `<`, `>`, `>>` or a here-document.
+#[derive(Clone, Debug)]
+pub struct Redir {
+    pub kind: RedirKind,
+    /// The path (`<`, `>`, `>>`) or the here-document's body.
+    pub word: Word,
+    /// A here-document with an unquoted delimiter expands `$…` in its body.
+    pub expand: bool,
+    pub line: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RedirKind {
+    In,
+    Out,
+    Append,
+    HereDoc,
+}
+
 #[derive(Clone, Debug)]
 pub enum Cmd {
     Simple { assigns: Vec<Assign>, words: Vec<Word>, line: usize },
+    /// `cmd < f`, `cmd > f`, `cmd >> f`, `cmd <<EOT`: the command with its
+    /// streams pointed somewhere else.
+    Redirected { inner: Box<Cmd>, redirs: Vec<Redir>, line: usize },
     If { branches: Vec<(List, List)>, else_body: Option<List>, line: usize },
     Loop { cond: List, body: List, until: bool, line: usize },
     /// `for var in words`; `words: None` iterates `"$@"`.
@@ -100,7 +147,8 @@ pub enum Cond {
 #[derive(Clone, Debug)]
 pub struct Pipeline {
     pub negated: bool,
-    pub cmd: Cmd,
+    /// `a | b | c`: one entry per stage. A single stage is the plain command.
+    pub stages: Vec<Cmd>,
 }
 
 /// `first && p1 || p2 …`; `true` = `&&`.
@@ -116,14 +164,14 @@ pub type List = Vec<AndOr>;
 pub fn lower_script(dialect: Dialect, script: &List) -> Result<Program> {
     let mut lw = Lw::new(dialect);
     for item in script {
-        if let Cmd::FuncDef { name, .. } = &item.first.cmd {
+        if let [Cmd::FuncDef { name, .. }] = item.first.stages.as_slice() {
             lw.funcs.insert(name.clone());
         }
     }
     let mut body = Vec::new();
     for item in script {
-        match &item.first.cmd {
-            Cmd::FuncDef { name, body: fbody, line } if item.rest.is_empty() && !item.first.negated => {
+        match item.first.stages.as_slice() {
+            [Cmd::FuncDef { name, body: fbody, line }] if item.rest.is_empty() && !item.first.negated => {
                 lw.lower_function(name, fbody, *line)?;
                 lw.defined.insert(name.clone());
             }
@@ -159,6 +207,18 @@ pub fn lower_script(dialect: Dialect, script: &List) -> Result<Program> {
     }
     main.push(decl("__a", E::ArrayLiteral { elements: vec![], meta: m() }));
     main.push(decl("__st", int(0)));
+    for (key, init) in [
+        (STREAM, int(0)),
+        (BUF, s("")),
+        (IN, s("")),
+        (IN_SET, int(0)),
+        (IN_FILE, int(0)),
+        (OUTF, s("")),
+        (APPEND, int(0)),
+        (STAGE, int(0)),
+    ] {
+        main.push(set_index("__g", key, init));
+    }
     main.extend(body);
     main.push(if_(
         bin("!=", var("__st"), int(0)),
@@ -771,6 +831,10 @@ struct Lw {
     depth: usize,
     /// Per enclosing loop: the variable holding the loop's exit status.
     loops: Vec<String>,
+    /// Globals written since this set was last taken. A pipeline stage's writes
+    /// are rolled back with it: the shells run each stage in a subshell, so
+    /// `printf x | read a` leaves `a` unset.
+    written: BTreeSet<String>,
 }
 
 impl Lw {
@@ -791,6 +855,7 @@ impl Lw {
             locals: HashSet::new(),
             depth: 0,
             loops: Vec::new(),
+            written: BTreeSet::new(),
         }
     }
 
@@ -806,6 +871,54 @@ impl Lw {
     fn tmp(&mut self) -> String {
         self.tmp += 1;
         format!("__t{}", self.tmp)
+    }
+
+    /// `__g[key]`, the stream state set by a redirection or a pipeline stage.
+    fn stream(&self, key: &str) -> E {
+        index(var("__g"), s(key))
+    }
+
+    /// Write `text` where this command's stdout points: the host's output, or
+    /// the buffer a pipeline stage or a redirected command fills. Everything
+    /// that prints (and every builtin's output) goes through here, so `echo x >
+    /// out` and `echo x | wc -l` are the same code path as a plain `echo x`.
+    fn emit(&mut self, out: &mut Vec<S>, text: E, newline: bool) {
+        // `io.print` already ends its line; `io.write` is the no-newline form.
+        let host = if newline {
+            cap("io.print", vec![text.clone()])
+        } else {
+            cap("io.write", vec![text.clone()])
+        };
+        let buffered = if newline { bin("+", text, s("\n")) } else { text };
+        out.push(if_(
+            bin("==", self.stream(STREAM), int(0)),
+            vec![expr_stmt(host)],
+            Some(vec![set_index("__g", BUF, bin("+", self.stream(BUF), buffered))]),
+        ));
+    }
+
+    /// Remember the stdin a command starts with, so it can be put back after
+    /// the command's own `<` / here-document / pipeline stage.
+    fn push_stdin(&mut self, out: &mut Vec<S>) -> (String, String) {
+        let (text, set) = (self.tmp(), self.tmp());
+        out.push(decl(&text, self.stream(IN)));
+        out.push(decl(&set, self.stream(IN_FILE)));
+        (text, set)
+    }
+
+    fn pop_stdin(&mut self, out: &mut Vec<S>, saved: &(String, String)) {
+        let (text, file) = saved;
+        out.push(set_index("__g", IN_SET, int(0)));
+        out.push(set_index("__g", IN_FILE, var(file)));
+        out.push(set_index("__g", IN, var(text)));
+    }
+
+    /// Point this command's stdin at `text`; `from_file` is true for `< file`
+    /// (which `wc` sizes its columns by) and false for a pipe or here-document.
+    fn set_stdin(&mut self, out: &mut Vec<S>, text: E, from_file: bool) {
+        out.push(set_index("__g", IN, text));
+        out.push(set_index("__g", IN_SET, int(1)));
+        out.push(set_index("__g", IN_FILE, int(if from_file { 1 } else { 0 })));
     }
 
     fn helper(&mut self, name: &'static str, args: Vec<E>) -> E {
@@ -885,6 +998,7 @@ impl Lw {
             self.fn_global_refs.push((name.to_string(), line));
         }
         self.globals.insert(name.to_string());
+        self.written.insert(name.to_string());
         Ok(set_index("__g", name, value))
     }
 
@@ -940,16 +1054,178 @@ impl Lw {
     }
 
     fn lower_pipeline(&mut self, p: &Pipeline, out: &mut Vec<S>) -> Result<()> {
-        self.lower_cmd(&p.cmd, out)?;
+        if p.stages.len() == 1 {
+            self.lower_cmd(&p.stages[0], out)?;
+        } else {
+            // `a | b | c`: each stage but the last fills `__sh_buf`, and that
+            // buffer becomes the next stage's stdin. Nothing leaves the program
+            // until the last stage prints, so a pipeline cannot interleave with
+            // what the script already printed. The outer streams (a redirection
+            // or an enclosing pipeline stage) are put back for the last stage.
+            let saved_in = self.push_stdin(out);
+            let (s_stream, s_buf, s_stage) = (self.tmp(), self.tmp(), self.tmp());
+            out.push(decl(&s_stream, self.stream(STREAM)));
+            out.push(decl(&s_buf, self.stream(BUF)));
+            out.push(decl(&s_stage, self.stream(STAGE)));
+            let mut carry: Option<String> = None;
+            for (i, stage) in p.stages.iter().enumerate() {
+                let last = i + 1 == p.stages.len();
+                if let Some(prev) = carry.take() {
+                    self.set_stdin(out, var(&prev), false);
+                }
+                if last {
+                    out.push(set_index("__g", STREAM, var(&s_stream)));
+                    out.push(set_index("__g", BUF, var(&s_buf)));
+                } else {
+                    out.push(set_index("__g", STREAM, int(1)));
+                    out.push(set_index("__g", BUF, s("")));
+                }
+                // A pipeline stage runs in a subshell: whatever it assigns is
+                // gone when it ends (`printf x | read a` leaves `a` unset). The
+                // stage is lowered first so its writes are known, then wrapped
+                // in a save/restore.
+                out.push(set_index("__g", STAGE, int(1)));
+                let mut stage_body = Vec::new();
+                let outer = std::mem::take(&mut self.written);
+                self.lower_cmd(stage, &mut stage_body)?;
+                let writes = std::mem::replace(&mut self.written, outer);
+                let mut saves = Vec::new();
+                for name in &writes {
+                    let slot = self.tmp();
+                    out.push(decl(&slot, index(var("__g"), s(name))));
+                    saves.push((slot, name.clone()));
+                }
+                out.extend(stage_body);
+                // bash runs the last stage in a subshell too; zsh keeps it in
+                // the current shell, so `printf x | read a` does set `a` there.
+                if self.d == Dialect::Bash || !last {
+                    for (slot, name) in saves {
+                        out.push(set_index("__g", &name, var(&slot)));
+                    }
+                }
+                out.push(set_index("__g", STAGE, var(&s_stage)));
+                if !last {
+                    // A stage with its own `> file` spent the buffer on the
+                    // file, so the next stage reads nothing — as in the shell.
+                    let buf = self.tmp();
+                    out.push(decl(&buf, self.stream(BUF)));
+                    out.push(set_index("__g", BUF, s("")));
+                    carry = Some(buf);
+                }
+            }
+            self.pop_stdin(out, &saved_in);
+        }
         if p.negated {
             out.push(if_(st_ok(), vec![set_st(1)], Some(vec![set_st(0)])));
         }
         Ok(())
     }
 
+    /// `cmd < in > out >> log <<EOT`: point the command's streams somewhere
+    /// else for the duration of the command.
+    fn lower_redirected(
+        &mut self,
+        inner: &Cmd,
+        redirs: &[Redir],
+        line: usize,
+        out: &mut Vec<S>,
+    ) -> Result<()> {
+        // `cmd > a > b` in a shell creates `a` empty and writes `b`; here only
+        // one of them would ever be touched, so it is refused rather than
+        // quietly doing half of what the shell does. The same goes for two `<`.
+        let outs = redirs
+            .iter()
+            .filter(|r| matches!(r.kind, RedirKind::Out | RedirKind::Append))
+            .count();
+        if outs > 1 {
+            return Err(self.err(
+                "two `>` / `>>` redirections on one command (only the last one's file would be written)",
+                line,
+            ));
+        }
+        if redirs.iter().filter(|r| r.kind == RedirKind::In).count() > 1 {
+            return Err(self.err("two `<` redirections on one command", line));
+        }
+        let writes = outs == 1;
+        if writes && !matches!(inner, Cmd::Simple { .. }) {
+            // The buffer is written out after the command returns, so a compound
+            // command that `break`s, `return`s or `exit`s would lose its output.
+            return Err(self.err(
+                "a `>` / `>>` on a loop, `if` or `{ }` (redirect the commands inside it instead)",
+                line,
+            ));
+        }
+        let saved_in = self.push_stdin(out);
+        let (s_stream, s_buf) = (self.tmp(), self.tmp());
+        if writes {
+            out.push(decl(&s_stream, self.stream(STREAM)));
+            out.push(decl(&s_buf, self.stream(BUF)));
+        }
+        for r in redirs {
+            match r.kind {
+                RedirKind::In => {
+                    let path = self.word_one(&r.word)?;
+                    let t = self.tmp();
+                    out.push(decl(&t, cap("fs.read", vec![path])));
+                    self.set_stdin(out, var(&t), true);
+                }
+                RedirKind::HereDoc => {
+                    let body = if r.expand { self.word_str(&r.word)? } else { s(&r.word.raw) };
+                    self.set_stdin(out, body, false);
+                }
+                RedirKind::Out | RedirKind::Append => {
+                    let path = self.word_one(&r.word)?;
+                    let t = self.tmp();
+                    out.push(decl(&t, path));
+                    out.push(set_index("__g", OUTF, var(&t)));
+                    let append = r.kind == RedirKind::Append;
+                    out.push(set_index("__g", APPEND, int(if append { 1 } else { 0 })));
+                }
+            }
+        }
+        if writes {
+            out.push(set_index("__g", STREAM, int(1)));
+            out.push(set_index("__g", BUF, s("")));
+        }
+        self.lower_cmd(inner, out)?;
+        if writes {
+            self.flush_buffer(out);
+            out.push(set_index("__g", STREAM, var(&s_stream)));
+            out.push(set_index("__g", BUF, var(&s_buf)));
+        }
+        self.pop_stdin(out, &saved_in);
+        Ok(())
+    }
+
+    /// Write a redirected command's buffer to its file and clear it. Also used
+    /// by `exit`, which must not drop what the command already printed.
+    fn flush_buffer(&mut self, out: &mut Vec<S>) {
+        // `>>` keeps what the file already holds: `fs.write` truncates, so the
+        // old contents are read back first (a missing file is empty).
+        let old = self.tmp();
+        out.push(decl(
+            &old,
+            tern(
+                bin("==", self.stream(APPEND), int(1)),
+                tern(
+                    bin("==", cap("fs.exists", vec![self.stream(OUTF)]), int(1)),
+                    cap("fs.read", vec![self.stream(OUTF)]),
+                    s(""),
+                ),
+                s(""),
+            ),
+        ));
+        let text = bin("+", var(&old), self.stream(BUF));
+        out.push(expr_stmt(cap("fs.write", vec![self.stream(OUTF), text])));
+        out.push(set_index("__g", BUF, s("")));
+    }
+
     fn lower_cmd(&mut self, cmd: &Cmd, out: &mut Vec<S>) -> Result<()> {
         match cmd {
             Cmd::Simple { assigns, words, line } => self.lower_simple(assigns, words, *line, out),
+            Cmd::Redirected { inner, redirs, line } => {
+                self.lower_redirected(inner, redirs, *line, out)
+            }
             Cmd::ExtendedTest { cond, line } => {
                 let e = self.cond_expr(cond, *line)?;
                 out.push(if_(e, vec![set_st(0)], Some(vec![set_st(1)])));
@@ -1113,6 +1389,8 @@ impl Lw {
                 Ok(())
             }
             "read" => self.lower_read(args, line, out),
+            "cat" | "ls" | "wc" | "head" | "tail" | "grep" | "cp" | "mv" | "rm" | "mkdir"
+            | "touch" => self.lower_coreutil(&name, args, line, out),
             "local" => self.lower_local(args, line, out),
             "return" => {
                 if !self.in_fn {
@@ -1134,6 +1412,29 @@ impl Lw {
                 };
                 let t = self.tmp();
                 out.push(decl(&t, v));
+                // A shell flushes the files it has open before leaving, so an
+                // `exit` inside `f > log` keeps what `f` already printed.
+                // A pipeline stage is a subshell, though: there `exit` leaves
+                // only the stage and the script goes on. Nothing here can
+                // resume a half-run stage, so that one is refused — after the
+                // last stage too, where it would otherwise end the whole script
+                // and silently skip what follows.
+                let stage_loud = throw(concat(vec![
+                    s("unsupported: `exit` inside a pipeline stage at "),
+                    self.at("exit", line),
+                    s(" — a shell would exit only that stage and continue"),
+                ]));
+                let mut flush_body = Vec::new();
+                self.flush_buffer(&mut flush_body);
+                out.push(if_(
+                    bin("==", self.stream(STAGE), int(1)),
+                    vec![stage_loud],
+                    Some(vec![if_(
+                        bin("==", self.stream(STREAM), int(1)),
+                        vec![if_(bin("!=", self.stream(OUTF), s("")), flush_body, None)],
+                        None,
+                    )]),
+                ));
                 out.push(expr_stmt(cap("sys.exit", vec![var(&t)])));
                 Ok(())
             }
@@ -1279,8 +1580,7 @@ impl Lw {
         }
         out.push(decl(&raw, call("str.join", vec![var(&arr), s(" ")])));
         if !escapes {
-            let c = if newline { "io.print" } else { "io.write" };
-            out.push(expr_stmt(cap(c, vec![var(&raw)])));
+            self.emit(out, var(&raw), newline);
             out.push(set_st(0));
             return Ok(());
         }
@@ -1289,13 +1589,13 @@ impl Lw {
         out.push(decl(&text, self.helper("__sh_esc", vec![var(&raw)])));
         out.push(decl(&stop, self.helper("__sh_esc_stop", vec![var(&raw)])));
         if newline {
-            out.push(if_(
-                not(var(&stop)),
-                vec![expr_stmt(cap("io.print", vec![var(&text)]))],
-                Some(vec![expr_stmt(cap("io.write", vec![var(&text)]))]),
-            ));
+            let mut with_nl = Vec::new();
+            self.emit(&mut with_nl, var(&text), true);
+            let mut no_nl = Vec::new();
+            self.emit(&mut no_nl, var(&text), false);
+            out.push(if_(not(var(&stop)), with_nl, Some(no_nl)));
         } else {
-            out.push(expr_stmt(cap("io.write", vec![var(&text)])));
+            self.emit(out, var(&text), false);
         }
         out.push(set_st(0));
         Ok(())
@@ -1337,7 +1637,7 @@ impl Lw {
                 break;
             }
         }
-        out.push(expr_stmt(cap("io.write", vec![concat(parts)])));
+        self.emit(out, concat(parts), false);
         out.push(set_st(0));
         Ok(())
     }
@@ -1422,8 +1722,20 @@ impl Lw {
         if let Some(p) = prompt {
             out.push(expr_stmt(cap("io.write", vec![p])));
         }
-        let (text, fields) = (self.tmp(), self.tmp());
-        out.push(decl(&text, self.helper("__sh_read_line", vec![boolean(raw)])));
+        let (text, fields, rest) = (self.tmp(), self.tmp(), self.tmp());
+        // `while read …; done < file` and `cmd | read x`: the line comes from
+        // the redirected text rather than the host's stdin.
+        let (avail, isset) = (self.stream(IN), self.stream(IN_SET));
+        out.push(decl(&rest, self.helper("__sh_in_rest", vec![avail.clone()])));
+        out.push(decl(
+            &text,
+            self.helper("__sh_read_from", vec![avail, isset.clone(), boolean(raw)]),
+        ));
+        out.push(if_(
+            bin("==", isset, int(1)),
+            vec![set_index("__g", IN, var(&rest))],
+            None,
+        ));
         out.push(decl(&fields, self.helper("__sh_read_split", vec![var(&text), int(names.len() as i64)])));
         for (i, name) in names.iter().enumerate() {
             out.push(self.write_var(name, index(var(&fields), int(i as i64)), line)?);
@@ -1433,6 +1745,300 @@ impl Lw {
             vec![set_st(1)],
             Some(vec![set_st(0)]),
         ));
+        Ok(())
+    }
+
+    /// This command's whole stdin, marked consumed (a reader that read it leaves
+    /// nothing for the next one, as in a shell).
+    fn stdin_all(&mut self, out: &mut Vec<S>) -> String {
+        let t = self.tmp();
+        let (avail, isset) = (self.stream(IN), self.stream(IN_SET));
+        out.push(decl(&t, self.helper("__sh_slurp", vec![avail, isset])));
+        out.push(set_index("__g", IN, s("")));
+        out.push(set_index("__g", IN_SET, int(0)));
+        t
+    }
+
+    /// The coreutil subset the walkers run in-VM: `cat ls wc head tail grep cp
+    /// mv rm mkdir touch`. Each is a thin layer over the `fs.*` capabilities and
+    /// the string helpers, so no process is spawned and the same script behaves
+    /// the same way wherever crush runs it. `>`/`>>`/`|` work with them because
+    /// their output goes through `emit`.
+    fn lower_coreutil(
+        &mut self,
+        name: &str,
+        args: &[Word],
+        line: usize,
+        out: &mut Vec<S>,
+    ) -> Result<()> {
+        let mut flags: Vec<String> = Vec::new();
+        let mut ops: Vec<&Word> = Vec::new();
+        for w in args {
+            match self.static_lit(w)? {
+                Some(lit) if lit.len() > 1 && lit.starts_with('-') => flags.push(lit),
+                _ => ops.push(w),
+            }
+        }
+        let no_flags = |flags: &[String]| !flags.is_empty();
+        match name {
+            "cat" => {
+                if no_flags(&flags) {
+                    return Err(self.err(&format!("`cat {}` (no options)", flags.join(" ")), line));
+                }
+                let text = if ops.is_empty() {
+                    var(&self.stdin_all(out))
+                } else {
+                    let mut parts = Vec::new();
+                    for f in &ops {
+                        parts.push(cap("fs.read", vec![self.word_one(f)?]));
+                    }
+                    concat(parts)
+                };
+                self.emit(out, text, false);
+            }
+            "ls" => {
+                if no_flags(&flags) {
+                    return Err(self.err(&format!("`ls {}` (no options)", flags.join(" ")), line));
+                }
+                if ops.len() > 1 {
+                    return Err(self.err("`ls` with more than one directory", line));
+                }
+                let dir = match ops.first() {
+                    Some(w) => self.word_one(w)?,
+                    None => s("."),
+                };
+                // `ls` hides dotfiles, sorts, and prints one name per line
+                // when its output is not a terminal — which is always, here.
+                // (`fs.list` returns directory order, `ls` never does.)
+                let names = self.helper("__sh_nodot", vec![cap("fs.list", vec![dir])]);
+                let sorted = self.helper("__sh_sort", vec![names]);
+                let text = self.helper("__sh_lines_out", vec![sorted]);
+                self.emit(out, text, false);
+            }
+            "wc" => {
+                let (mut lines, mut words, mut bytes, mut chars) = (false, false, false, false);
+                for f in &flags {
+                    for c in f[1..].chars() {
+                        match c {
+                            'l' => lines = true,
+                            'w' => words = true,
+                            'c' => bytes = true,
+                            'm' => chars = true,
+                            other => return Err(self.err(&format!("`wc -{other}` (only -l, -w, -c, -m)"), line)),
+                        }
+                    }
+                }
+                if !ops.is_empty() {
+                    // The multi-file column widths are a GNU `wc` detail; stdin
+                    // (`wc -l < file`, `cat f | wc -l`) is the exact path here.
+                    return Err(self.err("`wc` with a file name (use `wc -l < file` or a pipeline)", line));
+                }
+                if !(lines || words || bytes || chars) {
+                    lines = true;
+                    words = true;
+                    bytes = true;
+                }
+                let text = var(&self.stdin_all(out));
+                let mut cols: Vec<E> = Vec::new();
+                if lines {
+                    cols.push(self.helper("__sh_count", vec![text.clone(), s("\n")]));
+                }
+                if words {
+                    let fields = self.helper("__sh_split", vec![text.clone(), self.at("wc", line)]);
+                    cols.push(to_str(call("len", vec![fields])));
+                }
+                if bytes || chars {
+                    cols.push(to_str(call("len", vec![text.clone()])));
+                }
+                let n = cols.len();
+                // GNU `wc` pads its columns to the size of the input: the digit
+                // count of the file's length for `< file`, a fixed 7 for a pipe.
+                let text_len = to_str(call("len", vec![text.clone()]));
+                let width = tern(
+                    bin("==", self.stream(IN_FILE), int(1)),
+                    call("len", vec![text_len.clone()]),
+                    int(7),
+                );
+                let mut parts = Vec::new();
+                for (i, col) in cols.into_iter().enumerate() {
+                    if i > 0 {
+                        parts.push(s(" "));
+                    }
+                    let txt = to_str(col);
+                    parts.push(if n > 1 {
+                        self.helper("__sh_pad", vec![txt, width.clone()])
+                    } else {
+                        txt
+                    });
+                }
+                let joined = concat(parts);
+                self.emit(out, joined, true);
+            }
+            "head" | "tail" => {
+                let mut count: Option<E> = None;
+                let mut rest: Vec<&Word> = ops.clone();
+                for f in &flags {
+                    // `-n N` and the `-nN` spelling; anything else is refused.
+                    let digits = f.trim_start_matches("-n");
+                    if f != "-n" && !f.starts_with("-n") {
+                        return Err(self.err(&format!("`{name} {f}` (only -n N)"), line));
+                    }
+                    if f != "-n" {
+                        match digits.parse::<i64>() {
+                            Ok(v) => count = Some(int(v)),
+                            Err(_) => return Err(self.err(&format!("`{name} {f}` (a numeric count)"), line)),
+                        }
+                        continue;
+                    }
+                    let Some(first) = rest.first().copied() else {
+                        return Err(self.err(&format!("`{name} -n` without a count"), line));
+                    };
+                    // A literal count is checked here; a variable one is
+                    // converted at run time, so `head -n $n` works and a
+                    // non-numeric value is the loud error (not a count of 0).
+                    let lit = self.static_lit(first)?.filter(|l| l.chars().all(|c| c.is_ascii_digit()));
+                    count = Some(match lit {
+                        Some(lit) => int(lit.parse::<i64>().unwrap_or(10)),
+                        None => {
+                            let word_expr = self.word_one(first)?;
+                            let at = self.at(name, line);
+                            self.helper("__sh_int", vec![word_expr, at, boolean(true)])
+                        }
+                    });
+                    rest.remove(0);
+                }
+                if rest.len() > 1 {
+                    return Err(self.err(&format!("`{name}` with more than one file"), line));
+                }
+                let text = match rest.first() {
+                    Some(w) => cap("fs.read", vec![self.word_one(w)?]),
+                    None => var(&self.stdin_all(out)),
+                };
+                let picked = self.helper("__sh_lines", vec![text]);
+                let take = if name == "head" { "__sh_take" } else { "__sh_last" };
+                let picked = self.helper(take, vec![picked, count.unwrap_or_else(|| int(10))]);
+                let text = self.helper("__sh_lines_out", vec![picked]);
+                self.emit(out, text, false);
+            }
+            "grep" => {
+                let (mut count, mut invert) = (false, false);
+                for f in &flags {
+                    for c in f[1..].chars() {
+                        match c {
+                            'c' => count = true,
+                            'v' => invert = true,
+                            other => return Err(self.err(&format!("`grep -{other}` (only -c and -v)"), line)),
+                        }
+                    }
+                }
+                let Some(pat_word) = ops.first() else {
+                    return Err(self.err("`grep` without a pattern", line));
+                };
+                if ops.len() > 2 {
+                    return Err(self.err("`grep` with more than one file", line));
+                }
+                let pat = self.word_one(pat_word)?;
+                let at = self.at("grep", line);
+                // A BRE would need a regex engine; matching `.`/`*` literally
+                // would silently disagree with the shell.
+                out.push(if_(
+                    self.helper("__sh_re_meta", vec![pat.clone()]),
+                    vec![throw(concat(vec![
+                        s("unsupported: a `grep` pattern with regular-expression syntax (`"),
+                        pat.clone(),
+                        s("`) at "),
+                        at,
+                        s(" — only literal text is matched"),
+                    ]))],
+                    None,
+                ));
+                let text = match ops.get(1) {
+                    Some(w) => cap("fs.read", vec![self.word_one(w)?]),
+                    None => var(&self.stdin_all(out)),
+                };
+                let lines = self.helper("__sh_lines", vec![text]);
+                let matched = self.helper("__sh_grep_lines", vec![lines, pat, boolean(invert)]);
+                if count {
+                    let n = to_str(call("len", vec![matched.clone()]));
+                    self.emit(out, n, true);
+                } else {
+                    let text = self.helper("__sh_lines_out", vec![matched.clone()]);
+                    self.emit(out, text, false);
+                }
+                // `grep`'s status is what `&&` and `if` read.
+                out.push(if_(
+                    bin(">", call("len", vec![matched.clone()]), int(0)),
+                    vec![set_st(0)],
+                    Some(vec![set_st(1)]),
+                ));
+                return Ok(());
+            }
+            "cp" | "mv" => {
+                if no_flags(&flags) {
+                    return Err(self.err(&format!("`{name} {}` (no options)", flags.join(" ")), line));
+                }
+                if ops.len() != 2 {
+                    return Err(self.err(&format!("`{name}` without exactly two paths"), line));
+                }
+                let (a, b) = (self.word_one(ops[0])?, self.word_one(ops[1])?);
+                let c = if name == "cp" { "fs.cp" } else { "fs.mv" };
+                out.push(expr_stmt(cap(c, vec![a, b])));
+            }
+            "rm" => {
+                let mut recursive = false;
+                for f in &flags {
+                    for c in f[1..].chars() {
+                        match c {
+                            'r' | 'R' => recursive = true,
+                            // `-f` only suppresses errors, and ours are loud.
+                            'f' => {}
+                            other => return Err(self.err(&format!("`rm -{other}` (only -r and -f)"), line)),
+                        }
+                    }
+                }
+                if ops.is_empty() {
+                    return Err(self.err("`rm` without a path", line));
+                }
+                for w in &ops {
+                    let path = self.word_one(w)?;
+                    let args = if recursive { vec![path, boolean(true)] } else { vec![path] };
+                    out.push(expr_stmt(cap("fs.rm", args)));
+                }
+            }
+            "mkdir" => {
+                let mut parents = false;
+                for f in &flags {
+                    for c in f[1..].chars() {
+                        match c {
+                            'p' => parents = true,
+                            other => return Err(self.err(&format!("`mkdir -{other}` (only -p)"), line)),
+                        }
+                    }
+                }
+                if ops.is_empty() {
+                    return Err(self.err("`mkdir` without a path", line));
+                }
+                for w in &ops {
+                    let path = self.word_one(w)?;
+                    let args = if parents { vec![path, boolean(true)] } else { vec![path] };
+                    out.push(expr_stmt(cap("fs.mkdir", args)));
+                }
+            }
+            "touch" => {
+                if no_flags(&flags) {
+                    return Err(self.err(&format!("`touch {}` (no options)", flags.join(" ")), line));
+                }
+                if ops.is_empty() {
+                    return Err(self.err("`touch` without a path", line));
+                }
+                for w in &ops {
+                    let path = self.word_one(w)?;
+                    out.push(expr_stmt(cap("fs.touch", vec![path])));
+                }
+            }
+            other => return Err(self.err(&format!("`{other}`"), line)),
+        }
+        out.push(set_st(0));
         Ok(())
     }
 
@@ -2396,6 +3002,21 @@ const SHELL_HELPERS: &[&str] = &[
     "__sh_join",
     "__sh_sort",
     "__sh_dironly",
+    "__sh_slurp",
+    "__sh_in_line",
+    "__sh_in_rest",
+    "__sh_read_from",
+    "__sh_unbackslash",
+    "__sh_lines",
+    "__sh_lines_out",
+    "__sh_nodot",
+    "__sh_take",
+    "__sh_last",
+    "__sh_find",
+    "__sh_grep_lines",
+    "__sh_re_meta",
+    "__sh_count",
+    "__sh_pad",
     "__sh_unglob",
     "__sh_quote_pat",
     "__sh_read_line",
@@ -2990,6 +3611,300 @@ fn helper_fn(name: &str) -> Function {
             ],
         ),
 
+        // ── stdin / stdout plumbing for redirections and pipelines ──────────
+
+        // __sh_slurp(avail, isset): everything this command reads. When its
+        // stdin is redirected (a pipeline stage, `<`, a here-document) that is
+        // exactly `avail` — even when empty. Otherwise the host's stdin, a line
+        // at a time, which is the same source `read` uses.
+        "__sh_slurp" => func(
+            &["avail", "isset"],
+            vec![
+                if_(bin("==", var("isset"), int(1)), vec![ret(var("avail"))], None),
+                decl("out", s("")),
+                while_(boolean(true), vec![
+                    decl("line", call("__sh_read_line", vec![boolean(true)])),
+                    if_(bin("==", var("line"), s("")), vec![S::Break { meta: m() }], None),
+                    set("out", bin("+", bin("+", var("out"), var("line")), s("\n"))),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_in_line(avail): the first line of redirected stdin.
+        "__sh_in_line" => func(
+            &["avail"],
+            vec![
+                decl("i", call("__sh_find", vec![var("avail"), s("\n")])),
+                if_(
+                    bin("<", var("i"), int(0)),
+                    vec![ret(var("avail"))],
+                    None,
+                ),
+                ret(call("__sh_substr", vec![var("avail"), int(0), var("i"), boolean(true)])),
+            ],
+        ),
+        // __sh_in_rest(avail): what is left after that first line.
+        "__sh_in_rest" => func(
+            &["avail"],
+            vec![
+                decl("i", call("__sh_find", vec![var("avail"), s("\n")])),
+                if_(bin("<", var("i"), int(0)), vec![ret(s(""))], None),
+                ret(call(
+                    "__sh_substr",
+                    vec![var("avail"), bin("+", var("i"), int(1)), int(0), boolean(false)],
+                )),
+            ],
+        ),
+        // __sh_read_from(avail, isset, raw): one line of stdin, from the
+        // redirection when there is one. `raw` (read -r) keeps backslashes.
+        "__sh_read_from" => func(
+            &["avail", "isset", "raw"],
+            vec![
+                if_(bin("==", var("isset"), int(1)), vec![
+                    decl("line", call("__sh_in_line", vec![var("avail")])),
+                    if_(
+                        not(var("raw")),
+                        vec![ret(call("__sh_unbackslash", vec![var("line")]))],
+                        None,
+                    ),
+                    ret(var("line")),
+                ], None),
+                ret(call("__sh_read_line", vec![var("raw")])),
+            ],
+        ),
+        // __sh_unbackslash(s): drop the `\` of every `\x`, as `read` does
+        // without `-r` (a trailing `\` is dropped too, not continued).
+        "__sh_unbackslash" => func(
+            &["s"],
+            vec![
+                decl("cs", chars(var("s"))),
+                decl("n", len(var("cs"))),
+                decl("i", int(0)),
+                decl("out", s("")),
+                while_(bin("<", var("i"), var("n")), vec![
+                    if_(
+                        bin("==", index(var("cs"), var("i")), s("\\")),
+                        vec![if_(
+                            bin("<", bin("+", var("i"), int(1)), var("n")),
+                            vec![
+                                set(
+                                    "out",
+                                    bin("+", var("out"), index(var("cs"), bin("+", var("i"), int(1)))),
+                                ),
+                                set("i", bin("+", var("i"), int(2))),
+                            ],
+                            Some(vec![set("i", bin("+", var("i"), int(1)))]),
+                        )],
+                        Some(vec![
+                            set("out", bin("+", var("out"), index(var("cs"), var("i")))),
+                            set("i", bin("+", var("i"), int(1))),
+                        ]),
+                    ),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+
+        // ── the builtin command set ─────────────────────────────────────────
+
+        // __sh_lines(s): `s` split into lines, without the empty "line" a final
+        // newline would leave behind.
+        "__sh_lines" => func(
+            &["s"],
+            vec![
+                decl("out", array(vec![])),
+                decl("cur", s("")),
+                for_("c", chars(var("s")), vec![if_(
+                    bin("==", var("c"), s("\n")),
+                    vec![
+                        set("out", bin("+", var("out"), array(vec![var("cur")]))),
+                        set("cur", s("")),
+                    ],
+                    Some(vec![set("cur", bin("+", var("cur"), var("c")))]),
+                )]),
+                if_(
+                    bin("!=", var("cur"), s("")),
+                    vec![set("out", bin("+", var("out"), array(vec![var("cur")])))],
+                    None,
+                ),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_lines_out(a): lines back to text, each with its newline.
+        "__sh_lines_out" => func(
+            &["a"],
+            vec![
+                decl("out", s("")),
+                for_("l", var("a"), vec![set(
+                    "out",
+                    bin("+", bin("+", var("out"), var("l")), s("\n")),
+                )]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_nodot(a): the names that do not start with `.` — `ls` hides those.
+        "__sh_nodot" => func(
+            &["a"],
+            vec![
+                decl("out", array(vec![])),
+                for_("n", var("a"), vec![if_(
+                    bin(
+                        "!=",
+                        call("__sh_substr", vec![var("n"), int(0), int(1), boolean(true)]),
+                        s("."),
+                    ),
+                    vec![set("out", bin("+", var("out"), array(vec![var("n")])))],
+                    None,
+                )]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_take(a, n): the first `n` lines.
+        "__sh_take" => func(
+            &["a", "n"],
+            vec![
+                decl("out", array(vec![])),
+                decl("i", int(0)),
+                while_(
+                    bin(
+                        "and",
+                        bin("<", var("i"), var("n")),
+                        bin("<", var("i"), len(var("a"))),
+                    ),
+                    vec![
+                        set("out", bin("+", var("out"), array(vec![index(var("a"), var("i"))]))),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_last(a, n): the last `n` lines.
+        "__sh_last" => func(
+            &["a", "n"],
+            vec![
+                decl("out", array(vec![])),
+                decl("i", bin("-", len(var("a")), var("n"))),
+                if_(bin("<", var("i"), int(0)), vec![set("i", int(0))], None),
+                while_(bin("<", var("i"), len(var("a"))), vec![
+                    set("out", bin("+", var("out"), array(vec![index(var("a"), var("i"))]))),
+                    set("i", bin("+", var("i"), int(1))),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_find(hay, needle): where `needle` first occurs in `hay`, or -1.
+        "__sh_find" => func(
+            &["hay", "needle"],
+            vec![
+                decl("h", chars(var("hay"))),
+                decl("nd", chars(var("needle"))),
+                decl("i", int(0)),
+                while_(
+                    bin("<=", var("i"), bin("-", len(var("h")), len(var("nd")))),
+                    vec![
+                        decl("ok", boolean(true)),
+                        decl("j", int(0)),
+                        while_(bin("<", var("j"), len(var("nd"))), vec![
+                            if_(
+                                bin(
+                                    "!=",
+                                    index(var("h"), bin("+", var("i"), var("j"))),
+                                    index(var("nd"), var("j")),
+                                ),
+                                vec![set("ok", boolean(false)), S::Break { meta: m() }],
+                                None,
+                            ),
+                            set("j", bin("+", var("j"), int(1))),
+                        ]),
+                        if_(var("ok"), vec![ret(var("i"))], None),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
+                ret(int(-1)),
+            ],
+        ),
+        // __sh_grep_lines(a, pat, invert): the lines that contain `pat`.
+        "__sh_grep_lines" => func(
+            &["a", "pat", "invert"],
+            vec![
+                decl("out", array(vec![])),
+                for_("l", var("a"), vec![
+                    decl(
+                        "hit",
+                        bin(">=", call("__sh_find", vec![var("l"), var("pat")]), int(0)),
+                    ),
+                    if_(
+                        bin("!=", var("hit"), var("invert")),
+                        vec![set("out", bin("+", var("out"), array(vec![var("l")])))],
+                        None,
+                    ),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_re_meta(pat): does `pat` use regular-expression syntax? `grep`
+        // here matches literal text only, so such a pattern is refused rather
+        // than matched as if the metacharacters were plain characters.
+        "__sh_re_meta" => func(
+            &["pat"],
+            vec![
+                decl("cs", chars(var("pat"))),
+                decl("i", int(0)),
+                while_(bin("<", var("i"), len(var("cs"))), vec![
+                    decl("c", index(var("cs"), var("i"))),
+                    if_(
+                        bin(
+                            "or",
+                            bin(
+                                "or",
+                                bin("or", bin("==", var("c"), s("\\")), bin("==", var("c"), s("."))),
+                                bin("or", bin("==", var("c"), s("*")), bin("==", var("c"), s("["))),
+                            ),
+                            bin(
+                                "or",
+                                bin("or", bin("==", var("c"), s("]")), bin("==", var("c"), s("^"))),
+                                bin("==", var("c"), s("$")),
+                            ),
+                        ),
+                        vec![ret(boolean(true))],
+                        None,
+                    ),
+                    set("i", bin("+", var("i"), int(1))),
+                ]),
+                ret(boolean(false)),
+            ],
+        ),
+        // __sh_count(s, ch): how many times `ch` occurs in `s` (`wc -l`).
+        "__sh_count" => func(
+            &["s", "ch"],
+            vec![
+                decl("n", int(0)),
+                for_("c", chars(var("s")), vec![if_(
+                    bin("==", var("c"), var("ch")),
+                    vec![set("n", bin("+", var("n"), int(1)))],
+                    None,
+                )]),
+                ret(var("n")),
+            ],
+        ),
+        // __sh_pad(s, n): `s` right-aligned in `n` columns, the width GNU `wc`
+        // uses for its columns.
+        "__sh_pad" => func(
+            &["s", "n"],
+            vec![
+                if_(
+                    bin("<", len(var("s")), var("n")),
+                    vec![ret(bin(
+                        "+",
+                        call("__sh_repeat", vec![s(" "), bin("-", var("n"), len(var("s")))]),
+                        var("s"),
+                    ))],
+                    None,
+                ),
+                ret(var("s")),
+            ],
+        ),
         // __sh_glob(pat, s): does the whole of `s` match the shell pattern
         // `pat`? `*`, `?`, `[…]` (ranges, POSIX classes, `!`/`^` negation) and
         // `\` for a literal character; greedy match with backtracking.

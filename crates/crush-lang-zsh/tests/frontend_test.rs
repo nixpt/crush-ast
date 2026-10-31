@@ -115,14 +115,32 @@ fn test_zsh_return_outside_function_is_loud() {
 }
 
 #[test]
-fn test_zsh_heredoc_is_loud() {
-    assert!(lower_err("cat <<EOF\nhello world\nEOF\n").contains("unsupported"));
+fn test_zsh_heredoc_lowers() {
+    // CRUSH-311: a here-document is stdin text, not a redirection to refuse.
+    let cast = crush_lang_zsh::zsh_to_cast("cat <<EOF\nhello world\nEOF\n").unwrap();
+    // `cat` copies stdin verbatim: no newline of its own, and no file read.
+    let caps = caps_in(&cast, "main");
+    assert!(caps.contains(&"io.write".to_string()));
+    assert!(!caps.contains(&"fs.read".to_string()));
+}
+
+#[test]
+fn test_zsh_redirection_uses_fs_write() {
+    let cast = crush_lang_zsh::zsh_to_cast("echo hi > out.txt\n").unwrap();
+    assert!(caps_in(&cast, "main").contains(&"fs.write".to_string()));
+}
+
+#[test]
+fn test_zsh_pipeline_lowers() {
+    // No process is spawned: the stages hand a buffer to each other in-VM.
+    let cast = crush_lang_zsh::zsh_to_cast("echo a | cat\n").unwrap();
+    assert!(!caps_in(&cast, "main").iter().any(|c| c == "process.exec"));
 }
 
 #[test]
 fn test_zsh_error_names_the_line() {
-    let e = lower_err("echo ok\necho ok\nls /tmp\n");
-    assert!(e.contains("command `ls`") && e.contains("at line 3"), "{e}");
+    let e = lower_err("echo ok\necho ok\ndate\n");
+    assert!(e.contains("command `date`") && e.contains("at line 3"), "{e}");
 }
 
 #[test]
