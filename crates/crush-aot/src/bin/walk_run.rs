@@ -80,12 +80,15 @@ fn main() -> anyhow::Result<()> {
     // and `exit N` lowers to it directly (CRUSH-266). Without this the whole
     // run failed with "unknown capability: sys.exit".
     host_caps.register(Box::new(crush_lang_sdk::host_caps::SysExitCap));
-    // Pathname expansion (`echo *.txt`, `for f in *`) is the shell's one look at
-    // the filesystem: `fs.exists` + `fs.list`, confined to the directory the
-    // script was started in. Hosts that embed walker output can leave them out
-    // and a glob is then refused loudly ("unknown capability: fs.list").
+    // Pathname expansion (`echo *.txt`, `for f in *`, `echo */*.log`) is the
+    // shell's one look at the filesystem: `fs.exists` + `fs.list` +
+    // `fs.is_dir` (a walk into `*/*.txt` has to know which matches it may
+    // descend into), confined to the directory the script was started in.
+    // Hosts that embed walker output can leave them out and a glob is then
+    // refused loudly ("unknown capability: fs.list").
     let root = std::env::current_dir()?.display().to_string();
     host_caps.register(Box::new(crush_lang_sdk::host_caps::FsExistsCap::new(&root)));
+    host_caps.register(Box::new(crush_lang_sdk::host_caps::FsIsDirCap::new(&root)));
     host_caps.register(Box::new(crush_lang_sdk::host_caps::FsListCap::new(&root)));
     for name in &[
         "append", "push", "make_range", "arr_set", "arr_get", "str.concat",

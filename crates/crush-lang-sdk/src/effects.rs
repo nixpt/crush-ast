@@ -31,7 +31,7 @@ pub fn effects_of(name: &str) -> Option<&'static [&'static str]> {
         // Always registered: the program's own arguments, and ending the program.
         "sys.args" | "sys.exit" => &[],
         // --fs
-        "fs.read" | "fs.cat" | "fs.exists" | "fs.list" | "fs.ls" | "fs.find" | "fs.pwd"
+        "fs.read" | "fs.cat" | "fs.exists" | "fs.is_dir" | "fs.list" | "fs.ls" | "fs.find" | "fs.pwd"
         | "fs.cd" => FS_READ,
         "fs.write" | "fs.mkdir" | "fs.rm" | "fs.mv" | "fs.touch" => FS_WRITE,
         "fs.cp" => &["fs/read", "fs/write"],
