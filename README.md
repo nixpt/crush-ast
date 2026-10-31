@@ -107,8 +107,6 @@ crates/
 └── crush-installer/      # Toolchain installer and uninstaller
 ```
 
-`crates/crush-bucketspike/` also exists but is deliberately excluded from this list — it's an internal throwaway spike (see its own `Cargo.toml` description), not part of the release surface.
-
 ## 🚀 Quick Start
 
 ### Building from Source

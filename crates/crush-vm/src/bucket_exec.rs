@@ -4,8 +4,8 @@
 //! `buckets` crate (a sibling project — see this crate's `Cargo.toml` dep
 //! comment) instead of spawning the host's own interpreter with the host
 //! process's full authority. Proven empirically for python/node/bash by the
-//! CRUSHAST-BUCKETSPIKE-1/2 spikes (`SPIKE_RESULTS.md`/`SPIKE_RESULTS_2.md`
-//! at the repo root, `crates/crush-bucketspike`) — this module is the
+//! CRUSHAST-BUCKETSPIKE-1/2 spikes (`docs/design/spikes/SPIKE_RESULTS.md` and
+//! `SPIKE_RESULTS_2.md`; the spike crate itself was removed 2026-10-31) — this module is the
 //! production wiring of that spike into the real `EXEC_LANG` opcode
 //! handlers (`scheduler.rs`, `portable_vm.rs`).
 //!

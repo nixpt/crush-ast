@@ -96,8 +96,7 @@ source.(crush|py|rs|go|c|js|sh|zig|wasm|...)
 44 workspace members as of 2026-10-31 (`cargo metadata --no-deps`: 43 under
 `crates/` plus `xtask`; 43 default members — all but `crush-gui`; see
 `README.md`'s Repository Structure for the full annotated list). Not members: `crates/crush-web` and `crates/crush-vm-py`
-(`exclude`d in the root `Cargo.toml`) and `crates/crush-bucketspike` (its own
-`[workspace]`; a throwaway spike, not release surface).
+(`exclude`d in the root `Cargo.toml`).
 
 ## Examples
 
