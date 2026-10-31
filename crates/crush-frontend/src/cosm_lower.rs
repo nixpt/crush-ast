@@ -449,6 +449,18 @@ pub(crate) fn plan(program: &mut Program) -> Result<Option<Plan>> {
         bail!("{}", errors.join("\n"));
     }
 
+    // A lifted name is `Type::method`; the only other `::` names are the
+    // functions of imported modules (`facet::parse`, CRUSH-110). A clash —
+    // a struct named like an imported module — is an error, not an overwrite.
+    for (name, func) in &lifted {
+        if let Some(existing) = program.functions.get(name) {
+            let module = existing.meta.get("module").and_then(Value::as_str).unwrap_or("?");
+            bail!(
+                "{}method `{name}` has the same name as function `{name}` of imported module                  `{module}`; rename the struct or import the module `as` another name",
+                span_prefix(&func.meta)
+            );
+        }
+    }
     for (name, func) in lifted {
         program.functions.insert(name, func);
     }

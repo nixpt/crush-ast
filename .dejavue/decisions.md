@@ -1399,3 +1399,9 @@ Rejected alternatives:
 Outcome:
 CRUSH-319 phase 1: desktop+headless backends, headless-verified; window not run on a screen
 
+
+## 2026-10-31T03:49:37-05:00 — Crush imports resolve at compile time; module fns mangled <path with ::>::<name>
+
+Reason:
+CRUSH-110, captain's qualified+selective model. Merge before SemanticAnalyzer::check so imports type-check and missing_grants sees imported code. Separator is :: (already used by lifted methods, so every backend and the debugger take it); '.' is impossible because the compiler reads a dotted Call name as obj.method capability call. Search: importer dir, -L, CRUSH_PATH; a.b -> a/b.crush only (no mod.crush). Modules are definitions only; their main is ignored.
+

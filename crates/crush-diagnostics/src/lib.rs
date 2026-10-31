@@ -160,6 +160,11 @@ impl Diagnostic {
     /// mismatches in `capsule.toml`; `crush-run` uses it when a program needs
     /// a capability the run does not grant (CRUSH-315).
     pub const CODE_CAPS: &'static str = "E-CAPS";
+    /// An import that could not be resolved: module not found, an import
+    /// cycle, an unknown imported name, a forbidden statement or a syntax
+    /// error in an imported file (CRUSH-110). `file` is the file the problem
+    /// is in, which for an error inside a module is the module's file.
+    pub const CODE_IMPORT: &'static str = "E-IM01";
 
     /// An `error`-level record with no file, position or hint.
     pub fn error(code: &'static str, message: impl Into<String>) -> Self {
