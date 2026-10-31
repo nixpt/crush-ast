@@ -1,0 +1,7 @@
+[capsule]
+name = "facet"
+version = "0.0.0"
+description = "test double for facet: just enough of facet_parse for the `new --cli` scaffold"
+entry = "facet.crush"
+language = "crush"
+category = "library"

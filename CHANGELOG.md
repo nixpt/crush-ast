@@ -14,6 +14,16 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- `crush-pkg` (CRUSH-348/349/350): `run` now builds and runs the same combined program as a bare
+  `crush-pkg` (path dependencies visible); `sys.exit(n)` ends `crush-pkg` with status `n` and keeps
+  output printed before it (no `E-RUN` banner; real runtime errors keep it); the unused-dependency
+  note no longer fires for a dependency whose functions the entry calls.
+- `crush-pkg` git dependencies (CRUSH-351): `[[dependencies]]` takes `git = URL` plus one of
+  `tag` / `rev` / `branch`; fetched with the `git` CLI into `$CRUSH_PKG_CACHE`
+  (default `~/.cache/crush-pkg`), pinned to a commit in `capsule.lock`, `--offline` uses the
+  lock and cache only. See `crates/crush-pkg/MANIFEST.md`.
+- `crush-pkg new NAME --cli` (CRUSH-352): scaffolds a facet-based command-line program that runs
+  out of the box (`--facet-path DIR` for a local facet checkout).
 - `crush update` / `crush-installer update` (CRUSH-344): update a tarball or installer install from
   the GitHub release binaries — SHA256SUMS-verified before extraction, all-or-nothing rename swap,
   `--check` (exit 10 = update available), `--version` pin, `--dir`, refuses cargo-managed installs

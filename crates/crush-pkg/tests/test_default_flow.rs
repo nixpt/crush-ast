@@ -60,11 +60,10 @@ fn bare_builds_writes_target_and_runs_the_built_program() {
     assert!(app.join("target/app.cvm").is_file(), "target/app.cvm not written");
     assert!(app.join("target/app.casm.json").is_file());
 
-    // Control: `run` compiles the entry alone, so the dep's function is
-    // missing. The bare flow above must have run the built program.
+    // `run` is the same build-then-run path (CRUSH-348): the dep's function is there.
     let run = crush_pkg(&app, &["run"]);
-    assert!(!run.status.success(), "control: `run` unexpectedly passed");
-    assert!(text(&run).contains("greet"), "{}", text(&run));
+    assert!(run.status.success(), "`run` failed:\n{}", text(&run));
+    assert!(text(&run).contains("hi from util"), "{}", text(&run));
 }
 
 #[test]
