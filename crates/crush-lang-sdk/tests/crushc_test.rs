@@ -197,7 +197,8 @@ fn crushc_emits_casm() {
     let src = dir.path().join("emit.crush");
     std::fs::write(&src, "fn main() { io.print(\"hi\") }").unwrap();
 
-    let output = run_crushc(&["--emit", "casm", src.to_str().unwrap()]);
+    // CVM1 assembly (`--emit cvms`, #365; this was `--emit casm` before).
+    let output = run_crushc(&["--emit", "cvms", "-o", "-", src.to_str().unwrap()]);
     assert!(
         output.status.success(),
         "{}",
@@ -205,7 +206,15 @@ fn crushc_emits_casm() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(".func main"), "stdout: {stdout}");
-    assert!(stdout.contains("io.print"), "stdout: {stdout}");
+    assert!(stdout.contains(".cap io.print"), "stdout: {stdout}");
+
+    // `--emit casm` is CASM JSON now, written beside the input.
+    let output = run_crushc(&["--emit", "casm", src.to_str().unwrap()]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("emit.casm")).unwrap()).unwrap();
+    assert_eq!(json["manifest"]["permissions"][0], "io.print");
+    assert!(json["functions"]["main"]["body"].is_array(), "{json}");
 }
 
 #[test]
@@ -264,7 +273,7 @@ fn crushc_compiles_a_constructed_kind_call() {
         assert!(run.status.success(), "-O={opt}: {}", String::from_utf8_lossy(&run.stderr));
         assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "15", "-O={opt}");
     }
-    let casm = run_crushc(&["-O", "--emit", "casm", src.to_str().unwrap()]);
+    let casm = run_crushc(&["-O", "--emit", "cvms", "-o", "-", src.to_str().unwrap()]);
     assert!(casm.status.success(), "{}", String::from_utf8_lossy(&casm.stderr));
     assert!(String::from_utf8_lossy(&casm.stdout).contains("CONSTRUCT \"Acc\" 1"));
 }

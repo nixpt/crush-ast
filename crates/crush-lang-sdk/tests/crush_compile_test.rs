@@ -54,13 +54,13 @@ fn crush_compile_emits_json_diagnostic_for_io_fallback() {
 
 #[test]
 fn crush_compile_emits_json_diagnostic_for_assembler_error() {
-    // Bad CASM text causes `crush_lang_sdk::assemble` to return a
+    // Bad CVM1 assembly text causes `crush_lang_sdk::assemble` to return a
     // `crush_vm::AssemblyError`. The downcast in `crush-compile::main()`
     // routes that to `JsonDiagnostic::assembler_error` with code
     // `"E-ASM"`, the input file attached, and the underlying message
     // carrying the source line number (e.g. `line 1: ...`).
     let dir = tempfile::tempdir().unwrap();
-    let src = dir.path().join("bad.casm");
+    let src = dir.path().join("bad.cvms");
     std::fs::write(&src, "this is not valid CASM text\n").unwrap();
     let src_str = src.to_str().unwrap().to_string();
 
@@ -121,7 +121,7 @@ fn crush_compile_happy_path_json_mode_emits_no_diagnostic() {
     // accidentally surfaces a stray `{"code":"E-IO", ...}` record on
     // successful runs.
     let dir = tempfile::tempdir().unwrap();
-    let src = dir.path().join("hello.casm");
+    let src = dir.path().join("hello.cvms");
     std::fs::write(&src, ".func main\nPUSH_STR \"hi\"\nHALT\n").unwrap();
     let out = dir.path().join("hello.cvm1");
 

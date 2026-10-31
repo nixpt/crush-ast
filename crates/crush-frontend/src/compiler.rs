@@ -562,9 +562,10 @@ impl Compiler {
         }
 
         if !self.all_permissions.is_empty() {
-            casm_program.manifest = Manifest {
-                permissions: self.all_permissions.iter().cloned().collect(),
-            };
+            // Sorted, so the same source writes the same CASM JSON (#365).
+            let mut permissions: Vec<String> = self.all_permissions.iter().cloned().collect();
+            permissions.sort_unstable();
+            casm_program.manifest = Manifest { permissions };
         }
 
         self.last_debug_info = Some(debug_info);

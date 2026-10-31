@@ -1,22 +1,23 @@
 //! `crush-run` — CLI runner for CRUSH/CVM1 programs.
 //!
-//! Run a CASM text file or a compiled CVM1 binary with optional host
-//! capabilities and resource limits.
+//! Run a Crush program in any of its forms — source, CAST, CASM, CVM1
+//! assembly or CVM1 bytecode (`docs/FILE-FORMATS.md`, #365) — with optional
+//! host capabilities and resource limits.
 //!
 //! # Examples
 //!
 //! ```bash
-//! # Assemble and run CASM text
-//! crush-run run hello.casm
-//!
-//! # Run a compiled CVM1 blob
-//! crush-run run program.cvm1
+//! crush-run run hello.crush          # source
+//! crush-run run hello.cast.json      # CAST (.cast.json / .cast / .castb)
+//! crush-run run hello.casm           # CASM JSON (.casm / .casmb / .sno)
+//! crush-run run hello.cvms           # CVM1 assembly (its .cap lines declare caps)
+//! crush-run run program.cvm1         # CVM1 bytecode (.cvm1 / .cvm)
 //!
 //! # Enable filesystem + env + time host caps
-//! crush-run run script.casm --fs --env --time --cap fs.read --cap env.get --cap time.now
+//! crush-run run script.cvms --fs --env --time --cap fs.read --cap env.get --cap time.now
 //!
 //! # Restrict execution
-//! crush-run run script.casm --max-steps 100000 --max-stack 1024
+//! crush-run run script.cvms --max-steps 100000 --max-stack 1024
 //! ```
 
 use std::path::PathBuf;
@@ -36,7 +37,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run a CASM text file or CVM1 binary.
+    /// Run a program: .crush, .cast.json/.cast/.castb, .casm/.casmb/.sno, .cvms or .cvm1/.cvm.
     Run(RunArgs),
 
     /// List built-in portable capabilities, or, given a program, the
@@ -46,7 +47,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
 
-        /// A program (.crush, .casm, .cvm1 or .cvm) to inspect instead of listing
+        /// A program (any format `run` takes) to inspect instead of listing
         /// every capability.
         path: Option<PathBuf>,
 
@@ -58,7 +59,8 @@ enum Commands {
 
 #[derive(Parser)]
 struct RunArgs {
-    /// Path to the program file (.crush, .casm, .cvm1 or .cvm — crush-pkg's name for a CVM1 blob).
+    /// Path to the program: .crush source, CAST (.cast.json, .cast, .castb), CASM JSON
+    /// (.casm, .sno; .casmb MessagePack), CVM1 assembly (.cvms) or CVM1 bytecode (.cvm1, .cvm).
     path: PathBuf,
 
     /// Arguments for the program, returned by `sys.args()`. Flags for
@@ -291,16 +293,18 @@ impl std::fmt::Display for NotGranted {
 impl std::error::Error for NotGranted {}
 
 /// Compile `path` to bytecode, plus the `@capabilities` it declares
-/// (`.crush` only).
+/// (`.crush` and CAST only).
 fn load_program(
     path: &std::path::Path,
     casm_caps: &[String],
     polyglot: bool,
     lib_paths: &[PathBuf],
+    notes: bool,
 ) -> anyhow::Result<(crush_vm::Program, Option<Vec<String>>)> {
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-    match ext {
-        "crush" => {
+    use crush_lang_sdk::formats::{self, InputFormat};
+    let format = formats::detect_or_bail(path, notes)?;
+    match format {
+        InputFormat::Crush => {
             let source = std::fs::read_to_string(path)?;
             let declared = crush_frontend::parse_source(&source)
                 .ok()
@@ -315,8 +319,26 @@ fn load_program(
             .map_err(CompileFailed)?;
             Ok((program, declared))
         }
-        "casm" => {
+        InputFormat::CastJson | InputFormat::CastBinary => {
+            // Gated load (`cast_version` major), then the `.crush` pipeline.
+            let mut cast = formats::load_cast(path, format)?;
+            let declared = cast.manifest.as_ref().and_then(|m| m.capabilities.clone());
+            crush_frontend::import_system::resolve_imports(&mut cast, path, &import_options(lib_paths))?;
+            let program = crush_lang_sdk::compile::compile_cast_program(
+                cast,
+                &crush_lang_sdk::compile::CompileOptions::default(),
+            )
+            .map_err(CompileFailed)?;
+            Ok((program, declared))
+        }
+        InputFormat::CasmJson | InputFormat::CasmBinary => {
+            // Gated load (`version` major); the CASM manifest declares the caps.
+            let casm = formats::load_casm(path, format)?;
+            Ok((crush_lang_sdk::compile::casm_to_vm(&casm)?, None))
+        }
+        InputFormat::Cvms => {
             let source = std::fs::read_to_string(path)?;
+            // The text's `.cap` lines declare what it needs; `--cap` adds to them.
             let mut permissions: Vec<&str> = casm_caps.iter().map(|s| s.as_str()).collect();
             // Hand-written assembly has no compiler to declare its polyglot grants, and
             // EXEC_LANG checks the manifest (CRUSH-226) — `--polyglot` declares them too,
@@ -326,8 +348,7 @@ fn load_program(
             }
             Ok((crush_lang_sdk::assemble(&source, Some(&permissions), None)?, None))
         }
-        "cvm1" | "cvm" => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
-        _ => anyhow::bail!("unsupported file extension: {ext} (expected .crush, .casm, or .cvm1 / .cvm)"),
+        InputFormat::Cvm1 => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
     }
 }
 
@@ -339,7 +360,7 @@ fn import_options(lib_paths: &[PathBuf]) -> crush_frontend::import_system::Impor
 /// `crush-run caps FILE`: what the program can use, grouped by what grants
 /// it, without running it.
 fn show_program_caps(path: &std::path::Path, json: bool, lib_paths: &[PathBuf]) -> anyhow::Result<()> {
-    let (program, declared) = load_program(path, &[], false, lib_paths)?;
+    let (program, declared) = load_program(path, &[], false, lib_paths, true)?;
     let used = crush_lang_sdk::effects::used_by(&program)?;
     let catalog = crush_lang_sdk::effects::catalog();
     let grant_of = |cap: &str| -> &'static str {
@@ -563,20 +584,21 @@ fn list_caps() {
 }
 
 fn run_file(args: &RunArgs) -> anyhow::Result<()> {
-    let ext = args.path.extension().and_then(|s| s.to_str()).unwrap_or("");
-
+    use crush_lang_sdk::formats::{self, InputFormat};
     // Pre-validate the extension so feature-gate warnings (e.g. the
     // "--graphics requires the 'graphics' feature" hint) don't fire for
     // an unsupported file extension -- originally the extension dispatch
     // ran before quotas/caps were built, so unknown extensions bailed
     // cleanly. Hoisting Runtime init above the dispatch would otherwise
     // reorder those warnings before the bail.
-    match ext {
-        "crush" | "casm" | "cvm1" | "cvm" => {}
-        _ => anyhow::bail!(
-            "unsupported file extension: {ext} (expected .crush, .casm, or .cvm1 / .cvm)"
-        ),
-    }
+    // (The deprecation note for an old name is printed by `load_program`.)
+    let format = match formats::detect(&args.path)? {
+        Some(d) => d.format,
+        None => {
+            formats::detect_or_bail(&args.path, false)?;
+            unreachable!()
+        }
+    };
 
     // Build Runtime up-front so the `.cvm1` arm can route through typed
     // `Runtime::run_blob` (which loads *and* executes), mapping
@@ -622,7 +644,7 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     #[cfg(feature = "gpu")]
     if args.gpu {
         builder = builder.gpu(true);
-        if ext == "crush" {
+        if format == InputFormat::Crush {
             let (casm, _) = crush_lang_sdk::compile::compile_crush_file_to_casm(
                 &args.path,
                 &import_options(&args.lib_paths),
@@ -703,12 +725,18 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     // capability this run doesn't grant, listing all of them at once. A
     // `.cvm1` blob that doesn't decode is left to `run_blob` below, which
     // reports it as a typed load error.
-    let preflight = match ext {
-        "cvm1" | "cvm" => std::fs::read(&args.path)
+    let preflight = match format {
+        InputFormat::Cvm1 => std::fs::read(&args.path)
             .ok()
             .and_then(|blob| crush_vm::Program::from_blob(&blob).ok()),
         _ => {
-            let (program, _declared) = load_program(&args.path, &args.caps, args.polyglot, &args.lib_paths)?;
+            let (program, _declared) = load_program(
+                &args.path,
+                &args.caps,
+                args.polyglot,
+                &args.lib_paths,
+                matches!(args.message_format, MessageFormat::Text),
+            )?;
             // Compile warnings (CRUSH-270's polyglot implicit-output/clobber
             // warnings) go to stderr, never the program's stdout.
             for warning in &program.warnings {

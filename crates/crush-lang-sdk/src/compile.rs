@@ -183,6 +183,28 @@ pub fn compile_crush_file_for_debug(
 }
 
 /// The shared back half of the source and file entry points.
+/// Compile a CAST program (from a `.cast.json` / `.castb` file, a walker, or
+/// the parser) to CASM through the same pipeline `.crush` files take: the
+/// polyglot pass, lowering, the semantic check and the declared-capability
+/// check. Imports are not resolved here (#365).
+pub fn compile_cast_to_casm(
+    program: crush_cast::Program,
+    options: &CompileOptions,
+) -> anyhow::Result<(casm::Program, Vec<String>)> {
+    compile_program_to_casm(program, options)
+}
+
+/// [`compile_cast_to_casm`] to a CVM1 program (warnings attached).
+pub fn compile_cast_program(
+    program: crush_cast::Program,
+    options: &CompileOptions,
+) -> anyhow::Result<crush_vm::Program> {
+    let (casm, warnings) = compile_cast_to_casm(program, options)?;
+    let mut program = casm_to_vm(&casm)?;
+    program.warnings = warnings;
+    Ok(program)
+}
+
 fn compile_program_to_casm(
     mut program: crush_cast::Program,
     options: &CompileOptions,
@@ -1736,7 +1758,10 @@ pub fn casm_to_vm_named(
     }
 
     let assembly = cleaned.join("\n");
-    let perms_slice: Vec<&str> = perms.iter().map(|s| s.as_str()).collect();
+    // Sorted: the manifest (and the `.cap` lines a disassembly prints from it)
+    // must not depend on `HashSet` order (#365, CRUSH-188).
+    let mut perms_slice: Vec<&str> = perms.iter().map(|s| s.as_str()).collect();
+    perms_slice.sort_unstable();
     let mut vm_program = crush_vm::assemble(
         &assembly,
         if perms_slice.is_empty() {

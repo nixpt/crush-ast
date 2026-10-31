@@ -52,3 +52,46 @@ fn every_repo_cast_json_loads_through_the_gate_at_cast_version() {
     }
     assert!(failures.is_empty(), "{} of {} failed:\n{}", failures.len(), files.len(), failures.join("\n"));
 }
+
+fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|n| n == "tests" || n == "target") {
+                continue;
+            }
+            collect_rs(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// Every CAST producer (the Crush parser, the walkers, the codebase walker,
+/// the REPL, mutation_check) writes the constant, never a literal: before
+/// #365 they wrote `1.0.0`, `0.2` and `"1"`. Test modules may build programs
+/// at other versions on purpose (the gate's own tests), so lines after a
+/// file's `#[cfg(test)]` are not checked.
+#[test]
+fn no_producer_writes_a_literal_cast_version() {
+    let crates = repo_root().join("crates");
+    let mut files = Vec::new();
+    for krate in std::fs::read_dir(&crates).unwrap().flatten() {
+        collect_rs(&krate.path().join("src"), &mut files);
+    }
+    let mut offenders = Vec::new();
+    for file in &files {
+        let text = std::fs::read_to_string(file).unwrap();
+        for (i, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("#[cfg(test)]") {
+                break;
+            }
+            let code = line.split("//").next().unwrap_or("");
+            if code.contains("cast_version: \"") || code.contains("cast_version=\"") {
+                offenders.push(format!("{}:{}: {}", file.display(), i + 1, line.trim()));
+            }
+        }
+    }
+    assert!(offenders.is_empty(), "write crush_cast::CAST_VERSION instead:\n{}", offenders.join("\n"));
+}

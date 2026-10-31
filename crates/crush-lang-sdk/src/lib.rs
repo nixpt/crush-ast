@@ -31,10 +31,12 @@ pub mod dom_native;
 pub mod effects;
 pub mod bus;
 pub mod caps;
+pub mod cast_cli;
 pub mod cli;
 pub mod codebase;
 pub mod compile;
 pub mod compute;
+pub mod formats;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod doctor;
 // Compares against crush-vm's FastVM backend — native-plugins only.

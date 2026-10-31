@@ -166,7 +166,7 @@ fn diamond_imports_load_one_copy() {
     ]);
     assert_prints(&run_in(d.path(), &["top.crush"]), &["15"]);
     let casm = Command::new(bin("crushc"))
-        .args(["top.crush", "--emit", "casm"])
+        .args(["top.crush", "--emit", "cvms", "-o", "-"])
         .current_dir(d.path())
         .output()
         .unwrap();
