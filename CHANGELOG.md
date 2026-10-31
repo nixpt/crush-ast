@@ -23,6 +23,43 @@ add its entry after yours.
   allocation-growing cap (`str.repeat`/`pad_*`/`join`, `buffer.alloc`) is
   bounded by a fixed 64 MiB limit.
 
+- **FastVM/JIT print heap values, not the arena ref (CRUSH-294, GitHub #267):**
+  `io.print` of an array, map or struct printed the arena index (`@259`) on
+  FastVM and the JIT and finished successfully, while every other engine
+  printed the value. `runtime_value_to_text` (the `io.print` formatter both
+  fast engines use) resolved a ref only for strings; it now renders every heap
+  kind exactly like the VM's `Display` (`[a, b]`, `{k: v}`, `Vector[…]`, …).
+  Covered by an all-engine print test (`stdout_parity::heap_values_print_…`).
+
+- **Division edge cases fail loudly on every engine (CRUSH-213):**
+  `i64::MIN / -1` (and `% -1`) panicked in the interpreter and FastVM and
+  SIGFPE'd on AOT C; the JIT trapped (SIGILL/SIGFPE) on a zero divisor and
+  silently returned `inf` for `1.0 / 0.0`. The interpreter and FastVM now use
+  `checked_div`/`checked_rem` (→ `arithmetic overflow`), and the JIT guards
+  the divisor before `sdiv`/`srem`/`fdiv`, reporting `division by zero` /
+  `arithmetic overflow` like the other engines. AOT already did the right
+  thing. All six engines agree (verified by
+  `backend_agreement::division_edge_cases_agree_across_every_engine`).
+
+- **FastVM/JIT `==`/`!=` for strings, arrays, maps, bools and null
+  (CRUSH-215):** both fast engines reported `false` for every non-numeric
+  `==` — so `"ab" == "ab"` was `false` and `"ab" != "ab"` was `false` too
+  (FastVM), and the JIT compared strings by their NaN-boxed bits so string
+  `==` was always `false` and `!=` always `true`. A single canonical equality
+  (`crush_vm::value::runtime_value_eq`) now backs FastVM (`Eq`/`Ne`) and the
+  JIT (new `OP_CMP_EQUAL` runtime helper); it mirrors the interpreter's
+  `Value::PartialEq`. All six engines now agree on `==`/`!=` for every shared
+  value kind (verified by
+  `backend_agreement::equality_agrees_across_every_engine`).
+
+- **JIT: a function with more than 8 locals lost them across a call
+  (CRUSH-295, GitHub #273):** the JIT addressed each frame with a fixed 8-slot
+  stride and did not bounds-check local indices, so a caller using local 8+
+  spilled into the callee's frame and had its locals overwritten — the run
+  finished with wrong values while VM/FastVM/AOT were correct. The frame stride
+  is now the program's largest local count, so frames cannot overlap (a frame
+  that does not fit is refused → FastVM fallback).
+
 ## [0.8.0] - 2026-10-30
 
 - Merge pull request #315 from nixpt/agent/vega/fs-backend

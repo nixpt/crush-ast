@@ -112,11 +112,16 @@ pub fn div_values(a: &Value, b: &Value) -> Result<Value, VmError> {
         }
         Ok(Value::Float(to_f64(a) / bf))
     } else {
+        let ai = to_i64(a);
         let bi = to_i64(b);
         if bi == 0 {
             return Err(VmError::DivByZero);
         }
-        Ok(Value::Int(to_i64(a) / bi))
+        // `i64::MIN / -1` overflows (it would panic in Rust); report it the
+        // same way every other engine does (CRUSH-213).
+        ai.checked_div(bi)
+            .map(Value::Int)
+            .ok_or(VmError::ArithmeticOverflow)
     }
 }
 
@@ -134,8 +139,11 @@ pub fn mod_values(a: &Value, b: &Value) -> Result<Value, VmError> {
         if bi == 0 {
             return Err(VmError::DivByZero);
         }
-        // Truncating remainder, matching Rust's `%` operator.
-        Ok(Value::Int(ai % bi))
+        // Truncating remainder, matching Rust's `%` operator; `i64::MIN % -1`
+        // overflows, as on the AOT backends (CRUSH-213).
+        ai.checked_rem(bi)
+            .map(Value::Int)
+            .ok_or(VmError::ArithmeticOverflow)
     }
 }
 
