@@ -474,5 +474,14 @@ from exosphere's workspace; the files remain).
   (`language_walkers.rs::resolve_binary`, `go_walker`/`zig_walker`/`wasm_walker`); Lua declined
   (CRUSH-162). The python worker's bridge protocol is captured in
   `docs/design/exec-lang-callbacks.md` (CRUSH-166) before its source is deleted.
+- **`core/vm/nanovm`, `core/vm/casm`, `core/crush-cast`** — no exosphere commit since the CRUSH-55
+  diff (`8d52996`, 2026-09-24; last change 2026-08-02), so its verdicts stand. Re-verified by
+  comparing every `pub enum` variant and `pub fn` name: **`crush-cast` has no exo-only variant or
+  function**; `casm`'s only exo-only items are encrypted CASM (`EcasmError`, `encrypt`/`decrypt`/
+  `validate`/…) and the `CachedInstruction` accessors (`opcode`, `op_cached`, `instruction`,
+  `to_cached`) — both exo-owned, declined above. nanovm's PORT items are done (debugger CRUSH-159/160,
+  AI tool-chain CRUSH-156–158) or declined (Lua, CRUSH-162).
 - **Still open from this inventory:** CRUSH-164 (wildcard/expiry grants, from
-  `vm-runtime/enforcement.rs`) — optional, no consumer.
+  `vm-runtime/enforcement.rs`) and CRUSH-165 (CVM1 execution transcript, idea from nanovm
+  `audit.rs`) — both optional, no consumer; CRUSH-163 (FastVM host loop + nanovm AI op aliases) is
+  deferred by captain decision C-3.
