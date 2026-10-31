@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-167 |
 | **Priority** | P3 |
-| **Status** | Done (PR open) |
+| **Status** | Done — landed via merge wave PR #116 (2026-10-07, `9f6ed4a`; commit `132ddd4`); PR #109 itself was closed unmerged |
 | **Phase** | M0 |
 | **Assignee** | panini-d |
 | **Dependencies** | CRUSH-161, decision C-4 |
@@ -89,3 +89,7 @@ squeeze (`nixpt/squeeze`, 227 L, unpublished, no tests) is ~60 lines of composit
 - The existing `cli_lint_subcommand_parses…` test caught one regression from
   `args_conflicts_with_subcommands` (it broke `--message-format=json lint`).
   That setting was dropped.
+
+## Survey 2026-10-31 (status)
+
+Commit `132ddd4` (feat(crush-pkg): CRUSH-167) reached main through `kai/merge-wave-s474`, PR #116, merged 2026-10-07. PR #109 was closed without merging. Previous status: `Done (PR open)`.

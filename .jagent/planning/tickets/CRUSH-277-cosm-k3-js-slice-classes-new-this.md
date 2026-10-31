@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-277 |
 | **Priority** | P1 |
-| **Status** | All slices done — S1 (`agent/muse/CRUSH-277`), S2 (`agent/muse/CRUSH-277-s2`), S3 (`agent/muse/CRUSH-277-s3`), S4 (`agent/muse/CRUSH-277-s4`), S5 (`agent/muse/CRUSH-277-s5`); one PR for the stack |
+| **Status** | Done — S1–S5 merged as one stack in PR #285 (2026-10-21) |
 | **Phase** | COSM K3 — JS walker slice |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-266 (exports, PR #283), CRUSH-zorro-43 (COSM VM ops, done), CRUSH-zorro-44 (receiver method calls; partial — see D4), CRUSH-276 (blocker queue; this ticket scopes its item 1) |
@@ -388,3 +388,7 @@ Census of the JS class surface maya actually uses:
   `extends Component`) is name-based until CRUSH-110 gives modules real
   bindings; KindRefs may collide across modules. Acceptable for the
   corpus slice; note it in code where the merge happens (D1).
+
+## Survey 2026-10-31 (status)
+
+PR #285 (`agent/muse/CRUSH-277-s5`, the stacked S1–S5 branch) merged 2026-10-21. Previous status: `` All slices done — S1 (`agent/muse/CRUSH-277`), S2 (`agent/muse/CRUSH-277-s2`), S3 (`agent/muse/CRUSH-277-s3`), S4 (`agent/muse/CRUSH-277-s4`), S5 (`agent/muse/CRUSH-277-s5`); one PR for the stack ``.

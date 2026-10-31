@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-zorro-54 |
 | **Priority** | P1 |
-| **Status** | Done — PR `agent/vega/CRUSH-zorro-54-aot-unassigned` |
+| **Status** | Done — PR #248 merged 2026-10-16 |
 | **Phase** | M6 |
 | **Assignee** | vega |
 | **Dependencies** | none. **Must land before CRUSH-250 step 6** (a gate item there) |

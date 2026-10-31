@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-73 |
 | **Priority** | P0 (the meta-finding killer) |
-| **Status** | MVP Done (s417, 2026-08-05) — needs release build for CI |
+| **Status** | Done (MVP, s417, 2026-08-05) — needs release build for CI |
 | **Phase** | Correctness spine (s412) |
 
 ## Problem

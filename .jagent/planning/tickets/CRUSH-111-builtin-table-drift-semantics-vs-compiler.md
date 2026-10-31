@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-111 |
 | **Priority** | P2 |
-| **Status** | **Done** — merged in PR #275 (`59367ee`, 2026-10-16); see Resolution |
+| **Status** | Done — merged in PR #275 (`59367ee`, 2026-10-16); see Resolution |
 | **Phase** | M1 |
 | **Assignee** | buffy |
 | **Dependencies** | none (see CRUSH-65 for the shared-registry recommendation) |

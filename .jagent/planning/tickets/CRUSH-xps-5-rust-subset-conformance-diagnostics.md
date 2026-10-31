@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-xps-5 |
 | **Priority** | P1 |
-| **Status** | In review |
+| **Status** | Done — PR #220 merged 2026-10-15 |
 | **Phase** | M2 / conformance gate |
 | **Assignee** | nixp (user-directed Rust SDK work) |
 | **Dependencies** | CRUSH-xps-3 |
@@ -78,3 +78,7 @@ CRUSH-xps-4 enables Rust in `crush run`.
 
 See [Rust conformance](../../../docs/rust-conformance.md) for the precise
 supported boundary and reproduction commands. Review: [PR #220](https://github.com/nixpt/crush-ast/pull/220), based on PR #213.
+
+## Survey 2026-10-31 (status)
+
+PR #220 merged 2026-10-15; all criteria ticked. Previous status: `In review`.

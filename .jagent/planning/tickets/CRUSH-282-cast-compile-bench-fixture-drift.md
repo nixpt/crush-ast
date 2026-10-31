@@ -7,7 +7,7 @@
 |-------|-------|
 | **ID** | CRUSH-282 |
 | **Priority** | P3 |
-| **Status** | Done (this PR) |
+| **Status** | Done — PR #287 merged 2026-10-21 |
 | **Phase** | test hygiene |
 | **Assignee** | kai |
 | **Dependencies** | none |
@@ -49,3 +49,7 @@ doesn't affect pass/fail. If the noise matters, give `meta` an ordered map (or s
 
 - Running the bench in CI (`--test` mode takes seconds). Worth adding to the feature-gates job so drift is caught
   when it happens; left for a CI change (needs a token with `workflow` scope).
+
+## Survey 2026-10-31 (status)
+
+PR #287 (`agent/kai/CRUSH-280-bench-fixtures-and-ticket-hygiene`) merged 2026-10-21. Previous status: `Done (this PR)`.
