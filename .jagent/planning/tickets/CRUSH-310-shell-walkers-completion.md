@@ -1,8 +1,8 @@
-# CRUSH-298 — Bash/Zsh walkers: `[[ ]]`, arrays, `${…}` operators, `case` globs, `printf` formats, `read`
+# CRUSH-310 — Bash/Zsh walkers: `[[ ]]`, arrays, `${…}` operators, `case` globs, `printf` formats, `read`
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-298 |
+| **ID** | CRUSH-310 |
 | **Priority** | P1 |
 | **Status** | Done (pending review) |
 | **Phase** | M6 |
