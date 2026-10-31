@@ -190,6 +190,7 @@ impl AppState {
                 stdlib: true,
                 message_format: MessageFormat::Text,
                 import_paths: Vec::new(),
+                codebase: None,
             },
             fm_visible: false,
             fm_path: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),

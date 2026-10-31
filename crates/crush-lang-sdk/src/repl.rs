@@ -28,6 +28,26 @@ pub struct ReplConfig {
     /// `CRUSH_PATH`): an `import a.b` line loads `a/b.crush` from the first of
     /// them that has it (CRUSH-110).
     pub import_paths: Vec<std::path::PathBuf>,
+    /// An index to serve the read-only `codebase.*` capabilities from
+    /// (`crush-repl --codebase`). `None` = not granted.
+    pub codebase: Option<std::sync::Arc<crush_index::CrushIndex>>,
+}
+
+/// The host capabilities a REPL line runs with: the stdlib when enabled and
+/// the `codebase.*` caps when an index was granted. `None` = bare VM.
+fn repl_host_caps(config: &ReplConfig) -> Option<crush_vm::HostCaps> {
+    let mut builder = crate::HostCapsBuilder::new();
+    let mut any = false;
+    #[cfg(feature = "stdlib")]
+    if config.stdlib {
+        builder = builder.stdlib(true);
+        any = true;
+    }
+    if let Some(index) = &config.codebase {
+        builder = builder.codebase((**index).clone());
+        any = true;
+    }
+    any.then(|| builder.build())
 }
 
 impl Default for ReplConfig {
@@ -44,6 +64,7 @@ impl Default for ReplConfig {
             stdlib: cfg!(feature = "stdlib"),
             message_format: MessageFormat::Text,
             import_paths: Vec::new(),
+            codebase: None,
         }
     }
 }
@@ -493,11 +514,8 @@ pub fn evaluate_silent(source: &str, state: &mut ReplState, config: &ReplConfig)
     if had_main_statements {
         let mut vm = PortableVm::new(vm_program);
         vm.set_quotas(config.quotas.clone());
-        #[cfg(feature = "stdlib")]
-        if config.stdlib {
-            let mut builder = crate::HostCapsBuilder::new();
-            builder = builder.stdlib(true);
-            vm.set_host_caps(builder.build());
+        if let Some(caps) = repl_host_caps(config) {
+            vm.set_host_caps(caps);
         }
         
         match vm.run() {
@@ -563,11 +581,8 @@ fn evaluate_input(source: &str, state: &mut ReplState, config: &ReplConfig) -> a
     if had_main_statements {
         let mut vm = PortableVm::new(vm_program);
         vm.set_quotas(config.quotas.clone());
-        #[cfg(feature = "stdlib")]
-        if config.stdlib {
-            let mut builder = crate::HostCapsBuilder::new();
-            builder = builder.stdlib(true);
-            vm.set_host_caps(builder.build());
+        if let Some(caps) = repl_host_caps(config) {
+            vm.set_host_caps(caps);
         }
         match vm.run() {
             Ok(result) => {

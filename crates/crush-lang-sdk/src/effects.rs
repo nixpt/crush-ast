@@ -134,6 +134,7 @@ pub fn catalog() -> Vec<CapInfo> {
         ("--process", new().process(true)),
         ("--crypto", new().crypto(true)),
         ("--polyglot", new().polyglot(&["python", "javascript", "bash"])),
+        ("--codebase FILE", new().codebase(crush_index::CrushIndex::new())),
     ]);
     #[cfg(feature = "gpu")]
     grants.push(("--gpu", new().gpu(true)));
