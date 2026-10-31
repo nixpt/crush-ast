@@ -627,15 +627,11 @@ fn py_str_repr(s: &str) -> String {
     out
 }
 
-fn crush_float_to_text(f: f64) -> String {
-    if f.is_finite() && f.fract() == 0.0 {
-        format!("{:.1}", f)
-    } else {
-        f.to_string()
-    }
-}
-
 "#);
+    // CRUSH-229: the float rule is crush-vm's own source, embedded verbatim.
+    out.push_str("#[allow(dead_code)]\nmod float_text_core {\n");
+    out.push_str(crush_vm::float_text::SOURCE);
+    out.push_str("}\nuse float_text_core::crush_float_to_text;\n\n");
 }
 
 // ���─ Function emission ───────────────────────────────────────────────────────

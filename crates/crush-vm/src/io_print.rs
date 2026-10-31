@@ -151,13 +151,7 @@ pub fn runtime_value_to_text(v: &RuntimeValue, arena: &crate::memory::Arena) -> 
         RuntimeValue::Null => "null".to_string(),
         RuntimeValue::Bool(b) => b.to_string(),
         RuntimeValue::Int(i) => i.to_string(),
-        RuntimeValue::Float(f) => {
-            if f.is_finite() && f.fract() == 0.0 {
-                format!("{f:.1}")
-            } else {
-                f.to_string()
-            }
-        }
+        RuntimeValue::Float(f) => crate::float_text::crush_float_to_text(*f),
         RuntimeValue::String(s) => s.clone(),
         // Resolve the arena reference and render the heap value the way the
         // VM's `impl Display for Value` does (CRUSH-294 / GitHub #267). Before

@@ -2733,13 +2733,7 @@ pub fn value_to_text(v: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Int(i) => i.to_string(),
-        Value::Float(f) => {
-            if f.fract() == 0.0 && f.is_finite() {
-                format!("{f:.1}")
-            } else {
-                f.to_string()
-            }
-        }
+        Value::Float(f) => crate::float_text::crush_float_to_text(*f),
         Value::Str(s) => s.clone(),
         Value::Array(a) => {
             let items: Vec<String> = a.borrow().iter().map(value_to_text).collect();
