@@ -1,0 +1,31 @@
+# Counter — the smallest ui.* program.
+#
+#   crush-gui run examples/gui/counter.crush --ui
+#
+# Render a page, then pull events in a loop. ui.next_event() blocks until the
+# user does something; there are no callbacks.
+
+fn page(count) {
+    let html = "<h1>Counter</h1>";
+    html = html + "<p id=\"count\">Count: " + count + "</p>";
+    html = html + ui.button("dec", "-1", "outline");
+    html = html + ui.button("inc", "+1", "accent");
+    html = html + ui.button("reset", "Reset", "ghost");
+    return html;
+}
+
+ui.title("Counter");
+let count = 0;
+ui.render(page(count));
+
+while true {
+    let ev = ui.next_event();
+    if ev.kind == "close" { break; }
+    if ev.kind == "click" {
+        if ev.id == "inc" { count = count + 1; }
+        if ev.id == "dec" { count = count - 1; }
+        if ev.id == "reset" { count = 0; }
+        ui.render(page(count));
+    }
+}
+print("bye, count was " + count);
