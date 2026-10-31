@@ -885,3 +885,414 @@ Rejected alternatives:
 Outcome:
 all exo runtimes retired; EXEC_LANG + buckets is the polyglot path
 
+
+## 2026-10-15T00:18:41-05:00 — [TACTICAL] [VERIFIED] GPU kernels in .crush: gpu.* intrinsics lower to ptx_* CASM ops; gpu.launch compiles them from CASM at launch
+
+Reason:
+CRUSH-zorro-3 (vector-add milestone). A kernel is any function using device intrinsics. The frontend lowers gpu.* dotted calls straight to the ptx_* ops crush-ptx already compiles, widening integer results to s64 to match the kernel's s64 params. The CVM1 lowering skips such functions, since the VM never runs them. CVM1 bytecode drops CASM, so gpu.launch (crush-lang-sdk feature gpu, cudarc 0.11) is handed the program's CASM by crush-run and compiles one kernel with crush_ptx::compile_kernel, a fresh compiler per kernel. Arrays are uploaded as f32 buffers and written back in place, which keeps the host API one call with no buffer handles. Verified on the 5070 Ti: vec_add.crush gives 0 mismatches over 1000 elements.
+
+Rejected alternatives:
+- **@gpu.launch syntax**: '@' is not callable in crush source; dotted capability calls are the language's form, and the renderer prints them with @
+- **compile_program on the whole module**: it shares registers/locals across functions and fails on host functions
+- **buffer handles (gpu.alloc/upload/download)**: more surface than the milestone needs; in-place write-back covers it, handles can come with device-resident buffers
+
+Outcome:
+examples/gpu/vec_add.crush runs via crush-run run --gpu; tests: crush-ptx test_vec_add_crush_source_to_ptx (ptxas), crush-lang-sdk tests/gpu_launch.rs
+## 2026-10-15T00:15:27-05:00 — [STRATEGIC] [ADOPTED] HALT in a spawned task ends only that task
+
+Reason:
+Decided by the repo owner 2026-10-15. A task's HALT finishes the task like RET: its top-of-stack is its result and its waiters wake; only main's HALT ends the program. Consistent with Go-style 'main returning ends the program' (#177) and with #176 scopes. Today the scheduler returns StepAction::Finish (whole program) from any thread, and crush-vm's spawn_await_roundtrip test only passes because of that (#181); it gets rewritten to test through AWAIT.
+## 2026-10-14T23:58:03-05:00 — [STRATEGIC] [ADOPTED] CRUSH-47: decline the embedded RustPython VM lane — parser-only frontends
+
+Reason:
+Decided by the repo owner 2026-10-15: an embedded language VM is a dead path that exosphere's in-tree crush already had, and it dragged in a set of VMs. crush keeps parser-only frontends (rustpython-parser for Python, swc for JS) and runs the lowered program on crush-vm, supporting each language's format and semantics there. Host-language execution stays EXEC_LANG + buckets (CRUSH-55 D-2).
+
+Domain owner: nixpt
+
+Author type: human
+
+Rejected alternatives:
+- **HALT in any task ends the whole program (exit-like)**
+
+Outcome:
+scheduler + portable VM: task HALT = task finish; fix spawn_await_roundtrip
+
+
+## 2026-10-15T00:15:27-05:00 — [STRATEGIC] [ADOPTED] #176 scope { } blocks on exit and evaluates to its children's results
+
+Reason:
+Decided by the repo owner 2026-10-15. Scope exit awaits every task spawned inside it; let r = scope { ... } evaluates to the list of their results in spawn order. No cancellation in v1 (an explicit cancel can come later). Compile error on AOT/FastVM until #161 makes them run spawned tasks — never a silent no-op.
+
+Domain owner: nixpt
+
+Author type: human
+
+Rejected alternatives:
+- **value-less scope (statement only); cancel running children on exit**
+
+Outcome:
+scope = join-all + results list, no cancel in v1
+
+
+## 2026-10-15T00:15:27-05:00 — [STRATEGIC] [ADOPTED] #175 parallel_map waits for CRUSH-251 closures
+
+Reason:
+Decided by the repo owner 2026-10-15. Closures / function values (CRUSH-251) come first — needed for higher-order functions anyway — then parallel_map with move-only closures, share-nothing worker VMs, output and errors in input order, and a sequential fallback with identical results on wasm/FastVM/JIT. The cited fib(35) gap vs Node is single-thread and is CRUSH-258's (codegen), not parallelism's.
+
+Domain owner: nixpt
+
+Author type: human
+
+Rejected alternatives:
+- **named-function interim parallel_map(xs, fib) now; defer #175 entirely**
+
+Outcome:
+order: CRUSH-251, then #175 closure form
+
+
+## 2026-10-15T00:15:27-05:00 — [STRATEGIC] [ADOPTED] collections.keys/values/entries follow insertion order
+
+Reason:
+Decided by the repo owner 2026-10-15. Value::Map is insertion-ordered (#184); sorting existed only because HashMap order was random. keys/values/entries now match for-in iteration, printing, Python dict.keys() and JS Object.keys(); docs and tests updated in the same change.
+
+Domain owner: nixpt
+
+Author type: human
+
+Rejected alternatives:
+- **keep the documented sorted output**
+
+Outcome:
+collections.* return insertion order
+- **embed RustPython VM as runtime=rustpython (feature-gated)**
+
+Outcome:
+CRUSH-47 declined; Python parity pursued in crush-vm (cpython_corpus)
+
+
+## 2026-10-15T02:57:23-05:00 — [TACTICAL] JS swc lowering: nested let/const shadowing and for-in are refused, not lowered (CRUSH-zorro-23)
+
+Reason:
+lower_swc gives each name one slot per function and flattens nested blocks, so a nested let/const/class/for/catch binding reusing an enclosing name overwrote the outer variable (let x=1; if(c){let x=2} x -> 2). A pre-pass (check_lexical_shadowing) refuses that shadowing at walk time; fresh names and sibling scopes stay allowed. for-in lowers to crush 'for', which yields array/string elements; arrays can't be told from objects statically and crush-vm has no native type_of (sibling lane owns crush-vm), so for-in is refused except over an object literal.
+
+Rejected alternatives:
+- **runtime is_array/type_of guard for for-in**: no native capability on VM/AOT
+- **flatten top-level/function-body bare blocks too**: ticket says loud; z-5 implements blocks in the boa lowering
+
+Outcome:
+All silent swc mis-lowerings are walk-time errors '<construct> is not supported by the JS walker yet'; tests/loud_constructs_test.rs
+
+
+## 2026-10-15T03:04:39-05:00 — [TACTICAL] JS swc lowering: bare blocks flatten everywhere; for-in over a non-literal gets a runtime type_of guard (CRUSH-zorro-23 review)
+
+Reason:
+Reviewer: block rule was inconsistent (loud in function bodies, flattened in arrow bodies). check_lexical_shadowing makes flattening sound, so every bare block flattens. for-in: the CASM type_of op (CVM1 TYPEOF) exists on VM/portable/FastVM/JIT; crush-frontend now compiles CapabilityCall 'type_of' to it, and the walker throws at run time when the value is an array/str/string/list/vector/tuple, iterating keys otherwise. crush-aot Rust/C reject type_of at compile time (exact-or-loud).
+
+Outcome:
+Supersedes the for-in/block part of the earlier CRUSH-zorro-23 decision
+## 2026-10-15T02:27:21-05:00 — [STRATEGIC] [ADOPTED] JS parser: one JS frontend on boa_parser 0.22 in crush-ast, shared with bozo; swc only strips TypeScript types
+
+Reason:
+Owner decision 2026-10-15 on the JS/TS parity spike (option B). bozo planned its own boa-based JS frontend (BOZO-M7-1), runtime library (M7-2) and conformance gate (M7-5), which would duplicate crush-lang-js's semantic work. Measured with cargo tree: boa_parser 0.22 adds 1 crate to surfer (which already has boa_engine 0.22) vs 36 for the swc parser; after dropping boa_engine, boa is 60 crates vs swc 88. TS keeps one lowering by using the swc parser only to blank type spans (swc_fast_ts_strip measured at 146 crates and stale). Most of the spike's work (harness, js.* runtime library, number model) is parser-independent.
+
+Artifacts: .jagent/planning/research/2026-10-15-JS-TS-parity-spike.md
+
+Author type: human
+
+Rejected alternatives:
+- **A**: keep swc for JS and TS: +36 crates for the browser, swc in surfer's build against SURF-BUILD-1, and bozo would still build a second frontend
+- **swc_fast_ts_strip for TS**: 146 crates, last release 2025-06
+
+Outcome:
+CRUSH-250 widened into the JS frontend (wave 2, absorbs BOZO-M7-1); CRUSH-zorro-11 superseded; z-5/6/7/16/18/20 retargeted to the new lowering; z-8 narrowed to TS strip-to-boa; z-23 is the interim loud-making on the swc path; the js.* runtime tickets are unchanged and shared with bozo (absorbs BOZO-M7-2)
+
+
+## 2026-10-15T06:11:31-05:00 — [CONSTITUTIONAL] [ADOPTED] Object model: COSM (Crush Object Semantic Model) — objects are lowered to declarative Kinds, like code to CAST
+
+Reason:
+Owner decision 2026-10-15 (#206). Crush hosts languages whose object models disagree: JS prototypes/dynamic this, Python C3 MRO/dunders/bound methods, Rust/Go/C value semantics, Go structural interfaces, Dart mixins. Today there is no object model at all: maps only, and obj.m(x) is a global capability call. Walkers lower object declarations to COSM KindDecl/InterfaceDecl: serializable data whose language differences are a closed catalogue of strategies (resolution none/single/c3/prototype_chain/embedding_promotion; receiver dynamic_this/bound_self/explicit_value/explicit_ref; construction; storage sealed/open; value semantics reference/copy/move/clone; operator hooks; nominal/structural interfaces). Each strategy is implemented once in the VM. Kinds are COSM declarations instantiated at load time, built or patched at run time only where the language is dynamic. Seven generic ops (GET/SET/CALL/HAS/DEL_MEMBER, CONSTRUCT, OP, ITERATE). Static Kinds compile to direct slots and calls for AOT. Objects keep their home semantics across languages. Fidelity: what each parity corpus needs, the rest loud. Rust: Copy types copy, others move with a loud use-after-move. Crush grows impl+trait in K1. Instance cycles leak through K2; CRUSH-121's root-set fix is a prerequisite of K3.
+
+Artifacts: docs/design/object-model.md
+
+Author type: human
+
+Rejected alternatives:
+- **one fixed object model (JS-like or Python-like) for every language**: lossy, so every mismatch becomes a silently-wrong program
+- **per-walker desugaring to maps and functions**: semantics duplicated across walkers, bozo, AOT and the JIT, and lost at language boundaries
+- **per-language kind libraries as imperative code**: superseded by lowering to declarative COSM with a shared strategy catalogue
+- **running real CPython/V8 for objects**: excluded by the #204 decision (no silent change of trust model)
+
+Outcome:
+docs/design/object-model.md; phases K1-K5; supersedes the JS-specific object-model half of CRUSH-251
+## 2026-10-15T06:36:37-05:00 — [STRATEGIC] crush-cosm has no workspace deps; CosmType mirrors CastType
+
+Reason:
+crush-cast depends on crush-vm through crush-caison. CRUSH-zorro-42 (casm serializes a CosmModule) and CRUSH-zorro-43 (crush-vm instantiates Kinds) must depend on crush-cosm, so a crush-cosm -> crush-cast edge would close a cycle (crush-vm -> crush-cosm -> crush-cast -> crush-caison -> crush-vm). CosmType keeps CastType's exact JSON shape, so front ends convert by serde round-trip or a match.
+
+Artifacts: crates/crush-cosm/src/types.rs
+
+Author type: agent
+
+Rejected alternatives:
+- **depend on crush-cast for CastType**: dependency cycle once crush-vm/casm consume COSM
+- **field types as opaque strings**: loses structure for GET_SLOT typing and AOT layout
+
+Outcome:
+crates/crush-cosm (CRUSH-zorro-40): serde, serde_json, serde_path_to_error only
+
+
+## 2026-10-15T12:06:55-05:00 — [STRATEGIC] [ARCHITECTURAL] CVM1 kind table: a version-3 trailing section, written only when non-empty (COSM K1.3, CRUSH-zorro-42)
+
+Reason:
+A compiled program must carry its COSM declarations to every engine. CVM1 already versions its container with the version byte (v1 -> v2 for frame-local slots), so the kind table is gated the same way: version 3 = v2 layout + a trailing section 'kt_format(1) | kt_len(4 BE) | COSM JSON'. to_blob writes v3 only for a non-empty kind table; every other program stays a byte-identical v2 blob. v1/v2 blobs load with cosm=None. A pre-K1.3 runtime rejects v3 as an unsupported version, so a kind table can never be silently dropped. The format byte lets the encoding change (e.g. to a binary COSM form) without another container bump; unknown formats and trailing bytes after the section are errors.
+
+Rejected alternatives:
+- **put the module in the manifest JSON**: an older runtime would silently ignore the unknown field and run objects as maps; the manifest length is a u16 (64 KiB)
+- **always write v3 (empty section when none)**: changes every existing blob's bytes for no gain and makes every new blob unreadable by older runtimes
+- **msgpack/binary COSM encoding**: the COSM schema omits empty fields (skip_serializing_if), which a positional encoding can't represent; JSON is the crate's canonical form
+
+Outcome:
+crush_vm::bytecode::{VERSION_NO_KIND_TABLE=2, VERSION_KIND_TABLE=3, KIND_TABLE_FORMAT_JSON=1}; Program.cosm; Error::BadKindTable. casm::Program.cosm is serde-optional (absent=None, omitted when None, last field; binary CASM embeds it as a COSM JSON string). The disassembler prints a comment summary + a '.cosm <json>' directive the assembler reads back. Scheduler/portable VM run map-equivalent Kinds (reference/structural/literal, no hooks/accessors/field defaults) exactly as before and refuse others at load; FastVM/JIT/AOT/aotc refuse any non-empty kind table.
+
+
+## 2026-10-15T12:20:33-05:00 — [STRATEGIC] [ARCHITECTURAL] COSM K1.3: one narrow kind-table rule for every engine (casm::cosm_unsupported_reason)
+
+Reason:
+Owner decision on #219: engines without Kinds refuse only Kinds a plain map can't represent (non-reference semantics, identity equality, non-literal construction, hooks, accessors, field defaults); map-compatible Kinds (Crush's defaults) run on every engine, as under K1.2. The rule lives once in casm so the scheduler/portable VM, FastVM/JIT, crush-aot and crush-aotc can't drift.
+
+Rejected alternatives:
+- **refuse any non-empty kind table on FastVM/JIT/AOT**: regressed struct/impl/trait programs those engines ran correctly as maps
+
+Outcome:
+casm::kind_unsupported_strategies + cosm_unsupported_reason; Program::refuse_cosm and crush_vm::cosm_gate delegate to it. crush-aotc separately refuses object ops (it has no maps; they used to be dropped silently).
+
+
+## 2026-10-15T14:04:38-05:00 — [TACTICAL] [ADOPTED] CRUSH-xps-7 checks Rust value uses after lexical resolution and copies only flat proven sequences
+
+Reason:
+CAST arrays share storage, whereas Rust Vec/array clones need fresh values. The existing seq.slice implementation agrees across CVM1 and both AOT engines. A bounded value pass can prove scalar/text elements without adding VM ownership or a borrow checker; implicit owned transfers and escaping borrowed views are rejected until their semantics are implemented.
+
+Artifacts: crates/crush-lang-rust/src/values/mod.rs
+
+Outcome:
+Keep type hints in Rust CAST metadata, lower flat clone/to_vec/to_owned to seq.slice, preserve immutable String values, and report unsupported transfers with source locations.
+
+## 2026-10-15T13:08:42-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] COSM K1.4: every struct is a Record on the two VMs; map engines keep their map path (approach b, at the CASM->CVM1 boundary) (CRUSH-zorro-43)
+
+Reason:
+Struct patterns must test the Kind (closes CRUSH-zorro-37) and p.m() must resolve on the receiver, so default Crush structs need a Kind at run time on the VMs. The CASM for a struct literal stays new_obj + set_field, tagged {kind: P}: FastVM/JIT/AOT ignore the tag and build the same map as before, so the all-engine agreement (crush-aot/tests/cosm_k1_lifted_methods.rs) holds unchanged. casm_to_vm lowers a tagged new_obj to NEW_RECORD (no constructor runs) and new P() / C(...) to CONSTRUCT. GET_FIELD/SET_FIELD on a Record are the member ops (GET_FIELD keeps a map's null for a missing name). Ops only Kinds can run (call_member, is_kind, copy, construct, the member/slot ops) are unknown to FastVM/JIT/AOT, so they refuse them; FastVM refuses type_of in a program with Kinds. The shared rule becomes per-engine-capability (casm::CosmSupport::{Maps,Kinds}), defined once.
+
+Rejected alternatives:
+- **approach (a) — map ops for map-compatible Kinds, Records only for the rest**: default structs would carry no Kind, so zorro-37 stays open and p.m() can't resolve
+- **a construct CASM op for every literal, lowered to new_obj by each map engine**: touches FastVM, AOT Rust, AOT C and aotc for no behavioural gain
+- **Records with a dense slot print order**: a struct literal written out of declaration order would print differently than the map it was
+
+Outcome:
+crush_vm::cosm_rt (Kind, KindTable, RecordValue); Value::Record/Value::Kind; CVM1 0xC0-0xCA (GET_MEMBER SET_MEMBER HAS_MEMBER DEL_MEMBER CALL_MEMBER CONSTRUCT GET_SLOT SET_SLOT IS_KIND COPY NEW_RECORD); FunctionEntry.arity (programs with Kinds); casm::{CosmSupport, kind_unsupported_strategies_on, cosm_unsupported_reason_on, kind_constructor}. Records print fields in first-set order and compare structurally ignoring the Kind (as the maps they were). value(move) = copy at run time.
+
+
+## 2026-10-15T13:24:13-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] COSM structural equality ignores the Kind; sealed fields are enforced on every engine (CRUSH-zorro-43 review)
+
+Reason:
+Review of #222: a write to an undeclared field of a sealed Kind errored on the VMs but the map engines added the key (silent divergence). Fixed at run time on each map engine from the Kind tag new_obj already carries, with one message (casm::sealed_field_error). Equality: structural compares the set fields only, so P{x:1}==Q{x:1} and P{x:1}=={x:1} are true, matching the design doc ('structural — as maps compare today') and the map engines.
+
+Rejected alternatives:
+- **compile-time refusal of set_field keys no Kind declares**: unsound when another Kind declares the key, and refuses plain object literals in programs with structs
+- **structural equality including the Kind**: P{x:1}=={x:1} would change on the VMs only, a cross-engine divergence
+
+Outcome:
+FastVM/JIT: struct maps of sealed Kinds get a class name listing the fields (fastvm::sealed_class / check_sealed_write; JIT error flag 5). AOT Rust OrdMap::sealed, AOT C CrushObject.sealed_kind/sealed_fields. Test crush-aot/tests/cosm_k1_lifted_methods.rs::undeclared_write.
+## 2026-10-15T13:28:00-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] JS number model (CRUSH-zorro-13): Int promotes to Float on overflow
+
+Reason:
+Owner decision 2026-10-15, option (a). JS numbers are doubles; crush has Int(i64)+Float(f64) and made overflow an error, so 2**53+1, 2**64 and MAX_SAFE_INTEGER+2 failed where node prints a value. Promoting only on overflow keeps Int for indexing/loops/.length (no change for programs that never overflow) and matches node's output for every safe integer; beyond 2^53 the Float follows node's double formatting.
+
+Author type: agent
+
+Rejected alternatives:
+- **every JS number a Float**: changes indexing/loop semantics and the printed form of ordinary integers for no gain
+- **leave overflow loud**: programs that node runs fine would keep failing
+
+Outcome:
+Recorded in CRUSH-zorro-13 and the JS/TS spike doc; implementation pending (js.add/sub/mul/pow; VMs exact, FastVM/JIT/AOT match or refuse at compile time; BigInt stays loud).
+## 2026-10-15T13:23:36-05:00 — [STRATEGIC] [ADOPTED] CRUSH-265: decline capability_discovery / adaptation_request / semantic_switch, fail loudly instead of NOP
+
+Reason:
+DECLINE for now (vega, owner's decision). The three AI statements compile to CASM ops that lower to a silent NOP on CVM1. Instead of porting onto ai_native (later ticket), each now fails loudly at compile time naming the statement. Frontend compile_ai_statement (crates/crush-frontend/src/compiler.rs) bails with "<statement> isn't supported yet (CRUSH-265): it would compile to a no-op" for capability_discovery, adaptation_request and semantic_switch. Hand-built CASM is refused by casm_to_vm (Unsupported CVM1 opcode) and FastVM lower_program (UnknownOpcode); AOT Rust/C and crush-aotc also refuse the ops. semantic_switch is NOT implemented via semantic_match — its ai_semantic_switch opcode lowers to NOP so dispatch never selects a case by target. NOP_STUBS updated (three removed, added to UNSUPPORTED with reasons). Tests added per statement plus an every-engine-refusal test. ai_agent_ops.crush marked // expect-error (intentional compile failure).
+
+Artifacts: crates/crush-frontend/src/compiler.rs,crates/crush-lang-sdk/src/compile.rs,crates/crush-lang-sdk/tests/casm_lowering_completeness.rs,crates/crush-aotc/src/codegen.rs,examples/crush/ai_agent_ops.crush
+
+Tensions: silent-wrong-vs-loud-error
+
+Values: nothing-is-silently-wrong
+
+Domain owner: vega
+
+Outcome:
+All engines refuse the three ops; none silent. Frontend + casm_to_vm + FastVM + AOT Rust/C + crush-aotc verified. Tests green: crush-frontend, crush-lang-sdk, crush-vm, crush-aot, crush-aotc; examples_parity green.
+
+
+## 2026-10-15T14:10:14-05:00 — [STRATEGIC] [ADOPTED] [ARCHITECTURAL] @lang blocks declare outputs explicitly: @python -> names { … } (CRUSH-270, issue #230)
+
+Reason:
+Owner decision 2026-10-15. The implicit rule (a block's last top-level plain assignment is marshaled back) made data flow invisible. Measured on main a1b7fdf: #230's carry-over between blocks; an intended output lost because a later temp was last ('Undefined variable: result'); a block silently overwriting a Crush variable (count 10 -> 0); and the no-inputs fallback exposing Crush vars only via os.environ. Inputs stay automatic; outputs are listed on the header.
+
+Author type: agent
+
+Rejected alternatives:
+- **block as expression (let r = @python { … })**: one output per block, awkward for several
+- **keep implicit + document/warn**: leaves the lost-output and clobber cases
+
+Outcome:
+CRUSH-270 filed. One-release transition: implicit outputs still work with a compile warning (including the clobber case), then no header means no outputs. The env-only fallback is removed (inputs are Python names or absent). Issue #225 analyzer fix first.
+
+
+## 2026-10-15T14:42:52-05:00 — [TACTICAL] [PROPOSED] Propose xps-8 through xps-13 parity completion using retained Rust facts and shared kernels
+
+Reason:
+Ownership Copy metadata cannot establish numeric width, char/String/unit Debug behavior, or typed power results. Preserve source facts and evaluate operands once; unsupported domains must be refused before execution. Retain xps-10 through xps-12 implementations in their existing review lane. Shared AOT support must preserve Unicode and representation semantics rather than approximate them independently.
+
+Artifacts: .jagent/planning/designs/rust-parity-xps-8-13.md
+
+Outcome:
+Proposed specification and six existing ticket refinements; xps-8 then xps-9 then typed xps-13 work, with existing review closure before CLI release. Private C bridge and rust.debug contracts require design review.
+
+
+## 2026-10-15T18:20:46-05:00 — Lower only literal Rust integer casts in the first xps-8 slice
+
+Reason:
+The merged specification requires exact conversions or frontend refusal. Constant bounded integer casts can be evaluated in the walker without a new guest ABI or backend kernel; dynamic casts need a later binding/range fact pass and single-evaluation lowering. Retain numeric source syntax separately from ownership Copy metadata, keep overflow policy and the ticket open.
+
+
+## 2026-10-15T20:10:57-05:00 — Require canonical numeric provenance before dynamic Rust casts
+
+Reason:
+Rust declarations alone cannot prove values after generic Crush arithmetic. Resolve lexical storage first, validate direct-call arguments and least-fixed-point return summaries, then expand casts once in shared CASM. Keep u64 within guest i64 and new usize conversions within the portable 16-bit ceiling; length provenance can retain native usize bounds. This avoids a runtime ABI or backend-specific numeric implementation while preserving explicit refusals for unproven values.
+
+Outcome:
+CRUSH-xps-8 slice 2 adds dynamic casts, bounded unsigned/length/index cases, left-to-right rooted source calls and innermost diagnostics; general typed wrapping remains open.
+## 2026-10-15T19:01:29-05:00 — [STRATEGIC] [ADOPTED] CRUSH-270: multi-output @lang wire protocol
+
+Reason:
+The old exec_lang protocol marshaled exactly one output (the sentinel line's JSON scalar). Explicit -> outputs need several. Chose a JSON object keyed by name on the single sentinel line, plus out_count/out_i spec fields mirroring var_count/var_i, extracted by a shared exec_lang_outputs helper so scheduler.rs and portable_vm.rs can't drift. The VM pushes outputs in reverse so the compiler's source-order stores line up.
+
+Outcome:
+meta[polyglot_outputs] (array); exec_lang spec carries out_count + out_0..out_{k-1}; epilogue prints sentinel + JSON object {name: value}; crush_vm::scheduler::exec_lang_outputs extracts by name. FastVM/JIT untouched (keep yielding/refusing as now).
+
+
+## 2026-10-15T19:01:36-05:00 — [STRATEGIC] [ADOPTED] CRUSH-270: compiler warning channel
+
+Reason:
+No general compiler warning channel existed (only ai_runtime::Warning). The polyglot pass (crush-lang-sdk) needs to emit the transition warnings (implicit output, clobber) and crush-run must print them to stderr, not program stdout. Chose a plain Vec<String> on crush_vm::Program (non-serialized, like source_map), threaded via compile_crush_to_casm_with_warnings, rather than the structured CompilerDiagnostic (which lives in crush-frontend and only flows through check_source, a path crush-run doesn't take).
+
+Outcome:
+crush_vm::Program.warnings: Vec<String>; prepare_polyglot_blocks returns Result<Vec<String>>; crush-run and crushc print each with a 'warning:' prefix to stderr.
+## 2026-10-15T22:49:37-05:00 — Establish the Rust formatting boundary before adding dynamic Debug
+
+Reason:
+Generic runtime strings cannot distinguish Rust chars from str/String, and placeholder expansion can duplicate or reorder calls. First fold typed literals directly from Rust syntax across all backends, refuse dynamic Debug and unmaterialized effectful repetition/reordering, and preserve format String ownership. Explicitly reject newline/channel forms the current io.print ABI cannot represent. The shared dynamic formatter and type descriptors remain a separate xps-9 slice after numeric provenance integration.
+
+Outcome:
+xps-9 macro/literal slice in progress; no new runtime ABI or formatter capability.
+
+
+## 2026-10-15T23:03:56-05:00 — [TACTICAL] [ARCHITECTURAL] AOT backends fail a read of an unassigned local, checking only loads not preceded by a store on every path (CRUSH-zorro-54)
+
+Reason:
+The VMs fail 'load from uninitialised slot'; AOT read null and printed wrong output. A forward must-assigned dataflow pass (crush-aot/src/assigned.rs) over the emitted control flow leaves dominated loads unchecked. Rust: absence from the locals HashMap is the sentinel. C: frames start TAG_UNSET; typed (CRUSH-257) locals with a possibly-unassigned load stay boxed.
+
+Artifacts: crates/crush-aot/src/assigned.rs
+
+Rejected alternatives:
+- **walk-time refusal on swc (would turn ops_ternary_nested loud though its function never runs)**
+- **check every load (C cost on hot loops)**
+
+Outcome:
+AOT exact-or-loud on unassigned reads; FastVM/JIT still read null -> CRUSH-zorro-55
+
+
+## 2026-10-16T00:26:07-05:00 — Share the typed Rust Debug kernel verbatim with Rust AOT
+
+Reason:
+Generic string representation cannot identify Rust char/String/unit or numeric width. Use bounded JSON descriptors from conservative lexical type proofs, a std-only View-based formatter that borrows sequences, and one kernel embedded unchanged in Rust AOT. Runtime descriptor/value checks, cycle detection and streaming output limits protect direct stdcap callers too. Register rust.debug only in the explicit pure stdlib family; C refuses compilation until a shared bridge can faithfully represent inputs.
+
+Outcome:
+CRUSH-xps-9 shared formatter slice: SDK/VM plus Rust AOT, explicit C refusal, conservative source descriptors. Macro materialization, richer flow/numeric proofs and C bridge remain open.
+## 2026-10-16T02:23:27-05:00 — Refuse Rust mapped methods until source types and capability results agree
+
+Reason:
+SDK prefix/suffix predicates return integer flags; core str.contains shadows its SDK handler and returns Bool. Numeric methods coerce to f64, and string methods permit Display coercions. Slice 1 preserves SDK contracts, source-refuses numeric methods and prefix/suffix predicates, and proves string input kinds before shared kernels or a C bridge are introduced.
+
+
+## 2026-10-16T03:38:20-05:00 — Share Rust method kernels through a private scalar and UTF-8 AOT bridge
+
+Reason:
+VM adapters, generated Rust and C AOT now use one std-only kernel. Rust typed numeric and Bool adapters preserve source contracts without changing generic SDK flags or Float power. The C Value ABI remains NUL-terminated, so string proofs and representation gates precede artifact generation; owned byte results use paired Rust frees and hidden static support symbols. Cache identity includes source, compilers, target and options.
+
+
+## 2026-10-16T03:03:12-05:00 — [TACTICAL] [ARCHITECTURAL] FastVM, the JIT and crush-aotc fail a read of an unassigned local; one definite-assignment pass in casm (CRUSH-zorro-55)
+
+Reason:
+FastVM and the JIT read an unassigned local as null, and the JIT's reused frames returned a previous call's value (g(true)+g(false)=14). casm::assigned::loads_to_check (moved from crush-aot, now aware of FastVM's aliases/labels/break/continue/enter_try) is shared by AOT Rust/C, crush-aotc and fastvm::lower_program; only unproven loads become LoadLocalChecked. FastVM pads with a Ref(usize::MAX) sentinel; the JIT stores TAG_UNASSIGNED into checked slots on every function entry; crush-aotc boxes such locals with CV_UNSET.
+
+Artifacts: crates/casm/src/assigned.rs
+
+Rejected alternatives:
+- **parallel assigned-bitset in FastVM**: state through execute_one/frames/GC and a second write per store
+- **new RuntimeValue variant**: a non-value in every match across crates
+- **re-initialise all 8 JIT frame slots on every call**: cost on every call though 0 of 2054 example loads are checked
+
+Outcome:
+Every engine is loud on unassigned reads; STILL_SILENT empty; 0/2054 example loads checked
+
+
+## 2026-10-20T16:55:43-05:00 — [STRATEGIC] [ADOPTED] crush-vm-py builds against the stable ABI (abi3-py311) and surfaces VmResult.return_value
+
+Reason:
+Two independent gaps in the Python wheel, both found from the chroma side
+(chroma's VM prefers the wheel by default via backend="auto").
+
+1. pyo3 0.23 refuses to build on a Python 3.14 interpreter ("configured
+   Python interpreter version (3.14) is newer than PyO3's maximum supported
+   version (3.13)"), so the wheel could only be built where an older
+   interpreter happened to be available. Adopting abi3 + abi3-py311 — the
+   same pair crush-python already uses — builds against the stable ABI, lifts
+   that ceiling, and lets one wheel serve every interpreter from 3.11 up.
+   Verified: the wheel builds on 3.14 (cp311-abi3 tag) and the same artefact
+   imports and runs on 3.12.
+
+2. run_blob returned {output, result, stack, steps, halted}, where "result" is
+   stack.last(). A program with an explicit `return` leaves an EMPTY stack and
+   puts its value in VmResult.return_value, so the wheel reported result=None
+   for exactly the programs whose value matters — chroma saw a RET-contract
+   divergence against its Python reference tier. The Rust VmResult and the
+   crush-lang-sdk VmResult both carry return_value; the wheel now surfaces it
+   as a new "return_value" key. The change is additive: the key is absent
+   from older wheels and present (None when there is no explicit return) in
+   new ones.
+
+The wheel's version line is deliberately left alone: the crate is excluded from
+the workspace, so bump-version never touches it, and the 0.3.0-vs-workspace
+drift is already tracked as its own backlog item (CRUSH-206). AGENTS.md forbids
+hand-editing versions.
+
+Artifacts: crates/crush-vm-py/Cargo.toml,crates/crush-vm-py/pyproject.toml,crates/crush-vm-py/src/lib.rs
+
+
+## 2026-10-30T18:04:54-05:00 — [ARCHITECTURAL] The FastVM/JIT print formatter resolves every heap kind through the arena (CRUSH-294, GitHub #267)
+
+Reason:
+runtime_value_to_text (used by PrintCap, the io.print capability on FastVM and the JIT) resolved a RuntimeValue::Ref only when it pointed at Object::Str; every other object kind printed @N (the arena index) and the run finished successfully, so FastVM/JIT silently printed the wrong thing for arrays, maps and structs. It now matches the VM's impl Display for Value: arrays [a, b], tuples (a, b), Vector/Set/List prefixes, maps and structs {k: v, ...}, bytes/handles/tagged/results tagged, strings raw including inside a container. One formatter, both fast engines; pinned by an all-engine stdout test.
+## 2026-10-30T05:29:24-05:00 — [ARCHITECTURAL] Division/remainder edge cases are one rule across engines; the JIT must guard the divisor (CRUSH-213)
+
+Reason:
+The interp and FastVM did int / and % unchecked, so i64::MIN / -1 panicked in Rust and AOT C SIGFPE'd; the JIT lowered Div/Mod straight to sdiv/srem (which trap: SIGILL/SIGFPE) and fdiv (which silently yields inf for 1.0/0.0). AOT Rust/C already used checked_div/checked_rem. Fixed: interp and FastVM use checked_div/checked_rem -> ArithmeticOverflow; the JIT guards the divisor before sdiv/srem/fdiv and reports via two new ctx.error codes (ERR_DIV_ZERO, ERR_ARITH_OVERFLOW) mapped to the same text as the other engines. The JIT's 48-bit int payload means i64::MIN is unrepresentable, so it refuses to compile and falls back to FastVM (which errors) - an acceptable loud refusal, not a wrong result. Pinned by a six-engine differential test.
+## 2026-10-30T05:07:40-05:00 — [ARCHITECTURAL] One canonical equality backs FastVM and the JIT (CRUSH-215)
+
+Reason:
+FastVM's compare_op was arena-blind: it fell through to _ => false for every non-numeric kind (strings, arrays, maps) and its Bool arm computed x == y even for !=. The JIT's inline do_cmp compared NaN-boxed strings/bools/refs by their float bits, so string == was always false and != always true. Added crush_vm::value::runtime_value_eq, mirroring the interpreter's Value::PartialEq, and routed FastVM Eq/Ne and a new JIT OP_CMP_EQUAL helper through it. FastVM keeps its RuntimeValue+Arena representation; the JIT converts its operands to RuntimeValue and shares the function, so the two fast engines cannot drift again. A six-engine differential test (backend_agreement::equality_agrees_across_every_engine) pins agreement.
+## 2026-10-30T18:17:19-05:00 — [ARCHITECTURAL] The JIT frame stride is the program's largest local count, not a fixed 8 (CRUSH-295, GitHub #273)
+
+Reason:
+The JIT emulates frames in one flat 64-slot locals array, addressed as locals[call_stack_top * FRAME_LOCALS + idx] with FRAME_LOCALS fixed at 8, and LoadLocal/StoreLocal did not bounds-check idx. A function using local 8+ spilled into the next frame, so a callee clobbered the caller's locals and the JIT finished with wrong values while every other engine was correct. Fix: program_frame_locals computes the max local slot used anywhere (LoadLocal/StoreLocal/LoadLocalChecked) + 1 and threads it through build_fn/emit_one/lload/lstore/unassign_frame as the stride; a program whose frame exceeds the 64-slot array is refused (FastVM fallback) and the call-depth guard becomes JIT_MAX_LOCALS / frame_locals. This also removes the need for the old LoadLocalChecked-past-8 refusal (CRUSH-zorro-55).
+

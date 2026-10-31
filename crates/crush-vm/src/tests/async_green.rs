@@ -29,7 +29,9 @@ fn spawn_creates_handle() {
 
 #[test]
 fn spawn_await_roundtrip() {
-    // SPAWN a function, AWAIT it, check result
+    // SPAWN a function, AWAIT it, check result. The worker's HALT ends only
+    // the worker (it used to end the whole program with the worker's stack,
+    // which is why this passed before AWAIT delivered anything).
     let src = "\
 .func main
     PUSH_STR \"worker\"
@@ -197,3 +199,183 @@ fn worker_output_is_kept_when_it_finishes_after_main_yields() {
     let r = run_src_with_perms(src, &["io.print"]);
     assert_eq!(r.output, "from worker\nmain\n");
 }
+
+// ── #161: the portable VM (crush-web) runs green tasks like the scheduler ─────
+//
+// The portable VM used to record a spawn and run it only when awaited; YIELD
+// was a no-op. Each program here runs on both engines and must print the
+// same thing (and the expected text).
+
+fn run_both(src: &str) -> String {
+    let prog = assemble(src, Some(&["io.print"]), None).expect("assembly");
+    let native = run(&prog, &Quotas::default()).expect("scheduler run").output;
+    let mut pvm = crate::portable_vm::PortableVm::new(prog);
+    let portable = pvm.run().expect("portable run").output;
+    assert_eq!(portable, native, "portable VM and scheduler disagree");
+    native
+}
+
+#[test]
+fn engines_agree_yield_runs_spawned_worker() {
+    // The program from #161: `spawn worker(); yield; print("m")`.
+    let src = "\
+.func main
+    PUSH_STR \"worker\"
+    SPAWN 0
+    POP
+    YIELD
+    PUSH_STR \"m\"
+    CAP_CALL \"io.print\" 1
+    RET
+.func worker
+    PUSH_STR \"w\"
+    CAP_CALL \"io.print\" 1
+    RET";
+    assert_eq!(run_both(src), "w\nm\n");
+}
+
+#[test]
+fn engines_agree_interleaved_output_order() {
+    assert_eq!(run_both(INTERLEAVED), "w1\nm1\nw2\nm2\n");
+}
+
+#[test]
+fn engines_agree_main_returning_ends_program() {
+    let src = "\
+.func main
+    PUSH_STR \"spin\"
+    SPAWN 0
+    POP
+    YIELD
+    PUSH_STR \"main done\"
+    CAP_CALL \"io.print\" 1
+    RET
+.func spin
+loop:
+    YIELD
+    JMP loop";
+    assert_eq!(run_both(src), "main done\n");
+}
+
+#[test]
+fn engines_agree_await_after_task_already_finished() {
+    // The worker finishes during the YIELD; awaiting it afterwards must still
+    // deliver 42 and continue (the scheduler used to block forever here and
+    // end the program silently).
+    let src = "\
+.func main
+    PUSH_STR \"work\"
+    SPAWN 0
+    YIELD
+    AWAIT
+    CAP_CALL \"io.print\" 1
+    PUSH_STR \"after\"
+    CAP_CALL \"io.print\" 1
+    RET
+.func work
+    PUSH 42
+    RET";
+    assert_eq!(run_both(src), "42\nafter\n");
+}
+
+#[test]
+fn engines_agree_spawn_args_and_await() {
+    let src = "\
+.func main
+    PUSH 20
+    PUSH 22
+    PUSH_STR \"add\"
+    SPAWN 2
+    AWAIT
+    CAP_CALL \"io.print\" 1
+    RET
+.func add
+    ADD
+    RET";
+    assert_eq!(run_both(src), "42\n");
+}
+
+#[test]
+fn engines_agree_time_slice_preempts_without_yield() {
+    // No YIELD anywhere: main counts to 200 then prints; the worker must get a
+    // turn when main's 50-instruction slice runs out, on both engines.
+    let src = "\
+.func main
+    PUSH_STR \"worker\"
+    SPAWN 0
+    POP
+    PUSH 0
+    STORE 0
+loop:
+    LOAD 0
+    PUSH 1
+    ADD
+    STORE 0
+    LOAD 0
+    PUSH 200
+    LT
+    JNZ loop
+    PUSH_STR \"main\"
+    CAP_CALL \"io.print\" 1
+    RET
+.func worker
+    PUSH_STR \"worker\"
+    CAP_CALL \"io.print\" 1
+    RET";
+    assert_eq!(run_both(src), "worker\nmain\n");
+}
+
+// Spawning an unknown function used to hand back null, and `await` turned
+// that into a null result (`spawn w(21)` after #192 printed `null`, not `42`).
+#[test]
+fn engines_agree_spawn_of_unknown_function_is_an_error() {
+    let prog = assemble(".func main\n    PUSH_STR \"nope\"\n    SPAWN 0\n    RET", None, None)
+        .expect("assembly");
+    let native = run(&prog, &Quotas::default()).map(|r| r.output).map_err(|e| e.to_string());
+    let portable = crate::portable_vm::PortableVm::new(prog)
+        .run()
+        .map(|r| r.output)
+        .map_err(|e| e.to_string());
+    assert_eq!(portable, native, "portable VM and scheduler disagree");
+    assert_eq!(native, Err("call to unknown function: nope".to_string()));
+}
+
+#[test]
+fn engines_agree_halt_in_a_task_ends_only_that_task() {
+    // The worker HALTs with 42 on its stack: main keeps running, AWAIT gets
+    // 42, and main's own prints after it still happen.
+    let src = "\
+.func main
+    PUSH_STR \"worker\"
+    SPAWN 0
+    AWAIT
+    CAP_CALL \"io.print\" 1
+    PUSH_STR \"main continues\"
+    CAP_CALL \"io.print\" 1
+    RET
+.func worker
+    PUSH_STR \"worker\"
+    CAP_CALL \"io.print\" 1
+    PUSH 42
+    HALT";
+    assert_eq!(run_both(src), "worker\n42\nmain continues\n");
+}
+
+#[test]
+fn halt_in_main_still_ends_the_program_with_tasks_alive() {
+    let src = "\
+.func main
+    PUSH_STR \"spin\"
+    SPAWN 0
+    POP
+    YIELD
+    PUSH_STR \"bye\"
+    CAP_CALL \"io.print\" 1
+    HALT
+.func spin
+loop:
+    YIELD
+    JMP loop";
+    assert_eq!(run_both(src), "bye\n");
+}
+

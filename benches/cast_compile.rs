@@ -177,6 +177,16 @@ fn load_fixtures() -> Vec<Fixture> {
             .unwrap_or_else(|err| panic!("invalid CAST {}: {err}", cast_path.display()));
         let parsed = Parser::parse(&text)
             .unwrap_or_else(|err| panic!("invalid Crush {}: {:?}", text_path.display(), err));
+        // `CAST_FIXTURES_UPDATE=1 cargo bench -p crush-frontend --bench cast_compile -- --test`
+        // rewrites each fixture from the current parser. Run it when the CAST serialization changes on
+        // purpose (e.g. the parser started recording source positions in `meta`), then review the diff.
+        if std::env::var_os("CAST_FIXTURES_UPDATE").is_some() {
+            let pretty = serde_json::to_string_pretty(&parsed).expect("serialize parsed fixture");
+            fs::write(&cast_path, pretty + "\n")
+                .unwrap_or_else(|err| panic!("failed to write {}: {err}", cast_path.display()));
+            eprintln!("cast_compile: rewrote {}", cast_path.display());
+            continue;
+        }
         let parsed_json = serde_json::to_value(&parsed).expect("serialize parsed fixture");
         let cast_value = serde_json::to_value(&cast_program).expect("serialize CAST fixture");
         assert_eq!(

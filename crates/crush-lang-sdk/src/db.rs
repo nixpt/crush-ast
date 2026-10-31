@@ -45,13 +45,19 @@ fn json_value_to_sql(v: &Value) -> rusqlite::types::Value {
         | Value::List(_)
         | Value::Vector(_)
         | Value::Set(_)
-        | Value::Map(_) => {
+        | Value::Map(_)
+        // A struct instance (COSM K1.4) serializes as the map of its fields.
+        | Value::Record(_)
+        | Value::Kind(_) => {
             rusqlite::types::Value::Text(serde_json::to_string(v).unwrap_or_default())
         }
         Value::Error(e) => rusqlite::types::Value::Text(format!("error({})", e)),
         Value::Bytes(b) => rusqlite::types::Value::Blob(b.clone()),
         Value::Handle(h) => rusqlite::types::Value::Text(format!("<handle {}>", h)),
         Value::Foreign(id) => rusqlite::types::Value::Text(format!("<foreign {}>", id)),
+        Value::Func(f) => rusqlite::types::Value::Text(format!("<fn {}>", f.display_name())),
+        // A cell never reaches user code (it is unboxed on load); bind its value.
+        Value::Cell(c) => json_value_to_sql(&c.borrow()),
     }
 }
 

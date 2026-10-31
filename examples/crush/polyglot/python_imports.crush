@@ -1,24 +1,29 @@
 // Polyglot Demo — inline Python imports
 //
-// Python handles imports natively inside @python blocks.
-// Multiple blocks can share state through the runtime scope.
+// Python handles imports natively inside @python blocks. Each block runs in
+// its own fresh interpreter: blocks do NOT share state. To carry a value from
+// a block back into the surrounding Crush scope, declare it on the header with
+// `-> name` — that name becomes a Crush variable at the block's line, and only
+// declared names cross.
 
 fn main() {
-    // Block 1: inline import
-    @python {
+    // Block 1: inline import, explicit output.
+    @python -> result {
         import math
         result = math.sqrt(144)
         print(f"sqrt(144) = {result}")
     }
+    io.print("Crush sees result = ", result)
 
-    // Block 2: another inline import, different module
-    @python {
+    // Block 2: another inline import, different module.
+    @python -> data {
         import json
         data = {"name": "crush", "type": "polyglot"}
         print(f"JSON: {json.dumps(data)}")
     }
+    io.print("Crush sees data = ", data)
 
-    // Block 3: string operations
+    // Block 3: string operations (no output — nothing declared to cross).
     @python {
         import string
         print(f"uppercase letters: {string.ascii_uppercase[:5]}")

@@ -41,6 +41,20 @@ pub enum VmError {
     BadJump(usize),
     #[error("call to unknown function: {0}")]
     UnknownFunction(String),
+    /// `parallel_map` couldn't run an item, or an item failed (#175).
+    #[error("parallel_map: {0}")]
+    Parallel(String),
+    /// `CALL_VALUE` on something that isn't a function value (CRUSH-251).
+    #[error("{0} is not callable: only functions can be called")]
+    NotCallable(&'static str),
+    #[error("function `{function}` takes {expected} argument(s), got {got}")]
+    FuncArity { function: String, expected: usize, got: usize },
+    #[error("call_value_apply expects an array of arguments, got {0}")]
+    ApplyArgsType(&'static str),
+    /// A language-styled printer (`py.print`, `conv.text`) met a function
+    /// value; its format isn't pinned by any corpus yet (CRUSH-251).
+    #[error("printing a function value (`{0}`) isn't supported in this language's print yet (CRUSH-251)")]
+    PrintFunc(String),
     #[error("type error: expected {expected}, got {got}")]
     TypeError {
         expected: &'static str,
@@ -56,6 +70,10 @@ pub enum VmError {
     ArithmeticOverflow,
     #[error("capability not declared in manifest: {0}")]
     CapNotDeclared(String),
+    /// A language construct the runtime can't execute exactly yet (e.g. a
+    /// JS `+` on an object, which needs ToPrimitive). Loud instead of wrong.
+    #[error("not supported: {0}")]
+    Unsupported(String),
     #[error("capability denied by host: {0}")]
     CapDenied(String),
     #[error("unknown capability: {0}")]
@@ -97,6 +115,11 @@ pub enum VmError {
         crush_line: Option<u32>,
         phase: LangFailurePhase,
     },
+    /// A COSM object operation went wrong (COSM K1.4, CRUSH-zorro-43): an
+    /// unknown member, a write to a sealed Kind, an ambiguous trait method, a
+    /// malformed kind table.
+    #[error("{0}")]
+    Cosm(String),
 }
 
 /// Distinguishes the two ways an `EXEC_LANG` polyglot block can fail at
@@ -127,7 +150,82 @@ impl std::fmt::Display for LangFailurePhase {
     }
 }
 
+/// A function used as a value (CRUSH-251): a program function plus the values
+/// its lambda captured. Called with `CALL_VALUE`; made by `MAKE_CLOSURE`.
+#[derive(Debug)]
+pub struct FuncValue {
+    /// The program function to call (`fib`, `__lambda_3_h`).
+    pub name: String,
+    /// The arity callers see (the function's parameters minus `captured`).
+    pub arity: u8,
+    /// Captured values, passed ahead of the call's arguments (empty until
+    /// captures land in CRUSH-251 step 3).
+    pub captured: Vec<Value>,
+}
+
+impl FuncValue {
+    /// The name users see: `h` for `__lambda_3_h`, `lambda` for `__lambda_3`.
+    pub fn display_name(&self) -> &str {
+        match self.name.strip_prefix("__lambda_") {
+            Some(rest) => match rest.split_once('_') {
+                Some((_, hint)) => hint,
+                None => "lambda",
+            },
+            None => &self.name,
+        }
+    }
+}
+
+/// `CALL_VALUE`'s callee check: only a function value is callable, and only
+/// with the arity it was made with.
+pub fn callable(callee: &Value, argc: usize) -> Result<std::rc::Rc<FuncValue>, VmError> {
+    match callee {
+        Value::Func(f) if f.arity as usize == argc => Ok(f.clone()),
+        Value::Func(f) => Err(VmError::FuncArity {
+            function: f.display_name().to_string(),
+            expected: f.arity as usize,
+            got: argc,
+        }),
+        other => Err(VmError::NotCallable(other.type_name())),
+    }
+}
+
+/// `CELL_GET` / `CELL_SET`'s operand check.
+pub fn cell(v: &Value) -> Result<std::rc::Rc<std::cell::RefCell<Value>>, VmError> {
+    match v {
+        Value::Cell(c) => Ok(c.clone()),
+        other => Err(VmError::TypeError { expected: "cell", got: other.type_name() }),
+    }
+}
+
+/// The first function value inside `v` (itself or any element), for the
+/// language-styled printers, which reject them (`VmError::PrintFunc`).
+pub fn find_func(v: &Value) -> Option<std::rc::Rc<FuncValue>> {
+    match v {
+        Value::Func(f) => Some(f.clone()),
+        Value::Array(a) | Value::Vector(a) | Value::Set(a) => a.borrow().iter().find_map(find_func),
+        Value::Tuple(t) => t.iter().find_map(find_func),
+        Value::List(l) => l.borrow().iter().find_map(find_func),
+        Value::Map(m) => m.borrow().values().find_map(find_func),
+        Value::Record(r) => r.fields().iter().find_map(|(_, v)| find_func(v)),
+        _ => None,
+    }
+}
+
+/// `Err(PrintFunc)` if any of `args` holds a function value.
+pub fn reject_func_print(args: &[Value]) -> Result<(), VmError> {
+    match args.iter().find_map(find_func) {
+        Some(f) => Err(VmError::PrintFunc(f.display_name().to_string())),
+        None => Ok(()),
+    }
+}
+
 /// Stack value — the types the CVM1 supports.
+/// The storage behind `Value::Map`. Insertion-ordered, like Python dicts and
+/// JS objects: iteration and printing follow the order keys were added
+/// (`HashMap` gave arbitrary order, which `map_keys` papered over by sorting).
+pub type MapStore = indexmap::IndexMap<String, Value>;
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Null,
@@ -146,7 +244,7 @@ pub enum Value {
     /// Shared set (using Vec for uniqueness since Value doesn't impl Hash)
     Set(std::rc::Rc<std::cell::RefCell<Vec<Value>>>),
     /// Shared string-keyed map (reference semantics via Rc<RefCell<...>>).
-    Map(std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Value>>>),
+    Map(std::rc::Rc<std::cell::RefCell<MapStore>>),
     /// Error value (carries a message string).
     Error(String),
     /// Binary blob data.
@@ -155,6 +253,18 @@ pub enum Value {
     Handle(u64),
     /// Foreign object handle — opaque reference to an external environment object.
     Foreign(u64),
+    /// A function value (CRUSH-251).
+    Func(std::rc::Rc<FuncValue>),
+    /// A box for a variable that closures capture by reference (CRUSH-251):
+    /// the variable's slot holds the cell; reads and writes go through
+    /// `CELL_GET` / `CELL_SET`. Never visible to programs — a cell reaching a
+    /// printer or an operator means an unboxing path was missed.
+    Cell(std::rc::Rc<std::cell::RefCell<Value>>),
+    /// An instance of a Kind (COSM K1.4, CRUSH-zorro-43): a struct value.
+    /// Shared like a map; a `value(…)` Kind is copied by `COPY`.
+    Record(std::rc::Rc<crate::cosm_rt::RecordValue>),
+    /// A Kind used as a value: the receiver of a `bound_cls` method.
+    Kind(std::rc::Rc<crate::cosm_rt::Kind>),
 }
 
 impl PartialEq for Value {
@@ -189,6 +299,15 @@ impl PartialEq for Value {
             (Value::Bytes(a), Value::Bytes(b)) => a == b,
             (Value::Handle(a), Value::Handle(b)) => a == b,
             (Value::Foreign(a), Value::Foreign(b)) => a == b,
+            (Value::Func(a), Value::Func(b)) => {
+                a.name == b.name && a.arity == b.arity && a.captured == b.captured
+            }
+            // Two closures over the same variable share its cell.
+            (Value::Cell(a), Value::Cell(b)) => std::rc::Rc::ptr_eq(a, b),
+            (Value::Record(_), Value::Record(_) | Value::Map(_)) | (Value::Map(_), Value::Record(_)) => {
+                crate::cosm_rt::record_eq(self, other)
+            }
+            (Value::Kind(a), Value::Kind(b)) => a.name() == b.name(),
             _ => false,
         }
     }
@@ -212,6 +331,10 @@ impl Value {
             Value::Bytes(_) => "bytes",
             Value::Handle(_) => "handle",
             Value::Foreign(_) => "foreign",
+            Value::Func(_) => "function",
+            Value::Cell(_) => "cell",
+            Value::Record(_) => "record",
+            Value::Kind(_) => "kind",
         }
     }
 
@@ -232,6 +355,9 @@ impl Value {
             Value::Bytes(b) => !b.is_empty(),
             Value::Handle(_) => true,
             Value::Foreign(_) => true,
+            Value::Func(_) => true,
+            Value::Cell(_) => true,
+            Value::Record(_) | Value::Kind(_) => true,
         }
     }
 
@@ -323,6 +449,14 @@ impl std::fmt::Display for Value {
             Value::Bytes(b) => write!(f, "<{} bytes>", b.len()),
             Value::Handle(id) => write!(f, "<handle {id}>"),
             Value::Foreign(id) => write!(f, "<foreign {id}>"),
+            Value::Func(func) => write!(f, "<fn {}>", func.display_name()),
+            Value::Cell(_) => write!(f, "<cell>"),
+            // Crush's struct print: the map the struct used to be.
+            Value::Record(r) => {
+                let inner: Vec<String> = r.fields().iter().map(|(k, v)| format!("{k}: {v}")).collect();
+                write!(f, "{{{}}}", inner.join(", "))
+            }
+            Value::Kind(k) => write!(f, "<kind {}>", k.name()),
         }
     }
 }
@@ -413,6 +547,19 @@ impl serde::Serialize for Value {
             Value::Foreign(id) => {
                 serializer.serialize_str(&format!("<foreign {id}>"))
             }
+            Value::Func(func) => {
+                serializer.serialize_str(&format!("<fn {}>", func.display_name()))
+            }
+            Value::Cell(_) => serializer.serialize_str("<cell>"),
+            Value::Record(r) => {
+                let fields = r.fields();
+                let mut map = serializer.serialize_map(Some(fields.len()))?;
+                for (k, v) in &fields {
+                    map.serialize_entry(k, v)?;
+                }
+                map.end()
+            }
+            Value::Kind(k) => serializer.serialize_str(&format!("<kind {}>", k.name())),
         }
     }
 }
@@ -593,7 +740,7 @@ impl<'de> serde::Deserialize<'de> for Value {
                 self,
                 mut map: A,
             ) -> Result<Self::Value, A::Error> {
-                let mut out = std::collections::HashMap::new();
+                let mut out = MapStore::new(); // document key order
                 while let Some((key, value)) = map.next_entry::<String, Value>()? {
                     out.insert(key, value);
                 }
@@ -630,6 +777,8 @@ pub struct GreenThread {
     pub return_value: Option<Value>,
     pub out_parts: Vec<String>,
     pub out_len: usize,
+    /// Open `lang.capture_begin`s of inline-lowered polyglot blocks (#312).
+    pub captures: Vec<crate::block_capture::OutputCapture>,
 }
 
 impl GreenThread {
@@ -637,7 +786,7 @@ impl GreenThread {
         Self {
             ip,
             stack: Vec::new(),
-            call_stack: vec![Frame { return_ip: None, memory: HashMap::new() }],
+            call_stack: vec![Frame { return_ip: None, memory: HashMap::new(), on_ret: RetValue::Keep }],
             try_stack: Vec::new(),
             steps: 0,
             done: false,
@@ -646,6 +795,7 @@ impl GreenThread {
             return_value: None,
             out_parts: Vec::new(),
             out_len: 0,
+            captures: Vec::new(),
         }
     }
 
@@ -654,7 +804,7 @@ impl GreenThread {
         Self {
             ip,
             stack: args,
-            call_stack: vec![Frame { return_ip: None, memory: HashMap::new() }],
+            call_stack: vec![Frame { return_ip: None, memory: HashMap::new(), on_ret: RetValue::Keep }],
             try_stack: Vec::new(),
             steps: 0,
             done: false,
@@ -663,6 +813,7 @@ impl GreenThread {
             return_value: None,
             out_parts: Vec::new(),
             out_len: 0,
+            captures: Vec::new(),
         }
     }
 }
@@ -688,8 +839,9 @@ impl Value {
         Value::Set(std::rc::Rc::new(std::cell::RefCell::new(v)))
     }
 
-    pub fn new_map(m: std::collections::HashMap<String, Value>) -> Self {
-        Value::Map(std::rc::Rc::new(std::cell::RefCell::new(m)))
+    /// A map from any key/value pairs (kept in the order given).
+    pub fn new_map(m: impl IntoIterator<Item = (String, Value)>) -> Self {
+        Value::Map(std::rc::Rc::new(std::cell::RefCell::new(m.into_iter().collect())))
     }
 }
 
@@ -744,11 +896,34 @@ pub struct VmResult {
     pub steps: usize,
     pub halted: bool,
     pub stack: Vec<Value>,
+    /// Value returned by the program's entry function, if it used `return`.
+    /// HALT-based programs and older bytecode without a return value yield `None`.
+    pub return_value: Option<Value>,
 }
 
 pub struct Frame {
     pub return_ip: Option<usize>,
     pub memory: HashMap<u16, Value>,
+    /// What this frame's `RET` does with the callee's return value.
+    /// Ordinary calls keep it (it is the call's result). An accessor
+    /// call — run as an ordinary call on the same stack since the
+    /// CRUSH-285 review — is a member operation wearing a call's
+    /// clothes: a setter's value is dropped, an indexed write's is
+    /// replaced by the record written.
+    pub on_ret: RetValue,
+}
+
+/// What a frame's `RET` does with the callee's return value.
+#[derive(Debug, Clone, Default)]
+pub enum RetValue {
+    /// The value is the operation's result (an ordinary call, a getter).
+    #[default]
+    Keep,
+    /// Discard it (a setter: the write is the result).
+    Drop,
+    /// Discard it and leave this instead (an indexed write leaves the
+    /// record).
+    Replace(Value),
 }
 
 /// Run a program with the built-in portable capability registry only.

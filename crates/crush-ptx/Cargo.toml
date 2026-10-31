@@ -1,6 +1,6 @@
 [package]
 name = "crush-ptx"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "CASM -> PTX (NVIDIA GPU assembly) emission backend for Crush kernel programs"
 license.workspace = true
@@ -11,8 +11,8 @@ keywords = ["crush", "ptx", "gpu", "cuda", "compiler"]
 categories = ["compilers"]
 
 [dependencies]
-casm = { path = "../casm", version = "0.5.0" }
-crush-errors = { path = "../crush-errors", version = "0.5.0" }
+casm = { path = "../casm", version = "0.8.0" }
+crush-errors = { path = "../crush-errors", version = "0.8.0" }
 serde_json = "1.0"
 
 [dev-dependencies]

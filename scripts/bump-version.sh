@@ -111,6 +111,11 @@ rewrite_internal_reqs() {
             line=$0
             if (line ~ /^[[:space:]]*[A-Za-z0-9_-]+[[:space:]]*=[[:space:]]*\{/ && line ~ /path[[:space:]]*=/ && line ~ /version[[:space:]]*=[[:space:]]*"[^"]*"/) {
               name=line; sub(/^[[:space:]]*/,"",name); sub(/[[:space:]]*=.*/,"",name)
+              # A renamed dependency (`alias = { package = "member", ... }`) is keyed by its alias;
+              # match on the package name instead (v0.7.0 missed crush-walker-core-no-tree-sitter).
+              if (match(line, /package[[:space:]]*=[[:space:]]*"[^"]*"/)) {
+                pkg=substr(line, RSTART, RLENGTH); sub(/^package[[:space:]]*=[[:space:]]*"/,"",pkg); sub(/"$/,"",pkg); name=pkg
+              }
               if (name in want) sub(/version[[:space:]]*=[[:space:]]*"[^"]*"/, "version = \"" nextver "\"", line)
             }
             print line
@@ -181,6 +186,24 @@ fi
 
 write_version "$NEXT"
 rewrite_internal_reqs "$NEXT"
+# Guard: no workspace-member dependency may still require the old version — it would fail `cargo package` at
+# publish time, after the tag already exists (v0.7.0: an aliased `package = "crush-walker-core"` entry was missed).
+# Same matching as rewrite_internal_reqs (key, or `package = "..."` for a renamed dep); fail before tagging.
+stale="$(find . -name Cargo.toml -not -path '*/target/*' -not -path './.git/*' -not -path './.jagent/*' -not -path '*/node_modules/*' \
+  | while IFS= read -r f; do
+      awk -v cur="$CUR" -v members="$(workspace_member_names)" -v f="$f" '
+        BEGIN { n=split(members, m, "\n"); for (i=1;i<=n;i++) if (m[i]!="") want[m[i]]=1 }
+        /path[[:space:]]*=/ && $0 ~ ("version[[:space:]]*=[[:space:]]*\"" cur "\"") {
+          name=$0; sub(/^[[:space:]]*/,"",name); sub(/[[:space:]]*=.*/,"",name)
+          if (match($0, /package[[:space:]]*=[[:space:]]*"[^"]*"/)) { pkg=substr($0,RSTART,RLENGTH); sub(/^package[[:space:]]*=[[:space:]]*"/,"",pkg); sub(/"$/,"",pkg); name=pkg }
+          if (name in want) print f ":" FNR ": " $0
+        }' "$f"
+    done)"
+if [ -n "$stale" ]; then
+  log "workspace-member dependencies still require $CUR after the rewrite — refusing to tag v$NEXT:"
+  printf '%s\n' "$stale" >&2
+  exit 1
+fi
 
 if [ -f Cargo.toml ] && command -v cargo >/dev/null 2>&1; then
   log "refreshing Cargo.lock (cargo update --workspace)…"

@@ -53,3 +53,11 @@ closures, `this` and prototypes).
 ## Cross-refs
 
 bozo `BOZO-M7-1`, `BOZO-M7-2`; surfer-browser `SURF-ENGINE-2`.
+
+## Sequencing note (2026-10-15, owner decisions)
+
+**Closures / function values are the first slice, ahead of the rest of this ticket.** Besides bozo's JS object
+model, they now block: Python `lambda` and nested `def` closures (deferred from the Python e2e parity
+push, #184 / CRUSH-zorro-2), JS arrow-function closures, and **#175 `parallel_map`**, whose closure form waits
+for this ticket (decision recorded in `.dejavue/decisions.md`). The owner noted that higher-order functions
+are still needed. Prototypes / `this` / `new` can follow as later slices.

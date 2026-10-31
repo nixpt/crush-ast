@@ -2,10 +2,10 @@
 
 use super::instructions::SymbolTables;
 use super::instructions::{FastInstr, FastOp};
-use super::operations::{compare_op, current_locals_base, is_truthy};
+use super::operations::{current_locals_base, is_truthy};
 use super::arithmetic::{add_rtv, concat_arrays, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_ordered};
 use super::similarity::calculate_similarity;
-use super::types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC};
+use super::types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC, UNASSIGNED_LOCAL};
 use crate::memory::{Arena, Object};
 use crate::value::RuntimeValue;
 use super::Capability;
@@ -70,11 +70,25 @@ pub fn execute_one(
             let base = current_locals_base(call_stack);
             let idx = base + instr.arg as usize;
 
-            // Extend locals if needed
+            // Extend locals if needed. The gap is unassigned, not null
+            // (CRUSH-zorro-55).
             while locals.len() <= idx {
-                locals.push(RuntimeValue::Null);
+                locals.push(UNASSIGNED_LOCAL);
             }
             locals[idx] = val;
+        }
+
+        FastOp::LoadLocalChecked => {
+            let idx = current_locals_base(call_stack) + instr.arg as usize;
+            match locals.get(idx) {
+                Some(val) if *val != UNASSIGNED_LOCAL => stack.push(val.clone()),
+                _ => {
+                    return Err(FastError::ExecutionError(format!(
+                        "load from uninitialised slot {}",
+                        instr.arg
+                    )));
+                }
+            }
         }
 
         // ===== Control flow =====
@@ -241,8 +255,21 @@ pub fn execute_one(
         }
 
         // ===== Comparison =====
-        FastOp::Eq => compare_op(stack, |a, b| a == b, |a, b| a == b)?,
-        FastOp::Ne => compare_op(stack, |a, b| a != b, |a, b| a != b)?,
+        // EQ/NE use the canonical structural equality shared with the JIT
+        // (CRUSH-215): strings/arrays/maps compare by value, not by arena
+        // identity, and `!=` is the exact negation of `==` for every kind.
+        FastOp::Eq => {
+            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let eq = crate::value::runtime_value_eq(&a, &b, arena);
+            stack.push(RuntimeValue::Bool(eq));
+        }
+        FastOp::Ne => {
+            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let eq = crate::value::runtime_value_eq(&a, &b, arena);
+            stack.push(RuntimeValue::Bool(!eq));
+        }
         FastOp::Lt => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
@@ -717,7 +744,10 @@ pub fn execute_one(
             let val = stack.pop().ok_or(FastError::StackUnderflow)?;
             let target = stack.pop().ok_or(FastError::StackUnderflow)?;
             if let RuntimeValue::Ref(ptr) = target {
-                if let Ok(Object::Object { fields, .. }) = arena.get_mut(ptr) {
+                if let Ok(Object::Object { fields, class_name, .. }) = arena.get_mut(ptr) {
+                    // COSM K1.4: an instance of a sealed Kind takes only its
+                    // declared fields, as on the VMs.
+                    crate::fastvm::check_sealed_write(class_name, name).map_err(FastError::ExecutionError)?;
                     fields.insert(name.clone(), val);
                 } else {
                     return Err(FastError::TypeMismatch);
@@ -1239,15 +1269,11 @@ pub fn execute_one(
         }
 
         FastOp::Await => {
-            let event_val = stack.pop().ok_or(FastError::StackUnderflow)?;
-            let event_id = match event_val {
-                RuntimeValue::Ref(p) => match arena.get(p) {
-                    Some(Object::Str(s)) => s.clone(),
-                    _ => return Err(FastError::TypeMismatch),
-                },
-                _ => return Err(FastError::TypeMismatch),
-            };
-            return Ok(Some(FastYield::Request(HostRequest::Await { event_id })));
+            // issue #161/#251: `await` on a non-handle (there is no `spawn` on
+            // FastVM/JIT — that is refused at lowering) leaves the awaited
+            // value in place: `await v` returns `v` (JS semantics), exactly
+            // like the scheduler and portable VM, which never error on a
+            // non-handle `await`.
         }
 
         FastOp::CrossLangCall => {

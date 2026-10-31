@@ -139,8 +139,9 @@ pub enum Token {
     AtIdent(String, SourceLocation),  // @mcp, @cap, @lang, etc
     /// Raw body of `@python { ... }`, `@javascript { ... }`, etc, plus the
     /// optional `@lang[dep1, dep2]` dependency list (CRUSH-20) — empty if
-    /// the block had no bracketed annotation.
-    LangBody(String, SourceLocation, Vec<String>),
+    /// the block had no bracketed annotation — and the optional `-> name` /
+    /// `-> (a, b)` output list (CRUSH-270), empty if no arrow was written.
+    LangBody(String, SourceLocation, Vec<String>, Vec<String>),
 }
 
 impl Token {
@@ -228,7 +229,7 @@ impl Token {
             Token::EOF(_) => "end of input".to_string(),
             Token::Comment(_, _) => "comment".to_string(),
             Token::AtIdent(name, _) => format!("`@{name}`"),
-            Token::LangBody(_, _, _) => "language block body".to_string(),
+            Token::LangBody(_, _, _, _) => "language block body".to_string(),
         }
     }
 }
@@ -595,6 +596,8 @@ impl Lexer {
             "wip", "temporary", "decision",
             // Phase 2b additions — mutation surface
             "invalidates", "must-call-before", "must-call-after",
+            // COSM K1.2 — `@kind(…)` on a struct
+            "kind",
         ];
         if IMPORT_KEYWORDS.contains(&id.as_str()) {
             return Ok(Token::AtIdent(id, at_location));
@@ -635,6 +638,35 @@ impl Lexer {
             Vec::new()
         };
 
+        // Optional `-> name` / `-> (a, b)` output list (CRUSH-270). Only the
+        // raw identifier names are captured here; the SDK's polyglot pass
+        // checks each against the block's own bindings.
+        while let Some(ch) = self.peek() {
+            if ch.is_whitespace() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        let outputs = if self.peek() == Some('-') && self.peek_ahead(1) == Some('>') {
+            self.advance(); // '-'
+            self.advance(); // '>'
+            match self.read_output_list() {
+                Some(outputs) => outputs,
+                None => {
+                    // Malformed output list — restore and bail to a plain
+                    // AtIdent so the normal token stream surfaces an error on
+                    // the stray `-`, same as the malformed-bracket path.
+                    self.pos = saved.0;
+                    self.line = saved.1;
+                    self.col = saved.2;
+                    return Ok(Token::AtIdent(id, at_location));
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
         while let Some(ch) = self.peek() {
             if ch.is_whitespace() {
                 self.advance();
@@ -656,8 +688,81 @@ impl Lexer {
         };
         self.advance(); // consume opening '{'
         let body = self.read_lang_body(brace_loc)?;
-        self.pending = Some(Token::LangBody(body, brace_loc, deps));
+        self.pending = Some(Token::LangBody(body, brace_loc, deps, outputs));
         Ok(Token::AtIdent(id, at_location))
+    }
+
+    /// Read a `-> name` / `-> (a, b)` output list, starting just after the
+    /// arrow has been consumed. Returns `None` on any malformed list (no
+    /// identifier, a stray comma, an unclosed `(`) — the caller restores its
+    /// checkpoint, same convention as `read_dep_list`.
+    fn read_output_list(&mut self) -> Option<Vec<String>> {
+        let mut outputs = Vec::new();
+        while let Some(ch) = self.peek() {
+            if ch.is_whitespace() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if self.peek() == Some('(') {
+            self.advance(); // consume '('
+            loop {
+                while let Some(ch) = self.peek() {
+                    if ch.is_whitespace() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                match self.read_output_ident() {
+                    Some(name) => outputs.push(name),
+                    None => return None,
+                }
+                while let Some(ch) = self.peek() {
+                    if ch.is_whitespace() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                match self.peek() {
+                    Some(',') => {
+                        self.advance();
+                    }
+                    Some(')') => {
+                        self.advance();
+                        return Some(outputs);
+                    }
+                    _ => return None,
+                }
+            }
+        } else {
+            let name = self.read_output_ident()?;
+            outputs.push(name);
+            Some(outputs)
+        }
+    }
+
+    /// Read a bare identifier at the character level (letters/digits/`_`,
+    /// same predicate as `read_identifier`), or `None` if the cursor isn't on
+    /// one. Used by the `->` output-list parser, which runs in raw-body mode
+    /// where the normal token stream isn't available.
+    fn read_output_ident(&mut self) -> Option<String> {
+        let mut name = String::new();
+        while let Some(ch) = self.peek() {
+            if ch.is_alphanumeric() || ch == '_' {
+                name.push(ch);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if name.is_empty() {
+            None
+        } else {
+            Some(name)
+        }
     }
 
     /// Read a `[dep1, dep2, ...]` bracketed dependency list starting at the
@@ -1236,7 +1341,7 @@ mod tests {
             Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })
         );
         match lexer.next_token().unwrap() {
-            Token::LangBody(body, _, deps) => {
+            Token::LangBody(body, _, deps, _) => {
                 assert_eq!(deps, vec!["pypi:six".to_string()]);
                 assert_eq!(body.trim(), "pass");
             }
@@ -1253,7 +1358,7 @@ mod tests {
             Token::AtIdent("javascript".to_string(), SourceLocation { line: 1, col: 1 })
         );
         match lexer.next_token().unwrap() {
-            Token::LangBody(_, _, deps) => {
+            Token::LangBody(_, _, deps, _) => {
                 assert_eq!(deps, vec!["npm:is-number@7".to_string()]);
             }
             other => panic!("expected LangBody, got {other:?}"),
@@ -1271,7 +1376,7 @@ mod tests {
             Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })
         );
         match lexer.next_token().unwrap() {
-            Token::LangBody(_, _, deps) => {
+            Token::LangBody(_, _, deps, _) => {
                 assert_eq!(
                     deps,
                     vec![
@@ -1297,7 +1402,7 @@ mod tests {
             Token::AtIdent("javascript".to_string(), SourceLocation { line: 1, col: 1 })
         );
         match lexer.next_token().unwrap() {
-            Token::LangBody(_, _, deps) => {
+            Token::LangBody(_, _, deps, _) => {
                 assert_eq!(deps, vec!["npm:@types/node".to_string()]);
             }
             other => panic!("expected LangBody, got {other:?}"),
@@ -1314,7 +1419,58 @@ mod tests {
             Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })
         );
         match lexer.next_token().unwrap() {
-            Token::LangBody(_, _, deps) => assert!(deps.is_empty()),
+            Token::LangBody(_, _, deps, _) => assert!(deps.is_empty()),
+            other => panic!("expected LangBody, got {other:?}"),
+        }
+    }
+
+    /// CRUSH-270: a `-> name` output list is captured on the LangBody token.
+    #[test]
+    fn test_lex_lang_block_with_single_output() {
+        let mut lexer = Lexer::new("@python -> total { pass }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(_, _, deps, outputs) => {
+                assert!(deps.is_empty());
+                assert_eq!(outputs, vec!["total".to_string()]);
+            }
+            other => panic!("expected LangBody, got {other:?}"),
+        }
+    }
+
+    /// CRUSH-270: a `-> (a, b)` multi-output list is captured in order.
+    #[test]
+    fn test_lex_lang_block_with_multi_output() {
+        let mut lexer = Lexer::new("@python -> (mean, stdev) { pass }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(_, _, deps, outputs) => {
+                assert!(deps.is_empty());
+                assert_eq!(outputs, vec!["mean".to_string(), "stdev".to_string()]);
+            }
+            other => panic!("expected LangBody, got {other:?}"),
+        }
+    }
+
+    /// CRUSH-270: `->` works alongside a `[deps]` list.
+    #[test]
+    fn test_lex_lang_block_with_deps_and_outputs() {
+        let mut lexer = Lexer::new("@python[pypi:numpy] -> total { pass }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(_, _, deps, outputs) => {
+                assert_eq!(deps, vec!["pypi:numpy".to_string()]);
+                assert_eq!(outputs, vec!["total".to_string()]);
+            }
             other => panic!("expected LangBody, got {other:?}"),
         }
     }

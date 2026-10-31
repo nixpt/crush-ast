@@ -3,6 +3,24 @@
 //! Wire layout: MAGIC(4) | version(1) | manifest_len(2 BE) | manifest_json |
 //!              n_consts(2 BE) | consts[each: len(2 BE) + utf-8] |
 //!              code_len(4 BE) | code
+//!              [ version >= 3: kind_table ]
+//!
+//! The kind table (COSM K1.3, CRUSH-zorro-42) is the program's COSM module —
+//! its `KindDecl`s and `InterfaceDecl`s:
+//!
+//!   kind_table = kt_format(1) | kt_len(4 BE) | kt_bytes
+//!   kt_format 1 = the module's canonical COSM JSON (`CosmModule::to_json`)
+//!
+//! Versioning: the container version says whether the section is present.
+//! [`Program::to_blob`] writes version [`VERSION_KIND_TABLE`] (3) only when
+//! the program has a non-empty kind table; every other program is written
+//! exactly as before, as version [`VERSION_NO_KIND_TABLE`] (2), byte for
+//! byte. Versions 1 and 2 have no kind table and load with `cosm = None`. A
+//! runtime that predates the section rejects a version-3 blob as an
+//! unsupported version, so a kind table is never silently dropped. The
+//! section's own format byte lets its encoding change without another
+//! container bump; an unknown one is an error. Nothing may follow the
+//! section.
 //!
 //! Operand encoding per opcode:
 //!   PUSH      i64  8B signed BE
@@ -12,15 +30,34 @@
 //!   JMP/JZ/JNZ u32 byte offset
 //!   CAP_CALL  u16 const-pool idx + u8 argc
 //!   CALL      u16 const-pool idx (function name)
+//!   MAKE_CLOSURE u16 const-pool idx (function) + u8 arity + u8 captured count
+//!   CALL_VALUE   u16 argc
 //!   NEW_ARRAY u16 element count
+//!   GET_MEMBER/SET_MEMBER/HAS_MEMBER/DEL_MEMBER/IS_KIND/NEW_RECORD u16 const-pool idx
+//!   CALL_MEMBER/CONSTRUCT u16 const-pool idx (member / Kind name) + u8 argc
+//!   GET_SLOT/SET_SLOT u16 slot index
 //!   others    no operand
+//!
+//! The COSM ops (0xC0–0xCA, K1.4, CRUSH-zorro-43) run on the scheduler VM and
+//! the portable VM (see `cosm_rt`). A program that uses them carries a kind
+//! table, and its function table records each function's arity (`arity` in
+//! the manifest), which function values made from members need.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub const MAGIC: &[u8; 4] = b"CVM1";
-pub const VERSION: u8 = 2;
+/// The newest container version this runtime reads (and writes, for a
+/// program with a kind table).
+pub const VERSION: u8 = VERSION_KIND_TABLE;
 pub const MIN_VERSION: u8 = 1;
+/// The version written for a program without a kind table (unchanged since
+/// frame-local slots).
+pub const VERSION_NO_KIND_TABLE: u8 = 2;
+/// The first version with a kind-table section (COSM K1.3, CRUSH-zorro-42).
+pub const VERSION_KIND_TABLE: u8 = 3;
+/// Kind-table encoding: the module's canonical COSM JSON.
+pub const KIND_TABLE_FORMAT_JSON: u8 = 1;
 
 pub const NOP: u8 = 0x00;
 pub const PUSH: u8 = 0x01;
@@ -96,6 +133,21 @@ pub const GET_FIELD: u8 = 0x73;
 pub const SPAWN: u8 = 0x80;
 pub const YIELD: u8 = 0x81;
 pub const AWAIT: u8 = 0x82;
+/// Push a function value (CRUSH-251): pops the captured values, pushes
+/// `Func { function, arity, captured }`.
+pub const MAKE_CLOSURE: u8 = 0x83;
+/// Call a function value: pops the callee (above the args), checks it is a
+/// function of arity `argc`, pushes its captured values, calls it.
+pub const CALL_VALUE: u8 = 0x84;
+/// Box the top of the stack in a fresh cell (a variable closures capture by
+/// reference, CRUSH-251 step 3).
+pub const CELL_NEW: u8 = 0x85;
+/// Pop a cell, push its value.
+pub const CELL_GET: u8 = 0x86;
+/// Pop a cell, then a value; store the value in the cell.
+pub const CELL_SET: u8 = 0x87;
+/// Call a function value with arguments stored in an array (CRUSH-293 D3).
+pub const CALL_VALUE_APPLY: u8 = 0x88;
 pub const AI_QUERY: u8 = 0x90;
 pub const AI_SYNTHESIZE: u8 = 0x91;
 pub const AI_AGENT_DELEGATION: u8 = 0x92;
@@ -141,6 +193,39 @@ pub const STR_ENDS_WITH: u8 = 0xB1;
 pub const STR_TO_UPPER: u8 = 0xB2;
 pub const STR_TO_LOWER: u8 = 0xB3;
 pub const STR_TRIM: u8 = 0xB4;
+
+// COSM K1.4 (CRUSH-zorro-43): the generic member ops (see `cosm_rt`).
+/// Pop an object, push its member (`GET_MEMBER "name"`).
+pub const GET_MEMBER: u8 = 0xC0;
+/// Pop a value, then an object; write the member; push the object back.
+pub const SET_MEMBER: u8 = 0xC1;
+/// Pop an object, push whether it has the member.
+pub const HAS_MEMBER: u8 = 0xC2;
+/// Pop an object, delete the member, push the object back.
+pub const DEL_MEMBER: u8 = 0xC3;
+/// `CALL_MEMBER "name" argc`: the receiver on top of `argc` arguments
+/// (pushed last-first, as for `CALL`); call the method its Kind resolves.
+pub const CALL_MEMBER: u8 = 0xC4;
+/// `CONSTRUCT "Kind" argc`: create an instance from `argc` arguments by the
+/// Kind's `construct` strategy. For a Kind built by a constructor function
+/// the next instruction is a `POP` of that function's return value.
+pub const CONSTRUCT: u8 = 0xC5;
+/// Pop a Record, push the declared field at slot `i`.
+pub const GET_SLOT: u8 = 0xC6;
+/// Pop a value, then a Record; write slot `i`; push the Record back.
+pub const SET_SLOT: u8 = 0xC7;
+/// Pop a value, push whether it is an instance of the Kind (or of one that
+/// has it in its resolution order).
+pub const IS_KIND: u8 = 0xC8;
+/// Pop a value, push a copy if it is an instance of a `value(…)` Kind.
+pub const COPY: u8 = 0xC9;
+/// Push a fresh instance of the Kind (field defaults applied), without
+/// running any constructor: what a struct literal builds before it writes
+/// its fields (`SET_FIELD`s follow).
+pub const NEW_RECORD: u8 = 0xCA;
+/// Push the Kind itself as a value (CRUSH-277 D8): what a class name
+/// evaluates to, the receiver of a static member access.
+pub const LOAD_KIND: u8 = 0xCB;
 
 pub const HALT: u8 = 0xFF;
 
@@ -230,6 +315,11 @@ pub enum OperandKind {
     Cap,   // 2B const-pool idx + 1B argc
     Func,  // 2B const-pool index
     Count, // 2B element count
+    Closure, // 2B const-pool idx (function) + 1B arity + 1B captured count
+    /// A member or Kind name + argc (`CALL_MEMBER`, `CONSTRUCT`): encoded like
+    /// [`OperandKind::Cap`] — 2B const-pool idx + 1B argc — but the name is not
+    /// a capability (COSM K1.4).
+    Member,
 }
 
 impl OperandKind {
@@ -240,7 +330,8 @@ impl OperandKind {
             OperandKind::I64 | OperandKind::F64 => 8,
             OperandKind::Str | OperandKind::Slot | OperandKind::Func | OperandKind::Count => 2,
             OperandKind::Addr => 4,
-            OperandKind::Cap => 3,
+            OperandKind::Cap | OperandKind::Member => 3,
+            OperandKind::Closure => 4,
         }
     }
 }
@@ -263,6 +354,13 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         JMP | JZ | JNZ | ENTER_TRY => Some(OperandKind::Addr),
         CAP_CALL => Some(OperandKind::Cap),
         CALL => Some(OperandKind::Func),
+        MAKE_CLOSURE => Some(OperandKind::Closure),
+        CALL_VALUE => Some(OperandKind::Count),
+        CELL_NEW | CELL_GET | CELL_SET | CALL_VALUE_APPLY => Some(OperandKind::None),
+        GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | IS_KIND | NEW_RECORD | LOAD_KIND => Some(OperandKind::Str),
+        CALL_MEMBER | CONSTRUCT => Some(OperandKind::Member),
+        GET_SLOT | SET_SLOT => Some(OperandKind::Count),
+        COPY => Some(OperandKind::None),
         EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING | DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => Some(OperandKind::Str),
         NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL | VEC_ADD | VEC_DOT | MAT_MUL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
         PICK | ROLL => Some(OperandKind::Count),
@@ -280,6 +378,10 @@ pub fn instruction_size(opcode: u8) -> Option<usize> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionEntry {
     pub entry: usize,
+    /// The function's parameter count. Recorded for programs with a kind
+    /// table (COSM K1.4): a method used as a value (a bound method) needs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arity: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -307,6 +409,15 @@ pub struct Program {
     /// Not serialized in the binary blob — only populated by
     /// `assemble()`.
     pub source_map: Vec<(usize, usize)>,
+    /// Compile-time warnings collected while building this program
+    /// (CRUSH-270's polyglot implicit-output/clobber warnings). Not
+    /// serialized in the binary blob; the embedder (crush-run) surfaces them
+    /// to stderr.
+    pub warnings: Vec<String>,
+    /// The kind table (COSM K1.3, CRUSH-zorro-42): the program's object
+    /// declarations, or `None`. Serialized as the version-3 kind-table
+    /// section when non-empty (see the module docs).
+    pub cosm: Option<crush_cosm::CosmModule>,
 }
 
 impl Program {
@@ -316,6 +427,8 @@ impl Program {
             consts,
             manifest,
             source_map: Vec::new(),
+            warnings: Vec::new(),
+            cosm: None,
         }
     }
 
@@ -330,15 +443,33 @@ impl Program {
             consts,
             manifest,
             source_map,
+            warnings: Vec::new(),
+            cosm: None,
+        }
+    }
+
+    /// The kind table, if non-empty (at least one Kind or interface).
+    pub fn kind_table(&self) -> Option<&crush_cosm::CosmModule> {
+        self.cosm.as_ref().filter(|m| !casm::cosm_is_empty(m))
+    }
+
+    /// `Err(message)` when the kind table declares a Kind that can't run as
+    /// a plain map yet — the rule every engine shares
+    /// ([`casm::cosm_unsupported_reason`], see [`casm::Program::refuse_cosm`]).
+    pub fn refuse_cosm(&self, engine: &str) -> Result<(), String> {
+        match self.cosm.as_ref().and_then(|m| casm::cosm_unsupported_reason(m, engine)) {
+            Some(reason) => Err(reason),
+            None => Ok(()),
         }
     }
 
     pub fn to_blob(&self) -> Vec<u8> {
         let manifest_json = serde_json::to_string(&self.manifest).expect("manifest serialization");
         let mb = manifest_json.as_bytes();
+        let kind_table = self.kind_table().map(crush_cosm::CosmModule::to_json);
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
-        out.push(VERSION);
+        out.push(if kind_table.is_some() { VERSION_KIND_TABLE } else { VERSION_NO_KIND_TABLE });
         out.extend_from_slice(&(mb.len() as u16).to_be_bytes());
         out.extend_from_slice(mb);
         out.extend_from_slice(&(self.consts.len() as u16).to_be_bytes());
@@ -349,6 +480,11 @@ impl Program {
         }
         out.extend_from_slice(&(self.code.len() as u32).to_be_bytes());
         out.extend_from_slice(&self.code);
+        if let Some(json) = kind_table {
+            out.push(KIND_TABLE_FORMAT_JSON);
+            out.extend_from_slice(&(json.len() as u32).to_be_bytes());
+            out.extend_from_slice(json.as_bytes());
+        }
         out
     }
 
@@ -387,11 +523,60 @@ impl Program {
             return Err(crate::Error::Truncated);
         }
         let code = blob[off..off + code_len].to_vec();
+        off += code_len;
+        // Validate the code section at load (CRUSH-285 review #8): every
+        // byte must start an instruction of this format, so an unknown
+        // opcode is refused here — never discovered mid-execution,
+        // where it could desync instruction boundaries (or NOP on a
+        // backend that skips unknown bytes).
+        {
+            let mut pc = 0usize;
+            while pc < code.len() {
+                let size = instruction_size(code[pc])
+                    .ok_or(crate::Error::UnknownOpcode(code[pc], pc))?;
+                pc += size;
+            }
+            if pc != code.len() {
+                return Err(crate::Error::Truncated);
+            }
+        }
+        let cosm = if version >= VERSION_KIND_TABLE {
+            if off >= blob.len() {
+                return Err(crate::Error::Truncated);
+            }
+            let format = blob[off];
+            off += 1;
+            if format != KIND_TABLE_FORMAT_JSON {
+                return Err(crate::Error::BadKindTable(format!(
+                    "unknown kind-table format {format}"
+                )));
+            }
+            let len = rd_u32(blob, &mut off)? as usize;
+            if off + len > blob.len() {
+                return Err(crate::Error::Truncated);
+            }
+            let json = std::str::from_utf8(&blob[off..off + len])
+                .map_err(|e| crate::Error::BadKindTable(e.to_string()))?;
+            let module = crush_cosm::CosmModule::from_json(json)
+                .map_err(|e| crate::Error::BadKindTable(e.to_string()))?;
+            off += len;
+            if off != blob.len() {
+                return Err(crate::Error::BadKindTable(format!(
+                    "{} trailing byte(s) after the kind table",
+                    blob.len() - off
+                )));
+            }
+            Some(module)
+        } else {
+            None
+        };
         Ok(Self {
             code,
             consts,
             manifest,
             source_map: Vec::new(),
+            warnings: Vec::new(),
+            cosm,
         })
     }
 }

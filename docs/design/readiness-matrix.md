@@ -55,7 +55,7 @@
 | Capability | Status | Tests | Notes |
 |------------|--------|-------|-------|
 | Polyglot AOT (multi-language → one .so) | 🟡 | 1 | Programs.merge() works in SDK test. No CLI flag for multi-file input. |
-| C↔Crush FFI (`__crush_ffi__`) | 🟢 | 2 | Plugin auto-build. Gateway cap registered. |
+| C↔Crush FFI (`__crush_ffi__`) | 🟡 | 2 | Standalone `crush-vm run` does not grant the arbitrary-path gateway. Rust hosts may load a trusted plugin explicitly; Cargo plugin builds and guest-selected paths are not supported. |
 | Python→AOT C | 🟢 | 8 | Full pipeline working. Slices/in/is lowered. |
 | JS→AOT C | 🟢 | 11 | Full pipeline. TS stripping. Subscript fixed. |
 | Rust→AOT C | �� | 11 | Full pipeline. Field access + closures + array literals. |

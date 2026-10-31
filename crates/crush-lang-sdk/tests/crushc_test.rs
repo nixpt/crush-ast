@@ -234,3 +234,36 @@ fn crushc_compiled_program_runs() {
     let stdout = String::from_utf8_lossy(&run.stdout);
     assert!(stdout.contains("compiled"), "stdout: {stdout}");
 }
+
+// #260: `Acc(10)` of a `@kind(construct: ctor(init))` Kind is a constructor
+// call. crushc used to type-check without the constructors declared and
+// reject it ("Undefined function: Acc") while crush-run ran it; with and
+// without -O it now compiles, and the program runs like `crush-run x.crush`.
+#[test]
+fn crushc_compiles_a_constructed_kind_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("ctor.crush");
+    std::fs::write(
+        &src,
+        "@kind(construct: ctor(init))\nstruct Acc { total: Int }\nimpl Acc {\n    fn init(self, start) { self.total = start }\n    fn add(self, n) {\n        self.total = self.total + n\n        return self\n    }\n}\nlet a = Acc(10)\na.add(5)\nprint(a.total)\n",
+    )
+    .unwrap();
+    for opt in [false, true] {
+        let out = dir.path().join(format!("ctor{opt}.cvm1"));
+        let mut args = vec!["-o", out.to_str().unwrap(), src.to_str().unwrap()];
+        if opt {
+            args.insert(0, "-O");
+        }
+        let compile = run_crushc(&args);
+        assert!(compile.status.success(), "-O={opt}: {}", String::from_utf8_lossy(&compile.stderr));
+        let run = Command::new(crush_run_bin())
+            .args(["run", out.to_str().unwrap()])
+            .output()
+            .expect("failed to execute crush-run");
+        assert!(run.status.success(), "-O={opt}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "15", "-O={opt}");
+    }
+    let casm = run_crushc(&["-O", "--emit", "casm", src.to_str().unwrap()]);
+    assert!(casm.status.success(), "{}", String::from_utf8_lossy(&casm.stderr));
+    assert!(String::from_utf8_lossy(&casm.stdout).contains("CONSTRUCT \"Acc\" 1"));
+}

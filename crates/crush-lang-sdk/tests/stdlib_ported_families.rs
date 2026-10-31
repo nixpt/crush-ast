@@ -89,7 +89,8 @@ fn results_records_text_time_env() {
     );
     assert_eq!(
         out,
-        "true\n42\nfalse\n[al, cy]\n[a, b]\nfalse\n[a, b]\n25/09/2026\ntrue\n"
+        // collections.keys follows insertion order: merge keeps `b` first.
+        "true\n42\nfalse\n[al, cy]\n[b, a]\nfalse\n[a, b]\n25/09/2026\ntrue\n"
     );
 }
 
@@ -125,7 +126,8 @@ fn file_text_tools_are_fs_gated_and_sandboxed() {
         fs(),
     )
     .expect("runs");
-    assert_eq!(out, "[b 1, a 2]\n[b 3]\n[a, b]\n[12, 3, 6]\n2\n");
+    // text.wc values come in insertion order: lines, words, chars.
+    assert_eq!(out, "[b 1, a 2]\n[b 3]\n[a, b]\n[3, 6, 12]\n2\n");
 
     // without --fs the file tools do not exist, even with the stdlib on
     let err = run(

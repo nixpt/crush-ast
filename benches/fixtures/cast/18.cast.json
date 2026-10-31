@@ -15,23 +15,38 @@
               {
                 "type": "IntLiteral",
                 "value": 1,
-                "meta": {}
+                "meta": {
+                  "line": 2,
+                  "col": 15
+                }
               },
               {
                 "type": "IntLiteral",
                 "value": 2,
-                "meta": {}
+                "meta": {
+                  "col": 18,
+                  "line": 2
+                }
               },
               {
                 "type": "IntLiteral",
                 "value": 3,
-                "meta": {}
+                "meta": {
+                  "col": 21,
+                  "line": 2
+                }
               }
             ],
-            "meta": {}
+            "meta": {
+              "col": 22,
+              "line": 2
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "line": 2,
+            "col": 22
+          }
         },
         {
           "type": "VarDecl",
@@ -42,23 +57,38 @@
               {
                 "type": "IntLiteral",
                 "value": 4,
-                "meta": {}
+                "meta": {
+                  "col": 15,
+                  "line": 3
+                }
               },
               {
                 "type": "IntLiteral",
                 "value": 5,
-                "meta": {}
+                "meta": {
+                  "col": 18,
+                  "line": 3
+                }
               },
               {
                 "type": "IntLiteral",
                 "value": 6,
-                "meta": {}
+                "meta": {
+                  "line": 3,
+                  "col": 21
+                }
               }
             ],
-            "meta": {}
+            "meta": {
+              "col": 22,
+              "line": 3
+            }
           },
           "type_hint": "Any",
-          "meta": {}
+          "meta": {
+            "line": 3,
+            "col": 22
+          }
         },
         {
           "type": "For",
@@ -66,7 +96,10 @@
           "iterable": {
             "type": "Var",
             "name": "a",
-            "meta": {}
+            "meta": {
+              "col": 16,
+              "line": 4
+            }
           },
           "body": [
             {
@@ -74,12 +107,21 @@
               "expr": {
                 "type": "Var",
                 "name": "x",
-                "meta": {}
+                "meta": {
+                  "line": 5,
+                  "col": 10
+                }
               },
-              "meta": {}
+              "meta": {
+                "line": 5,
+                "col": 10
+              }
             }
           ],
-          "meta": {}
+          "meta": {
+            "col": 6,
+            "line": 6
+          }
         },
         {
           "type": "For",
@@ -87,7 +129,10 @@
           "iterable": {
             "type": "Var",
             "name": "b",
-            "meta": {}
+            "meta": {
+              "line": 7,
+              "col": 16
+            }
           },
           "body": [
             {
@@ -95,25 +140,42 @@
               "expr": {
                 "type": "Var",
                 "name": "y",
-                "meta": {}
+                "meta": {
+                  "col": 10,
+                  "line": 8
+                }
               },
-              "meta": {}
+              "meta": {
+                "line": 8,
+                "col": 10
+              }
             }
           ],
-          "meta": {}
+          "meta": {
+            "col": 6,
+            "line": 9
+          }
         },
         {
           "type": "Return",
           "value": {
             "type": "IntLiteral",
             "value": 0,
-            "meta": {}
+            "meta": {
+              "col": 13,
+              "line": 10
+            }
           },
-          "meta": {}
+          "meta": {
+            "line": 10,
+            "col": 13
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "line": 1,
+        "col": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }

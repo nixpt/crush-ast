@@ -4,31 +4,72 @@
 //!
 //! # Supported subset
 //!
-//! Free functions (block tail expressions are the return value), `let` /
+//! Synchronous free functions (block tail expressions are the return value), `let` /
 //! `let mut`, `if`/`else` (also as expressions), `while`, `loop`, `for` over
-//! `a..b` / `a..=b` / vectors, `break`/`continue`, `return`, `match` with literal,
-//! binding, `_` and `|` patterns, `vec![..]`, indexing, closures, `+= -= *= /= %=`,
-//! `println!`/`print!`/`eprintln!`/`format!` with `{}`, `{:?}`, `{0}`, `{name}`,
-//! and the common `str`/`Vec`/numeric methods (`len`, `push`, `pop`, `contains`,
-//! `to_uppercase`, `abs`, `sqrt`, …). `tests/rustc_corpus/` is checked against
-//! real `rustc` output.
+//! `a..b` / `a..=b` / fresh sequences or direct `.iter()`, `break`/`continue`, `return`, `match` with literal,
+//! binding, `_` and `|` patterns, `vec![..]`, indexing, synchronous closures
+//! with identifier parameters (including typed parameters and `_` wildcards),
+//! `+= -= *= /= %=`,
+//! `println!`/`format!` with Display `{}`, `{0}`, `{name}` and proven typed
+//! Debug `{:?}`/`{name:?}` through the opt-in shared formatter,
+//! and proven `str`/`Vec` methods (`len`, `push`, `to_uppercase`, …).
+//! Proven numeric methods use width-aware integer / f64 shared kernels, and
+//! prefix/suffix predicates use Rust Bool adapters (CRUSH-xps-13). Written,
+//! unknown and closure numeric flows require further source proofs.
+//! The SDK's `rustc_corpus` integration suite
+//! compares this subset against real `rustc` output.
 //!
 //! Not supported — rejected with an error rather than mistranslated: structs,
 //! enums, traits and `impl` blocks, match guards and range patterns, format
-//! width/precision (`{:.2}`, `{:>5}`), `vec![x; n]`, iterator chains (`.map`,
-//! `.sum`, …). Known difference: `print!` ends the line (there is no
-//! newline-free print capability yet).
+//! width/precision (`{:.2}`, `{:>5}`), `vec![x; n]`, move/async closures,
+//! destructured closure parameters, iterator chains (`.map`,
+//! `.sum`, …), `use` declarations and qualified module/crate paths. Rust crate
+//! APIs need an explicit Crush capability/plugin; a Rust `use` is not treated
+//! as a runtime import. `print!`, `eprint!`, and `eprintln!` are refused until
+//! their newline/channel routing is faithful. Potentially effectful format
+//! arguments need one use each, in source order, without inline captures.
+//! Multi-statement blocks are supported as function/closure bodies and
+//! statement blocks. In a value position (e.g. `let x = { ... }` or branches
+//! of an assigned `if` expression), only empty blocks or a single tail
+//! expression are supported; other forms are rejected with a source location.
+//!
+//! Closures can read implicit scalar captures through shared cells. Rust
+//! lexical bindings have distinct storage identities (CRUSH-xps-6). Rust
+//! flat sequence clones create fresh values (CRUSH-xps-7). Implicit owned binding
+//! transfers, nested/unknown clones, owned captures, escaping borrowed views, and
+//! `pop`/`unwrap` are rejected with source locations. Fresh values and supported
+//! clones can enter known owned parameters; String clones and local `+=` retain
+//! value semantics. This is not a Rust type/borrow checker or full closure-trait
+//! implementation. Nested functions are rejected until
+//! block-local item resolution is implemented.
+//! Integer casts use canonical binding/range proofs and one shared CASM expansion.
+//! Small u64 values and portable bounded usize conversions are supported;
+//! unproven producers, mutable lengths and closure casts are refused.
+//! Numeric suffixes and annotations are retained as source hints; this does not
+//! implement type inference or typed arithmetic. Runtime integer overflow
+//! still has a known silent divergence tracked by CRUSH-xps-8. Typed literal
+//! Debug and proven immutable dynamic values use exact typed formatting.
+//! Unknown producers, closures, loops and unsupported call/control contracts
+//! are refused. Dynamic Debug requires the host's explicit stdlib registration;
+//! Rust AOT embeds the same kernel and C refuses until its bridge is available.
 
 pub mod lower_expr;
 pub mod lower_stmt;
 pub mod parser;
-pub mod sdk;
+mod bindings;
+mod formatting;
+mod diagnostics;
+mod numeric;
+mod methods;
+mod values;
 
 use std::any::Any;
 use std::collections::HashMap;
 
 use crush_cast::{Function, Program, Statement};
-use crush_walker_core::{FeatureReport, Frontend, LowerCtx};
+use crush_walker_core_no_tree_sitter::{FeatureReport, Frontend, LowerCtx};
+use quote::ToTokens;
+use syn::spanned::Spanned;
 
 pub struct RustFrontend;
 
@@ -78,7 +119,7 @@ impl Frontend for RustFrontend {
 
 /// Parse Rust source and lower to CAST (convenience wrapper).
 pub fn rust_to_cast(source: &str) -> anyhow::Result<Program> {
-    let (_, program) = crush_walker_core::frontend_pipeline(&RustFrontend, source)?;
+    let (_, program) = crush_walker_core_no_tree_sitter::frontend_pipeline(&RustFrontend, source)?;
     Ok(program)
 }
 
@@ -90,9 +131,14 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
     for item in &file.items {
         match item {
             syn::Item::Fn(_) => {
+                if let syn::Item::Fn(f) = item {
+                    anyhow::ensure!(f.sig.ident != numeric::CAST,
+                        "unsupported Rust function at {}:{}: reserved Rust numeric compiler helper (CRUSH-xps-8)",
+                        f.sig.ident.span().start().line, f.sig.ident.span().start().column + 1);
+                }
                 let lowered = lower_stmt::lower_stmt(&syn::Stmt::Item(item.clone()), &ctx)?;
                 if let Statement::FunctionDef {
-                    name, params, body, ..
+                    name, params, body, meta
                 } = lowered
                 {
                     functions.insert(
@@ -100,16 +146,20 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
                         Function {
                             params,
                             body,
-                            meta: HashMap::new(),
+                            meta,
                             ..Default::default()
                         },
                     );
                 }
             }
-            _ => {
-                let stmt = syn::Stmt::Item(item.clone());
-                main_body.push(lower_stmt::lower_stmt(&stmt, &ctx)?);
-            }
+            // A `use`, `struct`, or other Rust item cannot be represented by
+            // this expression-only CAST surface. Do not turn it into a null
+            // statement: that made imported crate calls look as if they had
+            // been accepted, then fail later or silently do nothing.
+            _ => anyhow::bail!(
+                "unsupported Rust top-level item `{}` at {}:{}; Rust imports and crate APIs need an explicit Crush capability/plugin; type declarations need COSM walker support",
+                item.to_token_stream(), item.span().start().line, item.span().start().column + 1
+            ),
         }
     }
 
@@ -125,14 +175,19 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
         );
     }
 
-    Ok(Program {
+    let mut program = Program {
         cast_version: "0.2".to_string(),
         entry: "main".to_string(),
         lang: Some("rust".to_string()),
         functions,
         ai_meta: None,
         ..Default::default()
-    })
+    };
+    bindings::resolve(&mut program, source)?;
+    numeric::check(&mut program)?;
+    formatting::resolve(&mut program)?;
+    values::check(&mut program)?;
+    Ok(program)
 }
 
 #[cfg(test)]
@@ -148,11 +203,11 @@ mod tests {
     //! `println!` is covered by `tests/rustc_corpus_test.rs` (CRUSH-197).
 
     use super::{rust_to_cast, RustFrontend};
-    use crush_walker_core::Frontend;
+        use crush_walker_core_no_tree_sitter::Frontend;
 
     /// Mirror of python's `test_analyze` helper: frontend.parse ->
     /// frontend.analyze on raw rust source.
-    fn test_analyze(source: &str) -> crush_walker_core::FeatureReport {
+    fn test_analyze(source: &str) -> crush_walker_core_no_tree_sitter::FeatureReport {
         let frontend = RustFrontend;
         let ast = frontend.parse(source).unwrap();
         frontend.analyze(&ast).unwrap()
@@ -221,7 +276,7 @@ mod tests {
     #[test]
     fn rust_adapter_registers_in_unified_registry() {
         use super::RustAdapter;
-        use crush_walker_core::{AdapterRegistry, LanguageAdapter};
+        use crush_walker_core_no_tree_sitter::AdapterRegistry;
         let mut registry = AdapterRegistry::new();
         registry.register(Box::new(RustAdapter));
         let langs = registry.languages();
@@ -262,7 +317,7 @@ mod tests {
 
 // ── Adapter ──────────────────────────────────────────────────────────────────
 
-use crush_walker_core::impl_adapter_from_frontend;
+use crush_walker_core_no_tree_sitter::impl_adapter_from_frontend;
 
 impl_adapter_from_frontend!(
     RustAdapter,

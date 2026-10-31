@@ -33,15 +33,100 @@ pub fn format_py_print_line(parts: &[impl AsRef<str>]) -> String {
     line
 }
 
+/// `print(*values, sep=sep, end=end)` (CRUSH-zorro-38): `None` (crush null)
+/// means CPython's defaults, `" "` and `"\n"`.
+pub fn format_py_print_sep_end(args: &[crate::vm::Value]) -> String {
+    let text = |v: Option<&crate::vm::Value>, default: &str| match v {
+        None | Some(crate::vm::Value::Null) => default.to_string(),
+        Some(v) => py_value_to_text(v),
+    };
+    let (sep, end) = (text(args.first(), " "), text(args.get(1), "\n"));
+    let parts: Vec<String> = args.iter().skip(2).map(py_value_to_text).collect();
+    let mut line = parts.join(&sep);
+    line.push_str(&end);
+    line
+}
+
 /// Render a [`crate::vm::Value`] the way CPython's `print` would for bool/None,
 /// otherwise the canonical Crush `Display` / `as_text` form.
 pub fn py_value_to_text(v: &crate::vm::Value) -> String {
+    // `print(x)` is `str(x)`: a top-level string prints raw; everything else
+    // (and every element inside a container) is `repr`.
     match v {
-        crate::vm::Value::Bool(true) => "True".to_string(),
-        crate::vm::Value::Bool(false) => "False".to_string(),
-        crate::vm::Value::Null => "None".to_string(),
+        crate::vm::Value::Str(s) => s.clone(),
+        other => py_repr(other),
+    }
+}
+
+/// CPython `repr()` for a crush value: `True`/`False`/`None`, quoted strings,
+/// `[...]` lists, `(x,)` tuples, `{'k': v}` dicts (insertion order), and
+/// floats with Python's switch to exponent notation.
+pub fn py_repr(v: &crate::vm::Value) -> String {
+    use crate::vm::Value;
+    let seq = |items: &mut dyn Iterator<Item = String>| items.collect::<Vec<_>>().join(", ");
+    match v {
+        Value::Bool(true) => "True".to_string(),
+        Value::Bool(false) => "False".to_string(),
+        Value::Null => "None".to_string(),
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => py_float(*f),
+        Value::Str(s) => py_str_repr(s),
+        Value::Array(a) | Value::Vector(a) => format!("[{}]", seq(&mut a.borrow().iter().map(py_repr))),
+        Value::List(l) => format!("[{}]", seq(&mut l.borrow().iter().map(py_repr))),
+        Value::Tuple(t) if t.len() == 1 => format!("({},)", py_repr(&t[0])),
+        Value::Tuple(t) => format!("({})", seq(&mut t.iter().map(py_repr))),
+        Value::Set(s) if s.borrow().is_empty() => "set()".to_string(),
+        Value::Set(s) => format!("{{{}}}", seq(&mut s.borrow().iter().map(py_repr))),
+        Value::Map(m) => format!(
+            "{{{}}}",
+            seq(&mut m.borrow().iter().map(|(k, v)| format!("{}: {}", py_str_repr(k), py_repr(v))))
+        ),
         other => other.as_text(),
     }
+}
+
+/// CPython float repr: shortest round-trip digits, `.0` on integral values,
+/// exponent form (`1e+21`, `1.5e-07`) outside 1e-4 <= |f| < 1e16.
+pub fn py_float(f: f64) -> String {
+    if f.is_nan() {
+        return "nan".to_string();
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { "inf" } else { "-inf" }.to_string();
+    }
+    let a = f.abs();
+    if a == 0.0 || (1e-4..1e16).contains(&a) {
+        return if f.fract() == 0.0 { format!("{f:.1}") } else { format!("{f}") };
+    }
+    // Rust `{:e}` gives the shortest digits as `1.5e-7`; CPython writes `1.5e-07`.
+    let e = format!("{f:e}");
+    let (mant, exp) = e.split_once('e').expect("exponent form");
+    let exp: i32 = exp.parse().expect("exponent");
+    format!("{mant}e{}{:02}", if exp < 0 { '-' } else { '+' }, exp.abs())
+}
+
+/// CPython `repr()` of a string: single quotes unless the text contains a
+/// single quote and no double quote.
+pub fn py_str_repr(s: &str) -> String {
+    let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push(q);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == q => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push(q);
+    out
 }
 
 /// Render a [`RuntimeValue`] the same way `io.print` expects for its argument.
@@ -53,9 +138,12 @@ pub fn py_value_to_text(v: &crate::vm::Value) -> String {
 /// - `Float` → bare `f64` Display, with a forced `.0` suffix when the value
 ///   is finite and has no fractional part (so `3.0` prints as `3.0`, not `3`)
 /// - `String` → the raw string content (no quotes)
-/// - `Ref` → the arena reference index as `"@<idx>"`, or the referenced
-///   string if the arena contains `Object::Str`.
+/// - `Ref` → the arena object rendered the way the VM's `Display` renders the
+///   equivalent `Value`: strings raw, arrays `[a, b]`, tuples `(a, b)`, maps and
+///   structs `{k: v, …}`, `Vector[…]` / `Set{…}` / `List[…]`, bytes and handles
+///   tagged. A dead slot still falls back to `"@<idx>"`.
 pub(crate) fn runtime_value_to_text(v: &RuntimeValue, arena: &crate::memory::Arena) -> String {
+    use crate::memory::Object;
     match v {
         RuntimeValue::Null => "null".to_string(),
         RuntimeValue::Bool(b) => b.to_string(),
@@ -68,14 +156,74 @@ pub(crate) fn runtime_value_to_text(v: &RuntimeValue, arena: &crate::memory::Are
             }
         }
         RuntimeValue::String(s) => s.clone(),
-        RuntimeValue::Ref(idx) => {
-            if let Some(crate::memory::Object::Str(s)) = arena.get(*idx) {
-                s.clone()
-            } else {
-                format!("@{idx}")
+        // Resolve the arena reference and render the heap value the way the
+        // VM's `impl Display for Value` does (CRUSH-294 / GitHub #267). Before
+        // this, every non-string ref printed as `@N` — silently wrong output
+        // for arrays, maps and structs on FastVM and the JIT.
+        RuntimeValue::Ref(idx) => match arena.get(*idx) {
+            Some(Object::Str(s)) => s.clone(),
+            Some(Object::Array(items)) => seq_text("[", "]", items, arena),
+            Some(Object::Tuple(items)) => seq_text("(", ")", items, arena),
+            Some(Object::Vector(items)) => seq_text("Vector[", "]", items, arena),
+            Some(Object::Set(items)) => seq_text("Set{", "}", items, arena),
+            Some(Object::List(items)) => {
+                let inner: Vec<String> = items
+                    .iter()
+                    .map(|v| runtime_value_to_text(v, arena))
+                    .collect();
+                format!("List[{}]", inner.join(", "))
             }
-        }
+            Some(Object::Map(map)) => {
+                let inner: Vec<String> = map
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {}", runtime_value_to_text(v, arena)))
+                    .collect();
+                format!("{{{}}}", inner.join(", "))
+            }
+            // A struct/object value prints as the map it is (the VM's
+            // `Value::Record` / `Value::Map` render `{k: v, ...}`).
+            Some(Object::Object { fields, .. }) => {
+                let inner: Vec<String> = fields
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {}", runtime_value_to_text(v, arena)))
+                    .collect();
+                format!("{{{}}}", inner.join(", "))
+            }
+            Some(Object::Bytes(b)) => format!("<{} bytes>", b.len()),
+            Some(Object::Buffer(b)) => format!("<{} bytes>", b.len()),
+            Some(Object::Handle(id)) => format!("<handle {id}>"),
+            Some(Object::InterfaceHandle(id)) => format!("<handle {id}>"),
+            Some(Object::Tagged { tag, value }) => {
+                format!("{tag}({})", runtime_value_to_text(value, arena))
+            }
+            Some(Object::Result { ok, value }) => {
+                let inner = runtime_value_to_text(value, arena);
+                if *ok {
+                    format!("ok({inner})")
+                } else {
+                    format!("err({inner})")
+                }
+            }
+            // A dead slot is not reachable from a live program; keep the loud
+            // marker rather than fabricating a value.
+            None => format!("@{idx}"),
+        },
     }
+}
+
+/// Render a sequence-like heap value (`[...]`, `(...)`, `Vector[...]`, …) with
+/// the same element rendering as the VM's `Display`.
+fn seq_text(
+    open: &str,
+    close: &str,
+    items: &[RuntimeValue],
+    arena: &crate::memory::Arena,
+) -> String {
+    let inner: Vec<String> = items
+        .iter()
+        .map(|v| runtime_value_to_text(v, arena))
+        .collect();
+    format!("{open}{}{close}", inner.join(", "))
 }
 
 #[cfg(feature = "native-plugins")]
@@ -153,6 +301,25 @@ mod tests {
     }
 
     #[test]
+    fn py_repr_matches_cpython() {
+        use crate::vm::Value;
+        let list = Value::new_array(vec![
+            Value::Str("a".into()), Value::Int(1), Value::Float(2.5), Value::Bool(true), Value::Null,
+            Value::new_array(vec![Value::Str("it's".into())]),
+        ]);
+        // python3 -c "print(['a', 1, 2.5, True, None, [\"it's\"]])"
+        assert_eq!(py_value_to_text(&list), "['a', 1, 2.5, True, None, [\"it's\"]]");
+        let d = Value::new_map(vec![("zeta".to_string(), Value::Int(1)), ("a b".to_string(), Value::Str("x\ny".into()))]);
+        assert_eq!(py_value_to_text(&d), "{'zeta': 1, 'a b': 'x\\ny'}");
+        assert_eq!(py_value_to_text(&Value::Tuple(vec![Value::Int(1)])), "(1,)");
+        assert_eq!(py_value_to_text(&Value::Str("raw".into())), "raw");
+        for (f, want) in [(6.0, "6.0"), (0.1 + 0.2, "0.30000000000000004"), (1e21, "1e+21"), (1.5e-7, "1.5e-07"),
+                          (1e16, "1e+16"), (123456789012345.0, "123456789012345.0"), (0.0001, "0.0001"), (-0.0, "-0.0")] {
+            assert_eq!(py_float(f), want, "{f}");
+        }
+    }
+
+    #[test]
     fn format_py_print_line_joins_with_space() {
         assert_eq!(format_py_print_line(&["1".to_string(), "2".to_string(), "a".to_string()]), "1 2 a\n");
         assert_eq!(format_py_print_line(&[] as &[String]), "\n");
@@ -165,6 +332,47 @@ mod tests {
         assert_eq!(runtime_value_to_text(&RuntimeValue::Bool(true), &arena), "true");
         assert_eq!(runtime_value_to_text(&RuntimeValue::Int(42), &arena), "42");
         assert_eq!(runtime_value_to_text(&RuntimeValue::String("hi".to_string()), &arena), "hi");
+    }
+
+    // CRUSH-294 / GitHub #267: heap values render their value, not `@N`.
+    #[test]
+    fn runtime_value_to_text_renders_heap_values_like_the_vm() {
+        use crate::memory::{Arena, Object};
+        let mut arena = Arena::new();
+        let ints = |a: &mut Arena, xs: &[i64]| {
+            RuntimeValue::Ref(a.alloc(Object::Array(
+                xs.iter().map(|i| RuntimeValue::Int(*i)).collect(),
+            )))
+        };
+        let one = ints(&mut arena, &[1]);
+        let two_three = ints(&mut arena, &[2, 3]);
+        let nested = RuntimeValue::Ref(arena.alloc(Object::Array(vec![one, two_three])));
+        assert_eq!(runtime_value_to_text(&nested, &arena), "[[1], [2, 3]]");
+
+        let map = RuntimeValue::Ref(
+            arena.alloc(Object::Map(
+                [("a".to_string(), RuntimeValue::Int(1))]
+                    .into_iter()
+                    .collect(),
+            )),
+        );
+        assert_eq!(runtime_value_to_text(&map, &arena), "{a: 1}");
+
+        let obj = RuntimeValue::Ref(
+            arena.alloc(Object::Object {
+                lang: "crush".into(),
+                class_name: "P".into(),
+                fields: [("x".to_string(), RuntimeValue::Int(5))]
+                    .into_iter()
+                    .collect(),
+            }),
+        );
+        assert_eq!(runtime_value_to_text(&obj, &arena), "{x: 5}");
+
+        // A string renders raw (no quotes), including inside a container.
+        let s = RuntimeValue::Ref(arena.alloc(Object::Str("hi".to_string())));
+        let arr_s = RuntimeValue::Ref(arena.alloc(Object::Array(vec![s])));
+        assert_eq!(runtime_value_to_text(&arr_s, &arena), "[hi]");
     }
 
     #[cfg(feature = "native-plugins")]
@@ -211,6 +419,7 @@ mod tests {
                 permissions: vec!["io.print".to_string()],
             },
             lang: None,
+            cosm: None,
         };
 
         #[derive(Debug)]

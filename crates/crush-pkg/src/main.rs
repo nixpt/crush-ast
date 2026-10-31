@@ -55,9 +55,12 @@ pub enum MessageFormat {
 use crush_pkg::builder::PackageBuilder;
 use std::collections::HashSet;
 
-use crush_pkg::manifest::Manifest;
+use crush_pkg::manifest::{CapsuleType, Manifest};
 use crush_pkg::packer::{pack, unpack};
-use crush_pkg::runners::{ExecutionResult, get_runner_for_payload_with};
+use crush_pkg::runners::{
+    ExecutionResult, PluginGrant, capsule_type_for_format, detect_payload_format,
+    get_runner_with,
+};
 use crush_pkg::signer::{generate_keys, sign_package, verify_package};
 
 fn find_manifest() -> anyhow::Result<PathBuf> {
@@ -141,22 +144,84 @@ struct GrantArgs {
     /// Grant the clock (time.now*, time.elapsed, time.sleep, async.sleep).
     #[arg(long)]
     time: bool,
+    /// Load this host-selected native plugin for a Crush package.
+    #[arg(long, value_name = "LIBRARY")]
+    rust_plugin: Option<PathBuf>,
+    /// Grant one named export from --rust-plugin (repeatable).
+    #[arg(long = "plugin-export", value_name = "EXPORT", requires = "rust_plugin")]
+    plugin_exports: Vec<String>,
+    /// Maximum VM instruction steps (default: the manifest's
+    /// `[resources] gas`, else the VM default).
+    #[arg(long, value_name = "N")]
+    max_steps: Option<usize>,
+    /// Maximum VM stack slots.
+    #[arg(long, value_name = "N")]
+    max_stack: Option<usize>,
+    /// Maximum VM call depth.
+    #[arg(long, value_name = "N")]
+    max_call_depth: Option<usize>,
 }
 
 impl GrantArgs {
-    fn host_caps(&self) -> crush_vm::HostCaps {
+    /// The run's host capabilities; `args` is what `sys.args()` returns.
+    fn host_caps(&self, args: &[String]) -> crush_vm::HostCaps {
         crush_lang_sdk::HostCapsBuilder::new()
             .fs(self.fs)
             .fs_root(self.fs_root.to_string_lossy())
             .env(self.env)
             .time(self.time)
             .stdlib(true)
+            .args(args.to_vec())
             .build()
     }
 
-    fn runner(&self) -> crush_pkg::runners::CrushRunner {
+    /// VM quotas: the VM default, then the manifest's `[resources] gas` as
+    /// the step budget, then any `--max-*` flag (#304).
+    fn quotas(&self, manifest: &crush_pkg::manifest::Manifest) -> crush_vm::Quotas {
+        let mut quotas = crush_vm::Quotas::default();
+        if let Some(gas) = manifest.resources.gas {
+            quotas.max_steps = usize::try_from(gas).unwrap_or(usize::MAX);
+        }
+        if let Some(n) = self.max_steps {
+            quotas.max_steps = n;
+        }
+        if let Some(n) = self.max_stack {
+            quotas.max_stack = n;
+        }
+        if let Some(n) = self.max_call_depth {
+            quotas.max_call_depth = n;
+        }
+        quotas
+    }
+
+    fn runner(
+        &self,
+        manifest: &crush_pkg::manifest::Manifest,
+        args: &[String],
+    ) -> crush_pkg::runners::CrushRunner {
         crush_pkg::runners::CrushRunner {
-            host_caps: Some(self.host_caps()),
+            host_caps: Some(self.host_caps(args)),
+            quotas: self.quotas(manifest),
+        }
+    }
+
+    fn plugin_grants(&self) -> anyhow::Result<Vec<PluginGrant>> {
+        match (&self.rust_plugin, self.plugin_exports.is_empty()) {
+            (None, false) => anyhow::bail!("--plugin-export requires --rust-plugin"),
+            (Some(_), true) => anyhow::bail!("--rust-plugin requires at least one --plugin-export"),
+            (None, true) => Ok(Vec::new()),
+            (Some(library), false) => {
+                let mut unique = HashSet::new();
+                for export in &self.plugin_exports {
+                    if export.is_empty() || !unique.insert(export) {
+                        anyhow::bail!("plugin export names must be non-empty and unique: `{export}`");
+                    }
+                }
+                Ok(vec![PluginGrant {
+                    library: library.clone(),
+                    exports: self.plugin_exports.clone(),
+                }])
+            }
         }
     }
 }
@@ -633,15 +698,7 @@ fn handle_run(args: Vec<String>, grants: &GrantArgs, strict_mode: bool) -> anyho
         anyhow::bail!("entry file not found: {}", payload.display());
     }
 
-    let mut format = crush_pkg::manifest::PayloadFormat::from_path(&payload);
-    if format == crush_pkg::manifest::PayloadFormat::Unknown {
-        if let Ok(bytes) = std::fs::read(&payload) {
-            let detected = crush_pkg::manifest::PayloadFormat::from_magic(&bytes);
-            if detected != crush_pkg::manifest::PayloadFormat::Unknown {
-                format = detected;
-            }
-        }
-    }
+    let format = detect_payload_format(&payload);
 
     if format == crush_pkg::manifest::PayloadFormat::Unknown && strict_mode {
         let magic_bytes = std::fs::read(&payload).ok().unwrap_or_default();
@@ -660,12 +717,26 @@ fn handle_run(args: Vec<String>, grants: &GrantArgs, strict_mode: bool) -> anyho
         );
     }
 
-    let runner = get_runner_for_payload_with(&payload, &manifest, grants.runner());
-    println!(
-        "running {} v{} ({})",
-        manifest.capsule.name, manifest.capsule.version, manifest.capsule.language
-    );
-    let result = runner.run(&manifest, &payload, &args)?;
+    let plugin_grants = grants.plugin_grants()?;
+    let capsule_type = capsule_type_for_format(&manifest, format);
+    let runner = get_runner_with(&capsule_type, grants.runner(&manifest, &args));
+    let run_banner = || {
+        println!(
+            "running {} v{} ({})",
+            manifest.capsule.name, manifest.capsule.version, manifest.capsule.language
+        );
+    };
+    let result = if plugin_grants.is_empty() {
+        run_banner();
+        runner.run(&manifest, &payload, &args)?
+    } else {
+        if capsule_type != CapsuleType::Crush {
+            anyhow::bail!("--rust-plugin is supported only for Crush packages");
+        }
+        grants
+            .runner(&manifest, &args)
+            .run_payload_with_plugins_before(&payload, &plugin_grants, run_banner)?
+    };
     match result {
         ExecutionResult::Vm => {}
         ExecutionResult::Process(mut child) => {
@@ -783,6 +854,8 @@ fn handle_default(
 
     let name = manifest.capsule.name.clone();
     let version = manifest.capsule.version.clone();
+    // The program's arguments ride in the runner's host caps (`sys.args()`).
+    let runner = grants.runner(&manifest, &args);
     let builder = PackageBuilder::new(manifest, root);
     // No separate `check` pass: `build` compiles the whole package (entry +
     // path deps), which is the stronger check. `PackageBuilder::check`
@@ -793,13 +866,11 @@ fn handle_default(
     builder
         .write_output(&output)
         .map_err(DefaultFailure::Builder)?;
-    println!("running {name} v{version}");
-    // CrushRunner has no argv channel for Crush programs (same as
-    // `crush-pkg run -- ARGS` on a Crush capsule), so `args` stop here.
-    let _ = args;
-    grants
-        .runner()
-        .run_program(&output.program)
+    let plugin_grants = grants.plugin_grants().map_err(DefaultFailure::Run)?;
+    runner
+        .run_program_with_plugins_before(&output.program, &plugin_grants, || {
+            println!("running {name} v{version}");
+        })
         .map_err(DefaultFailure::Run)?;
     Ok(())
 }

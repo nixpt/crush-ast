@@ -101,6 +101,15 @@ fn test_frontend_opcode_surface_converts_to_typed_opcodes() {
         ),
         (
             Instruction {
+                op: "call_value_apply".into(),
+                lang: None,
+                meta: None,
+                args: json!({}),
+            },
+            OpCode::CallValueApply,
+        ),
+        (
+            Instruction {
                 op: "throw".into(),
                 lang: None,
                 meta: None,

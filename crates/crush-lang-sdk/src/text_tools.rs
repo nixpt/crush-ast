@@ -12,7 +12,6 @@
 use crate::host_caps::FsSandbox;
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
-use std::collections::HashMap;
 use std::path::Path;
 
 pub(crate) fn register(caps: &mut HostCaps, fs: &FsSandbox) {
@@ -24,8 +23,8 @@ pub(crate) fn register(caps: &mut HostCaps, fs: &FsSandbox) {
     caps.register(Box::new(TextGrepCap { fs: fs.clone() }));
 }
 
-fn read(cap: &str, path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|e| format!("{cap} {}: {e}", path.display()))
+fn read(fs: &FsSandbox, cap: &str, path: &Path) -> Result<String, String> {
+    fs.backend().read_to_string(path).map_err(|e| format!("{cap} {}: {e}", path.display()))
 }
 
 fn count_arg(cap: &str, v: &Value) -> Result<usize, String> {
@@ -68,7 +67,7 @@ fs_text_cap!(
     |fs: &FsSandbox, args: &[Value]| {
         let path = fs.resolve(&args[0])?;
         let n = count_arg("text.head", &args[1])?;
-        let content = read("text.head", &path)?;
+        let content = read(fs, "text.head", &path)?;
         Ok(Some(str_array(content.lines().take(n))))
     }
 );
@@ -81,7 +80,7 @@ fs_text_cap!(
     |fs: &FsSandbox, args: &[Value]| {
         let path = fs.resolve(&args[0])?;
         let n = count_arg("text.tail", &args[1])?;
-        let content = read("text.tail", &path)?;
+        let content = read(fs, "text.tail", &path)?;
         let lines: Vec<&str> = content.lines().collect();
         Ok(Some(str_array(
             lines[lines.len().saturating_sub(n)..].iter().copied(),
@@ -96,8 +95,9 @@ fs_text_cap!(
     Some(1),
     |fs: &FsSandbox, args: &[Value]| {
         let path = fs.resolve(&args[0])?;
-        let content = read("text.wc", &path)?;
-        let mut m = HashMap::new();
+        let content = read(fs, "text.wc", &path)?;
+        // Insertion order is the map's order: lines, words, chars (like `wc`).
+        let mut m = crush_vm::vm::MapStore::new();
         m.insert(
             "lines".to_string(),
             Value::Int(content.lines().count() as i64),
@@ -127,7 +127,7 @@ fs_text_cap!(
         if col == 0 || delim.is_empty() {
             return Err("text.cut: column is 1-based and the delimiter must be non-empty".into());
         }
-        let content = read("text.cut", &path)?;
+        let content = read(fs, "text.cut", &path)?;
         Ok(Some(str_array(content.lines().map(|line| {
             line.split(delim.as_str()).nth(col - 1).unwrap_or("")
         }))))
@@ -137,16 +137,17 @@ fs_text_cap!(
 /// Every regular file under `dir`, depth-first in name order, not following
 /// symlinks (nanovm's `WalkDir::follow_links(false)`).
 #[cfg(feature = "stdlib")]
-fn walk_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+fn walk_files(fs: &FsSandbox, dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    use crate::fs_backend::Kind;
+    let Ok(entries) = fs.backend().read_dir(dir) else {
         return;
     };
-    let mut entries: Vec<_> = entries.flatten().collect();
-    entries.sort_by_key(|e| e.file_name());
+    let mut entries: Vec<_> = entries.into_iter().flatten().collect();
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
     for entry in entries {
-        match entry.file_type() {
-            Ok(t) if t.is_dir() => walk_files(&entry.path(), out),
-            Ok(t) if t.is_file() => out.push(entry.path()),
+        match entry.kind {
+            Ok(Kind::Dir) => walk_files(fs, &dir.join(&entry.name), out),
+            Ok(Kind::File) => out.push(dir.join(&entry.name)),
             _ => {}
         }
     }
@@ -176,11 +177,11 @@ fs_text_cap!(
             .map_err(|e| format!("text.grep: invalid pattern: {e}"))?;
         let path = fs.resolve(&args[1])?;
 
-        let files = if path.is_file() {
+        let files = if fs.is_file(&path) {
             vec![path]
-        } else if path.is_dir() && recursive {
+        } else if fs.is_dir(&path) && recursive {
             let mut files = Vec::new();
-            walk_files(&path, &mut files);
+            walk_files(fs, &path, &mut files);
             files
         } else {
             return Err(
@@ -191,7 +192,7 @@ fs_text_cap!(
         let single = files.len() == 1;
         let mut hits = Vec::new();
         for file in files {
-            let content = match std::fs::read_to_string(&file) {
+            let content = match fs.backend().read_to_string(&file) {
                 Ok(c) => c,
                 Err(e) if single => return Err(format!("text.grep {}: {e}", file.display())),
                 Err(_) => continue,
@@ -199,7 +200,7 @@ fs_text_cap!(
             let shown = fs.display(&file);
             for (i, line) in content.lines().enumerate() {
                 if re.is_match(line) {
-                    let mut m = HashMap::new();
+                    let mut m = crush_vm::vm::MapStore::new();
                     m.insert("file".to_string(), Value::Str(shown.clone()));
                     m.insert("line".to_string(), Value::Int(i as i64 + 1));
                     m.insert("content".to_string(), Value::Str(line.to_string()));

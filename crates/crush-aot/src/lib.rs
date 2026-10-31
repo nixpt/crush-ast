@@ -28,6 +28,7 @@
 pub mod codegen;
 pub mod codegen_c;
 pub mod compiler;
+mod method_support;
 pub mod loader;
 pub mod names;
 
@@ -45,6 +46,27 @@ pub struct UnsupportedOps {
     pub ops: Vec<String>,
 }
 pub use loader::Module;
+
+/// COSM K1.3 (CRUSH-zorro-42): AOT doesn't compile Kinds yet. A program whose
+/// kind table declares a Kind that can't run as a plain map is refused before
+/// any code is generated (the rule every engine shares,
+/// `casm::cosm_unsupported_reason`); one whose Kinds all can compiles as before.
+fn refuse_cosm(program: &casm::Program, backend: &'static str) -> Result<(), UnsupportedOps> {
+    program
+        .refuse_cosm(&format!("the {backend} AOT backend"))
+        .map_err(|msg| UnsupportedOps { backend, ops: vec![msg] })
+}
+
+/// issue #161: AOT doesn't run green tasks. A program that `spawn`s is refused
+/// before any code is generated, naming `spawn` — not the `make_closure` a
+/// `spawn` compiles through, and never silently skipping the task. `yield` and
+/// `await` without `spawn` are no-ops (lowered to nothing; `await v` on a
+/// non-handle returns `v`, issue #251), not refusals.
+fn refuse_green_task(program: &casm::Program, backend: &'static str) -> Result<(), UnsupportedOps> {
+    program
+        .refuse_green_task(&format!("the {backend} AOT backend"))
+        .map_err(|msg| UnsupportedOps { backend, ops: vec![msg] })
+}
 
 /// Compile Crush source to native code, load it, and extract an i64 result.
 ///

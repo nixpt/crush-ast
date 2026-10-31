@@ -12,23 +12,37 @@
           "value": {
             "type": "IntLiteral",
             "value": 42,
-            "meta": {}
+            "meta": {
+              "col": 16,
+              "line": 1
+            }
           },
           "type_hint": "Int",
-          "meta": {}
+          "meta": {
+            "line": 1,
+            "col": 16
+          }
         },
         {
           "type": "ExprStmt",
           "expr": {
             "type": "Var",
             "name": "x",
-            "meta": {}
+            "meta": {
+              "line": 2,
+              "col": 2
+            }
           },
-          "meta": {}
+          "meta": {
+            "line": 2,
+            "col": 2
+          }
         }
       ],
-      "meta": {}
+      "meta": {
+        "line": 1,
+        "col": 1
+      }
     }
-  },
-  "ai_meta": null
+  }
 }

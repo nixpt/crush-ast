@@ -234,6 +234,29 @@ fn crush_run_accepts_valid_cvm1_blob_for_regression() {
     );
 }
 
+// #304: `crush-pkg build` writes `target/<name>.cvm`; the same CVM1 blob runs
+// under that name (it used to be refused as an unsupported extension).
+#[test]
+fn crush_run_accepts_crush_pkg_cvm_name() {
+    let program = crush_vm::assemble(
+        ".func main\nPUSH_STR \"hi\"\nCAP_CALL \"io.print\" 1\nHALT\n",
+        Some(&["io.print"]),
+        Some("hello"),
+    )
+    .expect("assemble should succeed");
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("hello.cvm");
+    std::fs::write(&src, program.to_blob()).unwrap();
+
+    let output = run_crush_run(&["run", "--cap", "io.print", src.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("hi"));
+}
+
 #[test]
 fn crush_run_reads_piped_stdin_through_source_pipeline() {
     use std::io::Write;

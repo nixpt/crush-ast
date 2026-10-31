@@ -54,6 +54,13 @@ impl AotcCompiler {
 
     /// Compile a CASM program to a C source string.
     pub fn compile(&self, program: &casm::Program) -> anyhow::Result<String> {
+        // COSM K1.3 (CRUSH-zorro-42): no Kinds here yet — refuse a kind table
+        // with a Kind a plain map can't represent (`casm::cosm_unsupported_reason`)
+        // before generating anything.
+        program.refuse_cosm("crush-aotc").map_err(anyhow::Error::msg)?;
+        // issue #161: no green-task scheduler here — refuse `spawn`/`yield`/
+        // `await` by name rather than silently skipping the task.
+        program.refuse_green_task("crush-aotc").map_err(anyhow::Error::msg)?;
         let mut out = String::with_capacity(8192);
 
         // Emit header
@@ -103,7 +110,19 @@ impl AotcCompiler {
         out: &mut String,
     ) -> anyhow::Result<()> {
         let c_name = mangle(name);
-        let tm = TypeMap::infer(&func.body);
+        let mut tm = TypeMap::infer(&func.body);
+        // CRUSH-zorro-55: a load that may run before its local is assigned
+        // is checked. Such a local is a boxed `CrushValue` that starts as
+        // `CV_UNSET` — an unboxed `int64_t`/`double` has no bit pattern to
+        // spare for "unassigned" — as AOT C does (CRUSH-zorro-54).
+        let to_check = casm::assigned::loads_to_check(func);
+        let mut unset_locals: Vec<&str> = Vec::new();
+        for (instr, _) in func.body.iter().zip(&to_check).filter(|(_, c)| **c) {
+            if let Some(name) = instr.args.get("name").and_then(|v| v.as_str()) {
+                tm.locals.insert(name.to_string(), InferredType::Dynamic);
+                unset_locals.push(name);
+            }
+        }
 
         let params = if func.params.is_empty() {
             "void".to_string()
@@ -136,7 +155,8 @@ impl AotcCompiler {
                 InferredType::Float => "double",
                 InferredType::Dynamic => "CrushValue",
             };
-            writeln!(out, "    {} {} = 0;", cty, mangle_local(local))?;
+            let init = if unset_locals.contains(&local.as_str()) { "CV_UNSET" } else { "0" };
+            writeln!(out, "    {} {} = {};", cty, mangle_local(local), init)?;
         }
 
         // Virtual stack of temporary names
@@ -208,6 +228,15 @@ impl AotcCompiler {
                     }
                 }
 
+                // ── Green tasks without `spawn` (issue #161) ──
+                // With no spawned task `yield` is a cooperative-yield no-op and
+                // `await` has no handle (issue #251: `await v` on a non-handle
+                // returns `v`, so the awaited value stays on the stack). A
+                // program that does `spawn` is refused up front by
+                // `refuse_green_task`, so these never run a task here.
+                "yield" => {}
+                "await" => {}
+
                 // ── Memory ──────────────────────────────────────────────
                 "store" => {
                     let name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("_");
@@ -251,6 +280,9 @@ impl AotcCompiler {
                     let name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("_");
                     let lname = mangle_local(name);
                     let inferred = tm.locals.get(name).cloned().unwrap_or(InferredType::Dynamic);
+                    if to_check[i] {
+                        writeln!(out, "    if ({} == CV_UNSET) crush_uninit_load(\"{}\");", lname, c_escape(name))?;
+                    }
                     stack.push((lname, inferred));
                 }
 
@@ -456,6 +488,42 @@ impl AotcCompiler {
                     // Control flow within loops — emit as-is
                     writeln!(out, "    /* {} */", instr.op)?;
                 }
+                // Objects and maps (struct literals, `{k: v}`, `.field`) have
+                // no representation here: dropped as unhandled ops they made
+                // every field read return garbage (`p.x` read the last value
+                // set — silently wrong). Refuse them, as for function values.
+                "new_obj" | "set_field" | "get_field" => {
+                    anyhow::bail!(
+                        "crush-aotc: `{}` (objects and maps, including struct instances) isn't \
+                         supported by this backend",
+                        instr.op
+                    );
+                }
+                // COSM member ops (K1.4, CRUSH-zorro-43) need Kinds, which
+                // run on the scheduler VM and the portable VM only.
+                "get_member" | "set_member" | "has_member" | "del_member" | "call_member" | "construct"
+                | "get_slot" | "set_slot" | "is_kind" | "copy" => {
+                    anyhow::bail!(
+                        "crush-aotc: `{}` (COSM objects, CRUSH-zorro-43) isn't supported by this backend",
+                        instr.op
+                    );
+                }
+                // Function values (CRUSH-251) run on the VMs only: refuse
+                // them here rather than drop them as an unhandled op.
+                "make_closure" | "call_value" | "call_value_apply" => {
+                    anyhow::bail!(
+                        "crush-aotc: `{}` (function values, CRUSH-251) isn't supported by this backend",
+                        instr.op
+                    );
+                }
+                // CRUSH-265: these lower to a silent NOP on CVM1; refuse them
+                // loudly here instead of dropping them as unhandled ops.
+                "ai_capability_discovery" | "ai_adaptation_request" | "ai_semantic_switch" => {
+                    anyhow::bail!(
+                        "crush-aotc: `{}` isn't supported yet (CRUSH-265): it would compile to a no-op",
+                        instr.op
+                    );
+                }
                 _ => {
                     writeln!(out, "    /* unhandled op: {} */", instr.op)?;
                 }
@@ -472,12 +540,28 @@ impl AotcCompiler {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// A Crush function name as a C identifier: `main` is `crush_main`; every other
+/// name gets a `cf_` prefix (so it can't collide with a C keyword or a runtime
+/// symbol) and an injective body: ASCII letters and digits are kept, `_`
+/// becomes `__`, any other character `_u<hex>_`. Qualified names such as the
+/// lifted COSM methods `Point::norm2` (CRUSH-zorro-41) used to reach the C
+/// source verbatim and fail to compile; `a.b` and `a__b` used to collide.
 fn mangle(name: &str) -> String {
     if name == "main" {
-        "crush_main".to_string()
-    } else {
-        name.replace('.', "__").replace('-', "_")
+        return "crush_main".to_string();
     }
+    let mut out = String::with_capacity(name.len() + 3);
+    out.push_str("cf_");
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if c == '_' {
+            out.push_str("__");
+        } else {
+            out.push_str(&format!("_u{:x}_", c as u32));
+        }
+    }
+    out
 }
 
 fn mangle_local(name: &str) -> String {
@@ -583,6 +667,25 @@ pub fn compile_to_so(c_source: &str, opts: &AotcOpts) -> anyhow::Result<std::pat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn function_names_mangle_to_distinct_c_identifiers() {
+        assert_eq!(mangle("main"), "crush_main");
+        assert_eq!(mangle("Point::norm2"), "cf_Point_u3a__u3a_norm2");
+        let names = ["a.b", "a__b", "a_b", "a-b", "a::b", "int", "main_", "Point::Shape::area"];
+        let mangled: std::collections::HashSet<_> = names.iter().map(|n| mangle(n)).collect();
+        assert_eq!(mangled.len(), names.len());
+        assert!(mangled.iter().all(|m| m.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')));
+    }
+
+    // CRUSH-251: function values must be refused, not dropped as unhandled ops.
+    #[test]
+    fn function_values_are_refused() {
+        let source = "fn apply(f, v) {\n  return f(v)\n}\nfn main() {\n  return apply(|x| x * 2, 21)\n}\n";
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let e = AotcCompiler::new(AotcOpts::default()).compile(&program).expect_err("must refuse");
+        assert!(e.to_string().contains("function values, CRUSH-251"), "{e}");
+    }
 
     #[test]
     fn test_emit_simple_add() {

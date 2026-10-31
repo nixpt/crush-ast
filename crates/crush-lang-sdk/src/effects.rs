@@ -55,6 +55,8 @@ pub fn effects_of(name: &str) -> Option<&'static [&'static str]> {
         // --crypto
         "crypto.sha256" => &[],
         "crypto.random" => &["crypto/random"],
+        // --gpu: runs code on the GPU
+        "gpu.launch" => &["gpu/launch"],
         // --graphics: an in-memory canvas
         n if n.starts_with("graphics.") => &[],
         // --net
@@ -120,6 +122,8 @@ pub fn catalog() -> Vec<CapInfo> {
         ("--crypto", new().crypto(true)),
         ("--polyglot", new().polyglot(&["python", "javascript", "bash"])),
     ]);
+    #[cfg(feature = "gpu")]
+    grants.push(("--gpu", new().gpu(true)));
     #[cfg(feature = "graphics")]
     grants.push(("--graphics", new().graphics(true)));
     #[cfg(feature = "net")]
@@ -284,7 +288,13 @@ impl HostCap for Declared {
 
 /// Move every handler of `from` into `into`, declaring `effects` for each
 /// one that has not declared its own.
-pub(crate) fn register_all(into: &mut HostCaps, from: HostCaps, effects: &'static [&'static str]) {
+pub(crate) fn register_all(into: &mut HostCaps, mut from: HostCaps, effects: &'static [&'static str]) {
+    // Not a handler; keep it unless `into` already has one (CRUSH-271).
+    if let Some(executor) = from.take_polyglot_executor()
+        && into.polyglot_executor().is_none()
+    {
+        into.set_polyglot_executor(executor);
+    }
     for handler in from.into_handlers() {
         into.register_shared(with_effects(handler, Some(effects)));
     }
@@ -292,8 +302,12 @@ pub(crate) fn register_all(into: &mut HostCaps, from: HostCaps, effects: &'stati
 
 /// Re-register every handler, declaring effects from [`effects_of`] where the
 /// handler has none of its own. Unknown names stay undeclared.
-pub(crate) fn declare(caps: HostCaps) -> HostCaps {
+pub(crate) fn declare(mut caps: HostCaps) -> HostCaps {
     let mut out = HostCaps::new();
+    // The polyglot executor is not a handler; carry it over (CRUSH-271).
+    if let Some(executor) = caps.take_polyglot_executor() {
+        out.set_polyglot_executor(executor);
+    }
     for handler in caps.into_handlers() {
         let effects = effects_of(&handler.spec().name);
         out.register_shared(with_effects(handler, effects));

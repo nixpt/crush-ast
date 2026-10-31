@@ -25,6 +25,10 @@ pub struct HostCapsBuilder {
     akg: bool,
     process: bool,
     crypto: bool,
+    #[cfg(feature = "gpu")]
+    gpu: bool,
+    #[cfg(feature = "gpu")]
+    gpu_program: Option<Arc<casm::Program>>,
     #[cfg(feature = "graphics")]
     graphics: bool,
     #[cfg(feature = "net")]
@@ -36,6 +40,8 @@ pub struct HostCapsBuilder {
     #[cfg(feature = "stdlib")]
     stdlib: bool,
     fs_root: Option<String>,
+    /// Where the files are (`fs_memory`); the host's disk when unset.
+    fs_backend: Option<Arc<dyn crate::fs_backend::FsBackend>>,
     env_vars: HashMap<String, String>,
     /// Pre-built codebase index for `codebase.*` caps.
     codebase_index: Option<Arc<CrushIndex>>,
@@ -46,6 +52,8 @@ pub struct HostCapsBuilder {
     /// CRUSH-158: host backends behind `ai_native.query` / `.agent_delegation`.
     query_provider: Option<Arc<dyn crate::ai_native::providers::QueryProvider>>,
     delegation_backend: Option<Arc<dyn crate::ai_native::providers::DelegationBackend>>,
+    /// CRUSH-271: the embedder's runner for granted `@lang` blocks.
+    polyglot_executor: Option<Arc<dyn crush_vm::PolyglotExecutor>>,
 }
 
 impl HostCapsBuilder {
@@ -70,6 +78,15 @@ impl HostCapsBuilder {
         self
     }
 
+    /// Run granted `@lang` blocks through `executor` instead of the built-in
+    /// local-interpreter runner (CRUSH-271). It does not grant anything: the
+    /// languages still need [`polyglot`](Self::polyglot), and a block without
+    /// its grant is refused before the executor is called.
+    pub fn polyglot_executor(mut self, executor: Arc<dyn crush_vm::PolyglotExecutor>) -> Self {
+        self.polyglot_executor = Some(executor);
+        self
+    }
+
     /// Enable filesystem capabilities: `fs.read`, `fs.write`, `fs.exists`,
     /// `fs.list`, the coreutils `fs.ls/cat/pwd/cd/mkdir/rm/cp/mv/touch/find`,
     /// and the `text.*` file tools — all confined to [`fs_root`](Self::fs_root).
@@ -81,6 +98,18 @@ impl HostCapsBuilder {
     /// Restrict filesystem access to paths under `root`.
     pub fn fs_root(mut self, root: impl Into<String>) -> Self {
         self.fs_root = Some(root.into());
+        self
+    }
+
+    /// Enable the filesystem capabilities ([`fs`](Self::fs)) over an empty
+    /// in-memory tree instead of the host's disk: the same caps, the same
+    /// sandbox rules and the same results and error messages as an empty
+    /// `fs_root` directory, for a host with no disk to give (a browser). The
+    /// files live as long as the registry this builds.
+    pub fn fs_memory(mut self) -> Self {
+        self.fs = true;
+        self.fs_root = Some("/".to_string());
+        self.fs_backend = Some(Arc::new(crate::fs_backend::MemFs::new()));
         self
     }
 
@@ -126,6 +155,22 @@ impl HostCapsBuilder {
     /// Enable process capabilities (`process.exec`).
     pub fn process(mut self, enable: bool) -> Self {
         self.process = enable;
+        self
+    }
+
+    /// Enable `gpu.launch` (CRUSH-zorro-3). Kernels come from the program given to
+    /// [`Self::gpu_program`]; without one, every launch fails with "no function".
+    #[cfg(feature = "gpu")]
+    pub fn gpu(mut self, enable: bool) -> Self {
+        self.gpu = enable;
+        self
+    }
+
+    /// The program whose kernel functions `gpu.launch` may compile and run: the
+    /// CASM of the program being executed.
+    #[cfg(feature = "gpu")]
+    pub fn gpu_program(mut self, program: Arc<casm::Program>) -> Self {
+        self.gpu_program = Some(program);
         self
     }
 
@@ -228,10 +273,17 @@ impl HostCapsBuilder {
         caps.register(Box::new(SysArgsCap { args: self.script_args.clone() }));
         caps.register(Box::new(SysExitCap));
         caps.grant_polyglot(&self.polyglot);
+        if let Some(executor) = self.polyglot_executor.clone() {
+            caps.set_polyglot_executor(executor);
+        }
         if self.fs {
             // One sandbox, so `fs.cd` moves the working directory every
             // file cap in this registry resolves against.
-            let fs = FsSandbox::new(self.fs_root.as_deref().unwrap_or("."));
+            let root = self.fs_root.as_deref().unwrap_or(".");
+            let fs = match self.fs_backend.clone() {
+                Some(backend) => FsSandbox::with_backend(root, backend),
+                None => FsSandbox::new(root),
+            };
             caps.register(Box::new(FsReadCap { fs: fs.clone() }));
             caps.register(Box::new(FsWriteCap { fs: fs.clone() }));
             caps.register(Box::new(FsExistsCap { fs: fs.clone() }));
@@ -271,6 +323,10 @@ impl HostCapsBuilder {
         if self.crypto {
             caps.register(Box::new(CryptoSha256Cap));
             caps.register(Box::new(CryptoRandomCap));
+        }
+        #[cfg(feature = "gpu")]
+        if self.gpu {
+            crate::gpu::register(&mut caps, self.gpu_program.clone());
         }
         #[cfg(feature = "graphics")]
         if self.graphics {
@@ -318,6 +374,7 @@ impl HostCapsBuilder {
 /// `root`. With `follow` false the last component is not resolved through a
 /// symlink, so `fs.rm`/`fs.mv` act on a link rather than on what it names.
 fn resolve_in(
+    backend: &dyn crate::fs_backend::FsBackend,
     root: &str,
     cwd: &std::path::Path,
     path: &Value,
@@ -327,12 +384,15 @@ fn resolve_in(
 
     let s = crate::caps::value_as_text(path);
     let p = Path::new(&s);
-    if p.is_absolute() {
+    // has_root, as is_absolute on unix: on wasm32-unknown-unknown (crush-web's
+    // in-memory fs) std calls `/x` relative, and `/etc/x` would be refused
+    // only later, as an escape, with a different message.
+    if p.has_root() {
         return Err(format!("absolute paths are not allowed: {s}"));
     }
     let escapes = || Unconfined::Escapes.message(&s);
     let root = Path::new(root);
-    let root_canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let root_canonical = backend.canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
 
     // Resolve `.` / `..` lexically first. A path that does not exist yet
     // (an `fs.write` target) cannot be canonicalized, and `Path::starts_with`
@@ -355,10 +415,10 @@ fn resolve_in(
     // Not following the last component: confine its parent, keep the name.
     if !follow && let Some(name) = relative.file_name().map(|n| n.to_os_string()) {
         let parent = relative.parent().unwrap_or(Path::new("")).to_path_buf();
-        let dir = confine(&root_canonical, &parent).map_err(|e| e.message(&s))?;
+        let dir = confine(backend, &root_canonical, &parent).map_err(|e| e.message(&s))?;
         return Ok(dir.join(name));
     }
-    confine(&root_canonical, &relative).map_err(|e| e.message(&s))
+    confine(backend, &root_canonical, &relative).map_err(|e| e.message(&s))
 }
 
 /// Why [`confine`] refused a path.
@@ -390,6 +450,7 @@ const MAX_SYMLINKS: usize = 40;
 /// is resolved whether or not it exists. Components past the first missing
 /// one cannot be links and are kept as they are.
 fn confine(
+    backend: &dyn crate::fs_backend::FsBackend,
     root_canonical: &std::path::Path,
     relative: &std::path::Path,
 ) -> Result<std::path::PathBuf, Unconfined> {
@@ -423,13 +484,13 @@ fn confine(
             continue;
         };
         let candidate = resolved.join(&part); // an absolute `part` replaces it
-        match std::fs::symlink_metadata(&candidate) {
-            Ok(meta) if meta.file_type().is_symlink() => {
+        match backend.symlink_kind(&candidate) {
+            Ok(crate::fs_backend::Kind::Symlink) => {
                 links += 1;
                 if links > MAX_SYMLINKS {
                     return Err(Unconfined::Loop);
                 }
-                let target = std::fs::read_link(&candidate).map_err(|_| Unconfined::Escapes)?;
+                let target = backend.read_link(&candidate).map_err(|_| Unconfined::Escapes)?;
                 queue(&target, &mut pending);
             }
             // Present and not a link, or missing (so nothing below it can be
@@ -494,14 +555,36 @@ pub(crate) struct FsSandbox {
     root: String,
     /// Relative to the canonical root; empty = the root itself.
     cwd: Arc<std::sync::Mutex<std::path::PathBuf>>,
+    /// Where the files are: the host's disk, or memory (`fs_memory`).
+    backend: Arc<dyn crate::fs_backend::FsBackend>,
 }
 
 impl FsSandbox {
     pub(crate) fn new(root: &str) -> Self {
+        Self::with_backend(root, Arc::new(crate::fs_backend::DiskFs))
+    }
+
+    pub(crate) fn with_backend(root: &str, backend: Arc<dyn crate::fs_backend::FsBackend>) -> Self {
         Self {
             root: root.to_string(),
             cwd: Arc::default(),
+            backend,
         }
+    }
+
+    /// The storage every file cap of this sandbox goes through.
+    pub(crate) fn backend(&self) -> &dyn crate::fs_backend::FsBackend {
+        &*self.backend
+    }
+
+    /// Whether `path` names a directory (following symlinks), as `Path::is_dir`.
+    pub(crate) fn is_dir(&self, path: &std::path::Path) -> bool {
+        matches!(self.backend.kind(path), Ok(crate::fs_backend::Kind::Dir))
+    }
+
+    /// Whether `path` names a regular file (following symlinks), as `Path::is_file`.
+    pub(crate) fn is_file(&self, path: &std::path::Path) -> bool {
+        matches!(self.backend.kind(path), Ok(crate::fs_backend::Kind::File))
     }
 
     fn cwd(&self) -> std::path::PathBuf {
@@ -510,24 +593,24 @@ impl FsSandbox {
 
     fn root_canonical(&self) -> std::path::PathBuf {
         let root = std::path::Path::new(&self.root);
-        root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+        self.backend.canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
     }
 
     /// Resolve a program path against the working directory, inside the root.
     pub(crate) fn resolve(&self, path: &Value) -> Result<std::path::PathBuf, String> {
-        resolve_in(&self.root, &self.cwd(), path, true)
+        resolve_in(&*self.backend, &self.root, &self.cwd(), path, true)
     }
 
     /// Like [`resolve`](Self::resolve), but a symlink in the last component
     /// is the target itself rather than what it points to.
     pub(crate) fn resolve_nofollow(&self, path: &Value) -> Result<std::path::PathBuf, String> {
-        resolve_in(&self.root, &self.cwd(), path, false)
+        resolve_in(&*self.backend, &self.root, &self.cwd(), path, false)
     }
 
     /// `fs.cd`: move the working directory to an existing directory.
     pub(crate) fn cd(&self, path: &Value) -> Result<(), String> {
         let target = self.resolve(path)?;
-        if !target.is_dir() {
+        if !self.is_dir(&target) {
             return Err(format!("fs.cd {}: not a directory", self.display(&target)));
         }
         let relative = target
@@ -601,7 +684,7 @@ impl HostCap for FsReadCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        let data = std::fs::read_to_string(&path)
+        let data = self.fs.backend().read_to_string(&path)
             .map_err(|e| format!("fs.read {}: {e}", self.fs.display(&path)))?;
         Ok(Some(Value::Str(data)))
     }
@@ -632,11 +715,29 @@ impl HostCap for FsWriteCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        let data = crate::caps::value_as_text(&args[1]);
-        open_for_write(&path, true)
-            .and_then(|mut file| std::io::Write::write_all(&mut file, data.as_bytes()))
+        let data = fs_write_payload(&args[1])?;
+        self.fs.backend().write(&path, &data)
             .map_err(|e| format!("fs.write {}: {e}", self.fs.display(&path)))?;
         Ok(None)
+    }
+}
+
+/// The bytes `fs.write` puts in the file (#302): a string as UTF-8, `bytes`
+/// and buffers raw (the same reading `bytes.*` / `binary.*` give them, so a
+/// buffer cell outside 0..=255 is an error), and any other data value as its
+/// text form. A value whose text form is only a placeholder (`<fn f>`,
+/// `<handle 3>`, …) is refused instead of being written.
+fn fs_write_payload(value: &Value) -> Result<Vec<u8>, String> {
+    match value {
+        Value::Str(s) => Ok(s.as_bytes().to_vec()),
+        Value::Bytes(_) | Value::Vector(_) => crate::stdlib::bytes::byte_view("fs.write", value),
+        Value::Func(_) | Value::Handle(_) | Value::Foreign(_) | Value::Cell(_) | Value::Kind(_) => {
+            Err(format!(
+                "fs.write: a {} has no file form; write a string, bytes or a buffer",
+                value.type_name()
+            ))
+        }
+        other => Ok(crate::caps::value_as_text(other).into_bytes()),
     }
 }
 
@@ -665,7 +766,7 @@ impl HostCap for FsExistsCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        Ok(Some(Value::Int(if path.exists() { 1 } else { 0 })))
+        Ok(Some(Value::Int(if self.fs.backend().kind(&path).is_ok() { 1 } else { 0 })))
     }
 }
 
@@ -804,6 +905,10 @@ impl HostCap for EnvAllCap {
         for (k, v) in &self.overrides {
             all.insert(k.clone(), Value::Str(v.clone()));
         }
+        // Environment variables have no inherent order: sort by name so the
+        // (insertion-ordered) map iterates the same way on every run.
+        let mut all: Vec<(String, Value)> = all.into_iter().collect();
+        all.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(Some(Value::new_map(all)))
     }
 }
@@ -1124,6 +1229,44 @@ mod tests {
         assert!(root.join("new.txt").exists() && root.join("new2.txt").exists());
     }
 
+    // #302: bytes and buffers land raw; they used to be written as their
+    // display text (`<2 bytes>`, `Vector[202, 254, 0, 0]`).
+    #[test]
+    fn fs_write_writes_bytes_and_buffers_raw() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = FsWriteCap::new(dir.path().to_str().unwrap());
+        let path = |s: &str| Value::Str(s.to_string());
+
+        write.call(vec![path("b.bin"), Value::Bytes(vec![0x41, 0x00, 0xC8, 0xFF])]).unwrap();
+        assert_eq!(std::fs::read(dir.path().join("b.bin")).unwrap(), [0x41, 0x00, 0xC8, 0xFF]);
+
+        let cells = [0xCA, 0xFE, 0, 0].map(Value::Int).to_vec();
+        let buf = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(cells)));
+        write.call(vec![path("v.bin"), buf]).unwrap();
+        assert_eq!(std::fs::read(dir.path().join("v.bin")).unwrap(), [0xCA, 0xFE, 0, 0]);
+
+        // strings and other data values keep their text form
+        write.call(vec![path("s.txt"), path("é")]).unwrap();
+        assert_eq!(std::fs::read(dir.path().join("s.txt")).unwrap(), "é".as_bytes());
+        write.call(vec![path("n.txt"), Value::Int(42)]).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.path().join("n.txt")).unwrap(), "42");
+    }
+
+    #[test]
+    fn fs_write_refuses_what_has_no_file_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = FsWriteCap::new(dir.path().to_str().unwrap());
+        let path = |s: &str| Value::Str(s.to_string());
+
+        let bad = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(300)])));
+        let err = write.call(vec![path("bad.bin"), bad]).unwrap_err();
+        assert!(err.contains("fs.write") && err.contains("not a byte"), "{err}");
+
+        let err = write.call(vec![path("h.txt"), Value::Handle(3)]).unwrap_err();
+        assert!(err.contains("has no file form"), "{err}");
+        assert!(!dir.path().join("bad.bin").exists() && !dir.path().join("h.txt").exists());
+    }
+
     #[test]
     fn sandbox_follows_symlinks_for_new_files() {
         let dir = tempfile::tempdir().unwrap();
@@ -1195,7 +1338,10 @@ mod tests {
             Some(Value::Str("/sandbox/home".into()))
         );
 
-        let ungranted = HostCapsBuilder::new().stdlib(true).time(true).build();
+        let builder = HostCapsBuilder::new().time(true);
+        #[cfg(feature = "stdlib")]
+        let builder = builder.stdlib(true);
+        let ungranted = builder.build();
         for cap in ["env.get", "env.all", "env.home_dir"] {
             assert!(ungranted.get(cap).is_none(), "{cap} without --env");
         }
@@ -1236,7 +1382,10 @@ mod tests {
 
     #[test]
     fn sleep_caps_need_the_time_grant() {
-        let caps = HostCapsBuilder::new().stdlib(true).fs(true).build();
+        let builder = HostCapsBuilder::new().fs(true);
+        #[cfg(feature = "stdlib")]
+        let builder = builder.stdlib(true);
+        let caps = builder.build();
         assert!(caps.get("time.sleep").is_none());
         assert!(caps.get("async.sleep").is_none());
         let caps = HostCapsBuilder::new().time(true).build();

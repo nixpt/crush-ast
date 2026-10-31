@@ -243,7 +243,7 @@ fn describe_value(value: &Value) -> String {
 fn typed_name(type_name: &str) -> String {
     match type_name {
         "VarDecl" | "Export" | "ExprStmt" | "If" | "While" | "For" | "Return" | "TryCatch"
-        | "Throw" | "FunctionDef" | "SetField" | "LangBlock" | "Import" | "StructDef" | "Break"
+        | "Throw" | "FunctionDef" | "SetField" | "LangBlock" | "Import" | "StructDef" | "ImplBlock" | "TraitDef" | "Break"
         | "Continue" | "DomMutate" | "DomEventListener" => {
             format!("Statement::{}", type_name)
         }

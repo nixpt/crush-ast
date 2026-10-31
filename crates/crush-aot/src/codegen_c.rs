@@ -12,23 +12,45 @@ use std::collections::HashMap;
 /// Fails with [`crate::UnsupportedOps`] if any instruction has no C
 /// translation.
 pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
+    crate::refuse_cosm(program, "C")?;
+    crate::refuse_green_task(program, "C")?;
+    crate::method_support::check_c(program)?;
     let mut out = String::new();
 
     emit_c_header(&mut out);
     emit_c_value(&mut out);
     emit_c_helpers(&mut out);
+    if crate::method_support::used(program) { crate::method_support::emit_c(&mut out); }
     emit_c_ai_stub(&mut out);
     emit_c_dom_stub(&mut out);
 
     // Forward declarations (needed because CASM functions may call each other)
-    for (name, _func) in &program.functions {
+    // Name order, not `HashMap` order: the same program must give the same
+    // source in every process, or the AOT build cache (keyed on it) misses.
+    let functions = crate::codegen::sorted_functions(program);
+    for (name, _func) in &functions {
         let fn_name = sanitize_fn_name(name);
         out.push_str(&format!("static Value fn_{fn_name}(void);\n"));
     }
     out.push_str("\n");
+    // COSM K1.4: the declared fields of each sealed Kind (NULL-terminated),
+    // which a struct map of that Kind checks every write against.
+    if let Some(module) = program.kind_table() {
+        for (i, k) in module.kinds.iter().enumerate() {
+            if let Some(fields) = casm::sealed_fields(module, &k.name) {
+                let list: Vec<String> =
+                    fields.iter().map(|f| format!("\"{}\"", f.escape_default())).collect();
+                out.push_str(&format!(
+                    "static const char* const _cosm_sealed_{i}[] = {{{}NULL}};\n",
+                    list.iter().map(|f| format!("{f}, ")).collect::<String>()
+                ));
+            }
+        }
+        out.push('\n');
+    }
 
     let mut unsupported = Vec::new();
-    for (name, func) in &program.functions {
+    for (name, func) in functions {
         emit_c_function(&mut out, name, func, program, &mut unsupported);
     }
     if !unsupported.is_empty() {
@@ -69,6 +91,7 @@ fn emit_c_value(out: &mut String) {
     TAG_STRING,
     TAG_ARRAY,
     TAG_OBJECT,
+    TAG_UNSET,  // a local before its first store (CRUSH-zorro-54); never on the stack
 } ValueTag;
 
 typedef struct {
@@ -168,6 +191,10 @@ typedef struct {
     int   field_count;
     bool  alive;
     bool  mark;
+    /* COSM K1.4: a struct of a sealed Kind — its name and its declared
+       fields (NULL-terminated); NULL for a plain map. */
+    const char* sealed_kind;
+    const char* const* sealed_fields;
 } CrushObject;
 
 static CrushObject _objects[OBJ_POOL_MAX];
@@ -187,6 +214,8 @@ static inline int _alloc_object(void) {
     }
     _objects[idx].field_count = 0;
     _objects[idx].alive = true;
+    _objects[idx].sealed_kind = NULL;
+    _objects[idx].sealed_fields = NULL;
     _gc_allocated += sizeof(CrushObject);
     return idx;
 }
@@ -206,10 +235,46 @@ static void _obj_set(CrushObject* obj, const char* key, Value val) {
             return;
         }
     }
+    if (obj->sealed_kind) {
+        bool declared = false;
+        for (const char* const* f = obj->sealed_fields; *f; f++)
+            if (strcmp(*f, key) == 0) { declared = true; break; }
+        if (!declared) {
+            fprintf(stderr, "crush(aotc): `%s` is sealed: it has no field `%s` (fields: ", obj->sealed_kind, key);
+            if (!obj->sealed_fields[0]) fprintf(stderr, "none");
+            for (const char* const* f = obj->sealed_fields; *f; f++)
+                fprintf(stderr, "%s%s", f == obj->sealed_fields ? "" : ", ", *f);
+            fprintf(stderr, ")\n");
+            exit(1);
+        }
+    }
     if (obj->field_count >= OBJ_FIELD_CAP) _crush_arith_error("object has too many fields (max 16)");
     obj->fields[obj->field_count].key = key;
     obj->fields[obj->field_count].val = val;
     obj->field_count++;
+}
+
+/* Python-dict access on an object (index / arr_set with a string key).
+   Mirrors crush-vm map_ops: string keys only; a missing key is an error. */
+static Value _obj_index(Value o, Value k) {
+    if (k.tag != TAG_STRING) _crush_arith_error("type error: map keys must be strings");
+    CrushObject* obj = &_objects[o.obj_idx];
+    for (int i = 0; i < obj->field_count; i++)
+        if (strcmp(obj->fields[i].key, k.s) == 0) return obj->fields[i].val;
+    _crush_arith_error("key not found in map");
+    return mk_null();
+}
+static void _obj_index_set(Value o, Value k, Value v) {
+    if (k.tag != TAG_STRING) _crush_arith_error("type error: map keys must be strings");
+    CrushObject* obj = &_objects[o.obj_idx];
+    for (int i = 0; i < obj->field_count; i++)
+        if (strcmp(obj->fields[i].key, k.s) == 0) { obj->fields[i].val = v; return; }
+    /* a runtime key string may live in the resettable string arena: keep a copy */
+    size_t n = strlen(k.s) + 1;
+    char* key = (char*)malloc(n);   /* ISO C has no strdup */
+    if (!key) _crush_arith_error("out of memory");
+    memcpy(key, k.s, n);
+    _obj_set(obj, key, v);
 }
 
 // ── AI stub helper (CRUSH-32 follow-up) ─────────────────────────────
@@ -360,6 +425,9 @@ static inline const char* io_read_line(void) {
 
 // ── Stack ───────────────────────────────────────────────────────────────────
 
+/// The C mirror of crush-vm's `js_core.rs` (the `js.*` capabilities).
+const JS_RUNTIME_C: &str = include_str!("js_runtime.c");
+
 fn emit_c_helpers(out: &mut String) {
     out.push_str(r#"// ── Stack ──────────────────────────────────────────────────────────
 // Grows on demand. (CRUSH-223: a fixed 512 slots silently dropped pushes past
@@ -399,9 +467,16 @@ static int _frame_enter(int n) {
         _locals = locals;
         _locals_cap = cap;
     }
-    for (int i = 0; i < n; i++) _locals[base + i] = mk_null();
+    // Unassigned until the first store: a load that may run before it checks
+    // for this and fails, as on the VM (CRUSH-zorro-54).
+    for (int i = 0; i < n; i++) _locals[base + i] = (Value){TAG_UNSET};
     _lsp = base + n;
     return base;
+}
+
+static void _uninit_load(const char* name) {
+    fprintf(stderr, "crush(aotc): load from uninitialised slot `%s`\n", name);
+    exit(1);
 }
 
 // ── Garbage collection ──────────────────────────────────────────────
@@ -769,6 +844,15 @@ static Value _mod(Value a, Value b) {
     return mk_float(fmod(fa, fb));
 }
 /* Python-style ops (CRUSH-200): true `/`, floor `//`, floormod `%`. */
+/* JavaScript `/`: an exact int quotient stays an int (mirrors crush-vm js_div_values). */
+static Value _true_div(Value a, Value b);
+static Value _js_div(Value a, Value b) {
+    if (a.tag == TAG_INT && b.tag == TAG_INT) {
+        if (b.i == 0) _crush_arith_error("division by zero");
+        if (!(a.i == INT64_MIN && b.i == -1) && a.i % b.i == 0) return mk_int(a.i / b.i);
+    }
+    return _true_div(a, b);
+}
 static Value _true_div(Value a, Value b) {
     double fa = (a.tag == TAG_INT) ? (double)a.i : (a.tag == TAG_FLOAT) ? a.f : 0.0;
     double fb = (b.tag == TAG_INT) ? (double)b.i : (b.tag == TAG_FLOAT) ? b.f : 0.0;
@@ -776,6 +860,121 @@ static Value _true_div(Value a, Value b) {
     if (b.tag != TAG_INT && b.tag != TAG_FLOAT) _crush_arith_error("type error: truediv non-numeric");
     if (fb == 0.0) _crush_arith_error("division by zero");
     return mk_float(fa / fb);
+}
+/* `conv.text`: mirrors crush-vm num_text::float_text. Shortest round-trip
+   digits (try precisions until strtod gives the value back), then plain
+   decimal — or JS exponent form outside 1e-6 <= |x| < 1e21. */
+static const char* _num_text(double f, bool js) {
+    char buf[64], out[400];
+    if (f != f) return "NaN";
+    if (f == 1.0 / 0.0) return js ? "Infinity" : "inf";
+    if (f == -1.0 / 0.0) return js ? "-Infinity" : "-inf";
+    int p = 0;
+    for (; p < 17; p++) { snprintf(buf, sizeof buf, "%.*e", p, f); if (strtod(buf, NULL) == f) break; }
+    /* buf = [-]D[.DDD]e[+-]XX */
+    char* e = strchr(buf, 'e'); int exp = atoi(e + 1); *e = '\0';
+    const char* m = buf; bool neg = (*m == '-'); if (neg) m++;
+    char digits[32]; int nd = 0;
+    for (const char* c = m; *c; c++) if (*c != '.') digits[nd++] = *c;
+    while (nd > 1 && digits[nd - 1] == '0') nd--;
+    double a = f < 0 ? -f : f;
+    size_t w = 0;
+    if (neg || (f == 0.0 && 1.0 / f < 0)) out[w++] = '-';
+    if (js && a != 0.0 && (a < 1e-6 || a >= 1e21)) {
+        out[w++] = digits[0];
+        if (nd > 1) { out[w++] = '.'; for (int i = 1; i < nd; i++) out[w++] = digits[i]; }
+        w += (size_t)snprintf(out + w, sizeof out - w, "e%c%d", exp < 0 ? '-' : '+', exp < 0 ? -exp : exp);
+    } else if (exp >= 0) {
+        for (int i = 0; i <= exp; i++) out[w++] = i < nd ? digits[i] : '0';
+        if (nd > exp + 1) { out[w++] = '.'; for (int i = exp + 1; i < nd; i++) out[w++] = digits[i]; }
+    } else {
+        out[w++] = '0'; out[w++] = '.';
+        for (int i = -1; i > exp; i--) out[w++] = '0';
+        for (int i = 0; i < nd; i++) out[w++] = digits[i];
+    }
+    out[w] = '\0';
+    char* r = _str_new(w);
+    memcpy(r, out, w);
+    return r;
+}
+static Value _conv_text(Value v, Value style) {
+    if (style.tag != TAG_STRING || (strcmp(style.s, "js") != 0 && strcmp(style.s, "rust") != 0))
+        _crush_arith_error("conv.text style must be \"js\" or \"rust\"");
+    if (v.tag == TAG_STRING) return v;
+    if (v.tag == TAG_FLOAT) return mk_string(_num_text(v.f, strcmp(style.s, "js") == 0));
+    char buf[TEXTBUF_SIZE];
+    const char* t = _to_text_buf(v, buf);
+    size_t n = strlen(t);
+    char* r = _str_new(n);
+    memcpy(r, t, n);
+    return mk_string(r);
+}
+
+"#);
+    out.push_str(JS_RUNTIME_C);
+    out.push_str(r#"
+/* `seq.slice`: mirrors crush-vm seq::slice_indices (CPython slice.indices). */
+static int64_t _slice_norm(int64_t v, int64_t len, int64_t lo, int64_t hi) {
+    if (v < 0) v += len;
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+static Value _seq_slice(Value t, Value a, Value b, Value st) {
+    if ((a.tag != TAG_INT && a.tag != TAG_NULL) || (b.tag != TAG_INT && b.tag != TAG_NULL) || (st.tag != TAG_INT && st.tag != TAG_NULL))
+        _crush_arith_error("type error: slice bounds must be int or null");
+    int64_t step = st.tag == TAG_INT ? st.i : 1;
+    if (step == 0) _crush_arith_error("slice step cannot be zero");
+    int64_t len;
+    if (t.tag == TAG_STRING) {
+        len = 0;
+        for (const unsigned char* p = (const unsigned char*)t.s; p && *p; p++) if ((*p & 0xC0) != 0x80) len++;
+    } else if (t.tag == TAG_ARRAY && t.array_idx >= 0 && t.array_idx < _array_count) {
+        len = _arrays[t.array_idx].len;
+    } else {
+        _crush_arith_error("type error: can only slice a string or array");
+    }
+    int64_t s, e;
+    if (step > 0) { s = a.tag == TAG_INT ? _slice_norm(a.i, len, 0, len) : 0; e = b.tag == TAG_INT ? _slice_norm(b.i, len, 0, len) : len; }
+    else { s = a.tag == TAG_INT ? _slice_norm(a.i, len, -1, len - 1) : len - 1; e = b.tag == TAG_INT ? _slice_norm(b.i, len, -1, len - 1) : -1; }
+    if (t.tag == TAG_ARRAY) {
+        int idx = _alloc_array(); CrushArray* src = &_arrays[t.array_idx];
+        for (int64_t i = s; (step > 0 && i < e) || (step < 0 && i > e); i += step) {
+            CrushArray* dst = &_arrays[idx]; _array_reserve(dst, dst->len + 1); dst->data[dst->len++] = src->data[i];
+        }
+        return mk_array(idx);
+    }
+    /* string: code-point start offsets, then copy the selected characters */
+    int64_t* off = (int64_t*)malloc((size_t)(len + 1) * sizeof(int64_t));
+    if (!off) _crush_arith_error("out of memory");
+    int64_t k = 0, bytes = 0;
+    for (const unsigned char* p = (const unsigned char*)t.s; *p; p++, bytes++) if ((*p & 0xC0) != 0x80) off[k++] = bytes;
+    off[len] = bytes;
+    size_t total = 0;
+    for (int64_t i = s; (step > 0 && i < e) || (step < 0 && i > e); i += step) total += (size_t)(off[i + 1] - off[i]);
+    char* out = _str_new(total); size_t w = 0;
+    for (int64_t i = s; (step > 0 && i < e) || (step < 0 && i > e); i += step) { size_t n = (size_t)(off[i + 1] - off[i]); memcpy(out + w, t.s + off[i], n); w += n; }
+    free(off);
+    return mk_string(out);
+}
+/* `a ** b`: exact for int ** non-negative int, float otherwise. */
+static Value _power(Value a, Value b) {
+    if (a.tag == TAG_INT && b.tag == TAG_INT) {
+        if (b.i >= 0) {
+            int64_t r = 1, base = a.i, e = b.i;
+            if (base == 0 || base == 1) return mk_int(e == 0 ? 1 : base);
+            if (base == -1) return mk_int((e % 2 == 0) ? 1 : -1);
+            while (e > 0) {
+                if (e & 1) { if (__builtin_mul_overflow(r, base, &r)) _crush_arith_error("arithmetic overflow"); }
+                e >>= 1;
+                if (e > 0 && __builtin_mul_overflow(base, base, &base)) _crush_arith_error("arithmetic overflow");
+            }
+            return mk_int(r);
+        }
+        if (a.i == 0) _crush_arith_error("division by zero");
+    }
+    if ((a.tag != TAG_INT && a.tag != TAG_FLOAT) || (b.tag != TAG_INT && b.tag != TAG_FLOAT)) _crush_arith_error("type error: ** non-numeric");
+    double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
+    double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
+    return mk_float(pow(fa, fb));
 }
 static Value _floor_div(Value a, Value b) {
     if (a.tag == TAG_INT && b.tag == TAG_INT) {
@@ -805,11 +1004,90 @@ static Value _floor_mod(Value a, Value b) {
     if (fb == 0.0) _crush_arith_error("division by zero");
     return mk_float(fa - fb * floor(fa / fb));
 }
+/* CPython repr / str for print (mirrors crush-vm io_print::py_value_to_text). */
+static void _py_float_tb(_TextBuf* t, double f) {
+    char buf[64];
+    double a = f < 0 ? -f : f;
+    if (f != f) { _tb_put(t, "nan"); return; }
+    if (a == 1.0 / 0.0) { _tb_put(t, f > 0 ? "inf" : "-inf"); return; }
+    if (a == 0.0 || (a >= 1e-4 && a < 1e16)) { _tb_put(t, _float_text(f, buf)); return; }
+    /* shortest digits that round-trip, then CPython's exponent form */
+    for (int p = 0; p < 17; p++) {
+        snprintf(buf, sizeof buf, "%.*e", p, f);
+        if (strtod(buf, NULL) == f) break;
+    }
+    char* e = strchr(buf, 'e');
+    int exp = atoi(e + 1);
+    *e = '\0';
+    char mant[40];
+    snprintf(mant, sizeof mant, "%s", buf);
+    char out[64];
+    snprintf(out, sizeof out, "%se%c%02d", mant, exp < 0 ? '-' : '+', exp < 0 ? -exp : exp);
+    _tb_put(t, out);
+}
+static void _py_str_repr_tb(_TextBuf* t, const char* s) {
+    char q = (strchr(s, '\'') && !strchr(s, '"')) ? '"' : '\'';
+    char one[8];
+    one[0] = q; one[1] = '\0'; _tb_put(t, one);
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++) {
+        unsigned char c = *p;
+        if (c == '\\') _tb_put(t, "\\\\");
+        else if (c == '\n') _tb_put(t, "\\n");
+        else if (c == '\r') _tb_put(t, "\\r");
+        else if (c == '\t') _tb_put(t, "\\t");
+        else if (c == (unsigned char)q) { one[0] = '\\'; one[1] = q; one[2] = '\0'; _tb_put(t, one); }
+        else if (c < 0x20 || c == 0x7f) { snprintf(one, sizeof one, "\\x%02x", c); _tb_put(t, one); }
+        else { one[0] = (char)c; one[1] = '\0'; _tb_put(t, one); }
+    }
+    one[0] = q; one[1] = '\0'; _tb_put(t, one);
+}
+static void _py_repr_tb(_TextBuf* t, Value v) {
+    char buf[TEXTBUF_SIZE];
+    switch (v.tag) {
+        case TAG_BOOL:   _tb_put(t, v.b ? "True" : "False"); return;
+        case TAG_NULL:   _tb_put(t, "None"); return;
+        case TAG_INT:    snprintf(buf, sizeof buf, "%ld", (long)v.i); _tb_put(t, buf); return;
+        case TAG_FLOAT:  _py_float_tb(t, v.f); return;
+        case TAG_STRING: _py_str_repr_tb(t, v.s ? v.s : ""); return;
+        case TAG_ARRAY: {
+            _tb_put(t, "[");
+            if (v.array_idx >= 0 && v.array_idx < _array_count) {
+                CrushArray* a = &_arrays[v.array_idx];
+                for (int i = 0; i < a->len; i++) { if (i) _tb_put(t, ", "); _py_repr_tb(t, a->data[i]); }
+            }
+            _tb_put(t, "]");
+            return;
+        }
+        case TAG_OBJECT: {
+            _tb_put(t, "{");
+            if (v.obj_idx >= 0 && v.obj_idx < _object_count) {
+                CrushObject* o = &_objects[v.obj_idx];
+                for (int i = 0; i < o->field_count; i++) {
+                    if (i) _tb_put(t, ", ");
+                    _py_str_repr_tb(t, o->fields[i].key);
+                    _tb_put(t, ": ");
+                    _py_repr_tb(t, o->fields[i].val);
+                }
+            }
+            _tb_put(t, "}");
+            return;
+        }
+        default:
+            _crush_arith_error("printing this value is not supported by the C backend");
+    }
+}
 static inline const char* _py_to_text_buf(Value v, char* buf) {
     switch (v.tag) {
-        case TAG_BOOL:  return v.b ? "True" : "False";
-        case TAG_NULL:  return "None";
-        default:        return _to_text_buf(v, buf);
+        case TAG_STRING: return v.s;
+        case TAG_INT:    return _to_text_buf(v, buf);
+        default: {
+            _TextBuf t = {0};
+            _py_repr_tb(&t, v);
+            char* out = _str_new(t.len);
+            if (t.len) memcpy(out, t.p, t.len);
+            free(t.p);
+            return out;
+        }
     }
 }
 static Value _neg(Value v) {
@@ -828,12 +1106,65 @@ static void _cmp_type_error(void) {
     exit(1);
 }
 
+/* `_obj_get` but distinguishing "key absent" from "key present with a null
+   value" — equality must not treat the two the same ({"a": null} != {"b": null}). */
+static bool _obj_get_opt(CrushObject* obj, const char* key, Value* out) {
+    for (int i = 0; i < obj->field_count; i++) {
+        if (strcmp(obj->fields[i].key, key) == 0) { *out = obj->fields[i].val; return true; }
+    }
+    return false;
+}
+
+/* Deep structural equality — mirrors crush-vm `Value::eq` (IndexMap/Vec
+   PartialEq). Maps (TAG_OBJECT) compare key set + value, order-insensitive;
+   arrays (TAG_ARRAY) compare length + elementwise, order-sensitive. Cross-type
+   numerics coerce (1 == 1.0); every other mixed-type pair is false. Recursive
+   like the VM: crush-vm's equality is not cycle-safe (it stack-overflows on a
+   self-referential array/map), so this mirror recurses the same way rather
+   than returning a silently-different answer for a cycle the other backends
+   reject loudly. */
+static bool _value_eq(Value a, Value b) {
+    if (a.tag == TAG_INT && b.tag == TAG_INT) return a.i == b.i;
+    if (_is_num(a) && _is_num(b)) {
+        double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
+        double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
+        return fa == fb;
+    }
+    if (a.tag == TAG_STRING && b.tag == TAG_STRING) return strcmp(a.s, b.s) == 0;
+    if (a.tag == TAG_BOOL && b.tag == TAG_BOOL) return a.b == b.b;
+    if (a.tag == TAG_NULL && b.tag == TAG_NULL) return true;
+    if (a.tag == TAG_ARRAY && b.tag == TAG_ARRAY) {
+        CrushArray* aa = &_arrays[a.array_idx];
+        CrushArray* ba = &_arrays[b.array_idx];
+        if (aa->len != ba->len) return false;
+        for (int i = 0; i < aa->len; i++)
+            if (!_value_eq(aa->data[i], ba->data[i])) return false;
+        return true;
+    }
+    if (a.tag == TAG_OBJECT && b.tag == TAG_OBJECT) {
+        CrushObject* ao = &_objects[a.obj_idx];
+        CrushObject* bo = &_objects[b.obj_idx];
+        if (ao->field_count != bo->field_count) return false;
+        for (int i = 0; i < ao->field_count; i++) {
+            Value bv;
+            if (!_obj_get_opt(bo, ao->fields[i].key, &bv)) return false;
+            if (!_value_eq(ao->fields[i].val, bv)) return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 static Value _cmp(Value a, Value b, int op) {
     // op: 0=EQ, 1=NE, 2=LT, 3=LE, 4=GT, 5=GE
+    // EQ/NE are deep structural; ordered comparisons stay numeric/string only
+    // (guarded at each call site in emit_c_instr).
+    if (op == 0) return mk_bool(_value_eq(a, b));
+    if (op == 1) return mk_bool(!_value_eq(a, b));
+
     bool r = false;
     if (a.tag == TAG_INT && b.tag == TAG_INT) {
         switch (op) {
-            case 0: r = a.i == b.i; break; case 1: r = a.i != b.i; break;
             case 2: r = a.i <  b.i; break; case 3: r = a.i <= b.i; break;
             case 4: r = a.i >  b.i; break; case 5: r = a.i >= b.i; break;
         }
@@ -841,7 +1172,6 @@ static Value _cmp(Value a, Value b, int op) {
         double fa = (a.tag == TAG_INT) ? (double)a.i : a.f;
         double fb = (b.tag == TAG_INT) ? (double)b.i : b.f;
         switch (op) {
-            case 0: r = fa == fb; break; case 1: r = fa != fb; break;
             case 2: r = fa <  fb; break; case 3: r = fa <= fb; break;
             case 4: r = fa >  fb; break; case 5: r = fa >= fb; break;
         }
@@ -850,14 +1180,9 @@ static Value _cmp(Value a, Value b, int op) {
            order, matching every other backend (CRUSH-136). */
         int c = strcmp(a.s, b.s);
         switch (op) {
-            case 0: r = c == 0; break; case 1: r = c != 0; break;
             case 2: r = c <  0; break; case 3: r = c <= 0; break;
             case 4: r = c >  0; break; case 5: r = c >= 0; break;
         }
-    } else if (a.tag == TAG_BOOL && b.tag == TAG_BOOL && (op == 0 || op == 1)) {
-        r = (op == 0) ? (a.b == b.b) : (a.b != b.b);
-    } else if (a.tag == TAG_NULL && b.tag == TAG_NULL && (op == 0 || op == 1)) {
-        r = (op == 0);
     }
     return mk_bool(r);
 }
@@ -876,6 +1201,18 @@ struct LocalMeta {
     ty: LocalType,
 }
 
+/// A `new_obj` tagged with a sealed Kind: the Kind's name and the index of
+/// its `_cosm_sealed_<i>` field list.
+fn sealed_new_obj<'p>(program: &'p casm::Program, instr: &'p casm::Instruction) -> Option<(&'p str, usize)> {
+    if instr.op != "new_obj" {
+        return None;
+    }
+    let kind = instr.args.get("kind")?.as_str()?;
+    let module = program.kind_table()?;
+    casm::sealed_fields(module, kind)?;
+    Some((kind, module.kinds.iter().position(|k| k.name == kind)?))
+}
+
 fn emit_c_function(
     out: &mut String,
     name: &str,
@@ -888,14 +1225,18 @@ fn emit_c_function(
 
     // Discover locals by scanning store/load instructions (func.locals may be empty)
     let arity: HashMap<String, usize> = program.functions.iter().map(|(k, f)| (k.clone(), f.params.len())).collect();
-    let local_index = discover_locals(func, &arity);
+    // CRUSH-zorro-54: loads not preceded by a store on every path.
+    let to_check = casm::assigned::loads_to_check(func);
+    let local_index = discover_locals(func, &arity, &to_check);
 
     out.push_str(&format!("static Value fn_{fn_name}(void) {{\n"));
 
     // Locals: `Value` locals are a frame on the collector-visible `_locals`
     // stack (see `discover_locals`); typed ones would stay C variables.
     out.push_str(&format!("    int __lb = _frame_enter({});\n", local_index.len()));
-    for meta in local_index.values() {
+    let mut typed_locals: Vec<&LocalMeta> = local_index.values().collect();
+    typed_locals.sort_unstable_by(|a, b| a.c_name.cmp(&b.c_name));
+    for meta in typed_locals {
         match meta.ty {
             LocalType::F64 => out.push_str(&format!("    double {} = 0.0;\n", meta.c_name)),
             LocalType::I64 => out.push_str(&format!("    int64_t {} = 0;\n", meta.c_name)),
@@ -910,7 +1251,15 @@ fn emit_c_function(
 
     for (i, instr) in func.body.iter().enumerate() {
         out.push_str(&format!("            case {i}: {{\n"));
-        if let Some(op) = emit_c_instr(out, instr, i, n, &local_index) {
+        if let Some((kind, idx)) = sealed_new_obj(program, instr) {
+            // COSM K1.4: a struct literal of a sealed Kind — the object
+            // remembers the Kind's fields and refuses any other (as the VMs do).
+            let next_pc = (i + 1).min(n);
+            out.push_str(&format!(
+                "                {{ int __oi = _alloc_object(); if (__oi >= 0) {{ _objects[__oi].sealed_kind = \"{}\"; _objects[__oi].sealed_fields = _cosm_sealed_{idx}; }} _push(__oi >= 0 ? mk_object(__oi) : mk_null()); }} _pc={next_pc}; break;\n",
+                kind.escape_default()
+            ));
+        } else if let Some(op) = emit_c_instr(out, instr, i, n, &local_index, to_check[i]) {
             unsupported.push(format!("{op} (fn {name}, instruction {i})"));
         }
         out.push_str("            }\n");
@@ -1006,7 +1355,7 @@ fn infer_local_types(func: &casm::Function, arity: &HashMap<String, usize>) -> O
             "pop" => { pop(&mut st)?; }
             "dup" => { let t = *st.stack.last()?; st.stack.push(t); }
             "swap" => { let a = pop(&mut st)?; let b = pop(&mut st)?; st.stack.push(a); st.stack.push(b); }
-            "nop" | "yield" => {}
+            "nop" | "yield" | "await" => {}
             "load" => {
                 let name = instr.args.get("name")?.as_str()?;
                 let t = st.locals.get(name).copied().unwrap_or(Ty::Null);
@@ -1038,7 +1387,7 @@ fn infer_local_types(func: &casm::Function, arity: &HashMap<String, usize>) -> O
                 if !matches!(instr.op.as_str(), "map_keys") { pop(&mut st)?; }
                 pop(&mut st)?; st.stack.push(Ty::Any);
             }
-            "str_to_upper" | "str_to_lower" | "str_trim" | "get_field" | "await" => { pop(&mut st)?; st.stack.push(Ty::Any); }
+            "str_to_upper" | "str_to_lower" | "str_trim" | "get_field" => { pop(&mut st)?; st.stack.push(Ty::Any); }
             "arr_len" | "len" => { pop(&mut st)?; st.stack.push(Ty::Int); }
             "new_array" => st.stack.push(Ty::Array),
             "new_obj" => st.stack.push(Ty::Object),
@@ -1079,11 +1428,20 @@ fn infer_local_types(func: &casm::Function, arity: &HashMap<String, usize>) -> O
 }
 
 /// Pre-scan instructions to discover local variable names from store/load ops.
-fn discover_locals(func: &casm::Function, arity: &HashMap<String, usize>) -> HashMap<String, LocalMeta> {
+/// `to_check[pc]`: the load at `pc` may see the local unassigned
+/// (`casm::assigned::loads_to_check`); such a local stays a `Value`, whose
+/// `TAG_UNSET` records that (CRUSH-zorro-54).
+fn discover_locals(func: &casm::Function, arity: &HashMap<String, usize>, to_check: &[bool]) -> HashMap<String, LocalMeta> {
     let (body, params) = (&func.body, &func.params);
     let mut map = HashMap::new();
     let mut next = 0usize;
-    let inferred = infer_local_types(func, arity).unwrap_or_default();
+    let mut inferred = infer_local_types(func, arity).unwrap_or_default();
+    // Inference already sees such a read as Null, so this only guards it.
+    for (instr, _) in body.iter().zip(to_check).filter(|(_, c)| **c) {
+        if let Some(name) = instr.args.get("name").and_then(|v| v.as_str()) {
+            inferred.insert(name.to_string(), Ty::Any);
+        }
+    }
 
     let add_local = |name: &str, map: &mut HashMap<String, LocalMeta>, next: &mut usize| {
         if !map.contains_key(name) {
@@ -1132,6 +1490,7 @@ fn emit_c_instr(
     this_pc: usize,
     total_instrs: usize,
     locals: &HashMap<String, LocalMeta>,
+    check_load: bool,
 ) -> Option<String> {
     let mut unsupported = None;
     let args = &instr.args;
@@ -1173,6 +1532,12 @@ fn emit_c_instr(
                 match meta.ty {
                     LocalType::F64 => out.push_str(&format!("                _push(mk_float({})); _pc={next_pc}; break;\n", meta.c_name)),
                     LocalType::I64 => out.push_str(&format!("                _push(mk_int({})); _pc={next_pc}; break;\n", meta.c_name)),
+                    // CRUSH-zorro-54: fail on a local not stored to yet.
+                    LocalType::Value if check_load => out.push_str(&format!(
+                        "                {{ Value _v = {}; if (_v.tag == TAG_UNSET) _uninit_load(\"{}\"); _push(_v); }} _pc={next_pc}; break;\n",
+                        meta.c_name,
+                        c_message(name)
+                    )),
                     LocalType::Value => out.push_str(&format!("                _push({}); _pc={next_pc}; break;\n", meta.c_name)),
                 }
             } else {
@@ -1381,31 +1746,18 @@ fn emit_c_instr(
                 out.push_str(&format!("                _pop(); _pc = {next_pc}; break;\n"));
             }
         }
-        // ── Async / AI opcodes ──
-        // AOT backends can't spawn OS threads or yield at the instruction level;
-        // these are stubbed to the minimum safe behavior.
-        "spawn" => {
-            // Pop function name + argc args (left on stack), push null.
-            // AOT can't spawn green threads, but we must keep the stack balanced.
-            let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
-            out.push_str(&format!("                _pop(); // fn name\n"));
-            for _ in 0..argc {
-                out.push_str(&format!("                _pop(); // arg\n"));
-            }
-            out.push_str(&format!("                _push(mk_null());\n"));
-            out.push_str(&format!("                _pc={next_pc}; break;\n"));
-        }
+        // ── Green tasks without `spawn` (issue #161) ──
+        // With no spawned task `yield` is a cooperative-yield no-op and `await`
+        // has no handle (issue #251: `await v` on a non-handle returns `v`, so
+        // the awaited value stays on the stack). A program that does `spawn` is
+        // refused up front by `refuse_green_task`, so these never run a task
+        // here.
         "yield" => {
-            // Cooperative yield is a no-op in sequential AOT execution.
-            out.push_str(&format!("                _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                _pc = {next_pc}; break;\n"));
         }
         "await" => {
-            // Pop handle, push null
-            out.push_str(&format!("                _pop(); // handle\n"));
-            out.push_str(&format!("                _push(mk_null());\n"));
-            out.push_str(&format!("                _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                _pc = {next_pc}; break;\n"));
         }
-
         // ── AI opcodes ──
         // AOT C can't perform AI queries. The JSON config is in the instruction args,
         // NOT on the stack. Push null (matching scheduler/portable VM behavior).
@@ -1485,6 +1837,12 @@ fn emit_c_instr(
             out.push_str("                { Value __ret = _pop(); _lsp = __lb; return __ret; }\n");
         }
 
+        // CRUSH-293 D3 is VM-only; refuse explicitly rather than relying on
+        // the generic unsupported-op fallback.
+        "call_value_apply" => {
+            unsupported = Some("`call_value_apply` (function values, CRUSH-293 D3)".to_string());
+        }
+
         // ── Calls ──
         "call" => {
             let target = args["function"].as_str().unwrap_or("");
@@ -1502,18 +1860,18 @@ fn emit_c_instr(
             out.push_str(&format!("                {{ int __ai = _alloc_array(); _push(__ai >= 0 ? mk_array(__ai) : mk_null()); }} _pc={next_pc}; break;\n"));
         }
         "arr_get" | "index" => {{
-            out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else if (__arr_v.tag == TAG_STRING && __idx_v.tag == TAG_INT) {{ _push(_str_char_at(__arr_v.s, __idx_v.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else if (__arr_v.tag == TAG_STRING && __idx_v.tag == TAG_INT) {{ _push(_str_char_at(__arr_v.s, __idx_v.i)); }} else if (__arr_v.tag == TAG_OBJECT && __arr_v.obj_idx >= 0 && __arr_v.obj_idx < _object_count) {{ _push(_obj_index(__arr_v, __idx_v)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
         }}
         "arr_set" => {{
-            out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ __a->data[__wi] = __val_v; }} }} }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ __a->data[__wi] = __val_v; }} }} }} else if (__arr_v.tag == TAG_OBJECT && __arr_v.obj_idx >= 0 && __arr_v.obj_idx < _object_count) {{ _obj_index_set(__arr_v, __idx_v, __val_v); }} }} _pc={next_pc}; break;\n"));
         }}
         "arr_len" | "len" => {{
-            out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag == TAG_ARRAY) {{ int __ai = __v.array_idx; _push(mk_int(__ai >= 0 && __ai < _array_count ? (int64_t)_arrays[__ai].len : 0LL)); }} else if (__v.tag == TAG_STRING) {{ _push(mk_int((int64_t)strlen(__v.s))); }} else {{ _push(mk_int(0LL)); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag == TAG_ARRAY) {{ int __ai = __v.array_idx; _push(mk_int(__ai >= 0 && __ai < _array_count ? (int64_t)_arrays[__ai].len : 0LL)); }} else if (__v.tag == TAG_STRING) {{ _push(mk_int((int64_t)strlen(__v.s))); }} else if (__v.tag == TAG_OBJECT && __v.obj_idx >= 0 && __v.obj_idx < _object_count) {{ _push(mk_int((int64_t)_objects[__v.obj_idx].field_count)); }} else {{ _push(mk_int(0LL)); }} }} _pc={next_pc}; break;\n"));
         }}
         "map_keys" => {{
-            // C backend has no map support; pass through unchanged.
-            // Maps were already unsupported here before this op existed.
-            out.push_str(&format!("                {{ Value __v = _pop(); _push(__v); }} _pc={next_pc}; break;\n"));
+            // Objects (Python dicts): their keys, in insertion order (fields are
+            // stored in the order they were added). Arrays/strings pass through.
+            out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag == TAG_OBJECT && __v.obj_idx >= 0 && __v.obj_idx < _object_count) {{ CrushObject* __o = &_objects[__v.obj_idx]; int __ki = _alloc_array(); CrushArray* __k = &_arrays[__ki]; _array_reserve(__k, __o->field_count); for (int __i = 0; __i < __o->field_count; __i++) __k->data[__k->len++] = mk_string(__o->fields[__i].key); _push(mk_array(__ki)); }} else {{ _push(__v); }} }} _pc={next_pc}; break;\n"));
         }}
         "arr_push" | "array_push" => {{
             out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; _array_push(__a, __val); }} }} _push(__arr); }} _pc={next_pc}; break;\n"));
@@ -1545,14 +1903,27 @@ fn emit_c_instr(
             let cap_name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             match cap_name {
+                name if crate::method_support::id(name).is_some() => {
+                    let expected=crush_vm::rust_methods_core::arity(name).unwrap();
+                    if argc != expected { unsupported=Some(format!("cap_call '{name}' needs {expected} arguments (CRUSH-xps-13)")); }
+                    else {
+                        let id=crate::method_support::id(name).unwrap();
+                        out.push_str(&format!("                {{ Value __a[4]; for(int j={argc}-1;j>=0;j--) __a[j]=_pop(); _push(_shared_method({id},__a,{argc})); }} _pc={next_pc}; break;\n"));
+                    }
+                }
+                // Returns the array, as the VM's `push` does.
+                // One value per push; anything else would pop the wrong slots.
+                "append" | "push" | "arr.push" | "array.push" if argc != 2 => {
+                    unsupported = Some(format!("cap_call '{cap_name}' with {argc} arguments (one value per push)"));
+                }
                 "append" | "push" | "arr.push" | "array.push" => {
-                    out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; _array_push(__a, __val); }} }} }} _pc={next_pc}; break; // cap_call append/push\n"));
+                    out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; _array_push(__a, __val); }} }} _push(__arr); }} _pc={next_pc}; break; // cap_call append/push\n"));
                 }
                 "arr_get" => {
                     out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break; // cap_call arr_get\n"));
                 }
                 "arr_set" => {
-                    out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ __a->data[__wi] = __val_v; }} }} }} }} _pc={next_pc}; break; // cap_call arr_set\n"));
+                    out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ __a->data[__wi] = __val_v; }} }} }} else if (__arr_v.tag == TAG_OBJECT && __arr_v.obj_idx >= 0 && __arr_v.obj_idx < _object_count) {{ _obj_index_set(__arr_v, __idx_v, __val_v); }} }} _pc={next_pc}; break; // cap_call arr_set\n"));
                 }
                 "make_range" => {
                     // Variadic: 0, 1, or 2 args �� args pushed left-to-right, top of stack = last arg
@@ -1570,8 +1941,12 @@ fn emit_c_instr(
                 "io.print" | "print" => {
                     // Same text as string concatenation (`_to_text_buf`), and pushes null like
                     // the VM: the CASM pops print's result, so pushing nothing popped the
-                    // caller's pending operand instead (CRUSH-216).
-                    out.push_str(&format!("                {{ Value __pv = _pop(); char __tb[TEXTBUF_SIZE]; printf(\"%s\\n\", _to_text_buf(__pv, __tb)); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n"));
+                    // caller's pending operand instead (CRUSH-216). All `argc` arguments are
+                    // printed, concatenated like the VM (it used to pop one).
+                    let n = argc;
+                    if n == 0 { out.push_str(&format!("                {{ putchar('\\n'); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n")); } else {
+                    out.push_str(&format!("                {{ Value __pa[{n}]; for (int __i = {n} - 1; __i >= 0; __i--) __pa[__i] = _pop(); for (int __i = 0; __i < {n}; __i++) {{ char __tb[TEXTBUF_SIZE]; fputs(_to_text_buf(__pa[__i], __tb), stdout); }} putchar('\\n'); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n"));
+                    }
                 }
                 "io.write" => {
                     out.push_str(&format!("                {{ Value __pv = _pop(); char __tb[TEXTBUF_SIZE]; fputs(_to_text_buf(__pv, __tb), stdout); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.write\n"));
@@ -1590,8 +1965,51 @@ fn emit_c_instr(
                         ));
                     }
                 }
+                "py.print_sep_end" if argc >= 2 => {
+                    // print(*values, sep=, end=) (CRUSH-zorro-38): (sep, end, values..);
+                    // null means CPython's default.
+                    out.push_str(&format!(
+                        "                {{ Value __pa[{argc}]; for (int __i = {argc} - 1; __i >= 0; __i--) __pa[__i] = _pop(); \
+                         char __sb[TEXTBUF_SIZE]; char __eb[TEXTBUF_SIZE]; \
+                         const char* __sep = __pa[0].tag == TAG_NULL ? \" \" : _py_to_text_buf(__pa[0], __sb); \
+                         const char* __end = __pa[1].tag == TAG_NULL ? \"\\n\" : _py_to_text_buf(__pa[1], __eb); \
+                         for (int __i = 2; __i < {argc}; __i++) {{ char __tb[TEXTBUF_SIZE]; if (__i > 2) fputs(__sep, stdout); fputs(_py_to_text_buf(__pa[__i], __tb), stdout); }} \
+                         fputs(__end, stdout); _push(mk_null()); }} _pc={next_pc}; break; // cap_call py.print_sep_end\n"
+                    ));
+                }
                 "math.truediv" => {
                     out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_true_div(__a, __b)); }} _pc={next_pc}; break; // cap_call math.truediv\n"));
+                }
+                "js.div" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_js_div(__a, __b)); }} _pc={next_pc}; break; // cap_call js.div\n"));
+                }
+                "js.add" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_js_add(__a, __b)); }} _pc={next_pc}; break; // cap_call js.add\n"));
+                }
+                "js.truthy" => {
+                    out.push_str(&format!("                {{ Value __v = _pop(); _push(mk_bool(_js_truthy(__v))); }} _pc={next_pc}; break; // cap_call js.truthy\n"));
+                }
+                "js.loose_eq" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(mk_bool(_js_loose_eq(__a, __b))); }} _pc={next_pc}; break; // cap_call js.loose_eq\n"));
+                }
+                "js.strict_eq" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(mk_bool(_js_strict_eq(__a, __b))); }} _pc={next_pc}; break; // cap_call js.strict_eq\n"));
+                }
+                "js.format" => {
+                    let n = argc;
+                    out.push_str(&format!("                {{ Value __fa[{}]; for (int __i = {n} - 1; __i >= 0; __i--) __fa[__i] = _pop(); _push(_js_format(__fa, {n})); }} _pc={next_pc}; break; // cap_call js.format\n", n.max(1)));
+                }
+                "rust.debug" => {
+                    unsupported = Some("cap_call 'rust.debug': shared Rust formatter bridge is required (CRUSH-xps-9)".into());
+                }
+                "conv.text" => {
+                    out.push_str(&format!("                {{ Value __st = _pop(); Value __v = _pop(); _push(_conv_text(__v, __st)); }} _pc={next_pc}; break; // cap_call conv.text\n"));
+                }
+                "seq.slice" => {
+                    out.push_str(&format!("                {{ Value __st = _pop(); Value __b = _pop(); Value __a = _pop(); Value __t = _pop(); _push(_seq_slice(__t, __a, __b, __st)); }} _pc={next_pc}; break; // cap_call seq.slice\n"));
+                }
+                "math.power" => {
+                    out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_power(__a, __b)); }} _pc={next_pc}; break; // cap_call math.power\n"));
                 }
                 "math.floordiv" => {
                     out.push_str(&format!("                {{ Value __b = _pop(); Value __a = _pop(); _push(_floor_div(__a, __b)); }} _pc={next_pc}; break; // cap_call math.floordiv\n"));
@@ -1633,6 +2051,18 @@ fn emit_c_instr(
 /// A C `double` literal that reads back as exactly `v`. Rust's `{v}` Display writes
 /// `1e20` as `100000000000000000000`, an integer literal too large for C (CRUSH-216);
 /// `{v:?}` is the shortest round-trip form and uses an exponent when that's shorter.
+/// `s` for the inside of a C string literal: printable ASCII as is, every
+/// other byte as an octal escape.
+fn c_message(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'"' | b'\\' => format!("\\{}", b as char),
+            0x20..=0x7e => (b as char).to_string(),
+            _ => format!("\\{b:03o}"),
+        })
+        .collect()
+}
+
 fn c_double_literal(v: f64) -> String {
     if v.is_nan() {
         "NAN".to_string()

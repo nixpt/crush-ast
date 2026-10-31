@@ -116,3 +116,29 @@ Imported from `workspace-meta/prompts/crush-backlog/CRUSH-30.txt` on 2026-08-24 
 - Verification: satisfy this ticket's Definition of done, include test evidence, and quote the real post-commit `HEAD` hash.
 - Lane guard: avoid `crates/crush-vm/src/fastvm/` and `crates/crush-vm/src/python.rs` unless this ticket explicitly scopes them; flag `crush_cast::Function`/`Program` shape changes before landing.
 - Halt: stop and DM foreman if gates are unmet, scope is wrong, the repro no longer exists, sandbox blocks required work, or budget is nearly exhausted.
+
+## Resolution (scope ruling, buffy 2026-10-16 — close + follow-up)
+
+Verified on branch `agent/buffy/CRUSH-quickwins-11-35` (main `cdb937e` + docs
+commit `cd83173`):
+
+- **Parser**: `@exhaustive-match-sites [T1, T2]` lexes as a known annotation
+  (`parser/lexer.rs:592`), accumulates into the module manifest's
+  `exhaustive_types` (`parser/mod.rs:445,741`; test
+  `test_exhaustive_match_sites_annotation` at parser/mod.rs:3837).
+- **CAST pass**: `cast_enrich::enrich_cast` populates
+  `Program.exhaustive_sites` (one `ExhaustiveMatchSite` per match, with
+  `covered_arms` + `has_wildcard`; unit tests at cast_enrich.rs:297+).
+- **Lint pass**: `exhaustive_check::check_exhaustiveness` runs in the
+  frontend pipeline (`lib.rs:58`), opt-in via `@module` +
+  `exhaustive_types`, emits Warning **E-EXH-001** on wildcard arms, with
+  its own test module (assert at exhaustive_check.rs:129).
+
+Ruling (captain-delegated): the opt-in, annotation-gated wildcard-warning
+lint satisfies the ticket's core intent ("agents read this before touching
+the module"). The v1 gaps — per-type narrowing (`type_name` still blank),
+populated `missing_arms`, workspace-wide cross-file tracking +
+`.exhaustive.json` side artifact, `W-EXM01` id — are **not** required for
+closure; they move to follow-up ticket **CRUSH-30a**. Note the spec's test (c)
+("new variant, no new match site → warn") is unreachable without type
+inference; it is re-homed in CRUSH-30a alongside the variant registry.

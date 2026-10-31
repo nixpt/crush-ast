@@ -97,6 +97,10 @@ fn parse_runtime_value(s: &str) -> Result<crush_vm::RuntimeValue> {
         return Ok(crush_vm::RuntimeValue::String(inner.to_string()));
     }
 
+    // Non-finite floats have no decimal point or exponent marker.
+    if matches!(s, "NaN" | "inf" | "-inf") {
+        return Ok(crush_vm::RuntimeValue::Float(s.parse()?));
+    }
     // Float (contains '.' or 'e')
     if s.contains('.') || s.contains('e') || s.contains('E') {
         if let Ok(f) = s.parse::<f64>() {

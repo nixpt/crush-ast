@@ -236,9 +236,18 @@ fn run_blob<'py>(
         .map_err(|e| PyRuntimeError::new_err(format!("CVM1 trap: {e:?}")))?;
     let stack: Vec<PyObject> = res.stack.iter().map(|v| value_to_py(py, v)).collect();
     let result = res.stack.last().map(|v| value_to_py(py, v));
+    // `VmResult::return_value` is the entry function's explicit `return`
+    // value. It is NOT the same thing as `result` (top of stack): a program
+    // that returns leaves an EMPTY stack and puts the value here, so
+    // surfacing only `stack.last()` reported `None` for exactly the
+    // programs whose value matters. The Rust `VmResult` and the
+    // `crush-lang-sdk` `VmResult` both carry it; surface it here too so the
+    // wheel and the reference ports agree.
+    let return_value = res.return_value.as_ref().map(|v| value_to_py(py, v));
     let d = PyDict::new_bound(py);
     d.set_item("output", res.output)?;
     d.set_item("result", result)?;
+    d.set_item("return_value", return_value)?;
     d.set_item("stack", stack)?;
     d.set_item("steps", res.steps)?;
     d.set_item("halted", res.halted)?;

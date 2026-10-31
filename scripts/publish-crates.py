@@ -20,8 +20,11 @@ names the crates that need a manual first publish; publish those by hand and
 run again to finish.
 
 Order: normal and build dependencies between workspace crates, dependencies
-first. Dev-dependencies are ignored: crates.io accepts path-only dev-deps,
-and counting them creates false cycles.
+first. Dev-dependencies don't order the set: crates.io accepts path-only
+dev-deps, and counting them creates false cycles. A dev-dep that carries a
+version requirement (e.g. inherited via `.workspace = true`) does make a crate
+wait, though: `cargo package` keeps it, so that version has to be on
+crates.io or in the same publish set.
 
 Safe to re-run: a version already on crates.io is skipped. `cargo publish`
 waits for each crate to appear in the index before the next one starts.
@@ -85,7 +88,23 @@ def workspace():
         )
         for name, p in packages.items()
     }
-    return packages, deps
+    # What `cargo package` must resolve: normal and build deps, plus dev-deps
+    # that carry a version requirement. A path-only dev-dep (req "*") is
+    # stripped from the published manifest; one with a version (e.g. via
+    # `.workspace = true`) is kept, so that version must be on crates.io or
+    # in the same publish set.
+    needs = {
+        name: sorted(
+            set(deps[name])
+            | {
+                d["name"]
+                for d in p["dependencies"]
+                if d["name"] in packages and d["kind"] == "dev" and d["req"] != "*"
+            }
+        )
+        for name, p in packages.items()
+    }
+    return packages, deps, needs
 
 
 def topo_order(names, deps):
@@ -107,7 +126,7 @@ def topo_order(names, deps):
 def main():
     publish = "--publish" in sys.argv[1:]
     verified = "--verified" in sys.argv[1:]
-    packages, deps = workspace()
+    packages, deps, needs = workspace()
     on_registry = {name: crates_io_versions(name) for name in sorted(packages)}
 
     in_set = {n for n, versions in on_registry.items() if versions is not None}
@@ -115,24 +134,33 @@ def main():
 
     # A crate waits if it needs a never-published workspace crate, directly
     # or through another waiting crate. Everything else is published now; a
-    # re-run after the manual first publishes picks up the rest.
-    todo, done, waiting = [], [], {}
-    for name in (n for n in topo_order(in_set, deps) if n in in_set):
-        version = packages[name]["version"]
-        if version in on_registry[name]:
-            done.append(f"{name} {version}")
-            continue
-        needs = sorted(
-            {
-                d for d in deps[name]
+    # re-run after the manual first publishes picks up the rest. A versioned
+    # dev-dep can point either way in the publish order, so iterate to a
+    # fixed point instead of deciding in one ordered pass.
+    pending = [
+        n for n in topo_order(in_set, deps)
+        if n in in_set and packages[n]["version"] not in on_registry[n]
+    ]
+    waiting = {}
+    changed = True
+    while changed:
+        changed = False
+        for name in pending:
+            firsts = {
+                d for d in needs[name]
                 if d not in in_set and packages[d]["version"] not in (on_registry[d] or ())
-            }
-            | {m for d in deps[name] if d in waiting for m in waiting[d]}
-        )
-        if needs:
-            waiting[name] = needs
-        else:
-            todo.append((name, version))
+            } | {m for d in needs[name] if d in waiting for m in waiting[d]}
+            if firsts - waiting.get(name, set()):
+                waiting[name] = waiting.get(name, set()) | firsts
+                changed = True
+    waiting = {name: sorted(waiting[name]) for name in pending if name in waiting}
+
+    done = [
+        f"{n} {packages[n]['version']}"
+        for n in topo_order(in_set, deps)
+        if n in in_set and packages[n]["version"] in on_registry[n]
+    ]
+    todo = [(n, packages[n]["version"]) for n in pending if n not in waiting]
 
     print(f"already on crates.io ({len(done)}): {', '.join(done) or '-'}")
     print(f"never published, left out ({len(not_published)}): {', '.join(not_published) or '-'}")
@@ -177,12 +205,48 @@ def main():
         return
 
     # Already verified above; --no-verify skips building each crate twice.
+    # A crate that fails to upload (typically crates.io refusing this
+    # workflow's token for it: no Trusted Publishing config for that crate)
+    # doesn't stop the run. Only the crates that need it are skipped, so one
+    # run reports every crate that needs attention, not just the first.
+    failed, skipped, published = {}, {}, []
     for name, version in todo:
+        blocked = sorted(d for d in needs[name] if d in failed or d in skipped)
+        if blocked:
+            skipped[name] = blocked
+            print(f"\nskipping {name}: needs {', '.join(blocked)}, which did not publish", flush=True)
+            continue
         print(f"\n::group::cargo publish -p {name} ({version})", flush=True)
-        subprocess.run(["cargo", "publish", "-p", name, "--locked", "--no-verify"], check=True)
+        result = subprocess.run(
+            ["cargo", "publish", "-p", name, "--locked", "--no-verify"],
+            stderr=subprocess.PIPE, text=True,
+        )
+        sys.stderr.write(result.stderr)
         print("::endgroup::", flush=True)
-    print(f"\npublished {len(todo)} crate(s)")
+        if result.returncode == 0:
+            published.append(name)
+        else:
+            denied = "403" in result.stderr or "not valid for crate" in result.stderr
+            failed[name] = "token refused" if denied else f"cargo publish exited {result.returncode}"
+            print(f"::error::{name}: {failed[name]}", flush=True)
+    print(f"\npublished {len(published)} crate(s)" + (f": {', '.join(published)}" if published else ""))
     report_waiting()
+    if failed or skipped:
+        print(f"\nFAILED ({len(failed)}):")
+        for name, why in failed.items():
+            print(f"  {name}: {why}")
+        if skipped:
+            print(f"SKIPPED ({len(skipped)}), because a crate they need did not publish:")
+            for name, blocked in skipped.items():
+                print(f"  {name} needs {', '.join(blocked)}")
+        refused = [n for n, why in failed.items() if why == "token refused"]
+        if refused:
+            print("crates.io refused this workflow's token for these. Add Trusted Publishing for each")
+            print("(crates.io > crate > Settings > Trusted Publishing: GitHub, repository nixpt/crush-ast,")
+            print("workflow publish.yml), then run this again: it skips what is already published.")
+            for n in refused:
+                print(f"  https://crates.io/crates/{n}/settings")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

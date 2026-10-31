@@ -37,6 +37,10 @@ pub(crate) fn register_pure(caps: &mut HostCaps) {
 }
 
 fn register_pure_with_rng(caps: &mut HostCaps, rng: SharedRng) {
+    caps.register(Box::new(RustDebugCap));
+    for name in ["rust.num", "rust.str.starts_with", "rust.str.ends_with"] {
+        caps.register(Box::new(RustMethodCap(name)));
+    }
     // String capabilities
     caps.register(Box::new(StrSplitCap));
     caps.register(Box::new(StrJoinCap));
@@ -154,8 +158,28 @@ macro_rules! std_cap {
     };
 }
 
+/// Pure typed method adapters, registered only by the explicit stdlib builder.
+struct RustMethodCap(&'static str);
+impl HostCap for RustMethodCap {
+    fn spec(&self) -> HostCapSpec { HostCapSpec { name: self.0.into(), argc: crush_vm::rust_methods_core::arity(self.0), returns: true } }
+    fn effects(&self) -> Option<&'static [&'static str]> { Some(&[]) }
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> { crush_vm::rust_methods::call(self.0, &args).map(Some) }
+}
+/// Pure, opt-in typed Rust formatting. No builtin/ambient registry entry.
+pub struct RustDebugCap;
+impl HostCap for RustDebugCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec { name: "rust.debug".into(), argc: Some(2), returns: true }
+    }
+    fn effects(&self) -> Option<&'static [&'static str]> { Some(&[]) }
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        if args.len() != 2 { return Err("rust.debug expects exactly 2 arguments".into()); }
+        crush_vm::rust_debug::format(&args[0], &args[1]).map(Some)
+    }
+}
+
 mod binary;
-mod bytes;
+pub(crate) mod bytes;
 mod collections_ext;
 mod env_info;
 mod result;
@@ -249,8 +273,8 @@ str_cap!(StrJoinCap, "join", 2, |args: &[Value]| {
 });
 
 str_cap!(StrTrimCap, "trim", 1, |args: &[Value]| {
-    let s = get_str(args, 0)?;
-    Ok(Some(Value::Str(s.trim().to_string())))
+    let values: Result<Vec<_>, String> = (0..1).map(|n| get_str(args, n).map(Value::Str)).collect();
+    crush_vm::rust_methods::call("str.trim", &values?).map(Some)
 });
 
 str_cap!(StrTrimStartCap, "trim_start", 1, |args: &[Value]| {
@@ -264,38 +288,35 @@ str_cap!(StrTrimEndCap, "trim_end", 1, |args: &[Value]| {
 });
 
 str_cap!(StrReplaceCap, "replace", 3, |args: &[Value]| {
-    let s = get_str(args, 0)?;
-    let pattern = get_str(args, 1)?;
-    let replacement = get_str(args, 2)?;
-    Ok(Some(Value::Str(s.replace(&pattern, &replacement))))
+    let values: Result<Vec<_>, String> = (0..3).map(|n| get_str(args, n).map(Value::Str)).collect();
+    crush_vm::rust_methods::call("str.replace", &values?).map(Some)
 });
 
 str_cap!(StrContainsCap, "contains", 2, |args: &[Value]| {
-    let s = get_str(args, 0)?;
-    let sub = get_str(args, 1)?;
-    Ok(Some(Value::Int(if s.contains(&sub) { 1 } else { 0 })))
+    let a = get_str(args, 0)?; let b = get_str(args, 1)?;
+    match crush_vm::rust_methods::call("str.contains", &[Value::Str(a), Value::Str(b)])? {
+        Value::Bool(b) => Ok(Some(Value::Int(i64::from(b)))), _ => unreachable!(),
+    }
 });
 
 str_cap!(StrStartsWithCap, "starts_with", 2, |args: &[Value]| {
-    let s = get_str(args, 0)?;
-    let prefix = get_str(args, 1)?;
-    Ok(Some(Value::Int(if s.starts_with(&prefix) { 1 } else { 0 })))
+    let values: Result<Vec<_>, String> = (0..2).map(|n| get_str(args, n).map(Value::Str)).collect();
+    crush_vm::rust_methods::call("str.starts_with", &values?).map(Some)
 });
 
 str_cap!(StrEndsWithCap, "ends_with", 2, |args: &[Value]| {
-    let s = get_str(args, 0)?;
-    let suffix = get_str(args, 1)?;
-    Ok(Some(Value::Int(if s.ends_with(&suffix) { 1 } else { 0 })))
+    let values: Result<Vec<_>, String> = (0..2).map(|n| get_str(args, n).map(Value::Str)).collect();
+    crush_vm::rust_methods::call("str.ends_with", &values?).map(Some)
 });
 
 str_cap!(StrToUpperCap, "to_upper", 1, |args: &[Value]| {
-    let s = get_str(args, 0)?;
-    Ok(Some(Value::Str(s.to_uppercase())))
+    let values: Result<Vec<_>, String> = (0..1).map(|n| get_str(args, n).map(Value::Str)).collect();
+    crush_vm::rust_methods::call("str.to_upper", &values?).map(Some)
 });
 
 str_cap!(StrToLowerCap, "to_lower", 1, |args: &[Value]| {
-    let s = get_str(args, 0)?;
-    Ok(Some(Value::Str(s.to_lowercase())))
+    let values: Result<Vec<_>, String> = (0..1).map(|n| get_str(args, n).map(Value::Str)).collect();
+    crush_vm::rust_methods::call("str.to_lower", &values?).map(Some)
 });
 
 str_cap!(StrPadLeftCap, "pad_left", 3, |args: &[Value]| {
@@ -410,16 +431,31 @@ macro_rules! math_binary_cap {
     };
 }
 
-math_unary_cap!(MathSqrtCap, "sqrt", f64::sqrt);
-math_unary_cap!(MathAbsCap, "abs", f64::abs);
-math_unary_cap!(MathFloorCap, "floor", f64::floor);
-math_unary_cap!(MathCeilCap, "ceil", f64::ceil);
-math_unary_cap!(MathRoundCap, "round", f64::round);
+fn shared_math_unary(name: &str, value: f64) -> f64 {
+    use crush_vm::rust_methods_core::{call, Input, Output};
+    match call(name, &[Input::Float(value)]).expect("known unary float kernel") {
+        Output::Float(value) => value,
+        _ => unreachable!("unary float kernel result contract"),
+    }
+}
+fn shared_math_pow(a: f64, b: f64) -> f64 {
+    use crush_vm::rust_methods_core::{call, Input, Output};
+    match call("math.pow", &[Input::Float(a), Input::Float(b)]).expect("known binary float kernel") {
+        Output::Float(value) => value,
+        _ => unreachable!("binary float kernel result contract"),
+    }
+}
+
+math_unary_cap!(MathSqrtCap, "sqrt", |x| shared_math_unary("math.sqrt", x));
+math_unary_cap!(MathAbsCap, "abs", |x| shared_math_unary("math.abs", x));
+math_unary_cap!(MathFloorCap, "floor", |x| shared_math_unary("math.floor", x));
+math_unary_cap!(MathCeilCap, "ceil", |x| shared_math_unary("math.ceil", x));
+math_unary_cap!(MathRoundCap, "round", |x| shared_math_unary("math.round", x));
 math_unary_cap!(MathSinCap, "sin", f64::sin);
 math_unary_cap!(MathCosCap, "cos", f64::cos);
 math_unary_cap!(MathTanCap, "tan", f64::tan);
 
-math_binary_cap!(MathPowCap, "pow", f64::powf);
+math_binary_cap!(MathPowCap, "pow", shared_math_pow);
 math_binary_cap!(MathMinCap, "min", f64::min);
 math_binary_cap!(MathMaxCap, "max", f64::max);
 
@@ -614,6 +650,7 @@ conv_cap!(ConvToBoolCap, "to_bool", 1, |args: &[Value]| {
         Value::Error(_) => Value::Int(1),
         Value::Bytes(b) => Value::Int(if b.is_empty() { 0 } else { 1 }),
         Value::Handle(_) => Value::Int(1),
+        Value::Func(_) => Value::Int(1),
         _ => Value::Int(0),
     };
     Ok(Some(result))
@@ -655,6 +692,7 @@ conv_cap!(ConvTypeOfCap, "type_of", 1, |args: &[Value]| {
         Value::Error(_) => "error",
         Value::Bytes(_) => "bytes",
         Value::Handle(_) => "handle",
+        Value::Func(_) => "function",
         _ => "unknown",
     };
     Ok(Some(Value::Str(type_name.to_string())))

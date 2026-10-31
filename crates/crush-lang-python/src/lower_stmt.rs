@@ -54,6 +54,70 @@ fn wrap_hoisted(
     }
 }
 
+thread_local! {
+    /// How many `def`s enclose the statement being lowered (CRUSH-251): a
+    /// nested `def` is a closure over its enclosing function, not a
+    /// program-wide function (which two `def helper()`s in different
+    /// functions would overwrite).
+    static DEF_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The names a function body declares `nonlocal`, not counting nested
+/// functions or classes (their own scopes).
+fn nonlocal_names(stmts: &[py_ast::Stmt], out: &mut Vec<String>) {
+    for stmt in stmts {
+        match stmt {
+            py_ast::Stmt::Nonlocal(n) => out.extend(n.names.iter().map(|i| i.to_string())),
+            py_ast::Stmt::If(s) => {
+                nonlocal_names(&s.body, out);
+                nonlocal_names(&s.orelse, out);
+            }
+            py_ast::Stmt::While(s) => {
+                nonlocal_names(&s.body, out);
+                nonlocal_names(&s.orelse, out);
+            }
+            py_ast::Stmt::For(s) => {
+                nonlocal_names(&s.body, out);
+                nonlocal_names(&s.orelse, out);
+            }
+            py_ast::Stmt::With(s) => nonlocal_names(&s.body, out),
+            py_ast::Stmt::Try(s) => {
+                nonlocal_names(&s.body, out);
+                for py_ast::ExceptHandler::ExceptHandler(h) in &s.handlers {
+                    nonlocal_names(&h.body, out);
+                }
+                nonlocal_names(&s.orelse, out);
+                nonlocal_names(&s.finalbody, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Meta for a lambda lowered from Python (CRUSH-251 step 4): the compiler
+/// applies Python scoping to it — an assignment makes a name local unless it
+/// is declared `nonlocal`.
+pub(crate) fn python_lambda_meta(
+    meta: &HashMap<String, serde_json::Value>,
+    nonlocals: Vec<String>,
+) -> HashMap<String, serde_json::Value> {
+    let mut meta = meta.clone();
+    meta.insert("scope".to_string(), serde_json::json!("python"));
+    meta.insert("nonlocal".to_string(), serde_json::json!(nonlocals));
+    meta
+}
+
+/// Lower the body of a `def`: one `def` level deeper, so a `def` in it is a
+/// closure over the body's locals (CRUSH-251), not a program-wide function.
+/// Also how an inline-lowered `@python` block's body is lowered (CRUSH-272).
+pub fn lower_def_body(body: &[py_ast::Stmt], ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
+    let depth = DEF_DEPTH.with(|d| d.get());
+    DEF_DEPTH.with(|d| d.set(depth + 1));
+    let lowered: anyhow::Result<Vec<Statement>> = body.iter().map(|s| lower_stmt(s, ctx)).collect();
+    DEF_DEPTH.with(|d| d.set(depth));
+    lowered
+}
+
 /// Lower a Python AST statement to a CAST statement.
 pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
     let offset = u32::from(stmt.start()) as usize;
@@ -92,14 +156,28 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
                 .iter()
                 .map(|a| (a.def.arg.to_string(), CastType::Any))
                 .collect();
-            let mut lowered_body = Vec::new();
-            for s in body {
-                lowered_body.push(lower_stmt(s, ctx)?);
+            let depth = DEF_DEPTH.with(|d| d.get());
+            let lowered_body = lower_def_body(body, ctx)?;
+            if depth == 0 {
+                return Ok(Statement::FunctionDef {
+                    name: name.to_string(),
+                    params,
+                    body: lowered_body,
+                    meta,
+                });
             }
-            Ok(Statement::FunctionDef {
+            // A nested `def` binds a closure to its name in the enclosing
+            // function (CRUSH-251 step 4).
+            let mut nonlocals = Vec::new();
+            nonlocal_names(body, &mut nonlocals);
+            Ok(Statement::VarDecl {
                 name: name.to_string(),
-                params,
-                body: lowered_body,
+                value: Expression::Lambda {
+                    params,
+                    body: lowered_body,
+                    meta: python_lambda_meta(&meta, nonlocals),
+                },
+                type_hint: CastType::Any,
                 meta,
             })
         }
@@ -341,7 +419,12 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
             meta,
         }),
         py_ast::Stmt::Global { .. } => anyhow::bail!("global keyword not yet supported"),
-        py_ast::Stmt::Nonlocal { .. } => anyhow::bail!("nonlocal keyword not yet supported"),
+        // The enclosing `def`'s lambda lists these names (`nonlocal_names`);
+        // the statement itself does nothing at run time.
+        py_ast::Stmt::Nonlocal { .. } => Ok(Statement::ExprStmt {
+            expr: Expression::NullLiteral { meta: meta.clone() },
+            meta,
+        }),
         py_ast::Stmt::Delete { .. } => anyhow::bail!("del not yet supported"),
         py_ast::Stmt::Assert { .. } => anyhow::bail!("assert not yet supported"),
         py_ast::Stmt::ClassDef { .. } => anyhow::bail!("class definitions not yet supported"),

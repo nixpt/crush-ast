@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Play blackjack_interactive.crush in headless Chromium via crush-web.
+"""Play blackjack_interactive.crush in headless Chromium via crush-web, and
+run a lowered @python block (CRUSH-272).
 
 usage: browser_test.py <site-dir>   (a dir holding index.html, pkg/, fixtures/;
                                      scripts/browser-test.sh stages one)
@@ -74,6 +75,14 @@ def main(site):
     for needle in ("Dealing (bet: $10)...", "Drew: ", "You stand at ", "You leave the table with $"):
         if needle not in transcript:
             failures.append(f"transcript lacks {needle!r}")
+    # CRUSH-272: an @python block lowered into the program runs with no grant
+    # and no executor; one the walker can't lower is a compile error.
+    lowered, refused = data["lowered"], data["loweredRefused"]
+    print("# lowered @python:", json.dumps(lowered))
+    if not lowered["ok"] or lowered["output"] != "125\n3\n2\n":
+        failures.append(f"lowered @python block: {lowered}")
+    if refused["ok"] or "class definitions" not in refused.get("error", ""):
+        failures.append(f"unlowerable @python block was not refused: {refused}")
     for f in failures:
         print("FAIL", f, file=sys.stderr)
     print("PASS" if not failures else f"{len(failures)} failure(s)", file=sys.stderr)

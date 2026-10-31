@@ -1,0 +1,17 @@
+{
+  "kinds": [
+    {
+      "name": "object",
+      "home_lang": "python",
+      "storage": "open_dict",
+      "semantics": "reference",
+      "resolution": "c3",
+      "receiver": "bound_self",
+      "construct": {
+        "py_new_init": {}
+      },
+      "equality": "identity"
+    }
+  ],
+  "interfaces": []
+}

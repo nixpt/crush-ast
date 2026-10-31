@@ -1,0 +1,47 @@
+use std::{panic::{catch_unwind, AssertUnwindSafe}, ptr, slice};
+#[repr(C)]
+pub struct AbiInput { tag: u32, reserved: u32, i: i64, f: f64, p: *const u8, n: usize }
+#[repr(C)]
+pub struct AbiOutput { status: u32, tag: u32, i: i64, f: f64, p: *mut u8, n: usize }
+fn bytes(status: u32, s: String) -> AbiOutput {
+    let b=s.into_bytes().into_boxed_slice(); let n=b.len(); let p=Box::into_raw(b) as *mut u8;
+    AbiOutput { status, tag: 4, i:0, f:0.0, p, n }
+}
+unsafe fn input(a: &AbiInput) -> Result<core::Input<'_>, String> {
+    if a.reserved != 0 { return Err("nonzero reserved input field".into()); }
+    Ok(match a.tag {
+        0 => core::Input::Null, 1 => core::Input::Int(a.i), 2 => core::Input::Float(a.f),
+        3 if a.i == 0 || a.i == 1 => core::Input::Bool(a.i != 0),
+        4 => {
+            if a.n > isize::MAX as usize || a.n != 0 && a.p.is_null() { return Err("invalid UTF-8 buffer length/pointer".into()); }
+            let b=if a.n == 0 { &[] } else { unsafe { slice::from_raw_parts(a.p,a.n) } };
+            core::Input::Text(std::str::from_utf8(b).map_err(|_| "invalid UTF-8 input")?)
+        },
+        5 => core::Input::Invalid,
+        _ => return Err("unknown scalar input tag".into()),
+    })
+}
+// Safety: generated callers provide valid readable arrays and live input buffers.
+// All failures/panics use the same owned-buffer/free protocol as text results.
+#[cfg_attr(not(test), unsafe(no_mangle))]
+pub unsafe extern "C" fn crush_support_call(op: u32, args: *const AbiInput, argc: usize) -> AbiOutput {
+    let result=catch_unwind(AssertUnwindSafe(|| -> Result<core::Output,String> {
+        let name=NAMES.get(op as usize).ok_or("unknown method operation")?;
+        if argc > 4 || argc != core::arity(name).unwrap() || args.is_null() { return Err("invalid method input arity/pointer".into()); }
+        let args=unsafe { slice::from_raw_parts(args,argc) };
+        let input: Result<Vec<_>,_> = args.iter().map(|a| unsafe { input(a) }).collect();
+        core::call(name, &input?)
+    }));
+    let value=match result { Ok(Ok(v)) => v, Ok(Err(e)) => return bytes(1,e), Err(_) => return bytes(2,"Rust support panic".into()) };
+    let mut out=AbiOutput { status:0, tag:0, i:0, f:0.0, p:ptr::null_mut(), n:0 };
+    match value {
+        core::Output::Int(i) => { out.tag=1; out.i=i; }, core::Output::Float(f) => { out.tag=2; out.f=f; },
+        core::Output::Bool(b) => { out.tag=3; out.i=i64::from(b); }, core::Output::Text(s) => return bytes(0,s),
+    }
+    out
+}
+// Safety: p/n must be an unfreed buffer returned by this library, or null/zero.
+#[cfg_attr(not(test), unsafe(no_mangle))]
+pub unsafe extern "C" fn crush_support_free(p: *mut u8, n: usize) {
+    if !p.is_null() { unsafe { drop(Box::from_raw(ptr::slice_from_raw_parts_mut(p,n))); } }
+}

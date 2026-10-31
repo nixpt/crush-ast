@@ -1,0 +1,42 @@
+// Vector add on the GPU, written in crush (CRUSH-zorro-3).
+//
+//   crush run --gpu examples/gpu/vec_add.crush
+//
+// `vec_add` uses device intrinsics (`gpu.*`), so it is a GPU kernel: crush-ptx
+// compiles it to PTX when the host launches it, and the host VM never runs it.
+// Buffers are f32 on the device; `gpu.launch` uploads each array argument, passes
+// integers as scalars, and copies every array back in place after the kernel runs.
+
+fn vec_add(a, b, out, n) {
+    let i = gpu.global_id();
+    if i < n {
+        gpu.store_f32(out, i, gpu.load_f32(a, i) + gpu.load_f32(b, i));
+    }
+}
+
+let n = 1000;
+let a = [];
+let b = [];
+let out = [];
+let i = 0;
+while i < n {
+    array.push(a, i * 1.0);
+    array.push(b, i * 2.0);
+    array.push(out, 0.0);
+    i = i + 1;
+}
+
+gpu.launch("vec_add", n, a, b, out, n);
+
+// Check every element against the CPU.
+let bad = 0;
+i = 0;
+while i < n {
+    if out[i] != a[i] + b[i] {
+        bad = bad + 1;
+    }
+    i = i + 1;
+}
+print(out[1]);
+print(out[999]);
+print(bad);    // mismatches: 0 when the GPU agrees with the CPU
