@@ -324,9 +324,72 @@ pub const CASES: &[Case] = &[
     loud("command_substitution", "v=$(echo hi)\necho $v\n", "command substitution"),
     loud("backticks", "v=`echo hi`\necho $v\n", "backticks"),
 
-    loud("external_command", "ls /\n", "command `ls`"),
-    loud("pipeline", "echo a | cat\n", "pipeline"),
-    loud("redirection", "echo a > /dev/null\n", "redirection"),
+    loud("external_command", "date\n", "command `date`"),
+    // ── pipelines: an in-VM buffer handoff, not a process ──
+    ok("pipeline_echo_cat", "echo a | cat\n"),
+    ok("pipeline_wc_l", "printf 'a\\nb\\n' | wc -l\n"),
+    ok("pipeline_three_stages", "printf 'a\\nb\\nc\\n' | grep b | wc -l\n"),
+    ok("pipeline_grep", "printf 'one\\ntwo\\nthree\\n' | grep t\n"),
+    ok("pipeline_grep_v", "printf 'one\\ntwo\\n' | grep -v one\n"),
+    ok("pipeline_grep_c", "printf 'a\\nb\\na\\n' | grep -c a\n"),
+    ok("pipeline_head", "printf '1\\n2\\n3\\n' | head -n 2\n"),
+    ok("pipeline_tail", "printf '1\\n2\\n3\\n' | tail -n 1\n"),
+    ok("pipeline_status", "printf 'a\\nb\\n' | grep hello\necho \"s=$?\"\n"),
+    ok("pipeline_and_or", "printf 'a\\n' | grep a && echo yes\nprintf 'a\\n' | grep z || echo no\n"),
+    ok("pipeline_negated", "! printf 'a\\n' | grep z\necho \"s=$?\"\n"),
+    ok("pipeline_into_read", "printf 'x y\\n' | read a b\necho \"[$a][$b]\"\n"),
+    ok("pipeline_from_heredoc", "cat <<'EOT' | wc -l\na\nb\nEOT\n"),
+    ok("pipeline_into_file", "printf 'a\\nb\\n' | grep b > f\ncat f\n"),
+    ok("pipeline_from_file", "printf 'a\\nb\\n' > f\ncat < f | wc -l\n"),
+    // ── redirections: `fs.write` / `fs.read` over the sandbox ──
+    ok("redirection_out", "echo hi > out.txt\ncat out.txt\n"),
+    ok("redirection_append", "echo a > f\necho b >> f\ncat f\n"),
+    ok("redirection_truncates", "echo one > f\necho two > f\ncat f\n"),
+    ok("redirection_append_new_file", "echo a >> f\ncat f\n"),
+    ok("redirection_in", "printf 'x\\ny\\n' > f\nwc -l < f\n"),
+    ok("redirection_in_cat", "printf 'x\\n' > f\ncat < f\n"),
+    ok("redirection_empty", ": > f\nwc -c < f\n"),
+    ok("redirection_printf_stderr_free", "printf '%s\\n' a b > f\ncat f\n"),
+    ok("redirection_while_read", "printf 'a\\nb\\n' > f\nwhile read l; do echo \"[$l]\"; done < f\n"),
+    ok("redirection_group_read", "printf 'a\\n' > f\n{ read x; } < f\necho \"[$x]\"\n"),
+    ok("redirection_heredoc_literal", "cat <<'EOT'\nliteral $x `y`\nEOT\n"),
+    ok("redirection_heredoc_expand", "n=w\ncat <<EOT\nhi $n\nEOT\n"),
+    ok("redirection_heredoc_empty", "cat <<'EOT'\nEOT\necho done\n"),
+    ok("redirection_in_loop_no_leak", "printf 'a\\nb\\n' > f\nwhile read l; do break; done < f\necho after\n"),
+    // ── the builtin command set ──
+    ok("coreutil_ls_hides_dotfiles", "touch a.txt .hidden\nls\n"),
+    okf("coreutil_ls_dir", "ls sub\n", &["sub/x", "sub/y", "sub/.h"]),
+    // `fs.list` is directory order; `ls` sorts, so the fixture is out of order.
+    okf("coreutil_ls_sorts", "ls\n", &["b.txt", "a.txt", "c.txt"]),
+    ok("coreutil_ls_empty", "mkdir e\nls e\necho end\n"),
+    ok("coreutil_cat_stdin", "printf 'a\\nb\\n' | cat\n"),
+    ok("coreutil_cat_append", "printf 'a\\n' > f\ncat f f\n"),
+    ok("coreutil_wc_default", "printf 'a b\\nc\\n' | wc\n"),
+    ok("coreutil_wc_flags", "printf 'a b\\nc\\n' | wc -l -w\n"),
+    // One column needs no padding, so it is exact on every coreutils version.
+    ok("coreutil_wc_file_single_column", "printf 'abc\\ndefg\\n' > f\nwc -l < f\necho done\n"),
+    // Several columns on a file's stdin: coreutils < 9.8 pads to 7, newer ones
+    // pad by the file's digit count. Refused rather than padded the wrong way.
+    loud("coreutil_wc_file_multi_column", "printf 'abc\\ndefg\\n' > f\nwc < f\n", "several columns"),
+    ok("coreutil_grep_missing_status", "printf 'a\\n' | grep z\necho \"[$?]\"\n"),
+    ok("coreutil_head_default_is_ten", "printf '1\\n2\\n' | head\n"),
+    ok("coreutil_head_variable_count", "n=2\nprintf '1\\n2\\n3\\n' | head -n $n\n"),
+    ok("coreutil_tail_count_from_file", "n=1\nprintf '1\\n2\\n' > f\ntail -n $n f\n"),
+    ok("coreutil_cp_mv_rm", "printf 'a\\n' > f\ncp f g\nmv g h\ncat h\nrm h\nls\n"),
+    ok("coreutil_mkdir_touch", "mkdir -p a/b\ntouch a/b/x\nls a/b\n"),
+    ok("coreutil_function_redirect", "setout() { echo from-fn; }\nsetout > fn.txt\ncat fn.txt\n"),
+    // `exit` inside a redirected function must flush what the function printed.
+    ok("redirection_function_exit", "f() { echo before; exit 3; }\nf > x.txt\necho unreachable\n"),
+    // A stage's `exit` has no file to flush into; refusing beats dropping its output.
+    loud("pipeline_stage_exit", "printf 'x\\n' | exit 0\n", "`exit` inside a pipeline stage"),
+    loud("redirection_stderr", "echo a 2>&1\n", "file descriptor"),
+    // A shell creates `f` empty and writes `g`; there is no way to do both here,
+    // so it is refused instead of writing only one of them.
+    loud("redirection_two_outputs", "echo a > f > g\n", "two `>`"),
+    loud("redirection_compound_out", "if true; then echo a; fi > f\n", "`>` / `>>` on a loop"),
+    loud("coreutil_sed_not_builtin", "printf 'a\\n' | sed s/a/b/\n", "command `sed`"),
+    loud("coreutil_grep_regex", "printf 'a1\\n' | grep 'a.'\n", "regular-expression syntax"),
+    loud("coreutil_wc_file_arg", "wc f\n", "`wc` with a file name"),
     // `read` itself needs stdin, so it is covered by `read_test.rs`; the
     // forms it does not lower are refused here.
     loud("read_unsupported_option", "read -t 5 x\n", "read -t"),
@@ -474,9 +537,12 @@ pub fn run_corpus(o: &Oracle) {
     eprintln!("| case | {} out (exit) | crush out (exit) | verdict |", o.dialect);
     eprintln!("|---|---|---|---|");
     for case in CASES {
-        let cwd = fixture_dir(o, case.name, case.files);
-        let (sh_out, sh_code) = run_shell(o, case.name, case.src, &cwd);
-        let crush = run_crush(case.src, o.to_cast, &cwd);
+        // One fixture directory each: a case that writes (`echo x > f`) must not
+        // see the file the real shell just wrote.
+        let sh_cwd = fixture_dir(o, &format!("{}-sh", case.name), case.files);
+        let crash_cwd = fixture_dir(o, &format!("{}-crush", case.name), case.files);
+        let (sh_out, sh_code) = run_shell(o, case.name, case.src, &sh_cwd);
+        let crush = run_crush(case.src, o.to_cast, &crash_cwd);
         let crush_cell = match &crush {
             Ok((out, code)) => format!("`{}` ({code})", show(out)),
             Err(e) => format!("error: {}", show(e)),

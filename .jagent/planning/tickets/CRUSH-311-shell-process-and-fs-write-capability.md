@@ -4,18 +4,17 @@
 |-------|-------|
 | **ID** | CRUSH-311 |
 | **Priority** | P1 |
-| **Status** | Proposed — needs a decision, not a patch |
+| **Status** | Done — option A (builtin-only), on `agent/buffy/shell-walkers-completion` |
 | **Phase** | M6 |
-| **Assignee** | unassigned |
+| **Assignee** | buffy |
 | **Dependencies** | CRUSH-202, CRUSH-310 (the shell IR is where this lands) |
-| **Estimated effort** | L (A below is M; B is L; C is S but wrong) |
+| **Estimated effort** | M for A (as estimated); B is still open |
 | **Filed by** | buffy — 2026-10-30, branch `agent/buffy/shell-walkers-completion` |
 
 ## Why this exists
 
 The bash/zsh walkers are honest: a construct either prints what the shell prints or
-is refused with `unsupported: <construct> at line N`. 168 oracle cases, 0 silently
-wrong. Everything still refused falls in two classes — ordinary lowering work
+is refused with `unsupported: <construct> at line N`.168 oracle cases (229 by the time this was implemented), 0 silently wrong. Everything still refused falls in two classes — ordinary lowering work
 (CRUSH-310's follow-ups) and this one:
 
 ```
@@ -61,6 +60,15 @@ what the CLI grants by default, and what an embedder must opt into.
 > if so, who says yes?
 
 Answering that sentence settles the rest of this ticket.
+
+**Decided 2026-10-30: D framing + A, as recommended.** A pipeline is an in-VM
+buffer handoff between two lowered commands, `<` `>` `>>` are `fs.read` /
+`fs.write` over the existing filesystem sandbox, a here-document is a string,
+and a fixed builtin set covers `cat ls wc head tail grep cp mv rm mkdir touch`.
+No process is ever spawned: `$(…)`, subshells, `2>&1` and any command outside
+the builtin set stay refused loudly. `crush-walk-run` keeps glob reading on by
+default and gates file contents behind `--allow-fs`; B (`--allow-process`)
+remains unbuilt and unplanned here.
 
 ## Options
 
@@ -149,16 +157,104 @@ choice rather than a default.
 
 ## Success criteria
 
-- [ ] The decision above is recorded (this ticket updated, or a `docs/design/` note).
-- [ ] Whichever of A/B is chosen: pipelines, `>`/`>>`/`<`, heredocs and `$(…)` lower
-      with a `Dialect`-correct exit status, or are still refused loudly.
-- [ ] Corpus cases for each construct, run against `/usr/bin/bash` and
+- [x] The decision above is recorded (this ticket updated, or a `docs/design/` note).
+- [x] Pipelines, `>`/`>>`/`<` and heredocs lower with a `Dialect`-correct exit
+      status; `$(…)` and the rest are still refused loudly.
+- [x] Corpus cases for each construct, run against `/usr/bin/bash` and
       `/usr/bin/zsh -f`, with **0 silently wrong** for both dialects.
-- [ ] A host granting nothing fails with a capability error, not a wrong answer —
-      pinned by a test (the pattern `glob_test.rs` already uses).
-- [ ] `crush-walk-run`'s defaults are documented in its `--help`: what a script may
+- [x] A host granting nothing fails with a capability error, not a wrong answer —
+      pinned by a test (the pattern `glob_test.rs` already uses; here, the live
+      run without `--allow-fs` fails with `unknown capability: fs.read`).
+- [x] `crush-walk-run`'s defaults are documented in its `--help`: what a script may
       read, write and execute, and the flag that widens it.
-- [ ] CRUSH-310's follow-up list is updated to drop what this lands.
+- [x] CRUSH-310's follow-up list is updated to drop what this lands.
+
+## What landed
+
+All in the shared IR, so bash and zsh get one implementation
+(`crates/crush-walker-core/src/shell.rs`); the lowerers only map parser nodes onto
+it.
+
+- **IR**: `Pipeline { stages }` (one entry per `|` stage), `Cmd::Redirected
+  { inner, redirs }`, `Redir { kind: In | Out | Append | HereDoc, word, expand }`.
+- **Streams**: the stream a command writes to is state in `__g`, not a parameter —
+  `__sh_stream` (0 = the host, 1 = `__sh_buf`), `__sh_buf`, `__sh_in` /
+  `__sh_in_set` (redirected stdin, with "set but empty" kept apart from "no
+  redirection"), `__sh_in_file` (so `wc` pads like GNU `wc` for `< file` and
+  pipes), `__sh_outf` / `__sh_append`. Keeping it in the globals map is what
+  makes a function inherit its caller's redirection, exactly as fds do.
+- **Pipelines**: each stage but the last fills the buffer, which becomes the next
+  stage's stdin; the last stage writes wherever the pipeline itself was pointed.
+  Nothing reaches the host until the last stage prints, so a pipeline cannot
+  reorder what the script already printed. `$?` is the last stage's status and
+  `!` negates it.
+- **Subshell semantics of a stage**: a stage's writes to globals are rolled back
+  afterwards — for every stage in bash and for the non-last stages in zsh, which
+  keeps the last stage's (zsh runs that one in the current shell). So
+  `printf x | read a` leaves `a` unset in bash and set in zsh, as both shells do.
+- **Redirections**: `<` is `fs.read`, `>` is `fs.write` (truncating), `>>` reads
+  the old contents back and writes old + new, a here-document is a literal (or,
+  for an unquoted delimiter, a normal word expansion) string. The filesystem caps
+  are only touched when a redirection is present.
+- **`exit`** flushes a redirected command's buffer before leaving, so
+  `f() { echo x; exit 3; }; f > log` leaves `x` in `log` like the shell does. In
+  a pipeline stage it is refused (see below), because there a real shell exits
+  only that stage and the script continues — which a lowered program cannot
+  resume halfway through a stage.
+- **Builtin command set** — `cat ls wc head tail grep cp mv rm mkdir touch`,
+  lowered inline onto `fs.read` / `fs.write` / `fs.cp` / `fs.mv` / `fs.rm` /
+  `fs.mkdir` / `fs.touch` / `fs.list` and the string helpers:
+  - `ls` hides dotfiles and sorts (`fs.list` is directory order; `ls` never is);
+  - `wc -l -w -c -m` on stdin — `wc -l < f` and `cat f | wc -l` are the exact
+    paths; several columns on a `< file` is refused, because coreutils < 9.8
+    pads those to 7 and newer ones pad by the file's digit count;
+  - `head`/`tail` with `-n N`, `-nN` (default 10) or a variable (`head -n $n`),
+    `grep` with `-c` and `-v` and its status wired to `$?`;
+  - `cat` with no operand reads stdin, which is what makes a here-document or a
+    pipeline stage usable;
+  - `cp mv rm mkdir touch`, with `-r`/`-f` for `rm` and `-p` for `mkdir`.
+  Anything outside those options is refused with a located error rather than
+  silently ignored.
+- **`crush-walk-run --allow-fs`** (was going to be `--allow-fs-write`; renamed
+  because `<` and `cat` need `fs.read` too) registers the whole fs group over the
+  start directory. Without it the script still gets `fs.exists` / `fs.list` /
+  `fs.is_dir` for globs, and a read of file *contents* fails with
+  `unknown capability: fs.read`. `--help` lists the three tiers: read names
+  (always), read/write files (`--allow-fs`), run a program (never).
+
+### Refused loudly, on purpose
+
+At compile time: `$(…)`, backticks, subshells, `&`, `2>&1` / `&>` /
+fd-numbered redirections, here-strings, process substitution, `>` on a loop /
+`if` / `{ }` (the buffer is flushed after the command returns, so an early
+`break`/`return` would lose its output), `wc FILE`, a multi-column `wc < f`,
+`ls` with options,
+and any command outside the builtin set; two `>`/`>>` (or two `<`) on one
+command, because a shell creates the earlier file empty and this could only
+write one of them; `exit` inside a pipeline stage. At run time: a `grep` pattern
+that uses regular-expression syntax (matching it as literal text would silently
+disagree with the shell).
+
+## Verification
+
+- Shared oracle corpus: **234 cases**, each run against real `/usr/bin/bash` and
+  `/usr/bin/zsh -f`, **0 failures / 0 silently wrong**:
+  - bash: 193 match, 41 loud-unsupported
+  - zsh: 187 match, 47 loud-unsupported
+  - (CRUSH-310 was 182 cases, 147/35 and 141/41. This ticket takes it from 182 to 234: 47
+    new matching cases and 8 new loud ones, minus the two old `pipeline` /
+    `redirection` refusals; the `external_command` case was retargeted from `ls`
+    to `date`.)
+- Each case now runs in a *separate* fixture directory for the shell and for
+  crush (`…-sh` / `…-crush`): a case that writes a file must not see the file
+  the other side just wrote.
+- `pipeline_test.rs`, `read_test.rs`, `glob_test.rs`, the kitchen-sink script and
+  the frontend tests are green in both dialects.
+- Live through the CLI, in a temp directory: a script with
+  `cat in.txt | grep b | wc -l`, `printf 'x\ny\n' > out.txt`, `echo appended >>
+  out.txt`, `wc -c < out.txt`, `mkdir -p d/e`, `touch d/e/f`, `ls d/e` and a
+  literal here-document prints byte-identical output to bash and creates the same
+  files; without `--allow-fs` it fails with `unknown capability: fs.read`.
 
 ## Out of scope
 
@@ -168,14 +264,27 @@ choice rather than a default.
 - `set -e` / `-u` / `pipefail` / `nullglob` and the rest of the option surface.
 - A POSIX `sh`/`dash` dialect (its own follow-up in CRUSH-310).
 
-## Open questions
+## Open questions — answered
 
-1. Is a shell script that writes files acceptable at all in the default CLI, or must
-   every write and every spawn be an explicit flag? (Recommendation: explicit.)
-2. Does A's buffer handoff need to model SIGPIPE, or is "left side runs to
-   completion, right side consumes the buffer" an acceptable documented difference?
-3. Should cap-backed builtins be spelled as shell commands (`cat`, `grep`) or as
-   crush caps with a shim? The former is what scripts write; the latter is what the
-   IR already knows how to emit.
-4. Who owns the streaming spawn API in the SDK if B is approved — and does it belong
-   to `crush_vm` (async) or to the host cap (blocking)?
+1. **Explicit flag.** `--allow-fs`, off by default. It covers reads of file
+   *contents* as well as writes, because `<` and `cat` need `fs.read`; that is why
+   the flag is not named `--allow-fs-write` as originally proposed.
+2. **No SIGPIPE model.** The left side runs to completion and the right side
+   consumes a buffer. A script whose left stage would have died of EPIPE here does
+   more work but prints the same bytes; this is a documented difference, not a
+   silent one.
+3. **Shell spelling.** `cat`, `grep`, … lower inline onto the `fs.*` / `text.*`
+   caps; no shim layer, and a script writes what a shell script writes.
+4. **Moot.** B was not approved, so there is no streaming spawn API to own.
+
+## Follow-ups
+
+- `$(…)` / backticks — the A-consistent form is a builtin-only capture (run the
+  lowered command into the buffer, use the buffer as the word); `$(date)` would
+  still be refused.
+- The rest of the coreutils: `sort`, `cut`, `uniq`, `tr`, `find`, `sed`. Each
+  needs its option surface decided the way `wc`/`grep` were.
+- `>` on a loop / `if` / `{ }` (flush the buffer on early exit), `2>&1`, `ls -l`,
+  `wc FILE`'s multi-file columns, and a regex engine for `grep`.
+- B behind `--allow-process` for the commands A cannot cover, with the timeout /
+  kill policy CRUSH-19 asks for first.

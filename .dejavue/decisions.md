@@ -1329,6 +1329,10 @@ Reason:
 task.start spawned a std::process::Command child that was tracked in a TaskState but never killed on drop, so a program that ran task.start and exited left the child running (sleep 333 outlived crush-run; touch created files). TaskState now implements Drop, killing and reaping every still-running task when the capability registry drops at the end of the run - a host that wants a detached task can stop tracking it first. Also, --task spawns host processes but its help never said so; the help text now states that --task grants process/spawn, which the effects catalog already listed for task.start.
 
 
+## 2026-10-30T21:16:19-05:00 — Shell pipelines and redirections run in-VM: no process, fs caps only (CRUSH-311)
+
+Reason:
+Option A of CRUSH-311, chosen over spawning real processes: a pipeline is a buffer handoff between two lowered commands, '<' '>' '>>' are fs.read/fs.write over the existing sandbox, a here-document is a string, and cat ls wc head tail grep cp mv rm mkdir touch lower inline onto the fs.* caps. No process is spawned - $(...) , subshells, 2>&1 and any command outside the builtin set stay refused loudly, so the guarantee that a script either prints what bash prints or fails with 'unsupported: ... at line N' survives. crush-walk-run gates file contents behind --allow-fs (renamed from --allow-fs-write because < and cat need fs.read), keeping glob-name reading on by default. Verified by the 234-case shared oracle: bash 193 match / 41 loud, zsh 187 / 47, 0 silently wrong.
 ## 2026-10-30T21:05:20-05:00 — Raw sockets are tcp.* caps with their own grants (--tcp, --tcp-listen), not net.*
 
 Reason:
