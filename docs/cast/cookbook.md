@@ -31,7 +31,7 @@ those calls (validate, compile, lower). No test in this repository walks
 | Match with all four Pattern kinds | [match.cast.json](../../examples/cast/match.cast.json) | validates, compiles, lowers |
 | Pipeline (result threads into next segment) | [pipeline.cast.json](../../examples/cast/pipeline.cast.json) | validates, compiles, lowers |
 | Spawn, Await, Yield | [concurrency.cast.json](../../examples/cast/concurrency.cast.json) | validates, compiles, lowers |
-| Imports: CrushModule, PolyglotModule, External | [imports.cast.json](../../examples/cast/imports.cast.json) | validates, compiles, lowers (imports then fail at run time: CRUSH-110) |
+| Imports: CrushModule, PolyglotModule, External | [imports.cast.json](../../examples/cast/imports.cast.json) | validates; does not compile: an unresolved `CrushModule` and an `External` import are compile errors since CRUSH-110 (module imports resolve from `.crush` files, see `docs/design/import-system.md`) |
 | LangBlock (embedded Python, variable injection) | [lang-block.cast.json](../../examples/cast/lang-block.cast.json) | validates, compiles, lowers |
 | AI Query | [ai-query.cast.json](../../examples/cast/ai-query.cast.json) | validates, compiles, lowers |
 | AI ToolChain (strategy + error handling) | [toolchain.cast.json](../../examples/cast/toolchain.cast.json) | validates, compiles, lowers |
@@ -53,10 +53,12 @@ where the manifest is part of the lesson.
 ## Status of the capsules
 
 Status against `3ae0b4a`: every capsule's `main.cast.json` validates, compiles and
-lowers except `research-summarizer` (refuses `CapabilityDiscovery`, CRUSH-265).
+lowers except `research-summarizer` (refuses `CapabilityDiscovery`, CRUSH-265) — and,
+since CRUSH-110, `mcp-web-tools`, whose `MCPImport` is refused at compile time ("`use @mcp`
+is not supported yet") instead of compiling to an `mcp.connect` call.
 Run with `Runtime::new()`, they stop at host capabilities nothing registers
-(`capability-log-reader`: `unknown capability: cap.acquire`; `mcp-web-tools`:
-`mcp.connect`; `secure-env-reader`: `secrets.read`), and `code-review-helper` runs
+(`capability-log-reader`: `unknown capability: cap.acquire`; `secure-env-reader`:
+`secrets.read`), and `code-review-helper` runs
 but every AI call yields `null` without an `ai_native` host (#261). They are
 schema and compile examples today. (The old `ant crush cast validate` / `ant pkg run` commands were
 exosphere's CLI and don't exist here.)

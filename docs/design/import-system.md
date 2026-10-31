@@ -1,120 +1,115 @@
-# Import system — what is specified, what is implemented
+# Import system
 
-**Status:** design note, 2026-10-07 (CRUSH-173). Written from the code at `main` + lane E; open work is
-**CRUSH-110** ("import is a no-op"). Line numbers are as of this commit.
+**Status:** implemented, CRUSH-110 (2026-10-31). Replaces the CRUSH-173 design note, which described
+imports as parsed but never resolved. The implementation is `crates/crush-frontend/src/import_system.rs`;
+its module docs are the normative rule list, this note is the overview.
 
 ## Summary
 
-Crush has a full import *syntax* — five forms, parsed by both the hand-written parser and the
-tree-sitter grammar, carried in CAST as `ImportStatement`. It has **no import semantics yet**:
-nothing loads a module, nothing resolves a name across files, and the compiler lowers every form to a
-runtime capability call that no host registers. The one thing that works end to end is the parse →
-render round trip.
+Crush module imports are resolved **at compile time**. Loading a module means parsing another `.crush`
+file and merging its definitions into the importing `Program` before `SemanticAnalyzer::check`, so
+imported names type-check like local ones, the capability check sees imported code exactly as if it were
+local, and no runtime capability is involved. `module.load` is no longer emitted.
 
-```text
-$ cat a.crush
-import helpers
-fn main() { io.print("hi") }
-$ crush-run run a.crush
-[runtime] unknown capability: module.load        # exit 1, even though helpers is never used
+```crush
+import facet                              // facet.facet_parse(spec)
+import facet { facet_parse, facet_help }  // facet_parse(spec)
+import util.strings as s                  // util/strings.crush → s.title(x)
 ```
 
-## Syntax (implemented)
+```text
+$ crush-run run examples/crush/imports/main.crush
+== imports ==
+3x4 = 12
+25
+```
 
-Parser: `crates/crush-frontend/src/parser/mod.rs` (`parse_import_statement`, ~1923). Grammar:
-`crates/tree-sitter-crush/grammar.js` (~30–82). CAST: `crush_cast::ImportStatement`
-(`crates/crush-cast/src/lib.rs` ~443), wrapped in `Statement::Import`.
+## Forms
 
-| Source form | CAST variant |
+| Source form | CAST variant | What it does |
+|---|---|---|
+| `import a.b [as x] [{ f, g }]` | `CrushModule { module_path, alias, selective }` | loads `a/b.crush` at compile time (below) |
+| `use @lang python "m" [{ … }] [as x]` | `PolyglotModule` | written into each later `@lang` block of that language (CRUSH-224, unchanged) |
+| `use @cap "fs.read" [{ … }] [as x]` | `Capability` | adds the manifest permission (unchanged) |
+| `import @http/@git/@file "…" [as x]` | `External` | **compile error**: not supported yet |
+| `use @mcp "url" [{ … }] [as x]` | `MCPImport` | **compile error**: not supported yet |
+
+`SecureEnv` exists in CAST (no parser produces it) and keeps its old lowering.
+
+## Resolution rules
+
+- **Search path.** `import a.b` looks for `a/b.crush` in: the importing file's directory, then each
+  `-L DIR` (repeatable, in order), then each `CRUSH_PATH` directory (colon-separated). First hit wins.
+  There is no `a/b/mod.crush` form. Not found is a compile error listing every directory searched.
+- **Mangling.** A module's functions are merged as `<module path, `.`→`::`>::<name>`:
+  `facet::facet_parse`, `util::strings::title`. `::` is what lifted methods already use
+  (`Point::norm2`), so the VMs, CASM, both AOT backends (`crush_aot::names::mangle`) and the debugger
+  already take it; it cannot occur in a user-written identifier. `.` cannot be used: the compiler reads a
+  dotted call name as a capability call on a receiver. A lifted method with the same spelling (a
+  `struct facet` with a method `facet_parse`) is a compile error rather than a silent overwrite
+  (`cosm_lower`). A second *file* imported under an already-used module path gets `#2`, `#3`, … on its
+  prefix.
+- **Binding.** `import a.b` binds the qualifier `b` (last segment); `as x` binds `x` instead. `q.f(…)`
+  calls the module's `f` (also `q.f` as a function value); a name the module lacks is a compile error
+  listing what it does define. `import a.b { f, g }` binds the bare names `f`, `g` — and the qualifier
+  only if `as x` is also given. A selective name colliding with a function of the importing file, or with
+  another selective import of a different function, is a compile error naming both. Two modules may export
+  the same name; two qualifiers of the same spelling for different files are an error.
+- **Inside a module** a bare call resolves to the module's own functions first
+  (`__facet_list(…)` → `facet::__facet_list`), then the module's own selective imports, then globals
+  (builtins, capabilities). A parameter or local of the same name shadows all of them.
+- **Module contents.** Definitions only: `fn`, `struct` / `impl` / `trait` (incl. `@kind`), and imports
+  of other Crush modules. The module's `main` is ignored. Any other top-level statement — `let`, a call,
+  `use @…` — is a compile error naming file and line: a module has no init code, so there is no hidden
+  init order. (`Parser::parse_module` keeps the top-level statements apart for this check.) Kind names
+  (`struct` / `trait`) are **not** mangled: Kinds are one global namespace.
+- **Graph.** Each file is loaded once per compile (keyed by canonical path, so a diamond shares one
+  copy); a cycle is a compile error showing it (`ca.crush → cb.crush → ca.crush`); nesting is capped at
+  `ImportOptions::max_depth` (64).
+- **Placement.** Imports go at the top level of a file. One inside a function or block is refused.
+
+## Diagnostics
+
+- Loading errors (not found, cycle, bad name, collision, top-level statement, syntax error in a module)
+  are `import_system::ImportError { file, pos, message }`; `Display` is `file:line:col: message`; JSON
+  code **`E-IM01`** with the file the problem is in.
+- Semantic errors inside imported code carry the module's file: every merged function records
+  `meta["source_file"]`, and the checker attaches it (`SemanticError::file`, new). Text output becomes
+  `errmod.crush:3:16: Undefined variable: …`; the `E-TP01` JSON record's `file` is the module's.
+- The import statement's own position is now the `import` keyword (it used to be stamped after the
+  statement, i.e. on the next line).
+
+## API
+
+| Caller | Use |
 |---|---|
-| `import a.b.c [as X] [{ x, y }]` | `CrushModule { module_path, alias, selective }` |
-| `import @http "…" [as X]` / `@git` / `@file` | `External { uri, resource_type, alias }` |
-| `use @mcp "url" [{ "tool", … }] [as X]` | `MCPImport { server_url, tools, alias }` |
-| `use @cap "fs.read" [{ "perm", … }] [as X]` | `Capability { capability_path, permissions, alias }` |
-| `use @lang python "module" [{ "name", … }] [as X]` | `PolyglotModule { language, module_path, alias, selective }` |
+| compile a file | `crush_frontend::parse_file(path, &ImportOptions)`, or in the SDK `compile::compile_crush_file[_to_casm](path, &imports, &CompileOptions)` / `compile_crush_file_for_debug` |
+| source with a location | `crush_frontend::parse_source_with_imports(src, origin, &opts)` (`origin` need not exist; only its directory is searched) |
+| an already-parsed program | `import_system::resolve_imports(&mut program, origin, &opts)` |
+| search path | `ImportOptions::new(lib_paths)` (only those) / `ImportOptions::with_crush_path(lib_paths)` (+ `CRUSH_PATH`; what the CLIs use) |
 
-Not accepted: `import "file.crush"` (a string after `import` is a parse error), `from … import`, any
-other `use @…`. `ImportStatement::SecureEnv` exists in CAST and the compiler handles it, but **no parser
-produces it** — `import secrets { … }` parses as a `CrushModule` named `secrets`. The Python and JS
-walkers also emit `CrushModule` for their own `import` statements.
+`parse_source(&str)` and every string entry point (`compile_crush_source`, `compile_crush_to_casm*`,
+crush-web's `compile_crush_source_with`) resolve nothing; a program that still has a module import when
+it is checked is refused with "`import x` was not resolved: … this compile has no file path to search
+from". The same refusal stands in the compiler for CAST input (walker output included: Python/JS `import`
+lowers to `CrushModule`, and is now a compile error rather than a `module.load` call that failed at run
+time).
 
-## Lowering (implemented, but nothing services it)
+CLIs: `crushc`, `crush-run run` / `crush-run caps`, `crush-debug` and `crush-repl` take `-L/--lib-path DIR`
+and read `CRUSH_PATH`; `crush run/build/debug/repl` forward to them. `crush-compile` assembles CASM only
+and has no imports. The REPL resolves from its working directory and keeps earlier `import` lines in scope
+for later lines. `crushc --emit ast` dumps the file as written (imports unresolved).
 
-`crates/crush-frontend/src/compiler.rs` (~883–1069) turns each variant into instructions; no variant
-consults a resolver:
+## Not yet
 
-| Variant | Emitted | Manifest permission |
-|---|---|---|
-| `CrushModule` | `push_str path; cap_call module.load 1; store alias` (`selective` dropped) | — |
-| `Capability` | `push_str; cap_call cap.acquire; store` (`permissions` dropped) | `capability_path` |
-| `PolyglotModule` | nothing: the import is written into each later `@lang` block of that language (`LangBlock.imports`, `crush_frontend::lang_imports`, CRUSH-224); bash is a compile error | — |
-| `SecureEnv` | `secrets.read` per key, or `secrets.load_all` | `secrets.read` |
-| `MCPImport` | `mcp.connect`, then `mcp.get_tool` per tool | `mcp.client` |
-| `External` | `push_str uri; cap_call external.load; store` (`resource_type` dropped) | `external.load` |
-
-None of `module.load`, `cap.acquire`, `external.load`, `mcp.connect`, `secrets.*` is registered by
-`HostCapsBuilder` (`crates/crush-lang-sdk/src/host_caps.rs`) or built into the VM, so every program with
-an import fails when the import statement executes — before any imported name is touched. The comment
-at `compiler.rs` ~885 ("the ImportResolver handles resolution at runtime via capabilities") describes
-an intent, not the code.
-
-## Name resolution (not implemented)
-
-- `SemanticAnalyzer::check` (`crates/crush-frontend/src/semantics.rs`) collects definitions from one
-  `Program`; `Statement::Import` falls into the `_ => { // TODO }` arm (~317). Imported names and
-  aliases are never put in scope. (`helpers.greet()` still type-checks because field access on an
-  unknown/`any` value is a dynamic lookup — it then fails at runtime as above.)
-- There is no multi-file merge on the compile path. `crushc -L/--lib-path` is parsed but only echoed
-  under `-v` (`crates/crush-lang-sdk/src/bin/crushc.rs` ~67, ~147).
-
-## `import_system.rs` (exists, never called)
-
-`crates/crush-frontend/src/import_system.rs` defines `ImportResolver::resolve_import` with a branch per
-variant, but no compile path, binary or SDK function calls it — only its own unit tests. What it does
-when called:
-
-- Crush modules: lookup in a hard-coded registry of three names (`io`, `fs`, `net`) with export *names*
-  only, no bodies. No file reading, search path or extension handling.
-- MCP / external / capability: string checks (scheme prefix, trusted-domain list, a dot in the path);
-  no network, no git clone (`cloned: false`).
-- `SecureEnv`: handles with `value: None`.
-- `SecurityPolicy.max_import_depth` and the `allow_*` flags are never checked;
-  `ImportError::ImportCycle` is declared and never produced.
-
-(`polyglot_imports.rs`, which built on its types and was likewise unused, was deleted in CRUSH-224.)
-
-## Specified vs implemented
-
-| Feature | Where it is promised | State |
-|---|---|---|
-| Module syntax (`a.b`, alias, selective list) | grammar + parser | parsed; `selective` ignored by the compiler |
-| Loading another `.crush` file | CRUSH-110 (the old top-level `stdlib/README.md` claimed transpiled modules were "loaded at compile time when a Crush program uses `import <module>`"; nothing ever loaded them, and the directory was removed 2026-10-31) | **no** |
-| Search paths | `crushc -L` | flag only |
-| Imported names visible to the type checker | CRUSH-110 | **no** |
-| Cycle detection, depth limit, import policy | `import_system.rs` types | declared, never enforced |
-| Runtime services (`module.load`, `external.load`, `mcp.connect`, `cap.acquire`, `secrets.*`) | compiler output | **none registered** — runtime error |
-| Python/JS `import` inside `@python { }` / `@javascript { }` | `EXEC_LANG` | works — that is the guest language's own import, not Crush's |
-| Stdlib access | — | works without `import`: `str.*`, `math.*`, … are host capabilities called by name |
-
-## Direction (for CRUSH-110, not decided here)
-
-What the code already makes cheap, and what it implies:
-
-1. **Resolve at compile time, not run time.** A Crush module is CAST; loading it is "parse another file
-   and merge its `functions` into the `Program`" before `SemanticAnalyzer::check`. That makes imported
-   names type-check, needs no new capability, and keeps the import graph out of the VM's authority
-   model. `module.load` as a runtime cap would let a program pull code by name at run time — that is an
-   authority the capability model should grant explicitly, if ever.
-2. **One resolver.** Either wire `ImportResolver` into `parse_source`/`compile_cast*` and give it real
-   file loading (search path = importing file's directory, then `-L`), or delete it; today it is a
-   second, unused description of the feature.
-3. **Name mangling.** `functions` is a flat map; merged modules need a prefix (`helpers.greet` →
-   `helpers::greet` or similar) so two modules can export the same name, and the parser's
-   `a.b()` call shape has to resolve to it.
-4. **The non-Crush forms stay capabilities.** `use @cap` is already the right shape (it adds a manifest
-   permission); `use @mcp` / `import @http` are host services and belong behind named grants like any
-   other I/O. They should fail at compile time with "not supported" until a host implements them,
-   instead of compiling to calls that can only fail.
-5. **Tests that run.** The only import tests today check emitted bytecode or round-trip rendering; the
-   conformance example `crates/tree-sitter-crush/test_imports.crush` is annotated
-   `expect-error: unknown capability: module.load`. A real import test is two files and a `crush-run`.
+- **crush-pkg dependencies as search roots.** crush-pkg should resolve its dep graph to directories and
+  pass them as `ImportOptions::search_paths` (ahead of `CRUSH_PATH`) to `compile_crush_file*`.
+- **Remote / external imports** (`import @http/@git/@file`) and **`use @mcp`**: refused at compile time.
+- **`use @lang` / `use @cap` inside an imported module**: refused (a top-level statement).
+- **Top-level constants** in modules: write a function (`fn pi() { return 3.14159 }`).
+- **Struct literals of an imported struct in the importer** (`Point { x: 1 }`): the parser recognises a
+  struct literal only for structs declared in the same file; build values through module functions.
+- **Source maps** of imported functions carry the module's line numbers but not its file, so a debugger
+  break inside one shows the importer's file name.
+- **Visibility**: every function of a module is importable (no `pub`/private distinction; the `__` prefix
+  is only a convention, hidden from "it defines: …" lists).
