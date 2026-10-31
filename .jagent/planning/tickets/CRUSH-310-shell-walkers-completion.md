@@ -231,6 +231,6 @@ much larger change and is listed as a follow-up.
   for an unmatched pattern.
 - `printf %a` (hex float) and `declare`/`typeset` with associative arrays.
 - Pipelines, redirections and `$(…)` — these need a process/fs capability and a
-  decision about what a shell script is allowed to do (M6 has no ticket for
-  this yet).
+  decision about what a shell script is allowed to do: **CRUSH-311** (options,
+  trade-offs and the recommendation are there; nothing is implemented yet).
 - A POSIX `sh`/`dash` dialect, so `.sh` stops being read with bash rules.
