@@ -125,7 +125,7 @@ jobs:
           } > "dist/${name}/BUILD-INFO"
           # smoke: the packaged binaries run
           "dist/${name}/crush" --version
-          "dist/${name}/crush-run" --version
+          "dist/${name}/crush-run" --help >/dev/null
           tar -C dist -czf "${name}.tar.gz" "${name}"
           tar -tzf "${name}.tar.gz"
       - uses: actions/upload-artifact@v4
