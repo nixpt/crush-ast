@@ -20,6 +20,46 @@ add its entry after yours.
   everything printed before the error was lost. It now streams the first run's
   output (so nothing is lost) and fails with a non-zero exit. `crush-run` (and
   `crush run`, which delegates to it) already streamed and exited non-zero.
+
+- **C API reports runtime errors and routes `io.print` to stdout (CRUSH-205):**
+  `crush_vm_run_casm` treated any `Ok(FastYield)` as success, so a program that
+  raised a runtime error (a stack underflow, a bad jump, an unsupported
+  capability) returned `0` with `last_error` null; it now returns `-2` with a
+  message for a run that did not finish, and clears `last_error` on success.
+  The bare FastVM has no capabilities, so the embedded `cap_call io.print` went
+  nowhere and `examples/embed.c` printed nothing — `run_casm` now runs with a
+  stdout `io.print` capability, so the example prints `42`.
+
+- **Spawned tasks no longer outlive the VM (CRUSH-182):** `TaskState` now
+  implements `Drop`, killing and reaping every still-running task when the
+  capability registry is dropped at the end of a run — a spawned `sleep 333`
+  no longer survives `crush-run`. `--task` spawns host processes, so its help
+  text now says plainly that it grants `process/spawn`.
+
+- **Deterministic CASM function layout (CRUSH-188):** `crushc --emit casm` laid
+  the functions out into the code buffer by iterating a `HashMap`, so the same
+  source compiled to different CASM (and different label numbering) from run to
+  run — bad for reproducible builds and the AOT build cache. Functions are now
+  emitted in name order.
+
+- **Go walker: no more silent drops (CRUSH-198):** the walker matched
+  `short_variable_declaration`, but tree-sitter-go emits `short_var_declaration`,
+  so `a := 7` was dropped and `a` read as uninitialised; `var`, assignment,
+  `++`/`--`, `for` (all shapes), bare blocks and `if`/`for` initializers were
+  silently dropped too, and unknown expressions became `null`. All are lowered
+  now, and any construct the walker does not support (`switch`, `defer`, a
+  two-variable range, a multi-value `return`, unknown expressions) is a loud
+  error instead of a silent drop. The README feature table matches reality.
+
+- **Stdlib caps no longer panic or abort the host on bad arguments
+  (CRUSH-181):** `str.repeat`, `str.pad_left`/`pad_right` and
+  `collections.chunk` cast negative lengths to `usize` (wrapping to a huge
+  value → "capacity overflow" / OOM abort); `conv.parse_int` panicked on a
+  radix outside 2..=36; `buffer.alloc` and `str.repeat` could request an
+  unbounded allocation. All now give a runtime error, and every
+  allocation-growing cap (`str.repeat`/`pad_*`/`join`, `buffer.alloc`) is
+  bounded by a fixed 64 MiB limit.
+
 - **FastVM/JIT print heap values, not the arena ref (CRUSH-294, GitHub #267):**
   `io.print` of an array, map or struct printed the arena index (`@259`) on
   FastVM and the JIT and finished successfully, while every other engine

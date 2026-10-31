@@ -76,6 +76,17 @@ fn main() -> anyhow::Result<()> {
     }
     host_caps.register(Box::new(WalkIoPrint));
     host_caps.register(Box::new(WalkIoWrite));
+    // Shell programs end with `sys.exit($?)` whenever the last command failed,
+    // and `exit N` lowers to it directly (CRUSH-266). Without this the whole
+    // run failed with "unknown capability: sys.exit".
+    host_caps.register(Box::new(crush_lang_sdk::host_caps::SysExitCap));
+    // Pathname expansion (`echo *.txt`, `for f in *`) is the shell's one look at
+    // the filesystem: `fs.exists` + `fs.list`, confined to the directory the
+    // script was started in. Hosts that embed walker output can leave them out
+    // and a glob is then refused loudly ("unknown capability: fs.list").
+    let root = std::env::current_dir()?.display().to_string();
+    host_caps.register(Box::new(crush_lang_sdk::host_caps::FsExistsCap::new(&root)));
+    host_caps.register(Box::new(crush_lang_sdk::host_caps::FsListCap::new(&root)));
     for name in &[
         "append", "push", "make_range", "arr_set", "arr_get", "str.concat",
         "__crush_deref__", "__crush_addr_of__", "__crush_unary__",
@@ -87,28 +98,44 @@ fn main() -> anyhow::Result<()> {
     let quotas = crush_vm::Quotas { max_steps: 10_000_000, ..Default::default() };
     let mut exec_times = Vec::with_capacity(cli.runs);
     let mut output = String::new();
+    let mut exit_code = None;
     let mut failed: Option<String> = None;
 
     for run_i in 0..cli.runs {
         let t2 = Instant::now();
-        let result = if run_i == 0 {
-            // Stream the first run's output so a runtime error never discards
-            // what the program printed before it (CRUSH-184). The output is
-            // kept verbatim — trimming hid trailing spaces and newline-free
-            // `io.write` output (C printf, Rust print!).
-            let mut sink = |part: &str| output.push_str(part);
-            crush_vm::vm::run_with_caps_streaming(&vm_prog, &quotas, Some(&host_caps), &mut sink)
-        } else {
-            crush_vm::run_with_caps(&vm_prog, &quotas, Some(&host_caps))
-        };
+        // Streaming, so output printed before a `sys.exit` or a runtime error
+        // is kept (CRUSH-184).
+        let mut run_out = String::new();
+        let result = crush_vm::vm::run_with_caps_streaming(&vm_prog, &quotas, Some(&host_caps), &mut |s: &str| {
+            run_out.push_str(s)
+        });
         exec_times.push(t2.elapsed());
-        if let Err(e) = result {
-            failed = Some(format!("{e}"));
-            break;
+        if run_i == 0 {
+            // Program output verbatim — trimming hid trailing spaces and
+            // newline-free `io.write` output (C printf, Rust print!).
+            output = run_out;
+        }
+        match result {
+            Ok(_) => {}
+            // `sys.exit(N)` is a requested stop, not a failure: keep the
+            // output and hand the status to the caller.
+            Err(crush_vm::VmError::Exit(code)) => {
+                exit_code = Some(code);
+                break;
+            }
+            // A runtime error is a failure: reported after the output, and a
+            // non-zero exit (CRUSH-184).
+            Err(e) => {
+                failed = Some(format!("{e}"));
+                break;
+            }
         }
     }
 
     if cli.runs == 1 { print!("{output}"); }
+    if let Some(code) = exit_code {
+        std::process::exit(code);
+    }
     if cli.timing {
         let w = walk_time.as_micros() as f64;
         let c = compile_time.as_micros() as f64;
@@ -119,8 +146,8 @@ fn main() -> anyhow::Result<()> {
         eprintln!("  Execute {:>10.1} s", e);
         eprintln!("  Total   {:>10.1} s", w + c + e);
     }
-    // A runtime error is a failure: report it (after the streamed output) and
-    // exit non-zero (CRUSH-184).
+    // A runtime error: reported after the streamed output, and a non-zero exit
+    // (CRUSH-184).
     if let Some(e) = failed {
         return Err(anyhow::anyhow!("{e}"));
     }
