@@ -13,5 +13,3 @@
 CRUSH-31  # CRUSH-31-dejavue-integration.md + CRUSH-31-dejavue-crush-index-integration.md (both pre-check)
 CRUSH-33  # CRUSH-33-dom-opcodes.md + CRUSH-33-dom-opcodes-vm-wire-up.md (both pre-check)
 CRUSH-34  # CRUSH-34-spawn-await-yield-vm-execution.md + CRUSH-34-spawn-await-yield-vm-wire-up.md (both pre-check)
-CRUSH-266 # CRUSH-266-js-walker-drops-exported-declarations.md + CRUSH-266-rust-crush-interop.md (claimed twice, pre-check)
-CRUSH-271 # CRUSH-271-scheduler-polyglot-executor-seam.md + CRUSH-271-unary-plus-and-invert-refused-by-the-compiler.md (claimed twice, pre-check)

@@ -8,8 +8,12 @@
 //! ```
 //!
 //! `next` considers ticket files in the local working tree, on
-//! `origin/main` and on every `refs/remotes/origin/*` branch (via
-//! `git ls-tree`), and in the titles of open PRs (via `gh pr list`).
+//! `origin/main`, on every `refs/remotes/origin/*` branch and on every local
+//! branch (`refs/heads/*`, which includes the branches of all this repo's
+//! worktrees) — file names and branch names both (via `git ls-tree`) — and in
+//! the titles of open PRs (via `gh pr list`). Local branches matter: a number
+//! claimed only by an unpushed branch in another worktree is invisible to the
+//! remote refs (CRUSH-298 was taken twice that way on 2026-10-30).
 //! If `gh` is unavailable it says so on stderr and falls back to git
 //! only. Only the allocated ID (`CRUSH-<N>`) goes to stdout; every
 //! warning goes to stderr, so the output is safe to capture in scripts.
@@ -30,8 +34,9 @@ const USAGE: &str = "\
 usage: ticket-id <next|check>
 
   next    print the next free CRUSH-<N> (considers the working tree,
-          origin/main, every refs/remotes/origin/* branch, and — when
-          gh works — open PR titles)
+          origin/main, every refs/remotes/origin/* branch, every local
+          branch incl. other worktrees', and — when gh works — open PR
+          titles)
   check   fail if two ticket files share an ID (same check as the
           xtask/tests/ticket_ids.rs CI test)";
 
@@ -111,7 +116,8 @@ fn cmd_next() -> ExitCode {
         ids.insert(id);
     }
 
-    // 2. origin/main + every refs/remotes/origin/* branch.
+    // 2. origin/main + every refs/remotes/origin/* branch + every local branch
+    //    (refs/heads/*, shared by all of this repo's worktrees).
     collect_git_ids(&root, &mut ids);
 
     // 3. Open PR titles, when gh works.
@@ -128,6 +134,7 @@ fn collect_git_ids(root: &Path, ids: &mut BTreeSet<String>) {
             "for-each-ref",
             "--format=%(refname)",
             "refs/remotes/origin/",
+            "refs/heads/",
         ],
     );
     let Some(refs) = refs else {
