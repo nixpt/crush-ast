@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **JS/TS dialect handling: unknown extensions are refused, `cts` is TypeScript
+  (CRUSH-zorro-8):** `JsLowering::for_ext` treated every unrecognised extension
+  as plain JS, so a `.ts` file reached as `.tmp` (or a typo like `typescript`)
+  parsed TypeScript as ES. It now accepts exactly
+  `js mjs cjs jsx ts tsx mts cts` and refuses anything else, naming the set;
+  `cts` is TypeScript; and `SubprocessWalker` names its temp file
+  `walker_N.<ext>` so a walked `.ts` keeps its dialect.
+
 - **`crush-walk-run` keeps output before a runtime error and exits non-zero
   (CRUSH-184):** it buffered the first run's output and replaced it with
   `Error: …` on failure, and returned `Ok`, so a failing script exited 0 and

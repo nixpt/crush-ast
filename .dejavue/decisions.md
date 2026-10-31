@@ -1324,3 +1324,9 @@ crush_vm_run_casm matched any Ok(FastYield) as success, so a runtime error (stac
 Reason:
 task.start spawned a std::process::Command child that was tracked in a TaskState but never killed on drop, so a program that ran task.start and exited left the child running (sleep 333 outlived crush-run; touch created files). TaskState now implements Drop, killing and reaping every still-running task when the capability registry drops at the end of the run - a host that wants a detached task can stop tracking it first. Also, --task spawns host processes but its help never said so; the help text now states that --task grants process/spawn, which the effects catalog already listed for task.start.
 
+
+## 2026-10-30T20:45:44-05:00 — [ARCHITECTURAL] A JS/TS dialect comes from the real file extension; an unknown one is refused, not treated as JS (CRUSH-zorro-8)
+
+Reason:
+JsLowering::for_ext mapped every unrecognised extension to plain JS, so a .ts file reached through a temp path (walker_N.tmp) or a typo like 'typescript' was parsed as ES - TypeScript syntax then either failed oddly or silently dropped types. Fix: for_ext accepts exactly js mjs cjs jsx ts tsx mts cts (cts is TypeScript) and refuses anything else naming that set; the JsFrontend/JsAdapter extension lists gained cts/jsx; swc parses cts as TypeScript; and SubprocessWalker::parse carries the filename so walk names its temp file walker_N.<ext>, keeping the dialect. Remaining: TS syntax under an ES extension is accepted (types stripped) by swc rather than a loud error - that needs the swc TS-mode strip-into-boa approach (the optional ts feature).
+
