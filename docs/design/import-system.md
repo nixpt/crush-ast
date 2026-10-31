@@ -88,7 +88,7 @@ when called:
 | Feature | Where it is promised | State |
 |---|---|---|
 | Module syntax (`a.b`, alias, selective list) | grammar + parser | parsed; `selective` ignored by the compiler |
-| Loading another `.crush` file | CRUSH-110; top-level `stdlib/README.md` ("loaded at compile time when a Crush program uses `import <module>`") | **no** |
+| Loading another `.crush` file | CRUSH-110 (the old top-level `stdlib/README.md` claimed transpiled modules were "loaded at compile time when a Crush program uses `import <module>`"; nothing ever loaded them, and the directory was removed 2026-10-31) | **no** |
 | Search paths | `crushc -L` | flag only |
 | Imported names visible to the type checker | CRUSH-110 | **no** |
 | Cycle detection, depth limit, import policy | `import_system.rs` types | declared, never enforced |

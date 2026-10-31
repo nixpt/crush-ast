@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-109 |
 | **Priority** | P4 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-31) — resolved by removing the top-level `stdlib/` |
 | **Phase** | M9 |
 
 ## Problem
@@ -60,3 +60,12 @@ mention `stdlib/`'s existence.
 ## Gates
 
 None.
+
+## Resolution (2026-10-31)
+
+Resolved by deletion rather than cross-referencing: the top-level `stdlib/` (`strings` transpiled
+from Rust, `patterns` from Python, as `*.cast.json`) was never read by anything — no code, build
+script, test or CI step referenced it, and its README's claim that `import <module>` loads it was
+false (`import` loads nothing, CRUSH-110). The one standard library is
+`crates/crush-lang-sdk/src/stdlib.rs` + `src/stdlib/` (+ `sbl/sbl_core.crush`). The sources stay in
+git history (last commit touching them: `55375687`).
