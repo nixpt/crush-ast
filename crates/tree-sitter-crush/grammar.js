@@ -549,9 +549,19 @@ module.exports = grammar({
         index_expression: $ => prec(11, seq(
             field('target', $._primary_expression),
             '[',
-            field('index', $.expression),
+            choice(field('index', $.expression), field('slice', $.slice)),
             ']',
         )),
+
+        // `[start:stop:step]` with any bound omitted — `s[0:5]`, `s[-5:]`,
+        // `xs[:]`, `u[::-1]`, as crush-frontend's parser reads them (bracket
+        // slices desugar to seq.slice). `::` lexes as two `:` here.
+        slice: $ => seq(
+            optional(field('start', $.expression)),
+            ':',
+            optional(field('stop', $.expression)),
+            optional(seq(':', optional(field('step', $.expression)))),
+        ),
 
         _literal: $ => choice(
             $.int_literal,
@@ -561,7 +571,8 @@ module.exports = grammar({
             $.null_literal,
         ),
 
-        int_literal: $ => /-?\d+/,
+        // Decimal, plus the hex (0x/0X) and binary (0b/0B) forms crush-frontend's lexer reads.
+        int_literal: $ => token(choice(/-?0[xX][0-9a-fA-F]+/, /-?0[bB][01]+/, /-?\d+/)),
         float_literal: $ => /-?\d+\.\d+/,
         // Escapes matter: `"a\"b"` and `"a\nb"` are ordinary in the corpus, and
         // the old `/[^"]*/` stopped at the escaped quote (CRUSH-207).

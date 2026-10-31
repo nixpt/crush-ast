@@ -451,3 +451,37 @@ absolute paths from anything moved (found in `crushed-book`, `joker-*`, `crush-c
 | `_rama-archive` | OS capsules, not Crush |
 | `incubator` except the shadow-capsule *idea* | private, transcripts, superseded runners/registries |
 
+
+## Re-check 2026-10-31 (exosphere `0c35ddec`)
+
+Re-swept the exosphere trees this inventory covers against crush-ast `main` (`73760920`). The only
+exosphere change to them since the `c7ee194c` baseline is EXO-216 (2026-10-09: `runtimes/*` retired
+from exosphere's workspace; the files remain).
+
+- **`core/base/stdlib`** — every capability name it defines (181, incl. macro-generated ones) was
+  called in `crush-run` with every grant on: **130 exist** in crush-ast (the 12 `binary.ReadU16Le`-
+  style names as snake_case `binary.read_u16_le` …); **the other 51 are exactly §2's dead/out/declined
+  rows** (`dom.*`, `gfx.*`, `data.*`, `agent.*`, `learn.*`, `ai.embed/tokenize`, `polyglot.*`,
+  `python/js.stdlib`, `storage.*`, `task.restart/watchdog`, `text.echo`).
+- **`core/base/common`** — unchanged; still superseded/out (row above). crush-ast neither depends on
+  it nor uses its names.
+- **`platform/abi-c`, `platform/sdk/{crush-sdk,vm-runtime,capsule-sdk,capsule-ui}`** — unchanged;
+  dead/out as above. `crush-sdk-py` (local shim: capabilities log and return `None`) and
+  `crush-sdk-ts` (`@exosphere/capsule-sdk`) are exosphere capsule guest SDKs — out. `exo-bliss-net`
+  is published from arniko/bliss, not crush-ast's.
+- **`platform/runtimes/*`** — the port items are done: AI tool-chain engine + arg plumbing
+  (CRUSH-156/157/158), debugger events/redaction (CRUSH-160), walker PATH fallback and binary names
+  (`language_walkers.rs::resolve_binary`, `go_walker`/`zig_walker`/`wasm_walker`); Lua declined
+  (CRUSH-162). The python worker's bridge protocol is captured in
+  `docs/design/exec-lang-callbacks.md` (CRUSH-166) before its source is deleted.
+- **`core/vm/nanovm`, `core/vm/casm`, `core/crush-cast`** — no exosphere commit since the CRUSH-55
+  diff (`8d52996`, 2026-09-24; last change 2026-08-02), so its verdicts stand. Re-verified by
+  comparing every `pub enum` variant and `pub fn` name: **`crush-cast` has no exo-only variant or
+  function**; `casm`'s only exo-only items are encrypted CASM (`EcasmError`, `encrypt`/`decrypt`/
+  `validate`/…) and the `CachedInstruction` accessors (`opcode`, `op_cached`, `instruction`,
+  `to_cached`) — both exo-owned, declined above. nanovm's PORT items are done (debugger CRUSH-159/160,
+  AI tool-chain CRUSH-156–158) or declined (Lua, CRUSH-162).
+- **Still open from this inventory:** CRUSH-164 (wildcard/expiry grants, from
+  `vm-runtime/enforcement.rs`) and CRUSH-165 (CVM1 execution transcript, idea from nanovm
+  `audit.rs`) — both optional, no consumer; CRUSH-163 (FastVM host loop + nanovm AI op aliases) is
+  deferred by captain decision C-3.

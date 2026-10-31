@@ -191,3 +191,6 @@ mod kind_table;
 mod records;
 // COSM K3 JS slice (CRUSH-277 S2): prototype-chain Kinds on both VMs.
 mod prototype_chain;
+
+#[cfg(test)]
+mod cap_patterns;

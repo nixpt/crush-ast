@@ -1,10 +1,10 @@
 # Threads (deferred work + parking lot)
 
 
-## a-4b-equivalent: workspace regression --  fails in  (rustls missing) -- OPEN
+## a-4b-equivalent: workspace regression -- crush-net fails (rustls missing) -- CLOSED 2026-06-19
 
 - **Date:** 2026-06-18
-- **Status:** OPEN -- INVESTIGATION captured; no fix proposed (NOT YET ROOT-CAUSED).
+- **Status:** CLOSED 2026-06-19 (see Resolution below). Original status: OPEN -- investigation captured.
 - **Findings (this session):**
   - `cargo check --workspace` from `/workspace/projects/crush-ast` fails with a rustls-related error inside `crush-net`. The failure is reproducible.
   - `crates/crush-net/Cargo.toml` declares rustls as a dependency (per dependency scan).

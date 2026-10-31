@@ -1,76 +1,63 @@
 # crush-errors
 
-Unified error types for the CRUSH runtime.
+Shared error types for the Crush toolchain: one error type with a kind, conversions from the std
+errors the toolchain hits, the CASM error type, and one shape for format-version mismatches.
 
-## Purpose
-
-Provides a consistent error handling system across all Crush crates. This is the
-lowest-level crate with no internal Crush dependencies.
-
-## Exports
+It is the leaf crate of the workspace (no Crush dependencies). Used by `casm`, `crush-cast`,
+`crush-frontend`, `crush-vm`, `crush-lang-sdk` and `crush-ptx`.
 
 ```rust
-use crush_errors::{CrushError, ErrorKind, CrushResult, ErrorContext};
+use crush_errors::{CrushError, CrushResult, ErrorContext, ErrorKind};
 
-fn example() -> CrushResult<()> {
-    some_operation()
-        .context("Failed to perform operation")?;
-    Ok(())
+fn load(path: &str) -> CrushResult<String> {
+    let text = std::fs::read_to_string(path).context("reading the program")?;
+    if text.is_empty() {
+        return Err(CrushError::new(ErrorKind::InvalidArgument, "empty program"));
+    }
+    Ok(text)
 }
 ```
 
 ## Types
 
-- `CrushError` — main error type with `kind`, `message`, and optional `source`
-- `ErrorKind` — categorized error enum (see below)
-- `CrushResult<T>` — `Result<T, CrushError>` alias
-- `ErrorContext` — extension trait on `Result` for adding a context message
+- `CrushError` — `kind`, `message`, optional `source` (`CrushError::new`, `with_source`).
+- `ErrorKind` — the category (table below).
+- `CrushResult<T>` — `Result<T, CrushError>`.
+- `ErrorContext` — `.context("…")` on a `Result` to prefix a message.
+- `convert::casm::CasmError` — errors from reading and validating CASM (re-exported by `casm`).
+- `VersionMismatch` / `VersionBoundary` — a format-version failure and where it happened.
 
-## Error Kinds
+## Error kinds
 
-| Kind | Description |
-|------|-------------|
-| `PermissionDenied` | Access or capability denied |
-| `NotFound` | Resource, variable, or function not found |
-| `InvalidArgument` | Bad argument value, parse error, or bad opcode |
-| `TypeMismatch` | Wrong type at a binary or VM operation |
-| `CapabilityViolation` | Missing or unknown capability |
-| `ResourceExhausted` | Gas/queue/memory limit exceeded |
-| `Unsupported` | Unsupported platform operation or version |
-| `Io` | File or network I/O error |
-| `Internal` | Internal invariant violation, arena error |
-| `Cancelled` | VM or operation cancelled |
-| `Timeout` | Watchdog or timeout triggered |
-| `AlreadyExists` | Duplicate resource |
+| Kind | Used for |
+|------|----------|
+| `PermissionDenied` | access or capability denied |
+| `NotFound` | resource, variable or function not found |
+| `InvalidArgument` | bad argument, parse error, bad opcode, version mismatch |
+| `TypeMismatch` | wrong type in an operation |
+| `CapabilityViolation` | missing or unknown capability |
+| `ResourceExhausted` | step, stack, queue or memory limit |
+| `Unsupported` | unsupported operation or version |
+| `Io` | file or network I/O |
+| `Internal` | internal invariant violated |
+| `Cancelled` | run cancelled |
+| `Timeout` | time limit hit |
+| `AlreadyExists` | duplicate resource |
 
 ## Conversions
 
-`From` impls are provided for common error types so `?` works seamlessly:
+`From` impls so `?` works: `std::io::Error` (`NotFound`, `PermissionDenied`, `InvalidInput` and
+`TimedOut` map to their kinds, the rest to `Io`), `std::string::FromUtf8Error`, `regex::Error`,
+`std::num::ParseIntError`, `CasmError` and `VersionMismatch`.
 
-- `std::io::Error` (maps `NotFound`, `PermissionDenied`, `InvalidInput`, `TimedOut`)
-- `std::string::FromUtf8Error`
-- `regex::Error`
-- `std::num::ParseIntError`
-- `crush_errors::vm::RuntimeError` / `VmError` / `SchedulerError` / `CbvError` / `BinaryError`
-- `crush_errors::hal::HalError` / `HostDispatchError`
-- `crush_errors::exo::HostError` / `LoaderError` / `IpcError` / `CryptoError`
-- `crush_errors::stdlib::StdlibError`
-- `crush_errors::casm::CasmError`
-- `crush_errors::version::VersionMismatch`
+## Version boundaries
 
-## Version Boundaries
+Two load-time gates check a format version and report a `VersionMismatch`:
 
-The `version` module provides a unified `VersionMismatch` shape for the six
-load-time version gates (`ipc`, `manifest`, `casm`, `cap_schema`, `service`,
-`cast`). Each gate keeps its own typed error and maps onto `VersionMismatch`
-for uniform audit-log rendering.
+| `VersionBoundary` | Gate |
+|---|---|
+| `Casm` | `casm::Program` deserialize (`CASM_VERSION` major) |
+| `Cast` | `crush_cast::pack` unpack (CAST pack format) |
 
-## Dependencies
-
-- `thiserror` — derive `Error` for `ErrorKind`
-- `regex` — `From<regex::Error>` conversion
-- `serde` — `Serialize`/`Deserialize` for `VersionMismatch` and `VersionBoundary`
-
-## Used By
-
-Every crate in the Crush ecosystem depends on this for error handling.
+`VersionMismatch` is `Serialize`, with the boundary as a lowercase string (`"casm"`, `"cast"`).
+`VersionBoundary` is `#[non_exhaustive]`, so a new gate is not a breaking change.

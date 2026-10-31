@@ -252,6 +252,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // "3.14" must roundtrip to the literal
     fn text_as_value_roundtrip() {
         assert_eq!(text_as_value("null"), Value::Null);
         assert_eq!(text_as_value("42"), Value::Int(42));

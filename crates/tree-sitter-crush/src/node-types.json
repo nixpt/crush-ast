@@ -1216,10 +1216,20 @@
     "fields": {
       "index": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "expression",
+            "named": true
+          }
+        ]
+      },
+      "slice": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "slice",
             "named": true
           }
         ]
@@ -2374,6 +2384,42 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "slice",
+    "named": true,
+    "fields": {
+      "start": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      },
+      "step": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      },
+      "stop": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {

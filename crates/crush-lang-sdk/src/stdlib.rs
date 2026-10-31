@@ -1630,6 +1630,7 @@ mod tests {
 
     // Conversion tests
     #[test]
+    #[allow(clippy::approx_constant)] // asserts conv on the literal 3.14
     fn test_conv_to_int() {
         let caps = setup_caps();
         let cap = caps.get("conv.to_int").unwrap();
@@ -1649,6 +1650,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // asserts conv on the literal 3.14
     fn test_conv_to_float() {
         let caps = setup_caps();
         let cap = caps.get("conv.to_float").unwrap();
@@ -1667,6 +1669,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // asserts conv on the literal 3.14
     fn test_conv_to_str() {
         let caps = setup_caps();
         let cap = caps.get("conv.to_str").unwrap();
@@ -1735,6 +1738,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // asserts conv on the literal 3.14
     fn test_conv_parse_float() {
         let caps = setup_caps();
         let cap = caps.get("conv.parse_float").unwrap();

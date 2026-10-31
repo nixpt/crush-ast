@@ -71,6 +71,11 @@ crush-ffi = { version = "0.8.0", path = "../crush-ffi", optional = true }
 # "buckets".
 buckets = { package = "crush-buckets", path = "../../../buckets", version = "0.1.0", optional = true }
 
+# CRUSH-165: the tamper-evident execution transcript's SHA-256 chain. Optional,
+# behind `transcript`. Same version `casm` already depends on, so turning the
+# feature on adds no crate to the build graph.
+sha2 = { version = "0.10", optional = true }
+
 [features]
 default = ["native-plugins"]
 # `python` removed (CRUSH-WORKSPACE-TEST-1) — the PyO3 bindings it gated now
@@ -83,6 +88,10 @@ native-plugins = ["dep:libloading", "dep:crush-ffi"]
 # buckets dependency directly, because EXEC_LANG's actual spawn point lives
 # here and crush-lang-sdk depends on crush-vm, not the reverse.
 sandboxed-polyglot = ["dep:buckets"]
+# CRUSH-165: hash-chain every executed CVM1 instruction and capability call
+# (scheduler VM + PortableVm) into a SHA-256 transcript digest. Off by
+# default; zero code at the hook sites when off. Encoding: `src/transcript.rs`.
+transcript = ["dep:sha2"]
 
 # `EXEC_LANG`'s wall-clock timeout must kill a polyglot subprocess's whole
 # process GROUP, not just the single tracked PID: `bash -c "sleep 30"`

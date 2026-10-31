@@ -1382,6 +1382,68 @@ fn first_cap_call(ops: &[(String, serde_json::Value)]) -> Option<usize> {
     ops.iter().position(|(op, _)| op == "cap_call")
 }
 
+// ── bracket slices desugar to `seq.slice` (strings AND arrays) ──────────────
+
+/// `s[a:b]` on a *string* must lower to the registered `seq.slice` capability
+/// (char-based, handles strings and arrays alike); the old desugar targeted
+/// the array-only `arr_slice`, so source-level string slices always errored at
+/// runtime ("expected array, got str") on every engine.
+#[test]
+fn bracket_slice_desugars_to_seq_slice_with_string_target() {
+    let ops = main_ops_with_args(
+        "fn main() { let s = \"héllo\"; let t = s[1:3]; print(t); }",
+    );
+    let cap_idx = first_cap_call(&ops).expect("cap_call missing");
+    assert_eq!(
+        ops[cap_idx].1.get("name").and_then(|v| v.as_str()),
+        Some("seq.slice"),
+        "string bracket slices must lower to seq.slice, got {ops:?}"
+    );
+    assert_eq!(
+        ops[cap_idx].1.get("argc").and_then(|v| v.as_u64()),
+        Some(4),
+        "seq.slice pop order is target,start,stop,step"
+    );
+}
+
+/// `xs[a::step]` must land the omitted stop in the stop slot (push order:
+/// target, start, stop=null, step) — `[::2]`/`[::-1]` lex `::` as a single
+/// DoubleColon token, which used to fall into the "index access" path.
+#[test]
+fn bracket_slice_step_lands_in_the_step_slot() {
+    let ops = main_ops_with_args(
+        "fn main() { let xs = [10, 20, 30]; let t = xs[1::2]; print(t); }",
+    );
+    let cap_idx = first_cap_call(&ops).expect("cap_call missing");
+    assert_eq!(
+        ops[cap_idx].1.get("name").and_then(|v| v.as_str()),
+        Some("seq.slice"),
+        "got {ops:?}"
+    );
+    // The three pushes before cap_call, in emission order (rev() → list the
+    // three preceding ops), must be start=1, stop=null, step=2.
+    let tail: Vec<(String, serde_json::Value)> = ops[..cap_idx]
+        .iter()
+        .rev()
+        .take(3)
+        .map(|(op, args)| (op.clone(), args.clone()))
+        .collect();
+    let int_at = |(op, args): &(String, serde_json::Value)| {
+        if op == "push_int" {
+            args.get("value").and_then(|v| v.as_i64())
+        } else {
+            None
+        }
+    };
+    assert!(
+        tail.iter().all(|(op, _)| op == "push_int" || op == "push_null"),
+        "expected int/null pushes, got {ops:?}"
+    );
+    assert_eq!(int_at(&tail[2]), Some(1), "start slot must be 1: {ops:?}");
+    assert_eq!(tail[1].0, "push_null", "stop slot must be null: {ops:?}");
+    assert_eq!(int_at(&tail[0]), Some(2), "step slot must be 2: {ops:?}");
+}
+
 #[test]
 fn method_call_pushes_args_in_order_for_capability_cap_call() {
     // `xs.arr_slice(1, 3)` must lower to load xs, push 1, push 3, cap_call arr_slice.

@@ -14,6 +14,23 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Source-level string slices (and full `xs[start:stop:step]` syntax) via the
+  shared `seq.slice` capability:** the parser desugared bracket slices to the
+  array-only `arr_slice`, so `s[0:5]` on a string errored at runtime with
+  "expected array, got str" on every engine, even though the capability layer
+  (`slice_indices` in `seq.rs`) had always been char-based for strings and
+  arrays, and both AOT backends already lowered `seq.slice` for strings.
+  Bracket slices now lower to `seq.slice` (target, start, stop, step with
+  `null = from-the-edge`), which also unlocks Python's full slice syntax —
+  `xs[:]`, `xs[::2]`, `xs[::-1]`, `xs[a::b]` were unparsable outright
+  (`::` lexes as one DoubleColon token, the Rust path separator). Slicing stays
+  Unicode-scalar-safe end to end: `u[::-1]` on `"日本語🎉!"` keeps the
+  4-byte emoji intact on the PortableVm, scheduler, both AOT backends and the
+  cross-engine conformance corpus (`examples/crush/unicode_slice_test.crush`).
+  Regression guards: `crush-lang-sdk` `string_slice_test` (char boundaries,
+  no scalar splitting, step-form slot order), `crush-frontend` compiler tests
+  (string targets reach `seq.slice`; the step lands in the step slot).
+
 - **Every tag now has a GitHub pre-release with prebuilt artifacts (CRUSH-342):**
   `release.yml` dispatches the new `artifacts.yml`, which builds the tag and
   attaches `crush-<ver>-x86_64-unknown-linux-gnu.tar.gz` (the CLIs),
