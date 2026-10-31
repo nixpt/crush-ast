@@ -1,3 +1,4 @@
+#![allow(deprecated)] // the `with_invariant_runtime` tests pin the deprecated emission (CRUSH-370)
 use casm::OpCode;
 use crush_cast::ai::{AIStatement, AdaptationType, DiscoveryStrategy};
 use crush_cast::manifest::{Invariant, ModuleManifest};

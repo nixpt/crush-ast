@@ -96,7 +96,6 @@ The same `.crush` file is not compiled identically by every tool:
 | `enrich_cast` | yes | **no** (calls `Parser::parse` directly) | yes |
 | `prepare_polyglot_blocks` | yes | yes | **no** |
 | optimizer | always | only `-O` | always |
-| `--invariant-runtime` | no | opt-in | no |
 
 `enrich_cast` only fills `exhaustive_sites`, which the exhaustiveness checker reads and the compiler
 does not, so the bytecode difference between `crushc` and `crush-run` is the optimizer: an optimizer
