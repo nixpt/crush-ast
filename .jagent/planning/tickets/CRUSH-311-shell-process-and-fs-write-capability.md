@@ -206,7 +206,8 @@ it.
   `fs.mkdir` / `fs.touch` / `fs.list` and the string helpers:
   - `ls` hides dotfiles and sorts (`fs.list` is directory order; `ls` never is);
   - `wc -l -w -c -m` on stdin — `wc -l < f` and `cat f | wc -l` are the exact
-    paths, and `wc < f` pads its columns by the file size like GNU `wc`;
+    paths; several columns on a `< file` is refused, because coreutils < 9.8
+    pads those to 7 and newer ones pad by the file's digit count;
   - `head`/`tail` with `-n N`, `-nN` (default 10) or a variable (`head -n $n`),
     `grep` with `-c` and `-v` and its status wired to `$?`;
   - `cat` with no operand reads stdin, which is what makes a here-document or a
@@ -226,7 +227,8 @@ it.
 At compile time: `$(…)`, backticks, subshells, `&`, `2>&1` / `&>` /
 fd-numbered redirections, here-strings, process substitution, `>` on a loop /
 `if` / `{ }` (the buffer is flushed after the command returns, so an early
-`break`/`return` would lose its output), `wc FILE`, `ls` with options,
+`break`/`return` would lose its output), `wc FILE`, a multi-column `wc < f`,
+`ls` with options,
 and any command outside the builtin set; two `>`/`>>` (or two `<`) on one
 command, because a shell creates the earlier file empty and this could only
 write one of them; `exit` inside a pipeline stage. At run time: a `grep` pattern
@@ -235,14 +237,14 @@ disagree with the shell).
 
 ## Verification
 
-- Shared oracle corpus: **233 cases**, each run against real `/usr/bin/bash` and
+- Shared oracle corpus: **234 cases**, each run against real `/usr/bin/bash` and
   `/usr/bin/zsh -f`, **0 failures / 0 silently wrong**:
-  - bash: 193 match, 40 loud-unsupported
-  - zsh: 187 match, 46 loud-unsupported
-  - (CRUSH-310 was 182 cases, 147/35 and 141/41. This ticket adds 53: 46
-    matching pipeline/redirection/builtin cases and 7 loud ones, and retires the
-    two old `pipeline` / `redirection` "unsupported" cases — the
-    `external_command` one was retargeted from `ls` to `date`.)
+  - bash: 193 match, 41 loud-unsupported
+  - zsh: 187 match, 47 loud-unsupported
+  - (CRUSH-310 was 182 cases, 147/35 and 141/41. This ticket takes it from 182 to 234: 47
+    new matching cases and 8 new loud ones, minus the two old `pipeline` /
+    `redirection` refusals; the `external_command` case was retargeted from `ls`
+    to `date`.)
 - Each case now runs in a *separate* fixture directory for the shell and for
   crush (`…-sh` / `…-crush`): a case that writes a file must not see the file
   the other side just wrote.

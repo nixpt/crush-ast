@@ -59,9 +59,9 @@ const IN: &str = "__sh_in";
 /// host's stdin just because the buffer is empty).
 const IN_SET: &str = "__sh_in_set";
 /// 1 when redirected stdin came from a file (`<`), 0 when it came from a pipe or
-/// a here-document. `wc` pads its columns by the input size for a file and to a
-/// fixed 7 for a stream, exactly as GNU `wc` does; this is the only thing that
-/// has to know the difference.
+/// a here-document. `wc` is the only command that has to know the difference:
+/// its multi-column padding for a file's stdin changed between coreutils
+/// versions, so that case is refused instead of guessed.
 const IN_FILE: &str = "__sh_in_file";
 /// Where a `>` / `>>` command's output goes, and whether it appends.
 const OUTF: &str = "__sh_outf";
@@ -1851,14 +1851,26 @@ impl Lw {
                     cols.push(to_str(call("len", vec![text.clone()])));
                 }
                 let n = cols.len();
-                // GNU `wc` pads its columns to the size of the input: the digit
-                // count of the file's length for `< file`, a fixed 7 for a pipe.
-                let text_len = to_str(call("len", vec![text.clone()]));
-                let width = tern(
-                    bin("==", self.stream(IN_FILE), int(1)),
-                    call("len", vec![text_len.clone()]),
-                    int(7),
-                );
+                // GNU `wc` pads several columns to 7 when it reads a pipe, and
+                // older coreutils will also stat a `< file` stdin; newer ones
+                // pad by the file's digit count instead. The width therefore
+                // depends on the coreutils version, so a multi-column `wc` on a
+                // redirected file is refused rather than padded the wrong way.
+                // One column (the common `wc -l < f`) needs no padding at all.
+                if n > 1 {
+                    let at = self.at("wc", line);
+                    out.push(if_(
+                        bin("==", self.stream(IN_FILE), int(1)),
+                        vec![throw(concat(vec![
+                            s("unsupported: `wc` with several columns on a `< file` at "),
+                            at,
+                            s(
+                                " — its column width depends on the coreutils version (use `wc -l < f`, or a pipeline)",
+                            ),
+                        ]))],
+                        None,
+                    ));
+                }
                 let mut parts = Vec::new();
                 for (i, col) in cols.into_iter().enumerate() {
                     if i > 0 {
@@ -1866,7 +1878,7 @@ impl Lw {
                     }
                     let txt = to_str(col);
                     parts.push(if n > 1 {
-                        self.helper("__sh_pad", vec![txt, width.clone()])
+                        self.helper("__sh_pad", vec![txt, int(7)])
                     } else {
                         txt
                     });

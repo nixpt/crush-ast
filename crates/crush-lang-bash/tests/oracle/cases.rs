@@ -366,7 +366,11 @@ pub const CASES: &[Case] = &[
     ok("coreutil_cat_append", "printf 'a\\n' > f\ncat f f\n"),
     ok("coreutil_wc_default", "printf 'a b\\nc\\n' | wc\n"),
     ok("coreutil_wc_flags", "printf 'a b\\nc\\n' | wc -l -w\n"),
-    ok("coreutil_wc_file_padding", "printf 'abc\\ndefg\\n' > f\nwc < f\n"),
+    // One column needs no padding, so it is exact on every coreutils version.
+    ok("coreutil_wc_file_single_column", "printf 'abc\\ndefg\\n' > f\nwc -l < f\necho done\n"),
+    // Several columns on a file's stdin: coreutils < 9.8 pads to 7, newer ones
+    // pad by the file's digit count. Refused rather than padded the wrong way.
+    loud("coreutil_wc_file_multi_column", "printf 'abc\\ndefg\\n' > f\nwc < f\n", "several columns"),
     ok("coreutil_grep_missing_status", "printf 'a\\n' | grep z\necho \"[$?]\"\n"),
     ok("coreutil_head_default_is_ten", "printf '1\\n2\\n' | head\n"),
     ok("coreutil_head_variable_count", "n=2\nprintf '1\\n2\\n3\\n' | head -n $n\n"),
