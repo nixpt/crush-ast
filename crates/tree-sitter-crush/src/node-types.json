@@ -1,5 +1,181 @@
 [
   {
+    "type": "annotation",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "annotation_body",
+            "named": true
+          }
+        ]
+      },
+      "id": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "complexity",
+            "named": false
+          },
+          {
+            "type": "covers",
+            "named": false
+          },
+          {
+            "type": "decision",
+            "named": false
+          },
+          {
+            "type": "does-not-write",
+            "named": false
+          },
+          {
+            "type": "errors",
+            "named": false
+          },
+          {
+            "type": "invalidates",
+            "named": false
+          },
+          {
+            "type": "invariant",
+            "named": false
+          },
+          {
+            "type": "module",
+            "named": false
+          },
+          {
+            "type": "must-call-after",
+            "named": false
+          },
+          {
+            "type": "must-call-before",
+            "named": false
+          },
+          {
+            "type": "reads",
+            "named": false
+          },
+          {
+            "type": "relies-on",
+            "named": false
+          },
+          {
+            "type": "temporary",
+            "named": false
+          },
+          {
+            "type": "wip",
+            "named": false
+          },
+          {
+            "type": "writes",
+            "named": false
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "annotation_body",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "annotation_entry",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "annotation_entry",
+    "named": true,
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "annotation_key",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "annotation_value",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "annotation_value",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "annotation_body",
+          "named": true
+        },
+        {
+          "type": "array_literal",
+          "named": true
+        },
+        {
+          "type": "bool_literal",
+          "named": true
+        },
+        {
+          "type": "float_literal",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "int_literal",
+          "named": true
+        },
+        {
+          "type": "null_literal",
+          "named": true
+        },
+        {
+          "type": "string_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "argument_list",
     "named": true,
     "fields": {},
@@ -9,6 +185,18 @@
       "types": [
         {
           "type": "expression",
+          "named": true
+        },
+        {
+          "type": "named_argument",
+          "named": true
+        },
+        {
+          "type": "object_literal",
+          "named": true
+        },
+        {
+          "type": "struct_literal",
           "named": true
         }
       ]
@@ -25,8 +213,58 @@
         {
           "type": "expression",
           "named": true
+        },
+        {
+          "type": "object_literal",
+          "named": true
+        },
+        {
+          "type": "struct_literal",
+          "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "assignment",
+    "named": true,
+    "fields": {
+      "target": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          },
+          {
+            "type": "object_literal",
+            "named": true
+          },
+          {
+            "type": "struct_literal",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -102,6 +340,10 @@
             "named": true
           },
           {
+            "type": "null_literal",
+            "named": true
+          },
+          {
             "type": "range_expression",
             "named": true
           },
@@ -111,6 +353,10 @@
           },
           {
             "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "unary_op",
             "named": true
           },
           {
@@ -194,6 +440,10 @@
             "named": true
           },
           {
+            "type": "null_literal",
+            "named": true
+          },
+          {
             "type": "range_expression",
             "named": true
           },
@@ -203,6 +453,10 @@
           },
           {
             "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "unary_op",
             "named": true
           },
           {
@@ -221,6 +475,10 @@
           },
           {
             "type": "%",
+            "named": false
+          },
+          {
+            "type": "&&",
             "named": false
           },
           {
@@ -257,6 +515,10 @@
           },
           {
             "type": ">=",
+            "named": false
+          },
+          {
+            "type": "||",
             "named": false
           }
         ]
@@ -330,6 +592,10 @@
             "named": true
           },
           {
+            "type": "null_literal",
+            "named": true
+          },
+          {
             "type": "range_expression",
             "named": true
           },
@@ -339,6 +605,10 @@
           },
           {
             "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "unary_op",
             "named": true
           },
           {
@@ -358,7 +628,19 @@
       "required": false,
       "types": [
         {
+          "type": "annotation",
+          "named": true
+        },
+        {
+          "type": "assignment",
+          "named": true
+        },
+        {
           "type": "break_statement",
+          "named": true
+        },
+        {
+          "type": "capability_decl",
           "named": true
         },
         {
@@ -367,10 +649,6 @@
         },
         {
           "type": "expr_stmt",
-          "named": true
-        },
-        {
-          "type": "field_assignment",
           "named": true
         },
         {
@@ -398,6 +676,10 @@
           "named": true
         },
         {
+          "type": "semantic_switch_statement",
+          "named": true
+        },
+        {
           "type": "struct_def",
           "named": true
         },
@@ -415,6 +697,21 @@
         },
         {
           "type": "while_statement",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "block_content",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "block_content",
           "named": true
         }
       ]
@@ -476,10 +773,40 @@
           "named": true
         },
         {
+          "type": "null_literal",
+          "named": true
+        },
+        {
           "type": "string_literal",
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "capability_decl",
+    "named": true,
+    "fields": {
+      "access": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -607,6 +934,10 @@
           "named": true
         },
         {
+          "type": "null_literal",
+          "named": true
+        },
+        {
           "type": "pipeline",
           "named": true
         },
@@ -620,6 +951,10 @@
         },
         {
           "type": "string_literal",
+          "named": true
+        },
+        {
+          "type": "unary_op",
           "named": true
         },
         {
@@ -692,33 +1027,15 @@
         "required": true,
         "types": [
           {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      }
-    }
-  },
-  {
-    "type": "field_assignment",
-    "named": true,
-    "fields": {
-      "target": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
             "type": "field_access",
             "named": true
-          }
-        ]
-      },
-      "value": {
-        "multiple": false,
-        "required": true,
-        "types": [
+          },
           {
-            "type": "expression",
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "index_expression",
             "named": true
           }
         ]
@@ -755,6 +1072,16 @@
         "types": [
           {
             "type": "parameter_list",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type",
             "named": true
           }
         ]
@@ -966,6 +1293,10 @@
             "named": true
           },
           {
+            "type": "null_literal",
+            "named": true
+          },
+          {
             "type": "range_expression",
             "named": true
           },
@@ -975,6 +1306,10 @@
           },
           {
             "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "unary_op",
             "named": true
           },
           {
@@ -1222,6 +1557,40 @@
     }
   },
   {
+    "type": "named_argument",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          },
+          {
+            "type": "object_literal",
+            "named": true
+          },
+          {
+            "type": "struct_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "new_struct",
     "named": true,
     "fields": {
@@ -1241,6 +1610,59 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "object_literal",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "object_property",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "object_property",
+    "named": true,
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          },
+          {
+            "type": "object_literal",
+            "named": true
+          },
+          {
+            "type": "struct_literal",
             "named": true
           }
         ]
@@ -1369,6 +1791,10 @@
           "named": true
         },
         {
+          "type": "null_literal",
+          "named": true
+        },
+        {
           "type": "range_expression",
           "named": true
         },
@@ -1378,6 +1804,10 @@
         },
         {
           "type": "string_literal",
+          "named": true
+        },
+        {
+          "type": "unary_op",
           "named": true
         },
         {
@@ -1447,7 +1877,19 @@
       "required": false,
       "types": [
         {
+          "type": "annotation",
+          "named": true
+        },
+        {
+          "type": "assignment",
+          "named": true
+        },
+        {
           "type": "break_statement",
+          "named": true
+        },
+        {
+          "type": "capability_decl",
           "named": true
         },
         {
@@ -1456,10 +1898,6 @@
         },
         {
           "type": "expr_stmt",
-          "named": true
-        },
-        {
-          "type": "field_assignment",
           "named": true
         },
         {
@@ -1484,6 +1922,10 @@
         },
         {
           "type": "return_statement",
+          "named": true
+        },
+        {
+          "type": "semantic_switch_statement",
           "named": true
         },
         {
@@ -1582,6 +2024,10 @@
             "named": true
           },
           {
+            "type": "null_literal",
+            "named": true
+          },
+          {
             "type": "range_expression",
             "named": true
           },
@@ -1591,6 +2037,10 @@
           },
           {
             "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "unary_op",
             "named": true
           },
           {
@@ -1668,6 +2118,10 @@
             "named": true
           },
           {
+            "type": "null_literal",
+            "named": true
+          },
+          {
             "type": "range_expression",
             "named": true
           },
@@ -1677,6 +2131,10 @@
           },
           {
             "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "unary_op",
             "named": true
           },
           {
@@ -1698,9 +2156,224 @@
           {
             "type": "expression",
             "named": true
+          },
+          {
+            "type": "object_literal",
+            "named": true
+          },
+          {
+            "type": "struct_literal",
+            "named": true
           }
         ]
       }
+    }
+  },
+  {
+    "type": "semantic_case",
+    "named": true,
+    "fields": {
+      "concept": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "annotation",
+          "named": true
+        },
+        {
+          "type": "assignment",
+          "named": true
+        },
+        {
+          "type": "break_statement",
+          "named": true
+        },
+        {
+          "type": "capability_decl",
+          "named": true
+        },
+        {
+          "type": "continue_statement",
+          "named": true
+        },
+        {
+          "type": "expr_stmt",
+          "named": true
+        },
+        {
+          "type": "fn_def",
+          "named": true
+        },
+        {
+          "type": "for_statement",
+          "named": true
+        },
+        {
+          "type": "if_statement",
+          "named": true
+        },
+        {
+          "type": "import_statement",
+          "named": true
+        },
+        {
+          "type": "lang_block",
+          "named": true
+        },
+        {
+          "type": "return_statement",
+          "named": true
+        },
+        {
+          "type": "semantic_switch_statement",
+          "named": true
+        },
+        {
+          "type": "struct_def",
+          "named": true
+        },
+        {
+          "type": "throw_statement",
+          "named": true
+        },
+        {
+          "type": "try_statement",
+          "named": true
+        },
+        {
+          "type": "var_decl",
+          "named": true
+        },
+        {
+          "type": "while_statement",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "semantic_fallback",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "annotation",
+          "named": true
+        },
+        {
+          "type": "assignment",
+          "named": true
+        },
+        {
+          "type": "break_statement",
+          "named": true
+        },
+        {
+          "type": "capability_decl",
+          "named": true
+        },
+        {
+          "type": "continue_statement",
+          "named": true
+        },
+        {
+          "type": "expr_stmt",
+          "named": true
+        },
+        {
+          "type": "fn_def",
+          "named": true
+        },
+        {
+          "type": "for_statement",
+          "named": true
+        },
+        {
+          "type": "if_statement",
+          "named": true
+        },
+        {
+          "type": "import_statement",
+          "named": true
+        },
+        {
+          "type": "lang_block",
+          "named": true
+        },
+        {
+          "type": "return_statement",
+          "named": true
+        },
+        {
+          "type": "semantic_switch_statement",
+          "named": true
+        },
+        {
+          "type": "struct_def",
+          "named": true
+        },
+        {
+          "type": "throw_statement",
+          "named": true
+        },
+        {
+          "type": "try_statement",
+          "named": true
+        },
+        {
+          "type": "var_decl",
+          "named": true
+        },
+        {
+          "type": "while_statement",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "semantic_switch_statement",
+    "named": true,
+    "fields": {
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "semantic_case",
+          "named": true
+        },
+        {
+          "type": "semantic_fallback",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -1787,6 +2460,40 @@
     }
   },
   {
+    "type": "struct_field_init",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          },
+          {
+            "type": "object_literal",
+            "named": true
+          },
+          {
+            "type": "struct_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "struct_field_pattern",
     "named": true,
     "fields": {
@@ -1810,6 +2517,32 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "struct_literal",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "struct_field_init",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -1891,6 +2624,139 @@
     }
   },
   {
+    "type": "type",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "unary_op",
+    "named": true,
+    "fields": {
+      "operand": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "(",
+            "named": false
+          },
+          {
+            "type": ")",
+            "named": false
+          },
+          {
+            "type": "array_literal",
+            "named": true
+          },
+          {
+            "type": "await_expr",
+            "named": true
+          },
+          {
+            "type": "binary_op",
+            "named": true
+          },
+          {
+            "type": "bool_literal",
+            "named": true
+          },
+          {
+            "type": "capability_call",
+            "named": true
+          },
+          {
+            "type": "expression",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "index_expression",
+            "named": true
+          },
+          {
+            "type": "int_literal",
+            "named": true
+          },
+          {
+            "type": "lambda",
+            "named": true
+          },
+          {
+            "type": "match_expression",
+            "named": true
+          },
+          {
+            "type": "new_struct",
+            "named": true
+          },
+          {
+            "type": "null_literal",
+            "named": true
+          },
+          {
+            "type": "range_expression",
+            "named": true
+          },
+          {
+            "type": "spawn_expr",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "unary_op",
+            "named": true
+          },
+          {
+            "type": "yield_expr",
+            "named": true
+          }
+        ]
+      },
+      "operator": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "!",
+            "named": false
+          },
+          {
+            "type": "-",
+            "named": false
+          },
+          {
+            "type": "not",
+            "named": false
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "var_decl",
     "named": true,
     "fields": {
@@ -1910,6 +2776,14 @@
         "types": [
           {
             "type": "expression",
+            "named": true
+          },
+          {
+            "type": "object_literal",
+            "named": true
+          },
+          {
+            "type": "struct_literal",
             "named": true
           }
         ]
@@ -1943,11 +2817,11 @@
     }
   },
   {
-    "type": "!=",
+    "type": "!",
     "named": false
   },
   {
-    "type": "\"",
+    "type": "!=",
     "named": false
   },
   {
@@ -1955,7 +2829,7 @@
     "named": false
   },
   {
-    "type": "'",
+    "type": "&&",
     "named": false
   },
   {
@@ -1980,6 +2854,10 @@
   },
   {
     "type": "-",
+    "named": false
+  },
+  {
+    "type": "->",
     "named": false
   },
   {
@@ -2067,7 +2945,15 @@
     "named": false
   },
   {
+    "type": "annotation_key",
+    "named": true
+  },
+  {
     "type": "as",
+    "named": false
+  },
+  {
+    "type": "async",
     "named": false
   },
   {
@@ -2075,11 +2961,15 @@
     "named": false
   },
   {
-    "type": "block_content",
-    "named": true
+    "type": "break",
+    "named": false
   },
   {
-    "type": "break",
+    "type": "capability",
+    "named": false
+  },
+  {
+    "type": "case",
     "named": false
   },
   {
@@ -2092,11 +2982,35 @@
     "extra": true
   },
   {
+    "type": "complexity",
+    "named": false
+  },
+  {
     "type": "continue",
     "named": false
   },
   {
+    "type": "covers",
+    "named": false
+  },
+  {
+    "type": "decision",
+    "named": false
+  },
+  {
+    "type": "does-not-write",
+    "named": false
+  },
+  {
     "type": "else",
+    "named": false
+  },
+  {
+    "type": "errors",
+    "named": false
+  },
+  {
+    "type": "fallback",
     "named": false
   },
   {
@@ -2136,6 +3050,14 @@
     "named": true
   },
   {
+    "type": "invalidates",
+    "named": false
+  },
+  {
+    "type": "invariant",
+    "named": false
+  },
+  {
     "type": "let",
     "named": false
   },
@@ -2144,11 +3066,47 @@
     "named": false
   },
   {
+    "type": "module",
+    "named": false
+  },
+  {
+    "type": "must-call-after",
+    "named": false
+  },
+  {
+    "type": "must-call-before",
+    "named": false
+  },
+  {
     "type": "new",
     "named": false
   },
   {
+    "type": "not",
+    "named": false
+  },
+  {
+    "type": "null_literal",
+    "named": true
+  },
+  {
+    "type": "pub",
+    "named": false
+  },
+  {
+    "type": "reads",
+    "named": false
+  },
+  {
+    "type": "relies-on",
+    "named": false
+  },
+  {
     "type": "return",
+    "named": false
+  },
+  {
+    "type": "semantic_switch",
     "named": false
   },
   {
@@ -2157,6 +3115,10 @@
   },
   {
     "type": "struct",
+    "named": false
+  },
+  {
+    "type": "temporary",
     "named": false
   },
   {
@@ -2184,6 +3146,14 @@
     "named": true
   },
   {
+    "type": "wip",
+    "named": false
+  },
+  {
+    "type": "writes",
+    "named": false
+  },
+  {
     "type": "yield_expr",
     "named": true
   },
@@ -2193,6 +3163,10 @@
   },
   {
     "type": "|",
+    "named": false
+  },
+  {
+    "type": "||",
     "named": false
   },
   {

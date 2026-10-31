@@ -14,6 +14,20 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`tree-sitter-crush` tracks the frontend again, and CI now checks it
+  (CRUSH-207):** the grammar parsed **1 of 51** `examples/crush/*.crush` without
+  ERROR nodes. The comment rule knew only `#`, so a file opening with `//` died
+  at line 1; assignment accepted only `a.b = c`; there were no return types,
+  string escapes, logical operators, object/struct literals, `@`-annotations or
+  `semantic_switch`. All of those are now handled — **49 of 51** parse clean.
+  A new `crates/tree-sitter-crush/tests/grammar_examples.rs` parses the corpus
+  and the crate's fixtures on every `cargo test`, failing on ERROR nodes with a
+  `KNOWN_BAD` allowlist that may only shrink (it runs in the existing `test-rest`
+  CI job; the grammar corpus still needs the tree-sitter CLI). Note for
+  consumers: the `field_assignment` node is now `assignment` (it covers
+  identifier/index targets too), and regenerating `parser.c` needs tree-sitter
+  CLI ≥ 0.25.
+
 - **Raw TCP/TLS sockets as `tcp.*` capabilities, behind their own grants
   (CRUSH-318):** `crush-net` is now wired into `crush-lang-sdk` (cargo features
   `tcp`, `tcp-tls`, on by default; grants are never on by default). `crush-run

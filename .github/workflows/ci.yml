@@ -309,8 +309,13 @@ jobs:
   # (pyo3, abi3-py311): setup-python provides a shared libpython.
   #
   # No tests yet, but kept in the list so new ones run without a CI change:
-  # crush-cson, crush-ffi, crush-plugin-example, crush-tui, tree-sitter-crush
-  # (its grammar corpus needs the tree-sitter CLI, which this job doesn't run).
+  # crush-cson, crush-ffi, crush-plugin-example, crush-tui.
+  #
+  # tree-sitter-crush runs here too. Its `test/corpus/` grammar corpus still
+  # needs the tree-sitter CLI (which this job doesn't run), but
+  # `tests/grammar_examples.rs` parses every `examples/crush/*.crush` with the
+  # crate's own parser and fails on ERROR nodes — the check CRUSH-207 asked
+  # for, without the CLI. (CRUSH-207)
   test-rest:
     name: Test (rest)
     runs-on: ubuntu-latest
