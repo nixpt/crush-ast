@@ -93,7 +93,7 @@ new review-exit matrices automatically.
 | xps  | Box-scoped Rust ↔ Crush pipeline: xps-1 manual host-approved plugins; xps-2 phased design; xps-3 shared SDK walker registry; xps-5 exact-or-loud harness (merged #220); xps-13 AOT mapped-capability parity; xps-6 lexical bindings (merged #224); xps-6..12 Rust parity, semantic-analysis, closure, and expression-lowering fixes; xps-4 gated shared-registry CLI dispatch; #213 merged (xps-3 Done; xps-10..12 In Progress on their review-exit criteria) |
 | 231 | s476 (kai): CI toolchain pin dead + 24 crates never run tests in CI |
 | 340   | (ex-266) JS walker drops the bodies of exported declarations — Done, PR #283 (renumbered by the 2026-10-31 survey) |
-| 342+  | Free above the highest allocated ID as of 2026-10-31. Gaps below 341 are **not** guaranteed free: agents allocate in 29x–31x concurrently, so check branches and PR titles first (PR #291 proposes a `ticket-id` allocator). No per-cap stdlib rewrite tickets will be minted (CRUSH-57 superseded by CRUSH-169) |
+| 348+  | Free above the highest allocated ID as of 2026-10-31 (345–347 minted same day). Gaps below 341 are **not** guaranteed free: agents allocate in 29x–31x concurrently, so check branches and PR titles first (PR #291 proposes a `ticket-id` allocator). No per-cap stdlib rewrite tickets will be minted (CRUSH-57 superseded by CRUSH-169) |
 
 ## How to dispatch from this index
 
@@ -234,6 +234,17 @@ the spine; most later work is gated on 73/77 existing.
 | CRUSH-100 | Universal native compile CLI | CRUSH-99 |
 | CRUSH-101 | Notebook self-hosting pipeline | CRUSH-98 |
 | CRUSH-102 | Notebook cross-language state-sharing CI | CRUSH-101 |
+
+## Crush language/type-system captures (345–347) — 2026-10-31
+
+Found while building `facet` (a CLI library in Crush, ../projects/facet).
+All three reproduce on 0.9.0 main.
+
+| ID | Dispatch state | Specification |
+|---|---|---|
+| CRUSH-345 | Backlog (S) | Map literals cannot span lines: `Expected property name but found newline` — arrays and call args are newline-tolerant, maps are not |
+| CRUSH-346 | Backlog (S) | `x != null` is a type error when `x` came from a function that can `return null` (`optional<any>`); host-cap nullables compare fine |
+| CRUSH-347 | Backlog (S) | Map subscript on an absent key errors (`expected present map key, got absent key`) while field access returns `null` — contract divergence across both access forms (and AOT) |
 
 ## JS/TS parity spike (2026-10-15 — CRUSH-zorro-4..23)
 

@@ -78,3 +78,18 @@ failure as `// expect-error: [runtime] unknown capability: module.load`.
 - Network / git imports (the `allow_network_imports` / `allow_git_imports` policy), MCP imports, secure-env imports.
 - Runtime hot-reload of modules.
 - Sharing `@polyglot` blocks across files.
+
+## Additional evidence (2026-10-31, from building `facet`)
+
+- Confirmed on 0.9.0: `import x` compiles to an unregistered `module.load`
+  cap call, so no source-level module imports exist.
+- `crush-pkg`'s own consumption model works around this by **concatenating**
+  path-dependency entry files into one program (`PackageBuilder::build` →
+  `collect_all_sources` ships only the entry file, or `src/**`). A library
+  therefore has to publish as one flat file; `facet` does exactly that
+  (`facet.crush`, flat `facet_*` functions) — see `projects/facet/README.md`.
+- The whole-program capability grant check IS reachability-aware (an unused
+  fn containing `env.get` does not force `--env`), but AOT *compilation* is
+  not (C/Rust backends reject unsupported ops/caps in unused functions too).
+  Relevant if the import implementation ever lands via runtime `module.load`:
+  dead module bodies will still gate AOT builds.
