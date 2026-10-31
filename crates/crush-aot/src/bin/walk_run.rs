@@ -76,6 +76,17 @@ fn main() -> anyhow::Result<()> {
     }
     host_caps.register(Box::new(WalkIoPrint));
     host_caps.register(Box::new(WalkIoWrite));
+    // Shell programs end with `sys.exit($?)` whenever the last command failed,
+    // and `exit N` lowers to it directly (CRUSH-266). Without this the whole
+    // run failed with "unknown capability: sys.exit".
+    host_caps.register(Box::new(crush_lang_sdk::host_caps::SysExitCap));
+    // Pathname expansion (`echo *.txt`, `for f in *`) is the shell's one look at
+    // the filesystem: `fs.exists` + `fs.list`, confined to the directory the
+    // script was started in. Hosts that embed walker output can leave them out
+    // and a glob is then refused loudly ("unknown capability: fs.list").
+    let root = std::env::current_dir()?.display().to_string();
+    host_caps.register(Box::new(crush_lang_sdk::host_caps::FsExistsCap::new(&root)));
+    host_caps.register(Box::new(crush_lang_sdk::host_caps::FsListCap::new(&root)));
     for name in &[
         "append", "push", "make_range", "arr_set", "arr_get", "str.concat",
         "__crush_deref__", "__crush_addr_of__", "__crush_unary__",
@@ -87,22 +98,36 @@ fn main() -> anyhow::Result<()> {
     let quotas = crush_vm::Quotas { max_steps: 10_000_000, ..Default::default() };
     let mut exec_times = Vec::with_capacity(cli.runs);
     let mut output = String::new();
+    let mut exit_code = None;
 
     for run_i in 0..cli.runs {
         let t2 = Instant::now();
-        let result = crush_vm::run_with_caps(&vm_prog, &quotas, Some(&host_caps));
+        // Streaming, so output printed before a `sys.exit` is kept.
+        let mut run_out = String::new();
+        let result = crush_vm::vm::run_with_caps_streaming(&vm_prog, &quotas, Some(&host_caps), &mut |s: &str| {
+            run_out.push_str(s)
+        });
         exec_times.push(t2.elapsed());
         if run_i == 0 {
             // Program output verbatim — trimming hid trailing spaces and
             // newline-free `io.write` output (C printf, Rust print!).
-            output = match result {
-                Ok(r) => r.output,
-                Err(e) => format!("Error: {e}\n"),
-            };
+            match result {
+                Ok(_) => output = run_out,
+                // `sys.exit(N)` is a requested stop, not a failure: keep the
+                // output and hand the status to the caller.
+                Err(crush_vm::VmError::Exit(code)) => {
+                    exit_code = Some(code);
+                    output = run_out;
+                }
+                Err(e) => output = format!("{run_out}Error: {e}\n"),
+            }
         }
     }
 
     if cli.runs == 1 { print!("{output}"); }
+    if let Some(code) = exit_code {
+        std::process::exit(code);
+    }
     if cli.timing {
         let w = walk_time.as_micros() as f64;
         let c = compile_time.as_micros() as f64;

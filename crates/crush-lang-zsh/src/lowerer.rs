@@ -86,6 +86,42 @@ fn pipe(p: &ZshPipe, negated: bool, coproc: bool) -> Pipeline {
     Pipeline { negated, cmd }
 }
 
+/// zshrs-parse's `[[ … ]]` tree → the shared shell IR's conditional expression.
+fn cond(c: &ZshCond, line: usize) -> Result<shell::Cond, Cmd> {
+    Ok(match c {
+        ZshCond::Not(x) => shell::Cond::Not(Box::new(cond(x, line)?)),
+        ZshCond::And(a, b) => shell::Cond::And(Box::new(cond(a, line)?), Box::new(cond(b, line)?)),
+        ZshCond::Or(a, b) => shell::Cond::Or(Box::new(cond(a, line)?), Box::new(cond(b, line)?)),
+        ZshCond::Regex(..) => return Err(unsupported("`=~` in `[[ … ]]`", line)),
+        // Operators arrive tokenized (`-gt` is DASH + `gt`), so decode them the
+        // same way word text is decoded.
+        ZshCond::Unary(op, w) => {
+            let op = source_text(op);
+            match op.as_str() {
+                "-z" => shell::Cond::Unary("-z", word(w, line)),
+                "-n" => shell::Cond::Unary("-n", word(w, line)),
+                other => return Err(unsupported(&format!("`{other}` in `[[ … ]]` (file and shell-option tests)"), line)),
+            }
+        }
+        ZshCond::Binary(l, op, r) => {
+            let op = match source_text(op).as_str() {
+                "=" | "==" => "==",
+                "!=" => "!=",
+                "<" => "<",
+                ">" => ">",
+                "-eq" => "-eq",
+                "-ne" => "-ne",
+                "-lt" => "-lt",
+                "-le" => "-le",
+                "-gt" => "-gt",
+                "-ge" => "-ge",
+                other => return Err(unsupported(&format!("`{other}` in `[[ … ]]` (regex and file tests)"), line)),
+            };
+            shell::Cond::Binary(op, word(l, line), word(r, line))
+        }
+    })
+}
+
 fn command(c: &ZshCommand, line: usize) -> Cmd {
     match c {
         ZshCommand::Simple(s) => {
@@ -94,12 +130,24 @@ fn command(c: &ZshCommand, line: usize) -> Cmd {
             }
             let mut assigns = Vec::new();
             for a in &s.assigns {
-                match &a.value {
-                    ZshAssignValue::Scalar(v) => {
-                        assigns.push(Assign { name: a.name.clone(), value: word(v, line), append: a.append, line })
-                    }
-                    ZshAssignValue::Array(_) => return unsupported(&format!("array assignment `{}=(…)`", a.name), line),
-                }
+                // `a[1]=x` arrives with the subscript still in the name, and
+                // the brackets as lexer markers.
+                let decoded = source_text(&a.name);
+                let (name, index) = match decoded.find('[') {
+                    Some(i) if decoded.ends_with(']') && i < decoded.len() - 1 => (
+                        decoded[..i].to_string(),
+                        Some(Word { raw: decoded[i + 1..decoded.len() - 1].to_string(), line }),
+                    ),
+                    _ => (decoded, None),
+                };
+                let (array, value) = match &a.value {
+                    ZshAssignValue::Scalar(v) => (None, word(v, line)),
+                    ZshAssignValue::Array(items) => (
+                        Some(items.iter().map(|v| word(v, line)).collect()),
+                        Word { raw: String::new(), line },
+                    ),
+                };
+                assigns.push(Assign { name, index, array, value, append: a.append, line });
             }
             Cmd::Simple { assigns, words: s.words.iter().map(|w| word(w, line)).collect(), line }
         }
@@ -155,7 +203,10 @@ fn command(c: &ZshCommand, line: usize) -> Cmd {
             }
         }
         ZshCommand::Time(_) => unsupported("`time`", line),
-        ZshCommand::Cond(_) => unsupported("`[[ … ]]` (use `[ … ]`)", line),
+        ZshCommand::Cond(c) => match cond(c, line) {
+            Ok(cond) => Cmd::ExtendedTest { cond, line },
+            Err(unsupported) => unsupported,
+        },
         ZshCommand::Arith(e) => Cmd::Arith { expr: untokenize(e), line },
         ZshCommand::Try(_) => unsupported("zsh `{ … } always { … }`", line),
         ZshCommand::Redirected(..) => unsupported("a redirection", line),

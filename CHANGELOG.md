@@ -23,6 +23,18 @@ add its entry after yours.
   nowhere and `examples/embed.c` printed nothing — `run_casm` now runs with a
   stdout `io.print` capability, so the example prints `42`.
 
+- **Spawned tasks no longer outlive the VM (CRUSH-182):** `TaskState` now
+  implements `Drop`, killing and reaping every still-running task when the
+  capability registry is dropped at the end of a run — a spawned `sleep 333`
+  no longer survives `crush-run`. `--task` spawns host processes, so its help
+  text now says plainly that it grants `process/spawn`.
+
+- **Deterministic CASM function layout (CRUSH-188):** `crushc --emit casm` laid
+  the functions out into the code buffer by iterating a `HashMap`, so the same
+  source compiled to different CASM (and different label numbering) from run to
+  run — bad for reproducible builds and the AOT build cache. Functions are now
+  emitted in name order.
+
 - **Go walker: no more silent drops (CRUSH-198):** the walker matched
   `short_variable_declaration`, but tree-sitter-go emits `short_var_declaration`,
   so `a := 7` was dropped and `a` read as uninitialised; `var`, assignment,
