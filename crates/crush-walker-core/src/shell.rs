@@ -1832,11 +1832,13 @@ impl Lw {
                 }
                 '$' => i = self.parse_dollar(&cs, i, false, line, &mut segs)?,
                 '`' => return Err(self.err("command substitution (backticks)", line)),
-                '*' | '?' | '[' if pattern => {
+                // An unquoted glob character stays in the word, and `fields`
+                // expands the word against the filesystem afterwards (a `case`
+                // pattern is not a pathname expansion, so it stays literal).
+                '*' | '?' | '[' => {
                     push_lit(&mut segs, c, false);
                     i += 1;
                 }
-                '*' | '?' | '[' => return Err(self.err(&format!("pathname expansion (unquoted `{c}` in `{raw}`)"), line)),
                 '~' if i == 0 => return Err(self.err(&format!("tilde expansion (`{raw}`)"), line)),
                 '=' if i == 0 && cs.len() > 1 && self.d == Dialect::Zsh => {
                     return Err(self.err(&format!("zsh `=command` expansion (`{raw}`)"), line));
@@ -2188,8 +2190,55 @@ impl Lw {
         self.concat_segs(&segs, w.line)
     }
 
+    /// The fields of a word: quote removal, field splitting, then pathname
+    /// expansion of any unquoted glob character (`echo *.txt`, `for f in *`).
+    ///
+    /// Pathname expansion reads the filesystem through the `fs.exists` and
+    /// `fs.list` capabilities, so a host that grants no filesystem gets a loud
+    /// error rather than a guess. bash's rules apply: a name starting with `.`
+    /// is only matched by a pattern that starts with one, the matches are
+    /// sorted, and a pattern that matches nothing stays as written.
     fn fields(&mut self, w: &Word) -> Result<Fields> {
-        let segs = self.parse_word(w)?;
+        let mut segs = self.parse_word(w)?;
+        let lit_glob = segs
+            .iter()
+            .any(|sg| matches!(sg, Seg::Lit(t, false) if t.contains(['*', '?', '['])));
+        // bash also globs the text an expansion contributes (`x='*'; echo $x`);
+        // zsh needs `GLOB_SUBST` for that, so it expands only what was written.
+        let exp_glob = self.d == Dialect::Bash
+            && segs.iter().any(|sg| sg.is_expansion() && !sg.quoted() && !sg.is_numeric());
+        if !lit_glob && !exp_glob {
+            return self.fields_plain(&segs, w);
+        }
+        // Quoted text inside a glob word must not act as a pattern: escape its
+        // metacharacters here, and `__sh_globexp` drops the escapes again for a
+        // pattern that matches nothing (`echo a"*"b*` prints `a*b*`).
+        if segs.iter().any(|sg| sg.is_expansion() && sg.quoted() && !sg.is_numeric()) {
+            return Err(self.err(
+                &format!(
+                    "a quoted expansion mixed with an unquoted glob (`{}`; quote the whole word)",
+                    w.raw
+                ),
+                w.line,
+            ));
+        }
+        for sg in segs.iter_mut() {
+            if let Seg::Lit(t, true) = sg {
+                *t = escape_pattern(t);
+            }
+        }
+        let at = self.at(&format!("`{}`", w.raw), w.line);
+        let arr = match self.fields_plain(&segs, w)? {
+            Fields::One(e) => array(vec![e]),
+            Fields::Many(a) => a,
+        };
+        // Under zsh a pattern that matches nothing is an error, not a literal.
+        let nomatch = boolean(self.d == Dialect::Zsh);
+        Ok(Fields::Many(self.helper("__sh_globmap", vec![arr, at, nomatch])))
+    }
+
+    /// The fields of a word before pathname expansion.
+    fn fields_plain(&mut self, segs: &[Seg], w: &Word) -> Result<Fields> {
         let line = w.line;
         let real: Vec<&Seg> = segs.iter().filter(|sg| !matches!(sg, Seg::Lit(t, _) if t.is_empty())).collect();
         if let [Seg::ArrAll { name, star: false, quoted }] = real.as_slice() {
@@ -2231,7 +2280,7 @@ impl Lw {
         }
         let splits = segs.iter().any(|sg| sg.is_expansion() && !sg.quoted() && !sg.is_numeric());
         if !splits {
-            return Ok(Fields::One(self.concat_segs(&segs, line)?));
+            return Ok(Fields::One(self.concat_segs(segs, line)?));
         }
         match self.d {
             Dialect::Bash => {
@@ -2241,12 +2290,12 @@ impl Lw {
                         line,
                     ));
                 }
-                let v = self.concat_segs(&segs, line)?;
+                let v = self.concat_segs(segs, line)?;
                 let at = self.at(&format!("unquoted `{}`", w.raw), line);
                 Ok(Fields::Many(self.helper("__sh_split", vec![v, at])))
             }
             Dialect::Zsh => {
-                let v = self.concat_segs(&segs, line)?;
+                let v = self.concat_segs(segs, line)?;
                 if real.len() == 1 {
                     Ok(Fields::Many(self.helper("__sh_nonempty", vec![v])))
                 } else {
@@ -2340,6 +2389,9 @@ const SHELL_HELPERS: &[&str] = &[
     "__sh_class",
     "__sh_dval",
     "__sh_glob",
+    "__sh_globmap",
+    "__sh_globexp",
+    "__sh_unglob",
     "__sh_quote_pat",
     "__sh_read_line",
     "__sh_read_split",
@@ -2513,6 +2565,198 @@ fn helper_fn(name: &str) -> Function {
                     ),
                     set("out", bin("+", var("out"), var("c"))),
                 ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_unglob(s): drop the pattern escapes `\x` → `x` from a word, the
+        // way quote removal shows text that was quoted inside a glob word.
+        "__sh_unglob" => func(
+            &["s"],
+            vec![
+                decl("cs", chars(var("s"))),
+                decl("n", len(var("cs"))),
+                decl("i", int(0)),
+                decl("out", s("")),
+                while_(bin("<", var("i"), var("n")), vec![
+                    if_(
+                        bin(
+                            "and",
+                            bin("==", index(var("cs"), var("i")), s("\\")),
+                            bin("<", bin("+", var("i"), int(1)), var("n")),
+                        ),
+                        vec![
+                            set("out", bin("+", var("out"), index(var("cs"), bin("+", var("i"), int(1))))),
+                            set("i", bin("+", var("i"), int(2))),
+                        ],
+                        Some(vec![
+                            set("out", bin("+", var("out"), index(var("cs"), var("i")))),
+                            set("i", bin("+", var("i"), int(1))),
+                        ]),
+                    ),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_globmap(arr, at, nomatch): pathname expansion of each field.
+        "__sh_globmap" => func(
+            &["arr", "at", "nomatch"],
+            vec![
+                decl("out", array(vec![])),
+                for_("f", var("arr"), vec![set(
+                    "out",
+                    bin(
+                        "+",
+                        var("out"),
+                        call("__sh_globexp", vec![var("f"), var("at"), var("nomatch")]),
+                    ),
+                )]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_globexp(field, at): the pathnames one word expands to, or the
+        // word itself when the pattern matches nothing (bash's default). The
+        // pattern is only the last path component: `*` never matches a leading
+        // `.`, the matches are sorted (`fs.list` sorts), and a glob in a
+        // directory component is refused rather than half-expanded.
+        "__sh_globexp" => func(
+            &["field", "at", "nomatch"],
+            vec![
+                decl("cs", chars(var("field"))),
+                decl("n", len(var("cs"))),
+                decl("i", int(0)),
+                decl("meta", boolean(false)),
+                while_(bin("<", var("i"), var("n")), vec![
+                    decl("c", index(var("cs"), var("i"))),
+                    if_(
+                        bin("==", var("c"), s("\\")),
+                        vec![set("i", bin("+", var("i"), int(2)))],
+                        Some(vec![
+                            if_(
+                                bin(
+                                    "or",
+                                    bin("or", bin("==", var("c"), s("*")), bin("==", var("c"), s("?"))),
+                                    bin("==", var("c"), s("[")),
+                                ),
+                                vec![set("meta", boolean(true))],
+                                None,
+                            ),
+                            set("i", bin("+", var("i"), int(1))),
+                        ]),
+                    ),
+                ]),
+                decl("lit", call("__sh_unglob", vec![var("field")])),
+                if_(not(var("meta")), vec![ret(array(vec![var("lit")]))], None),
+                // Split at the last `/`: everything before it is the directory.
+                decl("k", int(-1)),
+                decl("j", int(0)),
+                while_(bin("<", var("j"), var("n")), vec![
+                    if_(
+                        bin("==", index(var("cs"), var("j")), s("/")),
+                        vec![set("k", var("j"))],
+                        None,
+                    ),
+                    set("j", bin("+", var("j"), int(1))),
+                ]),
+                decl("dir", s(".")),
+                decl("pre", s("")),
+                decl("base", var("field")),
+                if_(bin(">=", var("k"), int(0)), vec![
+                    decl("dmeta", boolean(false)),
+                    decl("q", int(0)),
+                    while_(bin("<", var("q"), var("k")), vec![
+                        decl("dc", index(var("cs"), var("q"))),
+                        if_(
+                            bin("==", var("dc"), s("\\")),
+                            vec![set("q", bin("+", var("q"), int(2)))],
+                            Some(vec![
+                                if_(
+                                    bin(
+                                        "or",
+                                        bin("or", bin("==", var("dc"), s("*")), bin("==", var("dc"), s("?"))),
+                                        bin("==", var("dc"), s("[")),
+                                    ),
+                                    vec![set("dmeta", boolean(true))],
+                                    None,
+                                ),
+                                set("q", bin("+", var("q"), int(1))),
+                            ]),
+                        ),
+                    ]),
+                    if_(var("dmeta"), vec![throw(concat(vec![
+                        s("unsupported: a glob in a directory component of `"),
+                        var("field"),
+                        s("` at "),
+                        var("at"),
+                    ]))], None),
+                    set("pre", call("__sh_join_range", vec![var("cs"), int(0), bin("+", var("k"), int(1))])),
+                    set("base", call("__sh_join_range", vec![var("cs"), bin("+", var("k"), int(1)), var("n")])),
+                    set("dir", call("__sh_join_range", vec![var("cs"), int(0), var("k")])),
+                    // `/x*` lists the root, not a directory named "".
+                    if_(bin("==", var("dir"), s("")), vec![set("dir", s("/"))], None),
+                ], None),
+                decl("dirp", call("__sh_unglob", vec![var("dir")])),
+                decl("prep", call("__sh_unglob", vec![var("pre")])),
+                // Nothing to match in, or a trailing `/`: leave the word alone.
+                if_(bin("==", var("base"), s("")), vec![ret(array(vec![var("lit")]))], None),
+                if_(
+                    bin("==", cap("fs.exists", vec![var("dirp")]), int(0)),
+                    vec![ret(array(vec![var("lit")]))],
+                    None,
+                ),
+                // A leading `.` in the pattern is what lets `.`-files match.
+                decl("hidden", bin(
+                    "or",
+                    bin(
+                        "==",
+                        call("__sh_substr", vec![var("base"), int(0), int(1), boolean(true)]),
+                        s("."),
+                    ),
+                    bin(
+                        "==",
+                        call("__sh_substr", vec![var("base"), int(0), int(2), boolean(true)]),
+                        s("\\."),
+                    ),
+                )),
+                decl("out", array(vec![])),
+                for_("nm", cap("fs.list", vec![var("dirp")]), vec![
+                    if_(
+                        bin(
+                            "and",
+                            bin(
+                                "==",
+                                call("__sh_substr", vec![var("nm"), int(0), int(1), boolean(true)]),
+                                s("."),
+                            ),
+                            not(var("hidden")),
+                        ),
+                        vec![S::Continue { meta: m() }],
+                        None,
+                    ),
+                    if_(
+                        bin(
+                            "==",
+                            call("__sh_glob", vec![var("base"), var("nm")]),
+                            boolean(true),
+                        ),
+                        vec![set(
+                            "out",
+                            bin("+", var("out"), array(vec![bin("+", var("prep"), var("nm"))])),
+                        )],
+                        None,
+                    ),
+                ]),
+                // No match: bash keeps the word as written; zsh fails the
+                // command (here the whole run) with `no matches found`.
+                if_(bin("==", len(var("out")), int(0)), vec![
+                    if_(var("nomatch"), vec![throw(concat(vec![
+                        s("no matches found: "),
+                        var("field"),
+                        s(" (at "),
+                        var("at"),
+                        s(")"),
+                    ]))], None),
+                    ret(array(vec![var("lit")])),
+                ], None),
                 ret(var("out")),
             ],
         ),
@@ -4243,15 +4487,8 @@ fn helper_fn(name: &str) -> Function {
                             None,
                         )],
                         Some(vec![
-                            if_(
-                                bin("or", bin("or", bin("==", var("c"), s("*")), bin("==", var("c"), s("?"))), bin("==", var("c"), s("["))),
-                                vec![throw(bin(
-                                    "+",
-                                    bin("+", s("unsupported: pathname expansion of `"), var("v")),
-                                    bin("+", s("` from "), var("at")),
-                                ))],
-                                None,
-                            ),
+                            // A glob character stays in the field: `fields`
+                            // expands the resulting words against the filesystem.
                             set("cur", bin("+", var("cur"), var("c"))),
                         ]),
                     )],
