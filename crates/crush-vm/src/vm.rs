@@ -25,6 +25,9 @@ pub enum VmError {
     StepQuota(usize),
     #[error("output quota exceeded ({0})")]
     OutputQuota(usize),
+    /// The run as a whole outlived `Quotas::max_wall_time_ms` (CRUSH-186).
+    #[error("wall-clock quota exceeded ({0}ms)")]
+    WallTimeQuota(u64),
     #[error("I/O error: {0}")]
     Io(String),
     #[error("call depth quota exceeded ({0})")]

@@ -480,6 +480,10 @@ fn run_from(
     // COSM K1.4: the program's Kinds, built (or refused, see `cosm_gate`)
     // before anything runs.
     let kinds = crate::cosm_rt::KindTable::load(program)?;
+    // CRUSH-186: one wall-clock deadline for the whole run.
+    let wall_deadline = std::time::Instant::now() + std::time::Duration::from_millis(quotas.max_wall_time_ms);
+    let _wall_guard = crate::wall::enter(wall_deadline, quotas.max_wall_time_ms);
+    let mut wall_ticks: usize = 0;
     let code = &program.code;
     let n = code.len();
     if n == 0 {
@@ -601,6 +605,10 @@ fn run_from(
         threads[current].steps += 1;
         if threads[current].steps > quotas.max_steps {
             return Err(VmError::StepQuota(quotas.max_steps));
+        }
+        wall_ticks += 1;
+        if wall_ticks.is_multiple_of(crate::wall::CHECK_EVERY) {
+            crate::wall::check(wall_deadline, quotas.max_wall_time_ms)?;
         }
         // CRUSH-165 hook: the scheduler's one instruction-dispatch point.
         #[cfg(feature = "transcript")]
@@ -934,10 +942,9 @@ fn execute_one(
         {
             let b = pop!();
             let a = pop!();
+            // No size check here: `max_output` bounds what is *printed*, not what is built
+            // (CRUSH-186), and `str.concat` has no limit either. A memory quota is CRUSH-181.
             let joined = format!("{}{}", a.as_text(), b.as_text());
-            if joined.len() > quotas.max_output {
-                return Err(VmError::OutputQuota(quotas.max_output));
-            }
             push!(Value::Str(joined));
         }
         ADD | SUB | MUL | DIV | MOD | LT | GT | LE | GE => {
@@ -1613,7 +1620,7 @@ fn execute_one(
                 outputs: &outputs,
                 deps: &deps,
                 gate: &gate,
-                deadline_ms: quotas.max_wall_time_ms,
+                deadline_ms: crate::wall::remaining_ms(quotas.max_wall_time_ms),
                 crush_line,
             };
             let executor = host_caps.and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
@@ -1665,7 +1672,7 @@ fn execute_one(
                 &payload,
                 operands,
                 host_caps,
-                quotas.max_wall_time_ms,
+                crate::wall::remaining_ms(quotas.max_wall_time_ms),
             );
             // CRUSH-165 hook: an AI opcode, as cap `ai_native.<kind>`.
             #[cfg(feature = "transcript")]
@@ -2362,7 +2369,7 @@ fn dispatch_cap(
         {
             return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
         }
-        return match handler.call_with_deadline(args, quotas.max_wall_time_ms) {
+        return match handler.call_with_deadline(args, crate::wall::remaining_ms(quotas.max_wall_time_ms)) {
             // A host cap that returns nothing (`fs.write`, `akg.write`, …) still
             // leaves Null: the compiler only knows the built-ins' arity, so it pops
             // the result of every host call, and `let x = fs.write(..)` stores one

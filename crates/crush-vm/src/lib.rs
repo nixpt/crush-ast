@@ -43,6 +43,7 @@ pub mod io_print;
 pub mod io_read;
 pub mod lang_exec;
 pub mod str_len;
+pub mod wall;
 pub mod parallel;
 pub mod portable_vm;
 pub mod scheduler;

@@ -124,7 +124,7 @@ impl PolyglotError {
             }
             PolyglotError::Timeout => VmError::CapTimeout {
                 cap: request.gate.to_string(),
-                limit_ms: request.deadline_ms,
+                limit_ms: crate::wall::limit_ms().unwrap_or(request.deadline_ms),
             },
             PolyglotError::Vm(err) => err,
         }

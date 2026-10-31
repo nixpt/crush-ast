@@ -14,6 +14,9 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix: string `+` no longer counts against the output quota (a >1 MiB string built with `+` used to fail with `output quota exceeded` while `str.concat` was unlimited); a size limit for both is the memory quota, CRUSH-235 (CRUSH-186)
+- fix: `max_wall_time_ms` bounds the whole run: the scheduler and `PortableVm` check the clock every 1024 instructions (`wall-clock quota exceeded`), and a blocking `process.exec` gets the remaining time and is killed on expiry (CRUSH-186)
+
 ## [0.10.0] - 2026-10-31
 
 - Merge pull request #377 from nixpt/agent/satya/CRUSH-squeeze-roots
