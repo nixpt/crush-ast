@@ -99,6 +99,13 @@ struct Cli {
     #[arg(short = 'v', long)]
     verbose: bool,
 
+    /// Fail the build (exit 1, after printing them) if the annotation checks
+    /// (stale `@wip`, expired `@temporary`, wildcard in an exhaustive match,
+    /// `@must-call-after`) produce any warning. Without it they are printed
+    /// and the build goes on.
+    #[arg(long = "deny-warnings")]
+    deny_warnings: bool,
+
     /// Format for diagnostic output on errors: `text` (default, colored
     /// terminal output) or `json` (newline-delimited records for editor /
     /// IDE / LSP bridge integration).
@@ -275,6 +282,29 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
             crush_frontend::import_system::resolve_imports(&mut program, &cli.input, &imports)
         {
             report_import_error(cli, &e);
+        }
+    }
+
+    // CRUSH-369: the annotation checks `crush-lint` runs (stale @wip, expired
+    // @temporary, exhaustiveness, @must-call-after) as warnings. Run on the
+    // enriched, import-merged program; never fatal unless --deny-warnings.
+    if cli.emit != EmitKind::Ast {
+        let mut checked = program.clone();
+        crush_frontend::cast_enrich::enrich_cast(&mut checked);
+        let warnings =
+            crush_lang_sdk::compile::annotation_diagnostics(&checked, &cli.input.display().to_string());
+        crush_lang_sdk::compile::print_annotation_diagnostics(
+            &warnings,
+            matches!(cli.message_format, MessageFormat::Json),
+        );
+        if cli.deny_warnings && !warnings.is_empty() {
+            if matches!(cli.message_format, MessageFormat::Text) {
+                eprintln!(
+                    "crushc: {} warning(s) treated as errors (--deny-warnings)",
+                    warnings.len()
+                );
+            }
+            std::process::exit(1);
         }
     }
 

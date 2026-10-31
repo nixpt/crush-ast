@@ -403,6 +403,57 @@ pub fn check_declared_capabilities(casm: &casm::Program, declared: &[String]) ->
     )
 }
 
+/// CRUSH-369: the annotation checks (`W-WIP-001` stale `@wip`, `W-TMP-001`
+/// expired `@temporary`, `E-EXH-001` wildcard in an exhaustive match,
+/// `E-MUT-00x` `@must-call-after`) as NDJSON-schema records for the build and
+/// run tools. They are advisory there — every record is `level: "warning"`,
+/// whatever the pass's own severity, because only `crush-lint` and
+/// `crushc --deny-warnings` turn them into failures. `file` fills in a
+/// location the pass left empty.
+pub fn annotation_diagnostics(
+    program: &crush_cast::Program,
+    file: &str,
+) -> Vec<crate::theme::JsonDiagnostic> {
+    crush_frontend::check_program(program)
+        .into_iter()
+        .map(|d| {
+            let loc_file = if d.location.file.is_empty() { file } else { d.location.file.as_str() };
+            crate::theme::JsonDiagnostic {
+                code: d.code,
+                level: "warning",
+                file: Some(loc_file.to_string()),
+                line: (d.location.line > 0).then_some(d.location.line),
+                col: (d.location.col > 0).then_some(d.location.col),
+                message: d.message,
+                hint: d.hint,
+            }
+        })
+        .collect()
+}
+
+/// Print [`annotation_diagnostics`] to stderr: themed text lines, or NDJSON
+/// when `json`.
+pub fn print_annotation_diagnostics(diags: &[crate::theme::JsonDiagnostic], json: bool) {
+    if diags.is_empty() {
+        return;
+    }
+    if json {
+        eprint!("{}", crate::theme::render_diagnostics_ndjson(diags));
+        return;
+    }
+    for d in diags {
+        let at = match (&d.file, d.line) {
+            (Some(f), Some(l)) => format!("{f}:{l}: "),
+            (Some(f), None) => format!("{f}: "),
+            _ => String::new(),
+        };
+        eprintln!("{} [{}] {at}{}", crate::theme::paint_warning_badge("warning"), d.code, d.message);
+        if let Some(h) = &d.hint {
+            eprintln!("  hint: {h}");
+        }
+    }
+}
+
 /// Every path from Crush source to bytecode must run this — `crushc` used to
 /// skip it, so `crushc x.crush -o x.cvm1` rejected or mis-ran any program
 /// whose `@lang` block produces a variable (CRUSH-130).
