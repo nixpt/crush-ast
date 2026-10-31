@@ -68,18 +68,19 @@ pub struct JavaWalker {
 
 impl Walker for JavaWalker {
     fn language(&self) -> tree_sitter::Language {
-        // CRUSH-37 Commit 1 stub. Replaced with
-        // `tree_sitter_java::LANGUAGE.into()` in Commit 2.
-        unreachable!(
-            "JavaWalker::language() is a stub in CRUSH-37 Commit 1; \
-             add tree-sitter-java to the workspace in Commit 2"
+        // There is no `tree-sitter-java` dependency yet (CRUSH-37 Commit 2), so
+        // there is no grammar to return. Fail with a clear message instead of a
+        // bare `unreachable!` (CRUSH-203).
+        panic!(
+            "java: the Crush Java walker is not implemented — add tree-sitter-java \
+             to the workspace (CRUSH-37); see also CRUSH-203"
         )
     }
 
     fn walk(&self, _tree: &Tree, _source: &[u8]) -> anyhow::Result<Program> {
-        // CRUSH-37 Commit 1 stub. Commit 2 implements real Java
-        // AST -> CAST IR conversion (mirrors GoWalker::walk).
-        Ok(Program::default())
+        // A stub that returns `Program::default()` used to "run" silently with
+        // no output (CRUSH-203). Refuse loudly instead.
+        anyhow::bail!("java: the Crush Java walker is not implemented (CRUSH-37/CRUSH-203)")
     }
 }
 
@@ -103,7 +104,7 @@ impl_both_for_walker!(
     JavaAdapter,
     "java",                                 // LanguageWalker::language()
     &["java"],                              // LanguageWalker::extensions()
-    unreachable!(),                         // Walker::language() -- stub (Commit 1)
+    panic!("java: the Crush Java walker is not implemented — add tree-sitter-java to the workspace (CRUSH-37/CRUSH-203)"),
     JavaWalker,                             // inner walker type
     |fname| JavaWalker { file_name: fname } // walker ctor
 );

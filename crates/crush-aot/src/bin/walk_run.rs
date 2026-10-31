@@ -32,11 +32,25 @@ fn registry() -> AdapterRegistry {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let source = std::fs::read_to_string(&cli.file)?;
     let filename = cli.file.to_string_lossy();
 
     let t0 = Instant::now();
-    let (_, cast_program) = registry().walk(&source, &filename)?;
+    // Wasm is a binary format: read the bytes, not a UTF-8 string (CRUSH-203).
+    let (_, cast_program) = if cli.file.extension().and_then(|e| e.to_str()) == Some("wasm") {
+        let bytes = std::fs::read(&cli.file)?;
+        let program = crush_lang_wasm::walk_wasm(&bytes, &filename)
+            .map_err(|e| anyhow::anyhow!("wasm@walk: {e:?}"))?;
+        (
+            crush_walker_core::FeatureReport {
+                lang: "wasm".to_string(),
+                ..Default::default()
+            },
+            program,
+        )
+    } else {
+        let source = std::fs::read_to_string(&cli.file)?;
+        registry().walk(&source, &filename)?
+    };
     let walk_time = t0.elapsed();
     if cli.dump_cast { println!("{}", serde_json::to_string_pretty(&cast_program)?); return Ok(()); }
 

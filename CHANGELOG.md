@@ -14,6 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Stub walkers no longer produce empty programs (CRUSH-203):** the Zig walker
+  matched the wrong tree-sitter node names (`IntegerLiteral` vs the real
+  `integer`/`float`/`string`/`boolean`, `BinaryExpr` vs `binary_expression`, …),
+  so every literal silently became `null` and every program printed nothing; the
+  names and wrappers are fixed and unhandled nodes now error with the node kind
+  and position. Dart and Java (which returned an empty program / panicked with a
+  bare `unreachable!`) fail with "not implemented". The Wasm walker no longer
+  drops every non-`call` operator or lowers `fd_write` to an arg-less
+  `io.print`; it errors loudly. `crush-walk-run` reads a `.wasm` file as bytes.
+  The Nepali walker's false "native Nepali keywords" comment is corrected.
+
 - **Deterministic CASM function layout (CRUSH-188):** `crushc --emit casm` laid
   the functions out into the code buffer by iterating a `HashMap`, so the same
   source compiled to different CASM (and different label numbering) from run to
