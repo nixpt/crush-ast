@@ -737,6 +737,17 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
                 &args.lib_paths,
                 matches!(args.message_format, MessageFormat::Text),
             )?;
+            // CRUSH-369: annotation warnings (stale @wip, expired @temporary,
+            // wildcard in an exhaustive match, @must-call-after): advisory,
+            // stderr, in the same format as the other messages.
+            if format == InputFormat::Crush {
+                if let Ok(parsed) = crush_frontend::parse_file(&args.path, &import_options(&args.lib_paths)) {
+                    crush_lang_sdk::compile::print_annotation_diagnostics(
+                        &crush_lang_sdk::compile::annotation_diagnostics(&parsed, &args.path.display().to_string()),
+                        matches!(args.message_format, MessageFormat::Json),
+                    );
+                }
+            }
             // Compile warnings (CRUSH-270's polyglot implicit-output/clobber
             // warnings) go to stderr, never the program's stdout.
             for warning in &program.warnings {
