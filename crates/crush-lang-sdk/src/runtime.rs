@@ -16,6 +16,78 @@ use crush_index::{CrushIndex, DejavueEvent};
 use crush_vm::{HostCaps, Program, Quotas, VmError, VmResult, assemble, run_with_caps};
 use std::sync::Arc;
 
+/// Expand `paths` into the `.crush` files to index: a file stands for itself,
+/// a directory for every `*.crush` below it (recursive, sorted, so the index
+/// is the same on every run).
+pub fn expand_crush_paths(
+    paths: &[impl AsRef<std::path::Path>],
+) -> Result<Vec<std::path::PathBuf>, RuntimeError> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> Result<(), RuntimeError> {
+        let read = |e: std::io::Error| RuntimeError::IndexRead {
+            path: dir.display().to_string(),
+            cause: e.to_string(),
+        };
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .map_err(read)?
+            .collect::<Result<_, _>>()
+            .map_err(read)?;
+        entries.sort_by_key(|e| e.path());
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out)?;
+            } else if path.extension().is_some_and(|e| e == "crush") {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    for path in paths {
+        let path = path.as_ref();
+        if path.is_dir() {
+            walk(path, &mut out)?;
+        } else {
+            out.push(path.to_path_buf());
+        }
+    }
+    Ok(out)
+}
+
+/// Parse `paths` (files, or directories expanded by [`expand_crush_paths`])
+/// into a [`CrushIndex`]. Each file's stem is its module name; two files with
+/// the same stem are an error rather than one silently replacing the other.
+pub fn index_files(paths: &[impl AsRef<std::path::Path>]) -> Result<CrushIndex, RuntimeError> {
+    let mut index = CrushIndex::new();
+    let mut seen = std::collections::HashMap::<String, std::path::PathBuf>::new();
+    for path in expand_crush_paths(paths)? {
+        let module_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        if let Some(first) = seen.insert(module_name.clone(), path.clone()) {
+            return Err(RuntimeError::IndexRead {
+                path: path.display().to_string(),
+                cause: format!(
+                    "module name '{module_name}' is already taken by {}; rename one of the files",
+                    first.display()
+                ),
+            });
+        }
+        let source = std::fs::read_to_string(&path).map_err(|e| RuntimeError::IndexRead {
+            path: path.display().to_string(),
+            cause: e.to_string(),
+        })?;
+        let program = parse_source(&source).map_err(|e| RuntimeError::IndexParse {
+            module: module_name.clone(),
+            cause: e.to_string(),
+        })?;
+        index.add_program(&module_name, &program);
+    }
+    Ok(index)
+}
+
 /// Errors that can occur when running a program through the SDK.
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
@@ -220,23 +292,7 @@ impl Runtime {
         mut self,
         paths: &[impl AsRef<std::path::Path>],
     ) -> Result<Self, RuntimeError> {
-        let mut index = CrushIndex::new();
-        for path in paths {
-            let path = path.as_ref();
-            let module_name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown");
-            let source = std::fs::read_to_string(path).map_err(|e| RuntimeError::IndexRead {
-                path: path.display().to_string(),
-                cause: e.to_string(),
-            })?;
-            let program = parse_source(&source).map_err(|e| RuntimeError::IndexParse {
-                module: module_name.to_string(),
-                cause: e.to_string(),
-            })?;
-            index.add_program(module_name, &program);
-        }
+        let index = index_files(paths)?;
         let now = Utc::now().date_naive();
         let arc = Arc::new(index);
         let caps = self.host_caps.get_or_insert_with(HostCaps::new);
