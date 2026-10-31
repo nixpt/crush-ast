@@ -4,9 +4,9 @@
 |-------|-------|
 | **ID** | CRUSH-264 |
 | **Priority** | P2 |
-| **Status** | Backlog |
+| **Status** | Done (2026-10-31, nova) |
 | **Phase** | M9 |
-| **Assignee** | unassigned |
+| **Assignee** | nova |
 | **Dependencies** | none |
 | **Estimated effort** | S (mostly decisions + docs) |
 | **Filed by** | claude — 2026-10-12 exosphere→crush-ast stdlib audit (v0.5.0 `c1186b8`) |
@@ -28,17 +28,29 @@ made, so a default build silently lacks what exosphere programs expect:
    seconds, with `time.now_ms` for milliseconds (`host_caps.rs`, CRUSH-122). That is settled in code
    but not stated in user-facing docs, so ported programs silently get values 1000× smaller.
 
-## Decide
+## Decisions (repo owner, 2026-10-31)
 
-- Turn `net` and/or `db` on in the default `crush-run` / `crush` build (they are grant-gated
-  anyway), or keep them opt-in and document the feature flags where the caps are listed.
-- `http.*` → `net.*` alias (with a deprecation note), or a migration note plus updating the example.
-- Document `time.now` = seconds / `time.now_ms` = milliseconds in the stdlib reference and
-  MIGRATION-INVENTORY.
+1. **`net` ON in the default build; `db` stays opt-in.** `crush-lang-sdk`'s `default` features
+   gain `net` (ureq), so the default `crush-run` / `crush` binaries have `--net` →
+   `net.http_get/post/put/delete/request`. Still grant-gated: without `--net` a program using
+   `net.*` is refused before running. `db` (rusqlite) stays behind `--features db`; `crush-run caps`
+   and `--db` say how to get it. *Choice of mechanism:* Cargo features are per-package, and the
+   bins share a package with the library, so "binaries only" is not expressible without a new
+   wrapper crate. The cost to library consumers that take default features is one small, pure-Rust
+   HTTP client dependency (ureq) that is inert unless a host registers `net` caps; consumers that
+   already opt out (`crush-web`, `crush-lang-js`) are unaffected, and embedders can use
+   `default-features = false`.
+2. **`http.*` → loud error, no alias.** `effects::RENAMED_CAPS` + `MissingGrant::renamed_to`;
+   `describe_missing` prints `http.get was renamed to net.http_get (grant it with --net)`.
+   Every preflight (crush-run, `crush run`, crush-web, notebook kernel) gets it for free.
+   `examples/crush/httpclient.crush` now uses `net.http_get` (+ `str.format`, which also unblocked
+   its compile error).
+3. **`time.now` = seconds, `time.now_ms` = milliseconds** documented in `crush-run caps`, the
+   `crush-lang-sdk` README and MIGRATION-INVENTORY.
 
 ## Success criteria
 
-- [ ] Decision recorded (dejavue decision + this ticket).
-- [ ] Default-build behaviour matches the decision; `crush-run caps` lists what's available.
-- [ ] `httpclient.crush` runs (or fails with a message naming the replacement).
-- [ ] `time.now` unit documented.
+- [x] Decision recorded (dejavue decision + this ticket).
+- [x] Default-build behaviour matches the decision; `crush-run caps` lists what's available.
+- [x] `httpclient.crush` runs (or fails with a message naming the replacement).
+- [x] `time.now` unit documented.

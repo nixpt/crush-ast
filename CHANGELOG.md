@@ -14,6 +14,19 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **`net` on by default, `http.*` refused with its replacement, `time.now` unit
+  documented (CRUSH-264):** `crush-lang-sdk`'s `default` features now include
+  `net`, so `crush-run --net` grants `net.http_get/post/put/delete/request` out of
+  the box (still refused up front without `--net`); `db` stays opt-in
+  (`--features db`) and `crush-run caps` says so. exosphere's `http.get/…` have no
+  alias: a program calling one is refused before it runs with `http.get was
+  renamed to net.http_get (grant it with --net)` (`effects::RENAMED_CAPS`, shared
+  by every runner that preflights). `time.now` is seconds, `time.now_ms`
+  milliseconds (exosphere's `time.now` was ms) — now stated in `crush-run caps`,
+  the SDK README and MIGRATION-INVENTORY. `examples/crush/httpclient.crush` uses
+  `net.http_get` and `str.format` and compiles. Embedders that don't want the
+  HTTP client: `default-features = false`.
+
 - **`crush-walk-run` keeps output before a runtime error and exits non-zero
   (CRUSH-184):** it buffered the first run's output and replaced it with
   `Error: …` on failure, and returned `Ok`, so a failing script exited 0 and
