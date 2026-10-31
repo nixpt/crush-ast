@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-104 |
 | **Priority** | P1 (security: crates.io's SDK runs `@lang` blocks ungated) |
-| **Status** | In review (panini, `agent/panini/CRUSH-104`) |
+| **Status** | Done — PR #90 merged 2026-10-07 (`7420b76`); the foreman/captain publish checkboxes below were not re-verified by the survey |
 | **Phase** | Publish |
 
 ## Problem (rescoped 2026-10-07)
@@ -284,3 +284,7 @@ when a dependent starts using a newer API.
 - `crates/crush-lang-sdk/tests/polyglot_capability_test.rs`
 - `.github/workflows/ci.yml` (`Test (sdk)` job)
 - `CHANGELOG.md`, `.jagent/planning/TASKS.md`, this ticket
+
+## Survey 2026-10-31 (status)
+
+PR #90 (`agent/panini/CRUSH-104`) merged 2026-10-07, merge `7420b76`. The two foreman/captain checkboxes (publish order, `arniko-crush` release) were left unticked: not verified here. Previous status: `` In review (panini, `agent/panini/CRUSH-104`) ``.

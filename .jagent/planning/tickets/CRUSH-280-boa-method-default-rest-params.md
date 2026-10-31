@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-280 |
 | **Priority** | P1 (maya blocker: 9 engine files) |
-| **Status** | Implemented on `agent/muse/CRUSH-280` — awaiting merge |
+| **Status** | Done — PR #286 merged 2026-10-21 |
 | **Phase** | COSM K3 follow-up (boa class slice) |
 | **Assignee** | muse |
 | **Filed by** | muse — 2026-10-20, from the CRUSH-277 maya sweep |
@@ -85,3 +85,7 @@ a hidden flag fails `check_accessor_arity` at load (loud), as before.
   in Engine/Effects/Loop/Physics, `new Map` in Spatial, member `new`
   in GameObject/Scene, imported consts in Layer, `fetch` in
   Transport).
+
+## Survey 2026-10-31 (status)
+
+PR #286 (`agent/muse/CRUSH-280`) merged 2026-10-21. Previous status: `` Implemented on `agent/muse/CRUSH-280` — awaiting merge ``.

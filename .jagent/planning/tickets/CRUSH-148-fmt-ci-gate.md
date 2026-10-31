@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|--------|
-| **Status** | open |
+| **Status** | Backlog |
 | **Milestone** | — |
 | **Size** | S |
 | **Owner** | — |
@@ -52,3 +52,7 @@ developers format on current stable would fail on code that was formatted correc
 walks up and finds the main checkout's workspace manifest. The fix probably belongs in crush-ast's root
 `Cargo.toml` (`exclude = [".jagent"]`) or in squadron's SQ-204 sibling-link scheme, but check it before relying
 on `cargo fmt` from a horse's worktree. Workaround: `rustfmt --edition 2024 --check <files>` directly.
+
+## Survey 2026-10-31 (status)
+
+No `fmt` job in `.github/workflows/*.yml` on main. PR #89 (`agent/foreman/CRUSH-148`) only filed the ticket. Previous status: `open`.

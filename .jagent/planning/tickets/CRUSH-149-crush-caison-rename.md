@@ -1,6 +1,6 @@
 # CRUSH-149 — rename crush-cson → crush-caison
 
-**Status:** PR open. **Branch:** `agent/panini/CRUSH-149`.
+**Status:** Done — PR #96 merged 2026-10-08 (`agent/panini/CRUSH-149`); follow-up wave #116 declared `caison.parse` effects.
 
 CAISON was renamed from CSON on 2026-09-27; crush-cson was a 76-line shell
 re-exporting `caison` plus the `cson.parse` VM capability. Mechanical rename:
@@ -20,3 +20,7 @@ re-exporting `caison` plus the `cson.parse` VM capability. Mechanical rename:
 ## Not here
 
 CRUSH-177 (delete frontend's duplicate parser), CRUSH-178 (value mapping).
+
+## Survey 2026-10-31 (status)
+
+PR #96 merged 2026-10-08; `crates/crush-caison` exists on main. Previous status: `` PR open. **Branch:** `agent/panini/CRUSH-149`. ``.

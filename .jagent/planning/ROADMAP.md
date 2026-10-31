@@ -18,7 +18,8 @@
 >
 > - Identity: `.jagent/PROJECT.md`
 > - Backlog: `.jagent/TODO.md`
-> - Current milestone ladder: `.jagent/planning/TASKS.md`
+> - Current milestone ladder: `.jagent/planning/TASKS.md` (since `70a34d7` a view rendered from the ticket
+>   files by `jagent-ticket render`; untracked. The ticket `Status` rows are the source of truth.)
 > - Architectural memory: `.dejavue/decisions.md`, `.dejavue/timeline.jsonl`
 
 ---
@@ -32,12 +33,12 @@
 | M2     | JIT completion (Phases 1-7)                        | All 84 `FastOp` lowered; AOT-from-JIT live; differential coverage w/ AOT C              | Phases 1-5 landed; Phase 6/7 and conformance closure remain |
 | M3     | Debugger completion                                | Source-map + var print + step inspection                                               | Partial  |
 | M4     | Cross-project integration                          | Surfer migration + exosphere reconcile                                                | Partial  |
-| Publish | crates.io lane                                    | All 35 crates via `version.workspace`; `walker-core` published; taxon renames          | Open     |
-| **M5** | **AI-native compiler layer**                       | Annotations as CAST nodes; `crush-index` live; AI opcodes execute                      | Partial / active |
-| **M6** | **Walker parity & multi-language completeness**    | 11 walker lowering gaps closed; LanguageAdapter unification; Java/Kotlin                | Proposed |
-| **M7** | **Runtime hardening & ops tooling**                | Fuel + determinism + firewall + snapshot + V8/RustPython lanes                         | Proposed |
+| Publish | crates.io lane                                    | All 35 crates via `version.workspace`; `walker-core` published; taxon renames          | CRUSH-104 Done (PR #90); releases automated, v0.8.0 tagged 2026-10-30 (`crush-lang-sdk`/`crush-vm`/`crush-cast` 0.8.0 on crates.io; full crate coverage not re-checked) |
+| **M5** | **AI-native compiler layer**                       | Annotations as CAST nodes; `crush-index` live; AI opcodes execute                      | Nearly complete: CRUSH-27–33 Done; CRUSH-34 In Progress |
+| **M6** | **Walker parity & multi-language completeness**    | 11 walker lowering gaps closed; LanguageAdapter unification; Java/Kotlin                | Active: CRUSH-36/37 In Progress; CRUSH-35/38/103 Backlog |
+| **M7** | **Runtime hardening & ops tooling**                | Fuel + determinism + firewall + snapshot + V8/RustPython lanes                         | Proposed (CRUSH-47 RustPython Declined 2026-10-15) |
 | **M8** | **Platform & architecture maturation (CRUSH-22)**  | CI multi-OS + multi-arch; Android API; `wasm32` first-class                              | Proposed |
-| **M9** | **Cross-project convergence & STDLIB restoration** | Surfer migrated; exosphere/nakshatra converged; stdlib remainder CRUSH-151..155 landed | Proposed |
+| **M9** | **Cross-project convergence & STDLIB restoration** | Surfer migrated; exosphere/nakshatra converged; stdlib remainder CRUSH-151..155 landed | Partial: CRUSH-55 Closed 2026-10-12; CRUSH-56/57 Superseded; CRUSH-54/58 Backlog |
 | **M10** | **Performance ceiling & optimization**            | JIT miscompile closure; Phase 6/7 optimization; conservative→precise GC                | Proposed |
 | **M11** | **Universal native & WASM catalyst**               | WASM walker→AOT; cross-language inlining; notebook self-hosting                         | Proposed |
 
@@ -87,6 +88,9 @@ layer, the "AI-native" promise documented in `ai-native-roadmap.md` is hollow.
 - [CRUSH-33] DOM opcodes: `dom_mutate`, `dom_event_listener`, `dom_query`
 - [CRUSH-34] `spawn`/`await`/`yield` to VM execution (three opcodes plus
   scheduling rules)
+
+Status from the ticket files (2026-10-31 survey): CRUSH-27, 28, 29, 31, 32, 33 Done; CRUSH-30 Done by scope
+ruling 2026-10-16 (residue CRUSH-30a); CRUSH-34 In Progress (Commit 1 `79390d7` landed; Commits 2–3 open).
 
 **File ownership.**
 
@@ -138,7 +142,7 @@ that this is the single highest-leverage work in the whole project right now.
 - [CRUSH-36] `LanguageAdapter` trait unification + 6-crate migration
 - [CRUSH-37] `crush-lang-java` walker (tree-sitter-java)
 - [CRUSH-38] `crush-lang-kotlin` walker (tree-sitter-kotlin)
-- [CRUSH-39] Walker→AOT pipeline maturation for all 12 walkers (currently only
+- [CRUSH-103] (ex-CRUSH-39, an ID burned by unrelated branch work; see BACKLOG-INDEX ledger) Walker→AOT pipeline maturation for all 12 walkers (currently only
   c/python/basic-js have direct AOT paths)
 
 **File ownership.**
@@ -202,7 +206,7 @@ progress guarantees. This phase wires the production infrastructure
 - [CRUSH-44] Snapshot/replay spec + PortableVM/FastVM impl
 - [CRUSH-45] V8 fallback feature (`v8-fallback`, behind cfg)
 - [CRUSH-46] Node.js API compat shim (`require('http')` subset)
-- [CRUSH-47] Embedded RustPython VM lane (`crush-lang-python` `runtime =
+- [CRUSH-47] (**Declined** 2026-10-15, owner: parser-only frontends) Embedded RustPython VM lane (`crush-lang-python` `runtime =
   "rustpython"` option)
 - [CRUSH-48] `exo.*` capability module layer + mediation rules
 

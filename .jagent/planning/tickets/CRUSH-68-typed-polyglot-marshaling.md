@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-68 |
 | **Priority** | P1 — silent wrong-type / crash class for non-scalar polyglot inputs |
-| **Status** | Done (PR pending) |
+| **Status** | Done — PR #25 merged 2026-07-26 |
 | **Phase** | Correctness / polyglot |
 | **Assignee** | nixp |
 | **Dependencies** | CRUSH-18 ✅, CRUSH-20 ✅ (sentinel scan shared); Python rewrite already in `crush-lang-sdk` |
@@ -84,3 +84,7 @@ became `"hello"`, quotes included) and failed two portable-VM tests in CI.
 Encoding is now gated on `lang_expects_json_env`, which must stay in step with
 `prepare_stmts`' rewrite arm — a coupling worth removing later by carrying the
 marshaling mode in the EXEC_LANG spec the compiler emits.
+
+## Survey 2026-10-31 (status)
+
+PR #25 (`agent/nixp/CRUSH-68`) merged 2026-07-26. Previous status: `Done (PR pending)`.
