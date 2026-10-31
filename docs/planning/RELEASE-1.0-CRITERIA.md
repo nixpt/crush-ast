@@ -3,7 +3,9 @@
 > **DRAFT for the captain (nixpt) to edit.** This is a planning doc, not a release.
 > Nothing here changes versions, tags, publishing or release workflows.
 > Ticket: [CRUSH-275](../../.jagent/planning/tickets/CRUSH-275-define-1.0-criteria.md).
-> Surveyed against `origin/main` @ `5437ed64` (2026-10-18, workspace version 0.6.0).
+> Surveyed against `origin/main` @ `5437ed64` (2026-10-18, workspace version 0.6.0);
+> **re-scored against `faeb86e8` (2026-10-31, workspace 0.8.0)** — only the status/evidence of
+> criteria whose state changed; §1, §3–§5 are unchanged and still the captain's to decide.
 > Status marks: ✅ true today · 🟡 partly true / true but unverified · ❌ not true.
 > Every criterion is written so that someone can check it without asking the author.
 
@@ -14,7 +16,7 @@
 - **1.0 is a compatibility promise, not a quality award.** After 1.0.0, anything in §1's
   "promised" list can only break in 2.0. So the question is not "is Crush good enough?"
   but "which surfaces are we willing to freeze?".
-- **Today: 11 ✅ / 22 🟡 / 34 ❌** across 67 criteria (table in §2.9). The strengths are
+- **Today (2026-10-31): 14 ✅ / 26 🟡 / 27 ❌** across 67 criteria (table in §2.9; was 11 / 22 / 34 on 2026-10-18). **First fix: R1** (an accidental 1.0 is one `feat!:` away; #348). The strengths are
   real: load-time version gates on CVM1/CASM/CAST, a gated polyglot capability, an MSRV
   job, a cross-backend agreement suite and a CI-verified language guide. The gaps are a
   normative spec, semver tooling, a backward-compatibility corpus, and the class of
@@ -25,6 +27,8 @@
   milestones close.
 - **Path (§4):** 0.7 (vega, in flight) → 0.8 "freeze prep" → 0.9 "beta / feature
   freeze" → 1.0.0-rc.N (≥ 4 weeks of soak, no stable-surface changes) → 1.0.0.
+  *Note (2026-10-31): 0.8.0 was released 2026-10-30 and 0.9.0 is being cut 2026-10-31 as
+  ordinary feature releases, so this numbering needs the captain's update (e.g. freeze prep → 0.10).*
 
 ---
 
@@ -70,14 +74,14 @@ Each line: **criterion** — how to verify it — status — evidence.
 | ID | Criterion | Verify by | Status | Evidence |
 |---|---|---|---|---|
 | L1 | A **normative language reference** exists and states which constructs are stable. | The doc exists and has a "stability" column per construct. | ❌ | No spec in `docs/`. `docs/cast/schema-reference.md` covers the CAST JSON schema, not surface syntax. The guide's EBNF (`crush-language-guide/src/crush/syntax.md:414`) describes itself as "the grammar the parser implements, simplified", so the parser is the authority. |
-| L2 | The reference's grammar and the **two parsers agree**: `crush-frontend` and `tree-sitter-crush`. | A CI job parses the whole example and guide corpus with both parsers. Zero ERROR nodes, zero disagreements. | ❌ | CRUSH-207 (P1, Backlog): every one of the 43/43 example files parses with ERROR nodes in tree-sitter. tree-sitter rejects `//` comments, reassignment, `-> T` and `@decision`. `grammar.js` was last changed 2026-06-12. The editors and crush-lsp use this grammar. |
+| L2 | The reference's grammar and the **two parsers agree**: `crush-frontend` and `tree-sitter-crush`. | A CI job parses the whole example and guide corpus with both parsers. Zero ERROR nodes, zero disagreements. | 🟡 | **Partly done (2026-10-31).** CRUSH-207 (#342): the tree-sitter grammar now parses 49 of 51 `examples/crush/*.crush` without ERROR nodes (was 1/51), and `crates/tree-sitter-crush/tests/grammar_examples.rs` checks it in CI (2 files in `KNOWN_BAD`, with reasons). #347 adds slices and hex/binary literals. Still missing: a *differential* check against crush-frontend, and the guide's corpus. |
 | L3 | Every keyword is either usable or explicitly reserved-for-future, and documented. | Diff the lexer keyword table against the reference. | 🟡 | Keywords are at `crush-frontend/src/parser/lexer.rs:507-542`. `capability` is reserved with no statement form (`parser/mod.rs:542` "TODO: Parse capability declarations"). `pub`, `mcp` imports and `external` imports have no guide coverage. `let mut` is rejected. |
-| L4 | **No silently-wrong results** in stable-core constructs: open issues/tickets labelled silent-wrong on Tier-1 engines = 0. | Issue query. | ❌ | Open: #253 (`return match` → null), #254 (negative slices), #256, #257, #267, #273 (JIT locals overwritten), #255 (`@bash` vars empty, PR #277), CRUSH-217 (indexing/printing diverge across engines), CRUSH-191 (parser accepts malformed input). |
+| L4 | **No silently-wrong results** in stable-core constructs: open issues/tickets labelled silent-wrong on Tier-1 engines = 0. | Issue query. | 🟡 | Fixed and closed: #253, #254, #256, #257 (#306–#310), #267 (#319), #273 (#316). Still open on Tier-1 engines: **#258** (`@capabilities` ignored, see S3) and **#261** (ungranted AI op → `null`, see S6). Walker silent-wrongs (#329–#331, C) are outside the stable core. |
 | L5 | **Imports and modules work.** `import a.b` loads a module, or the reference says imports are not in 1.0. | Conformance test. | ❌ | CRUSH-110 "import is a no-op". The guide says `import a.b` parses but loads nothing (`syntax.md:365`). |
 | L6 | **Object model decided.** Either COSM K1–K2 has landed and `struct`/`impl`/`trait`/`@kind` semantics are specified, or structs are frozen at today's semantics and COSM stays experimental. | Design doc status plus tickets. | 🟡 | `docs/design/object-model.md` was approved 2026-10-15. K1.3/K1.4 have landed (CRUSH-zorro-42/43 Done: kind table, VM member ops). zorro-40/41/44 are Backlog, K2 (protocols) and K3 (walkers) have not started, and CRUSH-251 (JS object model) is Backlog. **This is the biggest semantic decision still open before 1.0.** |
 | L7 | **Error model is uniform**: `try`/`catch`/`throw` catch runtime errors on every Tier-1 engine. | Differential test. | ❌ | CRUSH-219 "runtime errors uncatchable; AOT has no try". |
 | L8 | **Numeric semantics specified**: int width/overflow, int↔float, division and modulo sign, and the bigint decision. | Reference section plus a test per rule. | 🟡 | Div/mod truncate toward zero (`crush-vm/src/vm.rs:5`). The bigint decision is open (CRUSH-zorro-36). |
-| L9 | **Lambda/closure syntax** is reachable and has defined capture semantics. | Conformance test. | 🟡 | CRUSH-75 (lambda syntax unreachable in lexer) is open. Closures are documented in the guide. |
+| L9 | **Lambda/closure syntax** is reachable and has defined capture semantics. | Conformance test. | ✅ | Lambdas and closures parse, capture and run: `|a, b| { … }`, `|x, y| => x * y`, `|x| => x + n` (verified on main 2026-10-31; CRUSH-251 steps 1–5). The guide's closures chapter is CI-verified. CRUSH-75's lambda half is done; its remaining lexer fallback (`&` lexes as an identifier) is CRUSH-343. |
 | L10 | Localised keyword sets (Nepali/CJK) are either stable and specified, or marked experimental. | Reference. | 🟡 | Aliases are in the lexer. The Nepali ones are shown in the guide; CJK is mentioned only in passing (`syntax.md:107`). |
 
 ### 2.2 Formats and backward compatibility
@@ -89,7 +93,7 @@ Each line: **criterion** — how to verify it — status — evidence.
 | F3 | CAST carries a version and a load gate. | Code. | 🟡 | `CAST_VERSION = "0.1"` with a major-only gate (`crush-cast/src/pack.rs:31,101-121`). **With major 0 this gate accepts every 0.x.** The binary `.castb` has no magic; the format is picked by file extension (`pack.rs:10-13`). Needs CAST 1.0 plus a magic before CAST is promised. |
 | F4 | **The written spec matches the format.** `casm_v1.0.md` covers every opcode the 1.0 runtime emits. | Opcode-table diff in CI. | ❌ | `crates/casm/specs/casm_v1.0.md` is marked "FROZEN" (2026-01-15), but COSM opcodes 0xC0–0xCA and the kind table (`bytecode.rs:7-22,40-43`) are not in it. "Frozen" has already drifted once. |
 | F5 | A **backward-compat corpus** exists: artifacts written by each released version are loaded and run by the current runtime in CI. | A `tests/compat/v0.N/*.cvm1` directory plus a test. | ❌ | Two `.cvm1` files sit in `examples/crush/`, and no test references them. A version-2 blob is built by hand in a unit test (`crush-vm/src/tests/kind_table.rs:29-33`). That is good, but it is not a corpus. |
-| F6 | **Deterministic output**: the same source and toolchain give byte-identical artifacts. | Build twice and diff. | 🟡 | `crush-aot/tests/codegen_deterministic.rs` covers AOT. CRUSH-188 (non-deterministic function layout) is open for CVM1. |
+| F6 | **Deterministic output**: the same source and toolchain give byte-identical artifacts. | Build twice and diff. | ✅ | CRUSH-188 done (#324): CVM1 function layout is sorted, `crushc --emit casm` is byte-identical across runs (`compile::tests::casm_to_vm_lays_out_functions_in_name_order`). AOT: `crush-aot/tests/codegen_deterministic.rs`. |
 | F7 | The COSM schema (embedded in CVM1 v3) is versioned and its evolution rule is written down. | Code plus doc. | 🟡 | `COSM_VERSION = "0.1.0"` (`crush-cosm/src/lib.rs:48`), with `deny_unknown_fields` throughout `schema.rs`. That is strict, so **any added field breaks old readers**. Pick an evolution rule before freezing. |
 | F8 | The capsule manifest and lockfile carry a **schema version**. | Code. | ❌ | `crush-pkg/src/manifest.rs:24-40` has `capsule.version` (the *package* version) but no manifest-format version. |
 | F9 | The versioning rule for every format is documented in one place (what bumps minor and what bumps major). | Doc. | ❌ | The rules are spread across code comments (`bytecode.rs:14-22`, `pack.rs:15-19`). |
@@ -106,8 +110,7 @@ Each line: **criterion** — how to verify it — status — evidence.
 | A6 | Stable-core crates build docs warning-free (`#![warn(missing_docs)]`) and docs.rs renders them. | CI `cargo doc -D warnings`. | ❌ | No `missing_docs` lints, no `[package.metadata.docs.rs]` and no `[workspace.lints]` anywhere. |
 | A7 | Feature flags on stable crates are additive and documented, and `--no-default-features` and `--all-features` both build. | CI. | ✅ | The `feature-gates` job runs both (`ci.yml:551-571`). It does not yet document the flags. |
 | A8 | An **MSRV policy** exists: which MSRV, how it moves (for example "N-2 stable, a bump is a minor release"), checked in CI. | Doc plus CI. | 🟡 | `rust-version = "1.95.0"` (`Cargo.toml:64`) is checked by the `MSRV (1.95.0)` job (`ci.yml:40-58`, CRUSH-231). The *policy* for moving it is not written down. |
-| A9 | Every published stable crate is on crates.io and has no path dependency outside the repo. | `cargo publish --dry-run`. | 🟡 | 24 crates are on crates.io at 0.6.0. `crush-vm` path-depends on `../../../buckets` (which publishes as `crush-buckets` 0.1.0). The comment saying `caison` is "NOT YET on crates.io" (`Cargo.toml:71-73`) is stale: caison 0.1.0 is live. |
-
+| A9 | Every published stable crate is on crates.io and has no path dependency outside the repo. | `cargo publish --dry-run`. | 🟡 | 27 crates are on crates.io at **0.8.0** (2026-10-30); 15 workspace crates have never been published (10 walkers, crush-aot, crush-net, crush-tui, crush-vm-capi, crush-walker). `crush-vm` still path-depends on `../../../buckets` (published as `crush-buckets` 0.1.0, 56 commits behind its master — nixpt/buckets#7). |
 ### 2.4 Runtime and security (the "capability-sandboxed" north star)
 
 | ID | Criterion | Verify by | Status | Evidence |
@@ -127,24 +130,22 @@ Each line: **criterion** — how to verify it — status — evidence.
 
 | ID | Criterion | Verify by | Status | Evidence |
 |---|---|---|---|---|
-| T1 | **One documented `crush` CLI** whose surface is the 1.0 promise. The many auxiliary binaries are either hidden or marked unstable. | `crush --help` matches the reference. | ❌ | 15+ binaries ship: `crush-run`, `crush-compile`, `crush-repl` (sdk), `crushc`, `walker`, `crush-vm`, `crush-aotc`, `crush-walk-run`, `crush-aot-runner`, `jit-runner`, `crush-debugger`, `crush-installer`, `*_walker` × 7, `export-ts`/`export-py`. #260 and #258 show that `crushc` and `crush-run` disagree. |
-| T2 | CLI errors carry a source location, and output is not lost on a runtime error. | Tests. | ❌ | CRUSH-190 and CRUSH-184 are open. |
+| T1 | **One documented `crush` CLI** whose surface is the 1.0 promise. The many auxiliary binaries are either hidden or marked unstable. | `crush --help` matches the reference. | 🟡 | `crush` now fronts `run`, `build`, `repl`, `doctor`, `debug` (#341) and `gui` (#344). The auxiliary binaries (`crush-run`, `crushc`, `crush-compile`, `crush-repl`, `crush-diff`, …) still ship and are not marked unstable. |
+| T2 | CLI errors carry a source location, and output is not lost on a runtime error. | Tests. | 🟡 | CRUSH-184 done (#325): `crush-walk-run` keeps output before a runtime error and exits non-zero. #338: `crushc` and `crush-run` emit identical JSON records, and semantic errors carry line/col. Runtime errors still have no position (no pc→source map); CRUSH-190 is open. |
 | T3 | `crush-pkg`: manifest schema frozen and versioned (see F8), with reproducible capsules. | Tests. | 🟡 | `crush-pkg` 0.6.0 is published and has `merkle.rs`/`signer.rs`. The manifest is unversioned. |
-| T4 | **LSP / editor support** exists for the 1.0 grammar. | crush-lsp builds against crush-ast 1.0. | ❌ | `crush-lsp` is 0.1.0 in a separate repo, last touched 2026-08-02, and depends on the drifted tree-sitter grammar (L2). *Captain call: is the LSP a 1.0 deliverable or a fast-follow?* |
-| T5 | The installer installs a pinned toolchain on Tier-1 platforms. | Smoke test in CI. | 🟡 | `crush-installer` is published. There is no install smoke test. Release binaries are being added in PR #280. |
-| T6 | Debugger: either M3 is done, or the debugger is excluded from 1.0. | — | 🟡 | M3 is about 50% done (`MILESTONES.caison`). Recommend excluding it. |
-
+| T4 | **LSP / editor support** exists for the 1.0 grammar. | crush-lsp builds against crush-ast 1.0. | 🟡 | `crush-lsp` 0.1.0 is **published** (crates.io, 2026-10-31) on crush-frontend 0.8.0 with real diagnostics (crush-lsp#1). *Correction: it uses crush-frontend, not the tree-sitter grammar.* Diagnostic ranges are still 0:0 (no spans from the parse path). *Captain call: is the LSP a 1.0 deliverable?* |
+| T5 | The installer installs a pinned toolchain on Tier-1 platforms. | Smoke test in CI. | 🟡 | `crush-installer` 0.8.0 is published and installs `crush` and `crush-debug` (#341). Prebuilt Linux binaries are attached to every tag's pre-release from 0.9.0 (#346), with `cargo binstall` metadata. No install smoke test in CI. |
+| T6 | Debugger: either M3 is done, or the debugger is excluded from 1.0. | — | 🟡 | `crush debug FILE` / `crush-debug` ship (#341): grant-gated stepping, breakpoints by source line, watch/print by name, NDJSON events. `spawn`/`await` programs are untried (it drives PortableVm, not the scheduler). Recommend: in 1.0 as *experimental*, not promised. |
 ### 2.6 Documentation
 
 | ID | Criterion | Verify by | Status | Evidence |
 |---|---|---|---|---|
-| D1 | The language guide is **pinned to the release** and every code block is checked in CI. | The guide's CI. | ✅ | `crush-language-guide/CRUSH_AST_COMMIT` pins `3ae0b4a`. `scripts/verify-examples` (121 files) and `scripts/check-examples.py` (every fenced block) run in the `verify` job. |
+| D1 | The language guide is **pinned to the release** and every code block is checked in CI. | The guide's CI. | ✅ | `crush-language-guide/CRUSH_AST_COMMIT` pins `c1cc21fb` (the 0.8.0 release); `verify-examples`, `check-examples.py`, the browser check and the notebooks job (blocking again, kernel 0.2.0) all run in its CI. |
 | D2 | A failed guide verification **blocks deployment**. | Workflow. | ❌ | In `gh-pages.yml`, `deploy` has no `needs: verify`. |
 | D3 | The guide marks every experimental feature (matching §1.2). | Review. | 🟡 | The guide uses "*not yet implemented*" and runfail markers (polyglot 4, structs 3, capabilities 3, concurrency 2, …). It has no stable/experimental labels. |
-| D4 | crushlang.org is accurate for the release and its samples run. | WEB-1 closed. | ❌ | The last content change was 2026-07-14. WEB-1 (content accuracy audit) is Backlog. No toolchain is pinned. |
+| D4 | crushlang.org is accurate for the release and its samples run. | WEB-1 closed. | 🟡 | crushlang.org was updated 2026-10-31 (crush-website#10): runtime from crush-ast `c1cc21fb`, grants, sandboxed `@javascript`/`@python`; a 20-case headless-Chromium check passed against the live site. WEB-1 (content audit) is still Backlog. |
 | D5 | Migration guide 0.x → 1.0, plus a written deprecation policy (§4.4). | Doc. | ❌ | — |
-| D6 | Internal status docs are current. | Review. | ❌ | `docs/design/readiness-matrix.md` is dated 2026-07-14. Several ticket statuses are stale: CRUSH-104 is "In review" although its gate has shipped, and zorro-40/41 are "Backlog" although `crush-cosm` exists. |
-
+| D6 | Internal status docs are current. | Review. | 🟡 | The planning survey (#339, 2026-10-31) re-checked 86 ticket statuses against merged PRs and updated BACKLOG-INDEX, ROADMAP and MILESTONES. 147 Backlog tickets were not individually re-verified. |
 ### 2.7 Quality gates (CI)
 
 | ID | Criterion | Verify by | Status | Evidence |
@@ -164,27 +165,26 @@ Each line: **criterion** — how to verify it — status — evidence.
 
 | ID | Criterion | Verify by | Status | Evidence |
 |---|---|---|---|---|
-| R1 | **No accidental 1.0.** While major = 0, a `feat!:` / `BREAKING CHANGE` commit bumps *minor*. 1.0.0 is minted only on purpose. | Read `bump-version.sh`. | ❌ | `scripts/bump-version.sh:7,72-73`: breaking → **major**. One `feat!:` on main followed by a release run would mint **1.0.0**. Releases are `workflow_dispatch`-only (`release.yml:16-19`), which lowers the risk but does not remove it. *Smallest, most urgent fix in this doc.* |
+| R1 | **No accidental 1.0.** While major = 0, a `feat!:` / `BREAKING CHANGE` commit bumps *minor*. 1.0.0 is minted only on purpose. | Read `bump-version.sh`. | ❌ | **Still the one that can mint 1.0 by accident:** `scripts/bump-version.sh` maps `feat!:` / `BREAKING CHANGE` → major. **Fixed by #348** (open): on 0.x a breaking change bumps minor; 1.0.0 needs `BUMPVER_ALLOW_MAJOR=1` (release.yml `allow_major`). → ✅ when #348 merges. The script is installed from squadron's `bump-version --install`, so squadron's template needs the same change. |
 | R2 | Versioning can **differ per crate** (needed for a partial 1.0). | Tooling. | ❌ | The workspace is lock-step (`version.workspace`, `Cargo.toml:59`), and `bump-version.sh` and `publish-crates.py` assume it. |
-| R3 | A pre-release (`1.0.0-rc.N`) can be cut and published. | Dry run. | 🟡 | `publish.yml` triggers on `v*` tags (`publish.yml:30`) and has trusted publishing. Pre-release suffixes are untested in `bump-version.sh`. |
-| R4 | Every crate in the release is publishable by CI. No manual first publish. | `publish-crates.py` plan. | 🟡 | 24 crates are published. About 20 more would each need a manual first `cargo publish`. |
+| R3 | A pre-release (`1.0.0-rc.N`) can be cut and published. | Dry run. | 🟡 | From 0.9.0 every tag gets a GitHub **pre-release** (`--prerelease --latest=false`, #346). `1.0.0-rc.N` version suffixes are still untested in `bump-version.sh` and `publish-crates.py`. |
+| R4 | Every crate in the release is publishable by CI. No manual first publish. | `publish-crates.py` plan. | 🟡 | 27 crates publish from CI (Trusted Publishing; #320 lists every crate that needs a config instead of stopping at the first). 15 never-published crates each need a manual first `cargo publish`. |
 | R5 | The CHANGELOG has a **"Breaking"** section per release, separate from the mechanical entries. | Review. | 🟡 | `CHANGELOG.md` follows Keep a Changelog "loosely". Entries are auto-appended. |
-| R6 | Release binaries for Tier-1 platforms are attached to the GitHub release. | Release page. | 🟡 | PR #280 (artifact upload) is open. |
-| R7 | The open-P1 count is triaged: each P1 is fixed, or scoped out of 1.0 with a note. | Board. | ❌ | **72 open P1 ticket files** (of 191 open), plus 15 open GitHub issues. |
-
+| R6 | Release binaries for Tier-1 platforms are attached to the GitHub release. | Release page. | ✅ | Mechanism merged (#346): `release-artifacts` builds Linux x86_64 binaries (`crush`, `crushc`, `crush-run`, `crush-compile`, `crush-repl`, `crush-debug`, `crush-pkg`, `crush-gui`), the crush-web pkg and `SHA256SUMS`, and attaches them to the tag's pre-release. First real run: 0.9.0. Linux only (see Q7). |
+| R7 | The open-P1 count is triaged: each P1 is fixed, or scoped out of 1.0 with a note. | Board. | ❌ | **63 open P1 ticket files** on main (2026-10-31; was 72). Not yet triaged against §3's scope. |
 ### 2.9 Scoreboard
 
 | Group | ✅ | 🟡 | ❌ | Total |
 |---|---|---|---|---|
-| 2.1 Language | 0 | 5 | 5 | 10 |
-| 2.2 Formats / compat | 2 | 3 | 4 | 9 |
+| 2.1 Language | 1 | 6 | 3 | 10 |
+| 2.2 Formats / compat | 3 | 2 | 4 | 9 |
 | 2.3 Public Rust API | 1 | 2 | 6 | 9 |
 | 2.4 Runtime / security | 2 | 2 | 6 | 10 |
-| 2.5 Tooling | 0 | 3 | 3 | 6 |
-| 2.6 Docs | 1 | 1 | 4 | 6 |
+| 2.5 Tooling | 0 | 6 | 0 | 6 |
+| 2.6 Docs | 1 | 3 | 2 | 6 |
 | 2.7 Quality gates | 5 | 2 | 3 | 10 |
-| 2.8 Release engineering | 0 | 4 | 3 | 7 |
-| **Total** | **11** | **22** | **34** | **67** |
+| 2.8 Release engineering | 1 | 3 | 3 | 7 |
+| **Total** | **14** | **26** | **27** | **67** |
 ---
 
 ## 3. Scope decision: full 1.0 vs partial 1.0

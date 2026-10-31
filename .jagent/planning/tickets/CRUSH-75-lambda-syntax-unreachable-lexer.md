@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-75 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done (lambda half, verified 2026-10-31); the lexer fallback moved to CRUSH-343 |
 | **GitHub** | [#78](https://github.com/nixpt/crush-ast/issues/78) — reported again 2026-10-04 by pranix: `\|x\| => x + 10` fails with "unexpected token `=>`"; the block form `\|x\| { return x + 10 }` is misparsed as a map literal |
 | **Phase** | Correctness spine (s412) |
 
@@ -74,3 +74,19 @@ Imported from `workspace-meta/prompts/crush-backlog/CRUSH-75.txt` on 2026-08-24 
 - No captures for now: a lambda referencing an outer local is a clear compile error ("lambda can't capture local 'n'"); closures deferred.
 - Recorded in `.dejavue/decisions.md` (2026-10-05).
 
+
+## Resolution (2026-10-31)
+
+Re-ran this ticket's repros on `main` `faeb86e8` with `crush-run run`:
+
+| Source | Output |
+|---|---|
+| `let add = \|a, b\| { return a + b; }` then `print(add(2, 3))` | `5` |
+| `let mul = \|x, y\| => x * y` then `print(mul(4, 5))` | `20` |
+| `let n = 10` / `let f = \|x\| => x + n` then `print(f(1))` | `11` (captures `n`) |
+| `let f = \|x\| => x + 10` then `print(f(5))` (GitHub #78's example; #78 is closed) | `15` |
+
+Lambdas are reachable from source and closures capture (CRUSH-251 steps 1–5). The second half of
+this ticket — the lexer turning an unknown operator character into an identifier — is still true:
+`let b = a & 1` fails with `Undefined variable: &` (`crates/crush-frontend/src/parser/lexer.rs:1123`,
+`// Single & as ident for now`). That is a separate fix, filed as **CRUSH-343**.
