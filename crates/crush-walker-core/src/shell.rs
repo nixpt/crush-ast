@@ -343,8 +343,9 @@ enum Seg {
     Default { name: String, op: &'static str, word: Word, quoted: bool },
     /// `${name<op>pat}`, op ∈ `# ## % %%` (remove a prefix/suffix pattern).
     Trim { name: String, op: &'static str, pat: Word, quoted: bool },
-    /// `${name/pat/rep}` (`//` replaces every occurrence).
-    Subst { name: String, all: bool, pat: Word, rep: Word, quoted: bool },
+    /// `${name/pat/rep}` (`//` replaces every occurrence); `anchor` is 0,
+    /// 1 for `/#pat` (the start) or 2 for `/%pat` (the end).
+    Subst { name: String, all: bool, anchor: u8, pat: Word, rep: Word, quoted: bool },
     /// `${name:off}` / `${name:off:len}` (a substring, by character).
     Substr { name: String, off: Word, len: Option<Word>, quoted: bool },
     /// `${name^^}` / `${name,,}`.
@@ -631,9 +632,9 @@ fn printf_pieces(fmt: &str) -> std::result::Result<Vec<Piece>, String> {
                 let Some(&conv) = cs.get(j) else {
                     return Err("`printf` format ending inside a conversion".to_string());
                 };
-                if !matches!(conv, 's' | 'd' | 'i' | 'u' | 'c' | 'x' | 'X' | 'o' | 'b') {
+                if !matches!(conv, 's' | 'd' | 'i' | 'u' | 'c' | 'x' | 'X' | 'o' | 'b' | 'f' | 'e' | 'E' | 'g' | 'G') {
                     return Err(format!(
-                        "`printf` conversion `%{conv}` (only %s, %d, %i, %u, %c, %x, %X, %o, %b and %% are supported)"
+                        "`printf` conversion `%{conv}` (only %s, %d, %i, %u, %c, %x, %X, %o, %b, %f, %e, %E, %g, %G and %% are supported)"
                     ));
                 }
                 pieces.push(Piece::Lit(std::mem::take(&mut lit)));
@@ -1352,8 +1353,11 @@ impl Lw {
             return self.helper("__sh_esc", vec![val]);
         }
         let at = self.at("printf", line);
+        // Floats have their own formatter: they parse the argument as a
+        // decimal number rather than an integer, and pad differently.
+        let helper = if matches!(c.conv, 'f' | 'e' | 'E' | 'g' | 'G') { "__sh_float" } else { "__sh_fmt" };
         self.helper(
-            "__sh_fmt",
+            helper,
             vec![
                 val,
                 s(&c.conv.to_string()),
@@ -2020,11 +2024,16 @@ impl Lw {
         }
         if let Some(tail) = rest.strip_prefix("//").or_else(|| rest.strip_prefix('/')) {
             let all = rest.starts_with("//");
+            // `/#pat` and `/%pat` match only at the start / end of the value.
+            let (anchor, tail) = match tail.strip_prefix('#') {
+                Some(t) => (1, t),
+                None => match tail.strip_prefix('%') {
+                    Some(t) => (2, t),
+                    None => (0, tail),
+                },
+            };
             let (pat, rep) = split_top_slash(tail);
-            if pat.is_empty() {
-                return Err(self.err(&format!("`${{{inner}}}` (an empty pattern)"), line));
-            }
-            return Ok(Seg::Subst { name, all, pat: w(&pat), rep: w(&rep), quoted });
+            return Ok(Seg::Subst { name, all, anchor, pat: w(&pat), rep: w(&rep), quoted });
         }
         match rest.as_str() {
             "^^" => Ok(Seg::Case { name, upper: true, quoted }),
@@ -2109,18 +2118,16 @@ impl Lw {
                 let prefix = boolean(op.starts_with('#'));
                 self.helper("__sh_trim", vec![v, pat, longest, prefix])
             }
-            Seg::Subst { name, all, pat, rep, .. } => {
+            Seg::Subst { name, all, anchor, pat, rep, .. } => {
                 let v = self.read_var(name, line);
                 let pat = self.pattern_of(pat)?;
                 let at = self.at("`${…/pat/rep}`", line);
-                let pat = self.helper("__sh_pat_literal", vec![pat, at.clone()]);
                 let rep = self.word_str(rep)?;
                 let zsh = boolean(self.d == Dialect::Zsh);
-                if *all {
-                    self.helper("__sh_replace_all", vec![v, pat, rep, zsh])
-                } else {
-                    self.helper("__sh_replace1", vec![v, pat, rep, at, zsh])
-                }
+                self.helper(
+                    "__sh_replace",
+                    vec![v, pat, rep, boolean(*all), int(*anchor as i64), zsh, at],
+                )
             }
             Seg::Substr { name, off, len: n, .. } => {
                 let v = self.read_var(name, line);
@@ -2354,12 +2361,19 @@ const SHELL_HELPERS: &[&str] = &[
     "__sh_base",
     "__sh_err_if_unset",
     "__sh_fmt",
+    "__sh_float",
+    "__sh_fparse",
+    "__sh_fround",
+    "__sh_finc",
+    "__sh_ffix",
+    "__sh_fexp",
+    "__sh_fztrim",
+    "__sh_repeat",
+    "__sh_isdigit",
     "__sh_isws",
     "__sh_number",
     "__sh_join_range",
-    "__sh_pat_literal",
-    "__sh_replace1",
-    "__sh_replace_all",
+    "__sh_replace",
     "__sh_split",
     "__sh_split_arr",
     "__sh_str",
@@ -3104,85 +3118,125 @@ fn helper_fn(name: &str) -> Function {
                 ret(var("out")),
             ],
         ),
-        // __sh_pat_literal(pat, at): a substitution pattern, which must be
-        // literal here (bash would glob-expand it).
-        "__sh_pat_literal" => func(
-            &["pat", "at"],
+        // __sh_replace(s, pat, rep, all, anchor, zsh, at): `${s/pat/rep}` and
+        // `${s//pat/rep}` with a shell glob pattern (`*`, `?`, `[…]`, `\`), the
+        // same matcher `${s#pat}` uses. Matching is leftmost-longest, as in bash
+        // and zsh: the leftmost position wins, then the longest match there.
+        // `all` replaces every non-overlapping match, skipping an empty one
+        // (bash's `${x//a*/Y}` on `bab` is `bY`, not `Yb Y`); `anchor` 1
+        // (`/#pat`) and 2 (`/%pat`) allow a match only at the start or the end.
+        "__sh_replace" => func(
+            &["s", "pat", "rep", "all", "anchor", "zsh", "at"],
             vec![
-                decl("ps", chars(var("pat"))),
-                decl("n", len(var("ps"))),
-                decl("i", int(0)),
-                decl("out", s("")),
-                while_(bin("<", var("i"), var("n")), vec![
-                    decl("c", index(var("ps"), var("i"))),
-                    if_(
-                        bin("and", bin("==", var("c"), s("\\")), bin("<", bin("+", var("i"), int(1)), var("n"))),
-                        vec![
-                            set("out", bin("+", var("out"), index(var("ps"), bin("+", var("i"), int(1))))),
-                            set("i", bin("+", var("i"), int(2))),
-                        ],
-                        Some(vec![
-                            if_(
-                                bin(
-                                    "or",
-                                    bin("or", bin("==", var("c"), s("*")), bin("==", var("c"), s("?"))),
-                                    bin("==", var("c"), s("[")),
-                                ),
-                                vec![throw(concat(vec![s("unsupported: glob pattern in a `${…/…}` substitution at "), var("at")]))],
-                                None,
-                            ),
-                            set("out", bin("+", var("out"), var("c"))),
-                            set("i", bin("+", var("i"), int(1))),
-                        ]),
-                    ),
-                ]),
-                ret(var("out")),
-            ],
-        ),
-        // __sh_replace1(s, pat, rep, at): replace the first literal occurrence.
-        "__sh_replace1" => func(
-            &["s", "pat", "rep", "at", "zsh"],
-            vec![
-                decl("cs", chars(var("s"))),
-                decl("n", len(var("cs"))),
-                decl("ps", chars(var("pat"))),
-                decl("m", len(var("ps"))),
                 if_(
-                    bin("==", var("m"), int(0)),
+                    bin("==", var("pat"), s("")),
                     vec![
+                        // An empty pattern with an anchor inserts the
+                        // replacement at that end (`${x/#/pre}`, `${x/%/post}`).
+                        if_(bin("==", var("anchor"), int(1)), vec![ret(bin("+", var("rep"), var("s")))], None),
+                        if_(bin("==", var("anchor"), int(2)), vec![ret(bin("+", var("s"), var("rep")))], None),
+                        // bash: an empty pattern leaves the value alone. zsh
+                        // instead inserts the replacement around every
+                        // character, which is not lowered here.
                         if_(
                             var("zsh"),
-                            vec![throw(s("unsupported: `${x/\"\"/…}` (an empty pattern) in zsh"))],
+                            vec![throw(concat(vec![
+                                s("unsupported: `${x//\"\"/…}` (an empty pattern) in zsh at "),
+                                var("at"),
+                            ]))],
                             None,
                         ),
                         ret(var("s")),
                     ],
                     None,
                 ),
+                decl("cs", chars(var("s"))),
+                decl("n", len(var("cs"))),
+                decl("out", s("")),
                 decl("i", int(0)),
-                while_(bin("<=", bin("+", var("i"), var("m")), var("n")), vec![
-                    decl("k", int(0)),
-                    decl("same", boolean(true)),
-                    while_(bin("<", var("k"), var("m")), vec![
-                        if_(
-                            bin("!=", index(var("cs"), bin("+", var("i"), var("k"))), index(var("ps"), var("k"))),
-                            vec![set("same", boolean(false)), S::Break { meta: m() }],
-                            None,
-                        ),
-                        set("k", bin("+", var("k"), int(1))),
-                    ]),
+                decl("done", boolean(false)),
+                while_(bin("<=", var("i"), var("n")), vec![
+                    // `advance`: copy `cs[i]` and move on by one character.
+                    decl("advance", boolean(true)),
+                    decl("mj", int(-1)),
                     if_(
-                        var("same"),
-                        vec![ret(concat(vec![
-                            call("__sh_join_range", vec![var("cs"), int(0), var("i")]),
-                            var("rep"),
-                            call("__sh_join_range", vec![var("cs"), bin("+", var("i"), var("m")), var("n")]),
-                        ]))],
+                        not(var("done")),
+                        vec![
+                            // Longest match starting at `i`.
+                            decl("j", var("n")),
+                            while_(bin(">=", var("j"), var("i")), vec![
+                                if_(
+                                    bin(
+                                        "==",
+                                        call(
+                                            "__sh_glob",
+                                            vec![var("pat"), call("__sh_join_range", vec![var("cs"), var("i"), var("j")])],
+                                        ),
+                                        boolean(true),
+                                    ),
+                                    vec![set("mj", var("j")), S::Break { meta: m() }],
+                                    None,
+                                ),
+                                set("j", bin("-", var("j"), int(1))),
+                            ]),
+                            if_(
+                                bin(
+                                    "and",
+                                    bin(">=", var("mj"), int(0)),
+                                    not(bin(
+                                        "or",
+                                        bin(
+                                            "or",
+                                            // A start-anchored pattern only at 0.
+                                            bin(
+                                                "and",
+                                                bin("==", var("anchor"), int(1)),
+                                                bin("!=", var("i"), int(0)),
+                                            ),
+                                            // An end-anchored one only at the end.
+                                            bin(
+                                                "and",
+                                                bin("==", var("anchor"), int(2)),
+                                                bin("!=", var("mj"), var("n")),
+                                            ),
+                                        ),
+                                        // An empty match is never replaced.
+                                        bin("==", var("mj"), var("i")),
+                                    )),
+                                ),
+                                vec![
+                                    set("out", bin("+", var("out"), var("rep"))),
+                                    set("i", var("mj")),
+                                    set("advance", boolean(false)),
+                                    // A single replacement, and an anchored one,
+                                    // end the scan.
+                                    if_(
+                                        bin("or", not(var("all")), bin("!=", var("anchor"), int(0))),
+                                        vec![set("done", boolean(true))],
+                                        None,
+                                    ),
+                                ],
+                                None,
+                            ),
+                        ],
                         None,
                     ),
-                    set("i", bin("+", var("i"), int(1))),
+                    if_(
+                        var("advance"),
+                        vec![
+                            // At the end there is no character left to copy:
+                            // only a `/%pat` anchor looks for a match there.
+                            if_(
+                                bin("<", var("i"), var("n")),
+                                vec![set("out", bin("+", var("out"), index(var("cs"), var("i"))))],
+                                None,
+                            ),
+                            set("i", bin("+", var("i"), int(1))),
+                        ],
+                        None,
+                    ),
                 ]),
-                ret(var("s")),
+                ret(var("out")),
             ],
         ),
         // __sh_substr(s, off, len, has_len): `${s:off:len}`, by character.
@@ -3279,27 +3333,6 @@ fn helper_fn(name: &str) -> Function {
                     None,
                 ),
                 ret(var("val")),
-            ],
-        ),
-        // __sh_replace_all(s, pat, rep, zsh): every occurrence. bash leaves the
-        // text alone for an empty pattern; zsh inserts the replacement around
-        // every character, which is not lowered here.
-        "__sh_replace_all" => func(
-            &["s", "pat", "rep", "zsh"],
-            vec![
-                if_(
-                    bin("==", var("pat"), s("")),
-                    vec![
-                        if_(
-                            var("zsh"),
-                            vec![throw(s("unsupported: `${x//\"\"/…}` (an empty pattern) in zsh"))],
-                            None,
-                        ),
-                        ret(var("s")),
-                    ],
-                    None,
-                ),
-                ret(cap("str.replace", vec![var("s"), var("pat"), var("rep")])),
             ],
         ),
         // __sh_number(v, at): a whole number the way printf reads one —
@@ -3408,6 +3441,598 @@ fn helper_fn(name: &str) -> Function {
                     set("v", bin("/", var("v"), var("base"))),
                 ]),
                 ret(var("out")),
+            ],
+        ),
+        // __sh_repeat(c, n): `c` repeated `n` times (padding, zero fill).
+        "__sh_repeat" => func(
+            &["c", "n"],
+            vec![
+                decl("out", s("")),
+                decl("i", int(0)),
+                while_(bin("<", var("i"), var("n")), vec![
+                    set("out", bin("+", var("out"), var("c"))),
+                    set("i", bin("+", var("i"), int(1))),
+                ]),
+                ret(var("out")),
+            ],
+        ),
+        // __sh_isdigit(c): is this one character an ASCII decimal digit?
+        "__sh_isdigit" => func(
+            &["c"],
+            vec![
+                decl("o", cap("conv.ord", vec![var("c")])),
+                ret(bin("and", bin(">=", var("o"), int(48)), bin("<=", var("o"), int(57)))),
+            ],
+        ),
+        // __sh_fparse(v, at): the number printf reads for a float conversion, as
+        // {neg, d, p} with |v| = 0.d1d2… × 10^p (`d` holds the significant
+        // digits with no leading or trailing zeros; zero is `d = "0"`,
+        // `p = 1`). Surrounding space, a sign, `.5`, `5.` and `e`/`E` exponents
+        // are accepted like C's strtod; anything else after the number is
+        // refused rather than read as a partial value.
+        //
+        // The value stays decimal: bash converts to `double` first, so where a
+        // decimal sits exactly on a rounding tie and is not representable in
+        // binary (`2.675` with `%.2f`, which bash prints as `2.67`), this
+        // rounds the number as written (`2.68`). Exact `double` behaviour needs
+        // strtod plus exact binary→decimal conversion; see CRUSH-294.
+        "__sh_fparse" => func(
+            &["v", "at"],
+            vec![
+                decl("text", call("__sh_str", vec![var("v")])),
+                decl("cs", chars(var("text"))),
+                decl("n", len(var("cs"))),
+                decl("i", int(0)),
+                while_(bin("<", var("i"), var("n")), vec![
+                    if_(
+                        call("__sh_isws", vec![index(var("cs"), var("i"))]),
+                        vec![set("i", bin("+", var("i"), int(1)))],
+                        Some(vec![S::Break { meta: m() }]),
+                    ),
+                ]),
+                decl("neg", boolean(false)),
+                if_(bin("<", var("i"), var("n")), vec![
+                    if_(
+                        bin(
+                            "or",
+                            bin("==", index(var("cs"), var("i")), s("-")),
+                            bin("==", index(var("cs"), var("i")), s("+")),
+                        ),
+                        vec![
+                            set("neg", bin("==", index(var("cs"), var("i")), s("-"))),
+                            set("i", bin("+", var("i"), int(1))),
+                        ],
+                        None,
+                    ),
+                ], None),
+                decl("d", s("")),
+                decl("ints", int(0)),
+                decl("seen", boolean(false)),
+                while_(bin("<", var("i"), var("n")), vec![
+                    if_(
+                        call("__sh_isdigit", vec![index(var("cs"), var("i"))]),
+                        vec![
+                            set("d", bin("+", var("d"), index(var("cs"), var("i")))),
+                            set("ints", bin("+", var("ints"), int(1))),
+                            set("seen", boolean(true)),
+                            set("i", bin("+", var("i"), int(1))),
+                        ],
+                        Some(vec![S::Break { meta: m() }]),
+                    ),
+                ]),
+                if_(
+                    bin("and", bin("<", var("i"), var("n")), bin("==", index(var("cs"), var("i")), s("."))),
+                    vec![
+                        set("i", bin("+", var("i"), int(1))),
+                        while_(bin("<", var("i"), var("n")), vec![
+                            if_(
+                                call("__sh_isdigit", vec![index(var("cs"), var("i"))]),
+                                vec![
+                                    set("d", bin("+", var("d"), index(var("cs"), var("i")))),
+                                    set("seen", boolean(true)),
+                                    set("i", bin("+", var("i"), int(1))),
+                                ],
+                                Some(vec![S::Break { meta: m() }]),
+                            ),
+                        ]),
+                    ],
+                    None,
+                ),
+                // `p` is the number of digits before the decimal point; the
+                // exponent is added to it.
+                decl("p", var("ints")),
+                if_(bin("<", var("i"), var("n")), vec![
+                    if_(
+                        bin(
+                            "or",
+                            bin("==", index(var("cs"), var("i")), s("e")),
+                            bin("==", index(var("cs"), var("i")), s("E")),
+                        ),
+                        vec![
+                            set("i", bin("+", var("i"), int(1))),
+                            decl("esign", int(1)),
+                            if_(bin("<", var("i"), var("n")), vec![
+                                if_(
+                                    bin("==", index(var("cs"), var("i")), s("-")),
+                                    vec![
+                                        set("esign", int(-1)),
+                                        set("i", bin("+", var("i"), int(1))),
+                                    ],
+                                    None,
+                                ),
+                                if_(
+                                    bin("==", index(var("cs"), var("i")), s("+")),
+                                    vec![set("i", bin("+", var("i"), int(1)))],
+                                    None,
+                                ),
+                            ], None),
+                            decl("ex", int(0)),
+                            decl("any", boolean(false)),
+                            while_(bin("<", var("i"), var("n")), vec![
+                                if_(
+                                    call("__sh_isdigit", vec![index(var("cs"), var("i"))]),
+                                    vec![
+                                        set(
+                                            "ex",
+                                            bin(
+                                                "+",
+                                                bin("*", var("ex"), int(10)),
+                                                bin(
+                                                    "-",
+                                                    cap("conv.ord", vec![index(var("cs"), var("i"))]),
+                                                    int(48),
+                                                ),
+                                            ),
+                                        ),
+                                        set("any", boolean(true)),
+                                        set("i", bin("+", var("i"), int(1))),
+                                    ],
+                                    Some(vec![S::Break { meta: m() }]),
+                                ),
+                            ]),
+                            if_(
+                                not(var("any")),
+                                vec![throw(concat(vec![
+                                    s("unsupported: a float conversion of `"),
+                                    var("text"),
+                                    s("` (an empty exponent) at "),
+                                    var("at"),
+                                ]))],
+                                None,
+                            ),
+                            set("p", bin("+", var("p"), bin("*", var("esign"), var("ex")))),
+                        ],
+                        None,
+                    ),
+                ], None),
+                while_(bin("<", var("i"), var("n")), vec![
+                    if_(
+                        call("__sh_isws", vec![index(var("cs"), var("i"))]),
+                        vec![set("i", bin("+", var("i"), int(1)))],
+                        Some(vec![S::Break { meta: m() }]),
+                    ),
+                ]),
+                if_(
+                    bin("or", not(var("seen")), bin("<", var("i"), var("n"))),
+                    vec![throw(concat(vec![
+                        s("unsupported: a float conversion of `"),
+                        var("text"),
+                        s("` (not a number) at "),
+                        var("at"),
+                    ]))],
+                    None,
+                ),
+                // Leading zeros carry no significance: drop them and lower the
+                // exponent by one for each.
+                decl("k", int(0)),
+                while_(bin("<", var("k"), len(chars(var("d")))), vec![
+                    if_(
+                        bin("==", index(chars(var("d")), var("k")), s("0")),
+                        vec![
+                            set("k", bin("+", var("k"), int(1))),
+                            set("p", bin("-", var("p"), int(1))),
+                        ],
+                        Some(vec![S::Break { meta: m() }]),
+                    ),
+                ]),
+                set(
+                    "d",
+                    call(
+                        "__sh_substr",
+                        vec![
+                            var("d"),
+                            var("k"),
+                            bin("-", len(chars(var("d"))), var("k")),
+                            boolean(true),
+                        ],
+                    ),
+                ),
+                if_(
+                    bin("==", var("d"), s("")),
+                    vec![set("d", s("0")), set("p", int(1))],
+                    None,
+                ),
+                ret(E::ObjectLiteral {
+                    properties: vec![
+                        ("neg".to_string(), var("neg")),
+                        ("d".to_string(), var("d")),
+                        ("p".to_string(), var("p")),
+                    ],
+                    meta: m(),
+                }),
+            ],
+        ),
+        // __sh_finc(s): a decimal digit string plus one, carrying as in grade
+        // school ("999" → "1000", "" → "1").
+        "__sh_finc" => func(
+            &["s"],
+            vec![
+                decl("cs", chars(var("s"))),
+                decl("n", len(var("cs"))),
+                if_(bin("==", var("n"), int(0)), vec![ret(s("1"))], None),
+                decl("i", bin("-", var("n"), int(1))),
+                while_(bin(">=", var("i"), int(0)), vec![
+                    if_(
+                        bin("==", index(var("cs"), var("i")), s("9")),
+                        vec![set("i", bin("-", var("i"), int(1)))],
+                        Some(vec![S::Break { meta: m() }]),
+                    ),
+                ]),
+                if_(bin("<", var("i"), int(0)), vec![
+                    ret(concat(vec![
+                        s("1"),
+                        call("__sh_repeat", vec![s("0"), var("n")]),
+                    ])),
+                ], None),
+                ret(concat(vec![
+                    call("__sh_substr", vec![var("s"), int(0), var("i"), boolean(true)]),
+                    cap(
+                        "conv.chr",
+                        vec![bin(
+                            "+",
+                            cap("conv.ord", vec![index(var("cs"), var("i"))]),
+                            int(1),
+                        )],
+                    ),
+                    call(
+                        "__sh_repeat",
+                        vec![s("0"), bin("-", bin("-", var("n"), var("i")), int(1))],
+                    ),
+                ])),
+            ],
+        ),
+        // __sh_fround(d, keep): `d` rounded to `keep` digits, half to even like
+        // C's printf ("2.5" → "2", "3.5" → "4"). The result can be one digit
+        // longer when the carry runs off the end ("99" → "100").
+        "__sh_fround" => func(
+            &["d", "keep"],
+            vec![
+                decl("n", len(chars(var("d")))),
+                // The digit after the kept ones must exist to round on.
+                decl("s", var("d")),
+                if_(bin("<", var("n"), bin("+", var("keep"), int(1))), vec![set(
+                    "s",
+                    bin(
+                        "+",
+                        var("d"),
+                        call(
+                            "__sh_repeat",
+                            vec![s("0"), bin("-", bin("+", var("keep"), int(1)), var("n"))],
+                        ),
+                    ),
+                )], None),
+                decl("kept", call("__sh_substr", vec![var("s"), int(0), var("keep"), boolean(true)])),
+                decl(
+                    "rd",
+                    bin(
+                        "-",
+                        cap("conv.ord", vec![index(chars(var("s")), var("keep"))]),
+                        int(48),
+                    ),
+                ),
+                decl("tailnz", boolean(false)),
+                decl("k", bin("+", var("keep"), int(1))),
+                while_(bin("<", var("k"), len(chars(var("s")))), vec![
+                    if_(
+                        bin("!=", index(chars(var("s")), var("k")), s("0")),
+                        vec![set("tailnz", boolean(true))],
+                        None,
+                    ),
+                    set("k", bin("+", var("k"), int(1))),
+                ]),
+                decl("up", boolean(false)),
+                if_(bin(">", var("rd"), int(5)), vec![set("up", boolean(true))], Some(vec![
+                    if_(bin("==", var("rd"), int(5)), vec![
+                        if_(var("tailnz"), vec![set("up", boolean(true))], Some(vec![
+                            // Exactly half: keep the last digit even.
+                            decl("last", int(0)),
+                            if_(
+                                bin(">", var("keep"), int(0)),
+                                vec![set(
+                                    "last",
+                                    bin(
+                                        "-",
+                                        cap(
+                                            "conv.ord",
+                                            vec![index(chars(var("kept")), bin("-", var("keep"), int(1)))],
+                                        ),
+                                        int(48),
+                                    ),
+                                )],
+                                None,
+                            ),
+                            if_(
+                                bin("==", bin("%", var("last"), int(2)), int(1)),
+                                vec![set("up", boolean(true))],
+                                None,
+                            ),
+                        ])),
+                    ], None),
+                ])),
+                if_(var("up"), vec![ret(call("__sh_finc", vec![var("kept")]))], None),
+                ret(var("kept")),
+            ],
+        ),
+        // __sh_fztrim(s): drop trailing fractional zeros and a bare trailing
+        // point, as `%g` does ("100.000" → "100", "1.500000" → "1.5"). A string
+        // with no point is left alone, so "100" stays "100".
+        "__sh_fztrim" => func(
+            &["s"],
+            vec![
+                decl("cs", chars(var("s"))),
+                decl("dot", boolean(false)),
+                for_("c", var("cs"), vec![
+                    if_(bin("==", var("c"), s(".")), vec![set("dot", boolean(true))], None),
+                ]),
+                if_(not(var("dot")), vec![ret(var("s"))], None),
+                decl("k", len(var("cs"))),
+                while_(bin(">", var("k"), int(0)), vec![
+                    if_(
+                        bin("==", index(var("cs"), bin("-", var("k"), int(1))), s("0")),
+                        vec![set("k", bin("-", var("k"), int(1)))],
+                        Some(vec![S::Break { meta: m() }]),
+                    ),
+                ]),
+                if_(
+                    bin("and", bin(">", var("k"), int(0)), bin("==", index(var("cs"), bin("-", var("k"), int(1))), s("."))),
+                    vec![set("k", bin("-", var("k"), int(1)))],
+                    None,
+                ),
+                ret(call("__sh_substr", vec![var("s"), int(0), var("k"), boolean(true)])),
+            ],
+        ),
+        // __sh_ffix(d, p, prec): the `%f` body (no sign) for 0.d × 10^p.
+        "__sh_ffix" => func(
+            &["d", "p", "prec"],
+            vec![
+                decl("keep", bin("+", var("p"), var("prec"))),
+                if_(bin("<", var("keep"), int(0)), vec![
+                    // Below half of the last place printed: zero.
+                    if_(bin("==", var("prec"), int(0)), vec![ret(s("0"))], None),
+                    ret(bin("+", s("0."), call("__sh_repeat", vec![s("0"), var("prec")]))),
+                ], None),
+                decl("s", call("__sh_fround", vec![var("d"), var("keep")])),
+                decl("m", len(chars(var("s")))),
+                if_(bin("<", var("m"), bin("+", var("prec"), int(1))), vec![
+                    set(
+                        "s",
+                        bin(
+                            "+",
+                            call(
+                                "__sh_repeat",
+                                vec![s("0"), bin("-", bin("+", var("prec"), int(1)), var("m"))],
+                            ),
+                            var("s"),
+                        ),
+                    ),
+                    set("m", bin("+", var("prec"), int(1))),
+                ], None),
+                decl(
+                    "ip",
+                    call(
+                        "__sh_substr",
+                        vec![var("s"), int(0), bin("-", var("m"), var("prec")), boolean(true)],
+                    ),
+                ),
+                if_(bin("==", var("prec"), int(0)), vec![ret(var("ip"))], None),
+                ret(bin(
+                    "+",
+                    bin("+", var("ip"), s(".")),
+                    call(
+                        "__sh_substr",
+                        vec![
+                            var("s"),
+                            bin("-", var("m"), var("prec")),
+                            var("prec"),
+                            boolean(true),
+                        ],
+                    ),
+                )),
+            ],
+        ),
+        // __sh_fexp(d, p, prec, upper, trim): the `%e` body (no sign) for
+        // 0.d × 10^p — one digit, the point, `prec` digits, then `e±NN` (at
+        // least two exponent digits, `E` for `%E`). `trim` drops trailing
+        // mantissa zeros for `%g`.
+        "__sh_fexp" => func(
+            &["d", "p", "prec", "upper", "trim"],
+            vec![
+                decl("keep", bin("+", var("prec"), int(1))),
+                decl("s", call("__sh_fround", vec![var("d"), var("keep")])),
+                decl("e", bin("-", var("p"), int(1))),
+                // A carry that grows the mantissa moves the point: 9.99 → 1.00e+01.
+                if_(bin(">", len(chars(var("s"))), var("keep")), vec![
+                    set(
+                        "s",
+                        call("__sh_substr", vec![var("s"), int(0), var("keep"), boolean(true)]),
+                    ),
+                    set("e", bin("+", var("e"), int(1))),
+                ], None),
+                decl("m", len(chars(var("s")))),
+                if_(bin("<", var("m"), var("keep")), vec![
+                    set(
+                        "s",
+                        bin("+", var("s"), call("__sh_repeat", vec![s("0"), bin("-", var("keep"), var("m"))])),
+                    ),
+                ], None),
+                decl("mant", call("__sh_substr", vec![var("s"), int(0), int(1), boolean(true)])),
+                if_(bin(">", var("prec"), int(0)), vec![
+                    set(
+                        "mant",
+                        bin(
+                            "+",
+                            bin("+", var("mant"), s(".")),
+                            call(
+                                "__sh_substr",
+                                vec![var("s"), int(1), var("prec"), boolean(true)],
+                            ),
+                        ),
+                    ),
+                ], None),
+                if_(var("trim"), vec![set("mant", call("__sh_fztrim", vec![var("mant")]))], None),
+                decl("ex", call(
+                    "__sh_base",
+                    vec![
+                        tern(bin("<", var("e"), int(0)), bin("-", int(0), var("e")), var("e")),
+                        int(10),
+                        boolean(false),
+                    ],
+                )),
+                if_(bin("<", len(chars(var("ex"))), int(2)), vec![
+                    set(
+                        "ex",
+                        bin(
+                            "+",
+                            call("__sh_repeat", vec![s("0"), bin("-", int(2), len(chars(var("ex"))))]),
+                            var("ex"),
+                        ),
+                    ),
+                ], None),
+                ret(concat(vec![
+                    var("mant"),
+                    tern(var("upper"), s("E"), s("e")),
+                    tern(bin("<", var("e"), int(0)), s("-"), s("+")),
+                    var("ex"),
+                ])),
+            ],
+        ),
+        // __sh_float(v, conv, left, zero, plus, space, w, prec, has_prec, at):
+        // one float conversion, sign and width padding included.
+        "__sh_float" => func(
+            &["v", "conv", "left", "zero", "plus", "space", "w", "prec", "has_prec", "at"],
+            vec![
+                decl("f", call("__sh_fparse", vec![var("v"), var("at")])),
+                decl("d", index(var("f"), s("d"))),
+                decl("p", index(var("f"), s("p"))),
+                decl("pr", tern(var("has_prec"), var("prec"), int(6))),
+                decl("upper", bin("or", bin("==", var("conv"), s("E")), bin("==", var("conv"), s("G")))),
+                decl("body", s("")),
+                if_(
+                    bin(
+                        "or",
+                        bin("or", bin("==", var("conv"), s("f")), bin("==", var("conv"), s("e"))),
+                        bin("==", var("conv"), s("E")),
+                    ),
+                    vec![if_(
+                        bin("==", var("conv"), s("f")),
+                        vec![set("body", call("__sh_ffix", vec![var("d"), var("p"), var("pr")]))],
+                        Some(vec![set(
+                            "body",
+                            call(
+                                "__sh_fexp",
+                                vec![var("d"), var("p"), var("pr"), var("upper"), boolean(false)],
+                            ),
+                        )]),
+                    )],
+                    Some(vec![
+                        // %g / %G: `prec` significant digits, no trailing
+                        // zeros; exponent form when the decimal exponent is
+                        // below -4 or not less than the precision.
+                        decl("x", bin("-", var("p"), int(1))),
+                        decl("gp", var("pr")),
+                        if_(bin("==", var("gp"), int(0)), vec![set("gp", int(1))], None),
+                        if_(
+                            bin("or", bin("<", var("x"), int(-4)), bin(">=", var("x"), var("gp"))),
+                            vec![set(
+                                "body",
+                                call(
+                                    "__sh_fexp",
+                                    vec![
+                                        var("d"),
+                                        var("p"),
+                                        bin("-", var("gp"), int(1)),
+                                        var("upper"),
+                                        boolean(true),
+                                    ],
+                                ),
+                            )],
+                            Some(vec![set(
+                                "body",
+                                call(
+                                    "__sh_fztrim",
+                                    vec![call(
+                                        "__sh_ffix",
+                                        vec![
+                                            var("d"),
+                                            var("p"),
+                                            bin("-", bin("-", var("gp"), int(1)), var("x")),
+                                        ],
+                                    )],
+                                ),
+                            )]),
+                        ),
+                    ]),
+                ),
+                decl("sign", s("")),
+                if_(
+                    index(var("f"), s("neg")),
+                    vec![set("sign", s("-"))],
+                    Some(vec![
+                        if_(
+                            var("plus"),
+                            vec![set("sign", s("+"))],
+                            Some(vec![if_(var("space"), vec![set("sign", s(" "))], None)]),
+                        ),
+                    ]),
+                ),
+                decl("s", bin("+", var("sign"), var("body"))),
+                decl("pad", bin("-", var("w"), len(chars(var("s"))))),
+                if_(bin(">", var("pad"), int(0)), vec![
+                    if_(
+                        var("left"),
+                        vec![set(
+                            "s",
+                            bin("+", var("s"), call("__sh_repeat", vec![s(" "), var("pad")])),
+                        )],
+                        Some(vec![
+                            if_(
+                                // Zeros go after the sign (`%08.2f` → `-0003.50`).
+                                var("zero"),
+                                vec![set(
+                                    "s",
+                                    bin(
+                                        "+",
+                                        bin(
+                                            "+",
+                                            var("sign"),
+                                            call("__sh_repeat", vec![s("0"), var("pad")]),
+                                        ),
+                                        var("body"),
+                                    ),
+                                )],
+                                Some(vec![set(
+                                    "s",
+                                    bin(
+                                        "+",
+                                        call("__sh_repeat", vec![s(" "), var("pad")]),
+                                        var("s"),
+                                    ),
+                                )]),
+                            ),
+                        ]),
+                    ),
+                ], None),
+                ret(var("s")),
             ],
         ),
         // __sh_fmt(v, conv, left, zero, plus, space, width, prec, has_prec, at):

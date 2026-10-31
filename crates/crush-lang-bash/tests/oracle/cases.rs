@@ -70,7 +70,34 @@ pub const CASES: &[Case] = &[
     // ── printf ──
     ok("printf_basic", "printf \"%s=%d\\n\" a 5\nprintf \"x%sy\\n\" 1 2\nprintf 'no newline'\necho\n"),
     ok("printf_percent", "printf \"100%%\\n\"\n"),
-    loud("printf_float", "printf \"%f\\n\" 1.5\n", "`%f`"),
+    ok(
+        "printf_float_f",
+        "printf \"[%f][%.2f][%8.2f][%-8.2f][%08.2f][%.0f][%f]\\n\" 1.5 3.14159 3.14159 3.14159 -3.5 2.5 0\n",
+    ),
+    ok(
+        "printf_float_e",
+        "printf \"[%e][%.2e][%.0e][%E][%12.3e][%.1e]\\n\" 1234.5678 1234.5678 1.5 1234.5678 1234.5678 9.99\n",
+    ),
+    ok(
+        "printf_float_g",
+        "printf \"[%g][%g][%g][%.1g][%.3g][%G][%g][%g]\\n\" 100 12345678 0.00012345 100 123.456 0.5 0.5 1.5\n",
+    ),
+    ok(
+        "printf_float_forms",
+        "printf \"[%f][%f][%f][%f][%f][%f]\\n\" .5 5. 1e3 -0.25 +2.0 007\n",
+    ),
+    ok(
+        "printf_float_sign_pad",
+        "printf \"[%+.2f][% .2f][%10.3f][%-10.3f][%+08.1f]\\n\" 1.5 1.5 -1.5 -1.5 2.0\n",
+    ),
+    ok(
+        "printf_float_round_half_even",
+        "printf \"[%.0f][%.0f][%.0f][%.0f][%.1f][%.2f][%.0f][%.0f]\\n\" 0.5 1.5 2.5 3.5 0.25 0.125 0.4 0.6\n",
+    ),
+    ok("printf_float_missing", "printf \"[%f][%.1e]\\n\"\n"),
+    loud("printf_float_bad_number", "printf '[%f]\\n' abc\n", "not a number"),
+    loud("printf_float_trailing", "printf '[%f]\\n' 1.2.3\n", "not a number"),
+    loud("printf_unknown_conversion", "printf '[%a]\\n' 1.0\n", "conversion"),
     ok(
         "printf_widths",
         "printf \"[%5s][%-5s][%.2s][%5.1s]\\n\" ab cd efgh ijkl\nprintf \"[%05d][%5d][%-5d][%+d]\\n\" 42 42 42 42\nprintf \"[%5.2d][%08.3d][%.3d]\\n\" 7 7 5\n",
@@ -195,6 +222,27 @@ pub const CASES: &[Case] = &[
     ok("param_trim_star", "x=abc\necho \"[${x%*}][${x%%*}][${x#*}][${x##*}]\"\n"),
     ok("param_trim_glob", "f=a1b22c\necho \"[${f#[a-z]}][${f%%[0-9]*}]\"\n"),
     ok("param_substitute", "y=aXbXc\necho \"[${y/X/-}][${y//X/-}]\"\n"),
+    ok(
+        "param_substitute_glob",
+        "y=aXbXc\necho \"[${y/X*/-}][${y//[abc]/.}]\"\nz=abcabc\necho \"[${z/a?c/Y}][${z//a?c/Y}][${z/*/all}][${z//?/-}]\"\nb=bab\necho \"[${b//a*/Y}][${b/a*/Y}][${b/b*/Y}]\"\n",
+    ),
+    ok(
+        "param_substitute_anchors",
+        "v=hello.txt\necho \"[${v/#hello/H}][${v/%txt/T}][${v/#ell/X}][${v/%lo/X}][${v/#/pre-}][${v/%/-post}]\"\n",
+    ),
+    ok(
+        "param_substitute_paths",
+        "u=a.b.c\necho \"[${u//./-}][${u/*./-}][${u//*.}][${u/%.[a-z]/-}]\"\n",
+    ),
+    ok(
+        "param_substitute_overlap",
+        "n=aaa\necho \"[${n//aa/X}][${n//a/bb}][${n/a/}][${n//a/}]\"\n",
+    ),
+    ok(
+        "param_substitute_empty_replaces",
+        "t=abc\necho \"[${t//[a-c]/}][${t/b*/Y}][${t//c*/Y}][${t/x/Y}]\"\n",
+    ),
+    ok("param_substitute_escaped", "s='a*b*c'\necho \"[${s/\\*/-}][${s//\\*/-}][${s/\\*/X}]\"\n"),
     ok(
         "param_substring",
         "z=hello\necho \"[${z:1:-1}][${z: -2}][${z:10}][${z:0:0}][${z:2:99}][${z:1}][${z:1:2}]\"\n",

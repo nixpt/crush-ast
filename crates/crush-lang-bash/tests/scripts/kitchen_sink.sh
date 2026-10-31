@@ -68,6 +68,8 @@ echo "i=$i"
 printf '%-8s|%8s|\n' left right
 printf '%05d %.2s %x\n' 42 abcdef 255
 printf '[%s=%d]\n' answer 42
+printf 'pi=%.2f e=%.3e big=%g\n' 3.14159 27182.818 0.000012345
+printf '[%08.2f][%-7.1f][%+.0f]\n' -3.5 2.25 2.5
 
 unset maybe
 echo "default: ${maybe:-fallback}"
@@ -75,6 +77,9 @@ word=a-b-c
 echo "swapped: ${word//-/+}"
 echo "slice: ${word:2:3}"
 echo "strip: ${word#*-} / ${word%-*}"
+file=report-2026.tar.gz
+echo "glob sub: ${file//[0-9]/.} ${file/report-*/X}"
+echo "anchored: ${file/#report-/draft-} ${file/%.gz/.zip} ${file/#out/X} ${file/%zip/X}"
 
 false
 echo "status: $?"

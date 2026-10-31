@@ -59,9 +59,16 @@ before coding).
   (negative indices included), `${a[@]}`, `${a[*]}`, `${#a[@]}`, `${#a[*]}`,
   `${#a[i]}`, `$a`, quoted/unquoted expansion in `for` and in argument lists.
 - **`${…}` operators**: `:- - := = :+ + :? ?`, `# ## % %%` (patterns, so
-  `${f##*/}` and `${f%%.tar.gz}` work), `/ //` substitution with a literal
-  pattern, `:off` and `:off:len` substrings (negative offsets and lengths),
-  `${#x}`, and positional defaults such as `${1:-world}`.
+  `${f##*/}` and `${f%%.tar.gz}` work), `/ //` substitution with a glob
+  pattern, `/#pat` and `/%pat` anchors, `:off` and `:off:len` substrings
+  (negative offsets and lengths), `${#x}`, and positional defaults such as
+  `${1:-world}`.
+- **`${x/pat/rep}` with glob patterns**: `*`, `?`, `[…]` and `\`, using the
+  same matcher `${x#pat}` uses. Matching is leftmost-longest, as both shells do
+  it; `${x//pat/rep}` replaces every non-overlapping match and never replaces
+  an empty one (`${x//a*/Y}` on `bab` is `bY`), `/#pat` / `/%pat` match only at
+  the start / end (and an empty pattern there inserts the replacement), and an
+  escaped `\*` stays literal.
 - **`case` patterns**: `*`, `?`, `[…]` (ranges, `[!…]`/`[^…]`, POSIX classes
   `[[:alpha:]]` …), `|` alternatives, and quoted text that must stay literal.
 - **`echo`**: `-n`, `-e`, `-E` (repeatable and combined, as both shells read
@@ -70,7 +77,15 @@ before coding).
   up to base 64 (36 in zsh), and integer `**` (right-associative, binding looser
   than unary minus, so `-2**2` is `4`).
 - **`printf`**: flags `-`, `0`, `+`, space; width; precision; conversions
-  `%s %d %i %u %c %x %X %o %b`; format reuse and missing-argument defaults.
+  `%s %d %i %u %c %x %X %o %b %f %e %E %g %G`; format reuse and
+  missing-argument defaults.
+- **`printf` floats**: `%f` (6 decimals by default), `%e`/`%E` (one digit, the
+  point, precision digits, then `e±NN` with at least two exponent digits) and
+  `%g`/`%G` (`prec` significant digits, no trailing zeros, exponent form when
+  the decimal exponent is below -4 or not less than the precision), with
+  rounding half to even like C (`%.0f` of 2.5 is `2`, of 3.5 is `4`), `0`
+  padding after the sign (`%08.2f` of -3.5 is `-0003.50`), and the accepted
+  input forms `.5`, `5.`, `1e3`, `+2.0`, surrounding spaces.
 - **`read`**: `-r`, `-s`, `-p prompt`, one or more names (the last gets the rest
   of the line with its spacing), `REPLY` default, and bash's backslash
   handling / line continuation without `-r`.
@@ -80,7 +95,8 @@ before coding).
 `$(…)`, backticks, pipelines, redirections and heredocs, subshells, globs as
 arguments, `~`, brace expansion, external commands, `source`/`eval`/`trap`,
 environment variables the script never assigns, `=~`, file tests (`-f`, `-d`,
-`-nt`, …) in `[[ … ]]` and `test`, `${!x}`, `${x^^}` in zsh, `%f`/`%e`/`%g`,
+`-nt`, …) in `[[ … ]]` and `test`, `${!x}`, `${x^^}` in zsh, `%a` and any other
+unlisted `printf` conversion, a float argument that is not a number,
 negative `%x`/`%o`/`%u`, `declare`/`typeset`, associative arrays, `IFS`
 assignment, and a name used both as an array and as a plain value.
 
@@ -93,6 +109,7 @@ assignment, and a name used both as an array and as a plain value.
 | `2**-1` | error | `0.5` |
 | `${p}` in a `case`/`[[ ]]` pattern | glob-active | literal |
 | `${y//""/x}` | unchanged | inserts around every character |
+| `${y/#/a}` `${y/%/z}` | `a…z` | `a…z` |
 | `${x^^}` / `${x,,}` | supported | bad substitution |
 | `echo 'a\tb'` | literal | escape |
 | `$a` where `a` is an array | element 0 | all elements joined |
@@ -111,11 +128,11 @@ exits with the requested status.
 
 ## Verification
 
-- Oracle corpus: **138 cases** (was 88) in
+- Oracle corpus: **153 cases** (was 88) in
   `crates/crush-lang-bash/tests/oracle/cases.rs`, run against `/usr/bin/bash`
   and `/usr/bin/zsh -f`:
-  - bash: 105 match, 33 loud-unsupported, **0 failures**
-  - zsh: 104 match, 34 loud-unsupported, **0 failures**
+  - bash: 118 match, 35 loud-unsupported, **0 failures**
+  - zsh: 117 match, 36 loud-unsupported, **0 failures**
   - (CRUSH-202 was 57 match / 31 loud per dialect.)
 - `crates/crush-lang-bash/tests/read_test.rs`: 13 tests, driving `read`
   through `PortableVm` with `InputSource::supplied` so nothing touches the
@@ -131,18 +148,29 @@ exits with the requested status.
   `crush-walk-run kitchen_sink.sh` is byte-identical to `bash kitchen_sink.sh`
   (and the zsh-walker path matches `zsh -f`).
 
-## Known limitation
+## Known limitations
 
-`io.read` reports end of input as an empty string, so `read` cannot tell a blank
-line from EOF. `read` therefore treats an empty line as end of input
-(status 1, variables empty). `while read` loops terminate instead of spinning
-forever, at the cost of stopping at a blank line. Documented in
+**`read` and EOF.** `io.read` reports end of input as an empty string, so `read`
+cannot tell a blank line from EOF. `read` therefore treats an empty line as end
+of input (status 1, variables empty). `while read` loops terminate instead of
+spinning forever, at the cost of stopping at a blank line. Documented in
 `lower_read`'s doc comment and in `read_test.rs`.
+
+**`printf` floats round the decimal you wrote, not a binary double.** The
+formatter works on the written decimal (`__sh_fparse` → digits + decimal
+exponent + `__sh_fround`), so it is exact for any length of input, but C's
+`printf` first converts to `double`, and a decimal like `2.675` is not
+representable in binary (the nearest double is just under it). Where a value
+sits exactly on a rounding tie, bash prints `2.67` for `%.2f` of `2.675` and
+this walker prints `2.68`. Everything the corpus covers matches bash and zsh
+byte for byte; emulating `strtod` + exact binary-to-decimal conversion is a
+much larger change and is listed as a follow-up.
 
 ## Follow-ups (not in this ticket)
 
-- `f`/`e`/`g` float conversions for `printf`.
-- Glob patterns inside `${x/pat/rep}` (currently literal-only).
+- Exact `double` semantics for `printf` floats (needs `strtod` plus exact
+  binary→decimal conversion) — see the limitation above.
+- `printf %a` (hex float) and `declare`/`typeset` with associative arrays.
 - Pipelines, redirections and `$(…)` — these need a process/fs capability and a
   decision about what a shell script is allowed to do (M6 has no ticket for
   this yet).
