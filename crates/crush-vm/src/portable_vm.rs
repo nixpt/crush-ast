@@ -210,6 +210,9 @@ pub struct PortableVm {
     load_error: Option<LoadError>,
     /// COSM K1.4: the program's Kinds.
     kinds: crate::cosm_rt::KindTable,
+    /// CRUSH-165: the hash chain over every executed instruction and cap call.
+    #[cfg(feature = "transcript")]
+    transcript: crate::transcript::Transcript,
 }
 
 /// A kind table this VM refused at load ([`PortableVm::new`]).
@@ -254,6 +257,8 @@ impl PortableVm {
         });
 
         let declared_caps: std::collections::HashSet<String> = permissions.into_iter().collect();
+        #[cfg(feature = "transcript")]
+        let transcript = crate::transcript::Transcript::new(&program);
 
         Self {
             program,
@@ -291,7 +296,17 @@ impl PortableVm {
             last_stop: None,
             load_error,
             kinds,
+            #[cfg(feature = "transcript")]
+            transcript,
         }
+    }
+
+    /// CRUSH-165: the transcript digest so far — every instruction executed
+    /// and every capability call made since [`PortableVm::new`] (encoding in
+    /// [`crate::transcript`]). Read it after `run()` (or any `step()`).
+    #[cfg(feature = "transcript")]
+    pub fn transcript_digest(&self) -> crate::transcript::TranscriptDigest {
+        self.transcript.digest()
     }
 
     /// Set execution quotas.
@@ -671,10 +686,24 @@ impl PortableVm {
         // instruction it came from — a `RET` back to the caller's own `RET`
         // (a recursive call in tail position, #94) or `loop: JMP loop`.
         self.jumped = false;
+        // CRUSH-165 hook: PortableVm's one instruction-dispatch point.
+        #[cfg(feature = "transcript")]
+        let transcript_before = {
+            let before = self.transcript.clone();
+            let code = &self.program.code;
+            self.transcript.record_instruction(ip, &code[ip..next_ip.min(code.len())]);
+            before
+        };
         self.execute_instruction(opcode, next_ip)?;
         if let Some(args) = self.lang_yield.take() {
             // A deferred `@lang` block: this EXEC_LANG runs again once the
             // host provides its result (see `set_lang_deferred`).
+            // It hasn't executed yet: un-record it, so the re-run that does
+            // execute it is recorded once (CRUSH-165).
+            #[cfg(feature = "transcript")]
+            {
+                self.transcript = transcript_before;
+            }
             return Ok(Some(VmYield::HostCall { capability: "lang.exec".to_string(), args }));
         }
         if !self.jumped {
@@ -1130,8 +1159,17 @@ impl PortableVm {
                     }
                 }
                 if crate::cosm_rt::is_index_cap(&cap, &args) {
-                    crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)?;
-                    match crate::cosm_rt::index_cap(&cap, &args)? {
+                    let access =
+                        crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)
+                            .and_then(|()| crate::cosm_rt::index_cap(&cap, &args));
+                    // CRUSH-165 hook: an index cap's outcome.
+                    #[cfg(feature = "transcript")]
+                    self.transcript.record_cap(&cap, &args, match &access {
+                        Ok(crate::cosm_rt::IndexAccess::Done(v)) => crate::transcript::CapOutcome::Value(v),
+                        Ok(crate::cosm_rt::IndexAccess::Call { .. }) => crate::transcript::CapOutcome::AccessorCall,
+                        Err(e) => crate::transcript::CapOutcome::Error(e),
+                    });
+                    match access? {
                         crate::cosm_rt::IndexAccess::Done(v) => self.push(v),
                         crate::cosm_rt::IndexAccess::Call { call, after } => {
                             let on_ret = match after {
@@ -1146,8 +1184,16 @@ impl PortableVm {
                 let args = crate::cosm_rt::cap_args(&cap, args)?;
 
                 if cap == "parallel_map" {
-                    crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)?;
-                    let (output, results) = self.parallel_map(&args)?;
+                    let mapped =
+                        crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)
+                            .and_then(|()| self.parallel_map(&args));
+                    // CRUSH-165 hook: parallel_map's results (its workers aren't transcribed).
+                    #[cfg(feature = "transcript")]
+                    self.transcript.record_cap(&cap, &args, match &mapped {
+                        Ok((_, results)) => crate::transcript::CapOutcome::Value(results),
+                        Err(e) => crate::transcript::CapOutcome::Error(e),
+                    });
+                    let (output, results) = mapped?;
                     if !output.is_empty() {
                         self.out_len += output.len();
                         if self.out_len > self.quotas.max_output {
@@ -1157,8 +1203,14 @@ impl PortableVm {
                     }
                     self.push(results);
                 } else {
-                    let result = self.dispatch_cap(&cap, args)?;
-                    if let Some(v) = result {
+                    // CRUSH-165: `dispatch_cap` consumes the args; keep a copy to hash.
+                    #[cfg(feature = "transcript")]
+                    let recorded_args = args.clone();
+                    let result = self.dispatch_cap(&cap, args);
+                    // CRUSH-165 hook: every other CAP_CALL (built-in and host caps).
+                    #[cfg(feature = "transcript")]
+                    self.transcript.record_cap(&cap, &recorded_args, crate::transcript::CapOutcome::of(&result));
+                    if let Some(v) = result? {
                         self.push(v);
                     }
                 }
@@ -1808,11 +1860,11 @@ impl PortableVm {
                 // `SubprocessExecutor` (`crate::scheduler::run_exec_lang_stdout` — see its doc
                 // comment for the CRUSH-20 buckets-sandboxing wiring). A `LangExecutor` set with
                 // `set_lang_executor` (#91) takes precedence over both.
-                let outcome = if self.lang_deferred {
+                let outcome: Result<crate::scheduler::ExecLangOutcome, VmError> = if self.lang_deferred {
                     match self.lang_result.take() {
-                        Some(Ok(stdout)) => crate::scheduler::parse_exec_lang_stdout(&stdout),
+                        Some(Ok(stdout)) => Ok(crate::scheduler::parse_exec_lang_stdout(&stdout)),
                         Some(Err(message)) => {
-                            return Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line));
+                            Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line))
                         }
                         None => {
                             // Hand the block to the host: put the inputs back,
@@ -1832,11 +1884,11 @@ impl PortableVm {
                     match self.lang_executor.as_mut() {
                         // #91: the host runs the block (e.g. a browser Worker).
                         Some(executor) => match executor(lang, code_str, &env_vars) {
-                            Ok(stdout) => crate::scheduler::parse_exec_lang_stdout(&stdout),
+                            Ok(stdout) => Ok(crate::scheduler::parse_exec_lang_stdout(&stdout)),
                             // What the guest reported, as a subprocess's stderr is: the
                             // same error, and message, as a native run of the block.
                             Err(message) => {
-                                return Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line));
+                                Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line))
                             }
                         },
                         None => {
@@ -1853,10 +1905,22 @@ impl PortableVm {
                             };
                             let executor =
                                 self.host_caps.as_ref().and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
-                            crate::lang_exec::run_block(executor, &request)?
+                            crate::lang_exec::run_block(executor, &request)
                         }
                     }
                 };
+                // CRUSH-165 hook: the polyglot block, as cap `polyglot.<lang>`
+                // (the same shape as the scheduler's, whichever executor ran it).
+                #[cfg(feature = "transcript")]
+                {
+                    let transcript = &mut self.transcript;
+                    crate::transcript::record_exec_lang(
+                        &mut |name, args, outcome| transcript.record_cap(name, args, outcome),
+                        &gate, lang, code_str, &env_vars,
+                        outcome.as_ref().map(|o| (o.visible.as_str(), &o.result_value)),
+                    );
+                }
+                let outcome = outcome?;
                 self.out_len += outcome.visible.len();
                 if self.out_len > self.quotas.max_output {
                     return Err(VmError::OutputQuota(self.quotas.max_output));
@@ -1892,14 +1956,22 @@ impl PortableVm {
                     return Err(VmError::StackUnderflow);
                 }
                 let operands = self.stack.split_off(self.stack.len() - n);
+                #[cfg(feature = "transcript")]
+                let recorded_args: Vec<Value> =
+                    std::iter::once(Value::Str(raw.clone())).chain(operands.iter().cloned()).collect();
                 let value = crate::ai_args::dispatch(
                     kind,
                     &payload,
                     operands,
                     self.host_caps.as_ref(),
                     self.quotas.max_wall_time_ms,
-                )?;
-                self.push(value);
+                );
+                // CRUSH-165 hook: an AI opcode, as cap `ai_native.<kind>`.
+                #[cfg(feature = "transcript")]
+                self.transcript.record_cap(
+                    &format!("ai_native.{kind}"), &recorded_args, crate::transcript::CapOutcome::of_value(&value),
+                );
+                self.push(value?);
             }
             // CRUSH-33 Commit 2: combined DOM arm mirroring the AI arm above.
             // Gates DOM opcodes through `self.host_caps.get("dom_native.<kind>")`
@@ -1921,6 +1993,9 @@ impl PortableVm {
                         .unwrap_or(Value::Null),
                     None => Value::Null,
                 };
+                // CRUSH-165 hook: a DOM opcode, as cap `dom_native.<kind>`.
+                #[cfg(feature = "transcript")]
+                self.transcript.record_cap(&gate, &[], crate::transcript::CapOutcome::Value(&value));
                 self.push(value);
             }
             SPAWN => {
@@ -2331,7 +2406,18 @@ impl PortableVm {
             vm.quotas = self.quotas.clone();
             vm.ip = entry;
             vm.stack = vec![recv];
-            let result = vm.run()?;
+            // CRUSH-165: the hook's instructions go into this VM's chain, as
+            // the scheduler's nested `run_from` records into its run's.
+            #[cfg(feature = "transcript")]
+            {
+                vm.transcript = self.transcript.clone();
+            }
+            let result = vm.run();
+            #[cfg(feature = "transcript")]
+            {
+                self.transcript = vm.transcript.clone();
+            }
+            let result = result?;
             if !result.output.is_empty() {
                 self.out_len += result.output.len();
                 if self.out_len > self.quotas.max_output {
