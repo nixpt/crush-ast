@@ -1,0 +1,10 @@
+// A module imported by `examples/crush/imports/main.crush` with a selective
+// list: `import textfmt { banner }` binds the bare name `banner`.
+
+fn banner(s) { return "== " + s + " ==" }
+
+fn main() {
+    // An imported module's `main` is ignored; it runs only when this file is
+    // the program itself (`crush-run run textfmt.crush`).
+    io.print(banner("textfmt run directly"))
+}

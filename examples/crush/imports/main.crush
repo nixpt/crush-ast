@@ -1,0 +1,14 @@
+// Source-level imports (CRUSH-110). `import a.b` loads `a/b.crush` from this
+// file's directory, then each `-L DIR`, then each `CRUSH_PATH` directory, at
+// compile time — the imported functions are merged into the program.
+//
+//   crush-run run examples/crush/imports/main.crush
+
+import geometry.shapes as shapes   // qualified: shapes.area(...)
+import textfmt { banner }          // selective: banner(...)
+
+fn main() {
+    io.print(banner("imports"))
+    io.print(shapes.describe(3, 4))
+    io.print(shapes.hypot2(3, 4))
+}

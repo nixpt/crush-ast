@@ -1,0 +1,14 @@
+// A module imported by `examples/crush/imports/main.crush` as
+// `import geometry.shapes as shapes` (CRUSH-110). A module holds definitions
+// only: functions, structs/impls/traits, and imports of other Crush modules.
+// Its `__`-prefixed helpers are called unqualified from inside the module.
+
+fn __square(x) { return x * x }
+
+fn area(w, h) { return w * h }
+
+fn hypot2(a, b) { return __square(a) + __square(b) }
+
+fn describe(w, h) {
+    return conv.to_str(w) + "x" + conv.to_str(h) + " = " + conv.to_str(area(w, h))
+}
