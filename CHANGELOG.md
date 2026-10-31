@@ -14,6 +14,15 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **C API reports runtime errors and routes `io.print` to stdout (CRUSH-205):**
+  `crush_vm_run_casm` treated any `Ok(FastYield)` as success, so a program that
+  raised a runtime error (a stack underflow, a bad jump, an unsupported
+  capability) returned `0` with `last_error` null; it now returns `-2` with a
+  message for a run that did not finish, and clears `last_error` on success.
+  The bare FastVM has no capabilities, so the embedded `cap_call io.print` went
+  nowhere and `examples/embed.c` printed nothing — `run_casm` now runs with a
+  stdout `io.print` capability, so the example prints `42`.
+
 - **Go walker: no more silent drops (CRUSH-198):** the walker matched
   `short_variable_declaration`, but tree-sitter-go emits `short_var_declaration`,
   so `a := 7` was dropped and `a` read as uninitialised; `var`, assignment,
