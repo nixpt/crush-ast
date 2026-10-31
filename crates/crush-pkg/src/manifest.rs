@@ -670,7 +670,7 @@ pub fn scaffold_package(dir: &Path, name: &str) -> anyhow::Result<Manifest> {
 /// facet, the CLI library `crush-pkg new --cli` depends on.
 pub const FACET_GIT_URL: &str = "https://github.com/nixpt/facet";
 /// The facet release the scaffold pins.
-pub const FACET_TAG: &str = "v0.1.1";
+pub const FACET_TAG: &str = "v0.2.0";
 
 /// Where a `--cli` scaffold gets facet from.
 #[derive(Debug, Clone)]

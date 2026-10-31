@@ -56,11 +56,11 @@ fn published_scaffold_pins_facet_as_a_git_dependency() {
     assert!(out.status.success(), "{}", text(&out));
     let toml = std::fs::read_to_string(tmp.path().join("tool2/capsule.toml")).unwrap();
     assert!(toml.contains("git = \"https://github.com/nixpt/facet\""), "{toml}");
-    assert!(toml.contains("tag = \"v0.1.1\""), "{toml}");
+    assert!(toml.contains("tag = \"v0.2.0\""), "{toml}");
     // and the manifest it wrote parses back as a valid git dependency
     let m = crush_pkg::manifest::Manifest::from_file(&tmp.path().join("tool2/capsule.toml")).unwrap();
     assert_eq!(m.dependencies.len(), 1);
-    assert_eq!(m.dependencies[0].tag.as_deref(), Some("v0.1.1"));
+    assert_eq!(m.dependencies[0].tag.as_deref(), Some("v0.2.0"));
 }
 
 #[test]

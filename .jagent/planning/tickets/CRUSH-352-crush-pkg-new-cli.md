@@ -19,7 +19,7 @@ the hello-world template.
 
 - [x] `crush-pkg new NAME --cli` writes `capsule.toml` (category `cli`,
       `required = ["io.print","sys.args","sys.exit"]`, facet as a git dependency at
-      `https://github.com/nixpt/facet` tag `v0.1.1`) and a `main.crush` with a working spec
+      `https://github.com/nixpt/facet` tag `v0.2.0`) and a `main.crush` with a working spec
       (a flag, a typed option with a default, a positional, `--help`).
 - [x] `--facet-path DIR` uses a local checkout as a path dependency instead.
 - [x] `cd NAME && crush-pkg run -- --help` prints facet's help and exits 0;
@@ -29,7 +29,7 @@ the hello-world template.
 ## Resolution
 
 Done on `agent/nova/CRUSH-351` (2026-10-31). `manifest::scaffold_cli_package` +
-`FacetSource` (`FACET_GIT_URL`, `FACET_TAG` = `v0.1.1` are the pinned defaults; bump
+`FacetSource` (`FACET_GIT_URL`, `FACET_TAG` = `v0.2.0` are the pinned defaults; bump
 when facet releases), `New { --cli, --facet-path }` in `main.rs`. Tests:
 `tests/test_new_cli.rs` (3) against `tests/fixtures/mini-facet`. Live-checked with the real
 facet (path and git tag).

@@ -45,7 +45,7 @@ path = "../util"
 [[dependencies]]                  # a git repository: exactly one of tag / rev / branch
 name = "facet"
 git  = "https://github.com/nixpt/facet"
-tag  = "v0.1.1"                   # or rev = "<sha>" / branch = "main"
+tag  = "v0.2.0"                   # or rev = "<sha>" / branch = "main"
 ```
 
 Git dependencies (CRUSH-351) are fetched with the `git` command, so git must
@@ -71,7 +71,7 @@ be installed. The checkout is cached, then treated like a path dependency (its
 ## Starting a command-line program
 
 ```sh
-crush-pkg new mytool --cli            # facet from https://github.com/nixpt/facet @ v0.1.1
+crush-pkg new mytool --cli            # facet from https://github.com/nixpt/facet @ v0.2.0
 crush-pkg new mytool --cli --facet-path ~/src/facet   # a local checkout instead
 cd mytool && crush-pkg run -- --help
 ```

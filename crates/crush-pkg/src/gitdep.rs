@@ -4,7 +4,7 @@
 //! [[dependencies]]
 //! name = "facet"
 //! git  = "https://github.com/nixpt/facet"
-//! tag  = "v0.1.1"          # or rev = "<sha>" / branch = "<name>"
+//! tag  = "v0.2.0"          # or rev = "<sha>" / branch = "<name>"
 //! ```
 //!
 //! A git dependency is fetched into a cache, checked out at one exact
@@ -31,7 +31,7 @@
 //! [[git]]
 //! name = "facet"
 //! url = "https://github.com/nixpt/facet"
-//! ref = "tag:v0.1.1"
+//! ref = "tag:v0.2.0"
 //! rev = "4b9046a…(40 hex)"
 //! ```
 
