@@ -1,34 +1,35 @@
 # State
 
-Updated: 2026-08-23T02:00:00-05:00
+Updated: 2026-10-31 (main `faeb86e8`, workspace 0.8.0). Earlier snapshots are in git history.
 
-crush-ast's foundation and M1 correctness spine are mostly complete, but M1 is
-not closed: CRUSH-1/AI execution, nested array semantics, residual builtin and
-AOT parity findings, and the remaining awesome-crush regressions are open.
-M2's JIT implementation arc is substantially landed through Phases 1-5; full
-conformance, optimization, and AOT-from-JIT closure remain. CRUSH-66 is done:
-BUCKETS-15 merged and the `@lang[pypi:/npm:]` sandbox path was verified live.
-CRUSH-119/120 are complete on the dedicated FastVM/compiler branch. Next:
-close the correctness spine, then choose M2 closure, M3 debugger inspection,
-or M5 AI-native VM execution.
+## Released
 
-## Update 2026-10-09
+- **v0.8.0** (2026-10-30): 27 crates on crates.io; `cargo install crush-lang-sdk` gives `crush`,
+  `crushc`, `crush-run`, `crush-repl`, `crush-compile`, `crush-diff`. 15 workspace crates have never
+  been published (10 walkers, `crush-aot`, `crush-net`, `crush-tui`, `crush-vm-capi`, `crush-walker`),
+  plus `crush-gui`.
+- **0.9.0** is being cut from `main` (2026-10-31): the first release with a GitHub pre-release and
+  prebuilt artifacts.
 
-Appended rather than rewritten: the summary above dates from 2026-08-23 and has
-not been re-verified here. What is true as of this update:
+## On main since v0.8.0 (headline)
 
-- A test-drive sweep on 2026-10-09 (merged as PR #124) filed CRUSH-179..221.
-  CRUSH-213..221 cover places where engines give different results.
-- PR #125 (branch `ccr-12236bee-uj4oar`, open, CI green) fixes the two causes
-  behind GitHub #37 and #92:
-  - CRUSH-187: functions that return early from a branch now get an implicit
-    return.
-  - CRUSH-189: the optimizer no longer makes rewrites that change results.
-  It closes #37 and #92 on merge.
-- awesome-crush `game_of_life` finishes in 286,738 steps. `pong` runs correctly
-  but needs about 2.3M steps, more than the 1M default limit.
-- New invariant: `-O` must not change what a program observably does
-  (`invariants.md`).
-- Known red: `cargo clippy --workspace --all-targets` fails on `3.14` test
-  literals (`approx_constant`) in several crates. CI runs clippy without
-  `--all-targets` and is green.
+- Engines agree on more: FastVM/JIT print heap values (#319), canonical equality (#317), division edge
+  cases fail loudly (#318), JIT frame stride (#316), deterministic CASM layout (#324).
+- Language: string slices and `[::step]` (#347), closures work end to end.
+- Diagnostics: one JSON schema; `crushc`/`crush-run` emit identical records; semantic errors carry
+  line/col (#338). `crush-lint` reports real parser/semantic findings (#336).
+- Tools: `crush debug` / `crush-debug` (#341), `crush gui` / `ui.*` (#344), `tcp.*` sockets behind
+  `--tcp`/`--tcp-listen` (#343), `net.*` on by default and renamed `http.*` refused by name (#340).
+- Walkers: bash/zsh pipelines, redirections, builtins, globs (#322, #327, #334, #345); loud failures
+  instead of silent drops in the Go/Zig/Dart/Java/Wasm walkers (#323, #335).
+- tree-sitter grammar tracks the frontend; CI checks the corpus (#342).
+- Release engineering: publish keeps going past a refused crate (#320); unique ticket IDs in CI (#291);
+  pre-release + artifacts per tag, cheaper PR CI (#346); no accidental 1.0 (#348, pending).
+
+## Known open (see the 1.0 criteria doc for the full list)
+
+- #258 (`@capabilities` ignored by crushc), #261 (ungranted AI op → null), CRUSH-110 (`import` loads
+  nothing), CRUSH-219 (runtime errors not catchable on every engine), CRUSH-211 (conformance not in CI).
+- Walkers: C (#329–#331), shell arithmetic (#332), undocumented refusals (#333).
+- `crush-vm` still path-depends on `../buckets` (nixpt/buckets#7).
+- `docs/planning/RELEASE-1.0-CRITERIA.md` (PR #281): 14 ✅ / 26 🟡 / 27 ❌ as of 2026-10-31.

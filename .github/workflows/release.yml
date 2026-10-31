@@ -17,6 +17,11 @@ name: release
 # release/bump used to fire on every push to main.
 on:
   workflow_dispatch:
+    inputs:
+      allow_major:
+        description: "Allow a major bump (needed only to mint 1.0.0 on purpose; a breaking change on 0.x bumps minor)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -37,6 +42,7 @@ jobs:
         env:
           BUMPVER_MAIN_BRANCH: main
           BUMPVER_GIT_USER: crush-ast-release
+          BUMPVER_ALLOW_MAJOR: ${{ inputs.allow_major && '1' || '0' }}
           BUMPVER_GIT_EMAIL: release@crush-ast.local
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # so `gh release create` inside the script authenticates
         run: ./scripts/bump-version.sh
