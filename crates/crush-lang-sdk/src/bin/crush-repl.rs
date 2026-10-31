@@ -45,12 +45,26 @@ struct Args {
     /// `-L` directory, then each `CRUSH_PATH` directory (CRUSH-110).
     #[arg(short = 'L', long = "lib-path", value_name = "DIR")]
     lib_paths: Vec<std::path::PathBuf>,
+
+    /// Index these `.crush` files (a directory expands to every `*.crush`
+    /// below it; repeatable) and enable the read-only `codebase.*`
+    /// capabilities over them. Passing the flag is the grant.
+    #[arg(long = "codebase", value_name = "FILE_OR_DIR")]
+    codebase: Vec<std::path::PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     crush_lang_sdk::theme::init_styling();
 
+    let codebase = if args.codebase.is_empty() {
+        None
+    } else {
+        Some(std::sync::Arc::new(
+            crush_lang_sdk::runtime::index_files(&args.codebase)
+                .map_err(|e| anyhow::anyhow!("--codebase: {e}"))?,
+        ))
+    };
     let config = ReplConfig {
         quotas: Quotas {
             max_steps: args.max_steps,
@@ -63,6 +77,7 @@ fn main() -> anyhow::Result<()> {
         message_format: args.message_format,
         import_paths: crush_frontend::import_system::ImportOptions::with_crush_path(args.lib_paths)
             .search_paths,
+        codebase,
     };
 
     // Errors during REPL eval are dispatched *inside* `run()` against

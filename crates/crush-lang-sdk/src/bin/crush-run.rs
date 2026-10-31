@@ -113,6 +113,15 @@ struct RunArgs {
     #[arg(long)]
     akg: bool,
 
+    /// Index these `.crush` files (a directory expands to every `*.crush` below
+    /// it; repeatable) and enable the read-only `codebase.*` capabilities over
+    /// them: `codebase.modules()`, `.definition(name)`, `.callers(name)`,
+    /// `.invariants(name)`, `.exhaustive_sites(name)`, `.wip()`, `.temporaries()`,
+    /// `.stale_temporaries()`, `.decisions()`, ... Passing the flag is the grant:
+    /// without it the program cannot see any source but its own.
+    #[arg(long = "codebase", value_name = "FILE_OR_DIR")]
+    codebase: Vec<PathBuf>,
+
     /// Enable process host capability (process.exec).
     #[arg(long)]
     process: bool,
@@ -334,7 +343,9 @@ fn load_program(
         InputFormat::CasmJson | InputFormat::CasmBinary => {
             // Gated load (`version` major); the CASM manifest declares the caps.
             let casm = formats::load_casm(path, format)?;
-            Ok((crush_lang_sdk::compile::casm_to_vm(&casm)?, None))
+            let program = crush_lang_sdk::compile::casm_to_vm(&casm)?;
+            let declared = program.manifest.declared_capabilities.clone();
+            Ok((program, declared))
         }
         InputFormat::Cvms => {
             let source = std::fs::read_to_string(path)?;
@@ -348,7 +359,11 @@ fn load_program(
             }
             Ok((crush_lang_sdk::assemble(&source, Some(&permissions), None)?, None))
         }
-        InputFormat::Cvm1 => Ok((crush_vm::Program::from_blob(&std::fs::read(path)?)?, None)),
+        InputFormat::Cvm1 => {
+            let program = crush_vm::Program::from_blob(&std::fs::read(path)?)?;
+            let declared = program.manifest.declared_capabilities.clone();
+            Ok((program, declared))
+        }
     }
 }
 
@@ -505,6 +520,10 @@ fn list_caps() {
     println!("  akg.write ID JSON_UNIT");
     println!("  akg.read ID");
     println!("  akg.search QUERY");
+    println!("Codebase capabilities (enable with --codebase FILE_OR_DIR, repeatable; read-only):");
+    println!("  codebase.modules / .definition NAME / .callers NAME / .invariants NAME");
+    println!("  codebase.exhaustive_sites NAME / .uncovered_paths NAME / .wip / .temporaries");
+    println!("  codebase.stale_temporaries / .decisions / .annotation_history NAME");
     println!("Process capabilities (enable with --process):");
     println!("  process.exec CMD [ARGS...]  run subprocess, return JSON stdout/stderr/exit_code");
     println!("Cryptography capabilities (enable with --crypto):");
@@ -638,6 +657,11 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         .akg(args.akg)
         .process(args.process)
         .crypto(args.crypto);
+    if !args.codebase.is_empty() {
+        builder = builder.codebase(
+            crush_lang_sdk::runtime::index_files(&args.codebase).map_err(|e| anyhow::anyhow!("--codebase: {e}"))?,
+        );
+    }
 
     // `gpu.launch` compiles kernels from the program's CASM, which the CVM1
     // program doesn't keep — so give the capability its own compile of the source.
@@ -737,6 +761,17 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
                 &args.lib_paths,
                 matches!(args.message_format, MessageFormat::Text),
             )?;
+            // CRUSH-369: annotation warnings (stale @wip, expired @temporary,
+            // wildcard in an exhaustive match, @must-call-after): advisory,
+            // stderr, in the same format as the other messages.
+            if format == InputFormat::Crush {
+                if let Ok(parsed) = crush_frontend::parse_file(&args.path, &import_options(&args.lib_paths)) {
+                    crush_lang_sdk::compile::print_annotation_diagnostics(
+                        &crush_lang_sdk::compile::annotation_diagnostics(&parsed, &args.path.display().to_string()),
+                        matches!(args.message_format, MessageFormat::Json),
+                    );
+                }
+            }
             // Compile warnings (CRUSH-270's polyglot implicit-output/clobber
             // warnings) go to stderr, never the program's stdout.
             for warning in &program.warnings {

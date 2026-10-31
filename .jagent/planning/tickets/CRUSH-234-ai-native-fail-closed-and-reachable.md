@@ -27,8 +27,14 @@
 
 ## Success criteria
 
-- [ ] An ungranted AI call is a runtime error naming the capability (supersedes the
-      CRUSH-156 null decision — record it).
+- [x] An ungranted AI call is a runtime error naming the capability (supersedes the
+      CRUSH-156 null decision). Done: `ai_args::not_granted` -> `VmError::CapDenied` with the
+      same text on the scheduler and PortableVm; FastVM embedders get
+      `fastvm::ai_request_denied`; AOT Rust/C refuse the ten `ai_*` ops at compile time
+      (`crush_aot::refuse_ai`, covers the `ai_tool_chain`/`ai_goal_decl` spellings the old
+      codegen never matched). `crush-run`/`crush` already refuse statically via
+      `effects::missing_grants`; the runtime error is the backstop for precompiled
+      `.cvm1`, `crush-vm run`, and embedders. Behaviour change (0.x, intended).
 - [ ] `semantic_switch` either works with a granted provider or is a compile error.
 - [ ] One real `QueryProvider` (host-supplied, e.g. HTTP to a configured endpoint) behind
       an explicit grant; `crush-run` flag to enable it.

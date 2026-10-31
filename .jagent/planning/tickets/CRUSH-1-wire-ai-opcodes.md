@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-1 |
 | **Priority** | P1 |
-| **Status** | Done (superseded by CRUSH-32, closed `07f64ee`) — the 10 AI opcodes are wired to real bytecode + host_caps-gated fail-loud dispatch; the 3 AI *statements* that still lower to a silent NOP (`capability_discovery`/`adaptation_request`/`semantic_switch`, `compile.rs:697-698`) are tracked separately as **CRUSH-265** (M9) |
+| **Status** | Done (superseded by CRUSH-32, closed `07f64ee`) — the 10 AI opcodes are wired to real bytecode + host_caps-gated dispatch (an ungranted op was a silent `null` until CRUSH-234 made it a named `CapDenied` error; AOT refuses AI ops); the 3 AI *statements* that still lower to a silent NOP (`capability_discovery`/`adaptation_request`/`semantic_switch`, `compile.rs:697-698`) are tracked separately as **CRUSH-265** (M9) |
 | **Phase** | M1 |
 | **Assignee** | unassigned |
 | **Dependencies** | none |

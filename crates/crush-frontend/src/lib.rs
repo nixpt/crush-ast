@@ -1,5 +1,3 @@
-pub mod ai_runtime;
-pub mod cson_desugar;
 pub mod cast_enrich;
 pub mod compiler;
 mod cosm_kind;
@@ -136,11 +134,20 @@ pub fn check_source(
     source: &str,
 ) -> Result<(crush_cast::Program, Vec<diagnostics::CompilerDiagnostic>)> {
     let program = parse_source(source)?;
-    let mut diags = exhaustive_check::check_exhaustiveness(&program);
-    diags.extend(wip_check::check_wip(&program));
-    diags.extend(wip_check::check_temporaries(&program));
-    diags.extend(mutation_check::check_mutation_ordering(&program));
+    let diags = check_program(&program);
     Ok((program, diags))
+}
+
+/// The annotation analysis passes (exhaustiveness, stale `@wip`, expired
+/// `@temporary`, `@must-call-after`) over an already-parsed program. The one
+/// list of passes: [`check_source`] (and so `crush-lint`) and the `crushc` /
+/// `crush-run` warning output (CRUSH-369) all go through it.
+pub fn check_program(program: &crush_cast::Program) -> Vec<diagnostics::CompilerDiagnostic> {
+    let mut diags = exhaustive_check::check_exhaustiveness(program);
+    diags.extend(wip_check::check_wip(program));
+    diags.extend(wip_check::check_temporaries(program));
+    diags.extend(mutation_check::check_mutation_ordering(program));
+    diags
 }
 
 /// Compile an already-parsed CAST Program into CASM bytecode.

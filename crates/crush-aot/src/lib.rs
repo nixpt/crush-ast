@@ -68,6 +68,42 @@ fn refuse_green_task(program: &casm::Program, backend: &'static str) -> Result<(
         .map_err(|msg| UnsupportedOps { backend, ops: vec![msg] })
 }
 
+/// CRUSH-234: the ten `ai_*` opcodes name host capabilities (`ai_native.*`)
+/// that a standalone native binary has no way to be granted or to serve, so
+/// the old behaviour — push a made-up `{ok, kind, echo}` stub and carry on —
+/// silently invented model output. AOT now refuses them at compile time, naming
+/// the op. Both spellings the frontend/CASM use are covered (`ai_tool_chain` /
+/// `ai_toolchain`, `ai_goal_decl` / `ai_goal_declaration`).
+const AI_OPS: &[&str] = &[
+    "ai_query",
+    "ai_synthesize",
+    "ai_agent_delegation",
+    "ai_semantic_match",
+    "ai_learning_loop",
+    "ai_context_aware",
+    "ai_toolchain",
+    "ai_tool_chain",
+    "ai_goal_declaration",
+    "ai_goal_decl",
+    "ai_progress_update",
+    "ai_knowledge_sharing",
+];
+
+fn refuse_ai(program: &casm::Program, backend: &'static str) -> Result<(), UnsupportedOps> {
+    let mut ops = Vec::new();
+    for (name, func) in &program.functions {
+        for (i, instr) in func.body.iter().enumerate() {
+            if AI_OPS.contains(&instr.op.as_str()) {
+                ops.push(format!(
+                    "`{}` (fn {name}, instruction {i}): AI ops need a granted `ai_native.*` host capability, which AOT binaries cannot be given; run it on the VM with the AI grant instead",
+                    instr.op
+                ));
+            }
+        }
+    }
+    if ops.is_empty() { Ok(()) } else { Err(UnsupportedOps { backend, ops }) }
+}
+
 /// Compile Crush source to native code, load it, and extract an i64 result.
 ///
 /// Convenience function for the common case of calling `main()`.

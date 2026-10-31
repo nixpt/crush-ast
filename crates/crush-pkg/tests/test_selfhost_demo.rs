@@ -232,6 +232,7 @@ fn test_sno_execution() {
         },
         manifest: CasmManifest {
             permissions: vec!["io.print".to_string()],
+            ..Default::default()
         },
         ..Default::default()
     };

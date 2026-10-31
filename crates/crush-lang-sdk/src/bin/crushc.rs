@@ -98,6 +98,13 @@ struct Cli {
     #[arg(short = 'v', long)]
     verbose: bool,
 
+    /// Fail the build (exit 1, after printing them) if the annotation checks
+    /// (stale `@wip`, expired `@temporary`, wildcard in an exhaustive match,
+    /// `@must-call-after`) produce any warning. Without it they are printed
+    /// and the build goes on.
+    #[arg(long = "deny-warnings")]
+    deny_warnings: bool,
+
     /// Format for diagnostic output on errors: `text` (default, colored
     /// terminal output) or `json` (newline-delimited records for editor /
     /// IDE / LSP bridge integration).
@@ -285,6 +292,29 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         }
     }
 
+    // CRUSH-369: the annotation checks `crush-lint` runs (stale @wip, expired
+    // @temporary, exhaustiveness, @must-call-after) as warnings. Run on the
+    // enriched, import-merged program; never fatal unless --deny-warnings.
+    if cli.emit != EmitKind::Ast {
+        let mut checked = program.clone();
+        crush_frontend::cast_enrich::enrich_cast(&mut checked);
+        let warnings =
+            crush_lang_sdk::compile::annotation_diagnostics(&checked, &cli.input.display().to_string());
+        crush_lang_sdk::compile::print_annotation_diagnostics(
+            &warnings,
+            matches!(cli.message_format, MessageFormat::Json),
+        );
+        if cli.deny_warnings && !warnings.is_empty() {
+            if matches!(cli.message_format, MessageFormat::Text) {
+                eprintln!(
+                    "crushc: {} warning(s) treated as errors (--deny-warnings)",
+                    warnings.len()
+                );
+            }
+            std::process::exit(1);
+        }
+    }
+
     // `--emit cast`: the program as parsed, imports merged, before the
     // polyglot pass (which the loader runs again when the CAST is compiled).
     if cli.emit == EmitKind::Cast {
@@ -359,6 +389,14 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
 
     // --check: stop after type-checking
     if cli.check {
+        // The declared-capability check needs the bytecode's names, so --check
+        // compiles too (cheap) rather than reporting "no errors" for a
+        // program the real build would refuse.
+        if let Some(declared) = lowered.manifest.as_ref().and_then(|m| m.capabilities.clone()) {
+            let casm_prog = crush_frontend::compiler::Compiler::new()
+                .compile_lowered(lowered.clone(), cosm.clone())?;
+            enforce_declared_capabilities(cli, &casm_prog, Some(&declared));
+        }
         eprintln!("crushc: no errors detected");
         return Ok(());
     }
@@ -377,7 +415,12 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
 
     // ── Step 4: Compile to CASM then VM ─────────────────────────────
     let mut compiler = crush_frontend::compiler::Compiler::new();
+    let declared = lowered.manifest.as_ref().and_then(|m| m.capabilities.clone());
     let casm_prog = compiler.compile_lowered(lowered, cosm)?;
+    // #258: `@capabilities` is the reviewable contract; enforce it here the way
+    // `crush-run run FILE.crush` and the SDK compile path do. The declaration
+    // itself rides in the artifact's manifest (`casm.manifest.declared`).
+    enforce_declared_capabilities(cli, &casm_prog, declared.as_deref());
     let dest = destination(cli);
     match cli.emit {
         EmitKind::Casm => {
@@ -420,6 +463,27 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         }
         _ => unreachable!(),
     }
+}
+
+/// #258: exit 1 with the same `[compile] … not declared in @capabilities`
+/// error `crush-run run FILE.crush` gives, in text or JSON.
+fn enforce_declared_capabilities(cli: &Cli, casm_prog: &casm::Program, declared: Option<&[String]>) {
+    let Some(declared) = declared else { return };
+    let Err(e) = crush_lang_sdk::compile::check_declared_capabilities(casm_prog, declared) else {
+        return;
+    };
+    match cli.message_format {
+        MessageFormat::Text => eprint!("{}", crush_lang_sdk::theme::render_anyhow_error(&e, "compile")),
+        MessageFormat::Json => eprint!(
+            "{}",
+            crush_lang_sdk::theme::render_diagnostics_ndjson(&crush_lang_sdk::theme::diagnostics_for_error(
+                &e,
+                Some(&cli.input.display().to_string()),
+                crush_lang_sdk::theme::JsonDiagnostic::CODE_IO,
+            ))
+        ),
+    }
+    std::process::exit(1);
 }
 
 /// Where an emit goes: stdout or a file.

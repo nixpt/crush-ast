@@ -148,6 +148,20 @@ pub fn catalog() -> Vec<CapInfo> {
     ]);
     #[cfg(feature = "db")]
     grants.push(("--db PATH", new().db(":memory:")));
+    let mut extra: Vec<(&'static str, HostCaps)> = Vec::new();
+
+    // `--codebase`: registered with a fixed date, not via the builder, whose
+    // `register` reads the wall clock (`Utc::now()` panics on wasm32, and the
+    // catalog is built at startup by crush-web).
+    {
+        let mut caps = crush_vm::HostCaps::new();
+        crate::codebase::register_at(
+            &mut caps,
+            Arc::new(crush_index::CrushIndex::new()),
+            chrono::NaiveDate::from_ymd_opt(2000, 1, 1).expect("valid date"),
+        );
+        extra.push(("--codebase FILE", declare(caps)));
+    }
 
     let mut out = std::collections::BTreeMap::new();
     for spec in crush_vm::capabilities().values() {
@@ -167,8 +181,8 @@ pub fn catalog() -> Vec<CapInfo> {
             },
         );
     }
-    for (grant, builder) in grants {
-        let caps = builder.build();
+    let built = grants.into_iter().map(|(g, b)| (g, b.build())).chain(extra);
+    for (grant, caps) in built {
         for name in caps.names() {
             if out.contains_key(name) {
                 continue;
