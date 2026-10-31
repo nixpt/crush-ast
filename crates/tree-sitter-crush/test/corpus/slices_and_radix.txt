@@ -1,0 +1,90 @@
+==================
+Slices
+==================
+
+let a = s[0:5]
+let b = s[-5:]
+let c = xs[:2]
+let d = u[::-1]
+let e = xs[1:9:2]
+let f = xs[:]
+
+---
+
+(program
+  (var_decl
+    (identifier)
+    (expression
+      (index_expression
+        (identifier)
+        (slice
+          (expression
+            (int_literal))
+          (expression
+            (int_literal))))))
+  (var_decl
+    (identifier)
+    (expression
+      (index_expression
+        (identifier)
+        (slice
+          (expression
+            (int_literal))))))
+  (var_decl
+    (identifier)
+    (expression
+      (index_expression
+        (identifier)
+        (slice
+          (expression
+            (int_literal))))))
+  (var_decl
+    (identifier)
+    (expression
+      (index_expression
+        (identifier)
+        (slice
+          (expression
+            (int_literal))))))
+  (var_decl
+    (identifier)
+    (expression
+      (index_expression
+        (identifier)
+        (slice
+          (expression
+            (int_literal))
+          (expression
+            (int_literal))
+          (expression
+            (int_literal))))))
+  (var_decl
+    (identifier)
+    (expression
+      (index_expression
+        (identifier)
+        (slice)))))
+
+==================
+Hex And Binary Integer Literals
+==================
+
+let h = 0x65E5
+let b = 0b1010
+let n = -0XFF
+
+---
+
+(program
+  (var_decl
+    (identifier)
+    (expression
+      (int_literal)))
+  (var_decl
+    (identifier)
+    (expression
+      (int_literal)))
+  (var_decl
+    (identifier)
+    (expression
+      (int_literal))))
