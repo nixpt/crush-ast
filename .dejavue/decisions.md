@@ -1310,3 +1310,9 @@ crushc --emit casm changed between runs: the compiler sorted functions by name f
 Reason:
 The Go walker matched tree-sitter-go's node `short_variable_declaration`, which does not exist (it is `short_var_declaration`), so `a := 7` fell through the `_ => Ok(None)` catch-all and `a` read as uninitialised; var/assignment/inc/for/block were dropped the same way, and unknown expressions became NullLiteral. Fix: visit_statement -> visit_statements returning Vec (one node can yield several statements, e.g. a C-style for -> init + while), implement var/assignment/inc/dec/for(all shapes)/block, and make the catch-all a loud error. The same rule as the rest of the repo: exact or loud, never silently wrong. A multi-value return and unknown expressions also error now. Known divergence left as a follow-up: fmt.Println(a, b) maps to io.print which concatenates, while Go joins with spaces.
 
+
+## 2026-10-30T19:40:05-05:00 — [ARCHITECTURAL] A spawned task is killed when the run ends, and --task states its process grant (CRUSH-182)
+
+Reason:
+task.start spawned a std::process::Command child that was tracked in a TaskState but never killed on drop, so a program that ran task.start and exited left the child running (sleep 333 outlived crush-run; touch created files). TaskState now implements Drop, killing and reaping every still-running task when the capability registry drops at the end of the run - a host that wants a detached task can stop tracking it first. Also, --task spawns host processes but its help never said so; the help text now states that --task grants process/spawn, which the effects catalog already listed for task.start.
+

@@ -14,6 +14,12 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Spawned tasks no longer outlive the VM (CRUSH-182):** `TaskState` now
+  implements `Drop`, killing and reaping every still-running task when the
+  capability registry is dropped at the end of a run — a spawned `sleep 333`
+  no longer survives `crush-run`. `--task` spawns host processes, so its help
+  text now says plainly that it grants `process/spawn`.
+
 - **Deterministic CASM function layout (CRUSH-188):** `crushc --emit casm` laid
   the functions out into the code buffer by iterating a `HashMap`, so the same
   source compiled to different CASM (and different label numbering) from run to
