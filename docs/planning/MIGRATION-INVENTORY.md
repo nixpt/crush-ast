@@ -451,3 +451,28 @@ absolute paths from anything moved (found in `crushed-book`, `joker-*`, `crush-c
 | `_rama-archive` | OS capsules, not Crush |
 | `incubator` except the shadow-capsule *idea* | private, transcripts, superseded runners/registries |
 
+
+## Re-check 2026-10-31 (exosphere `0c35ddec`)
+
+Re-swept the exosphere trees this inventory covers against crush-ast `main` (`73760920`). The only
+exosphere change to them since the `c7ee194c` baseline is EXO-216 (2026-10-09: `runtimes/*` retired
+from exosphere's workspace; the files remain).
+
+- **`core/base/stdlib`** — every capability name it defines (181, incl. macro-generated ones) was
+  called in `crush-run` with every grant on: **130 exist** in crush-ast (the 12 `binary.ReadU16Le`-
+  style names as snake_case `binary.read_u16_le` …); **the other 51 are exactly §2's dead/out/declined
+  rows** (`dom.*`, `gfx.*`, `data.*`, `agent.*`, `learn.*`, `ai.embed/tokenize`, `polyglot.*`,
+  `python/js.stdlib`, `storage.*`, `task.restart/watchdog`, `text.echo`).
+- **`core/base/common`** — unchanged; still superseded/out (row above). crush-ast neither depends on
+  it nor uses its names.
+- **`platform/abi-c`, `platform/sdk/{crush-sdk,vm-runtime,capsule-sdk,capsule-ui}`** — unchanged;
+  dead/out as above. `crush-sdk-py` (local shim: capabilities log and return `None`) and
+  `crush-sdk-ts` (`@exosphere/capsule-sdk`) are exosphere capsule guest SDKs — out. `exo-bliss-net`
+  is published from arniko/bliss, not crush-ast's.
+- **`platform/runtimes/*`** — the port items are done: AI tool-chain engine + arg plumbing
+  (CRUSH-156/157/158), debugger events/redaction (CRUSH-160), walker PATH fallback and binary names
+  (`language_walkers.rs::resolve_binary`, `go_walker`/`zig_walker`/`wasm_walker`); Lua declined
+  (CRUSH-162). The python worker's bridge protocol is captured in
+  `docs/design/exec-lang-callbacks.md` (CRUSH-166) before its source is deleted.
+- **Still open from this inventory:** CRUSH-164 (wildcard/expiry grants, from
+  `vm-runtime/enforcement.rs`) — optional, no consumer.
