@@ -70,14 +70,13 @@ Windows registry associations are not provided yet.
 
 Crush is **not** a Linguist language and this repository does not pretend it is. Linguist
 ([contributing guide](https://github.com/github-linguist/linguist/blob/main/CONTRIBUTING.md))
-requires a language to have a unique, in-use extension with at least **200 files in distinct public
+requires a language to have a unique, in-use extension with at least **use in at least 200 distinct public
 repositories** (and a TextMate/tree-sitter grammar under a compatible licence, plus samples) before
 it will be added. When the ecosystem reaches that, the PR needs: `lib/linguist/languages.yml`
 entry (`.crush`, `tm_scope: source.crush`), the grammar from
 [`crush-vscode/syntaxes`](https://github.com/nixpt/crush-vscode) (MIT OR Apache-2.0), and a handful of
 samples from `examples/crush/`. Until then `.gitattributes` only marks compiled artifacts
-(`*.cvm1`, `*.castb`, `*.casmb`) as `binary linguist-generated`; to get highlighting on your own
-repository today, add `*.crush linguist-language=Rust` (closest syntax) in its `.gitattributes`.
+(`*.cvm1`, `*.castb`, `*.casmb`) as `binary linguist-generated`.
 
 ## Maintaining
 
