@@ -39,6 +39,15 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             privileged: false,
             summary: "write args (concatenated) to output",
         });
+        // stdout's twin (CRUSH-241): same line shape, different stream, so a
+        // script's data and its diagnostics can be redirected separately.
+        reg(CapabilitySpec {
+            name: "io.eprint",
+            argc: None,
+            returns: false,
+            privileged: false,
+            summary: "write args (concatenated) to stderr, with a trailing newline",
+        });
         reg(CapabilitySpec {
             name: "io.write",
             argc: Some(1),

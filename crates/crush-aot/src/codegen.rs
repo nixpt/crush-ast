@@ -1143,6 +1143,14 @@ fn emit_body(
                     }
                     out.push_str(&next_pc_str);
                 }
+                "io.eprint" => {
+                    // stdout's twin on stderr (CRUSH-241): same concatenation + newline.
+                    let n = argc;
+                    if n == 0 { out.push_str(&format!("{ind}eprint!(\"\\n\");\n")); } else {
+                    out.push_str(&format!("{ind}{{ let mut __parts: Vec<String> = Vec::with_capacity({n}); for _ in 0..{n} {{ __parts.push(stack.pop().unwrap_or(RuntimeValue::Null).to_string()); }} __parts.reverse(); let __refs: Vec<&str> = __parts.iter().map(|s| s.as_str()).collect(); eprint!(\"{{}}\", io_print_line(&__refs)); }}\n"));
+                    }
+                    out.push_str(&next_pc_str);
+                }
                 "io.write" => {
                     out.push_str(&format!("{ind}{{ let __v = stack.pop().unwrap_or(RuntimeValue::Null); print!(\"{{}}\", __v); }}\n"));
                     out.push_str(&next_pc_str);
