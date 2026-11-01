@@ -14,6 +14,59 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-01
+
+- Merge pull request #396 from nixpt/agent/claude/CRUSH-206
+- Merge origin/main into agent/claude/CRUSH-206 (union-resolve CHANGELOG/.dejavue)
+- Merge pull request #392 from nixpt/agent/opencode/CRUSH-221
+- Merge origin/main into agent/opencode/CRUSH-221 (union-resolve CHANGELOG/.dejavue)
+- Merge pull request #400 from nixpt/agent/claude/CRUSH-229
+- Merge origin/main into agent/claude/CRUSH-229 (union-resolve CHANGELOG/.dejavue)
+- Merge pull request #399 from nixpt/agent/opencode/CRUSH-240
+- Merge origin/main into agent/opencode/CRUSH-240 (union-resolve CHANGELOG/.dejavue)
+- Merge pull request #397 from nixpt/agent/opencode/CRUSH-239
+- Merge origin/main into agent/opencode/CRUSH-239 (keep both #391 and #397 tests)
+- Merge pull request #391 from nixpt/agent/opencode/CRUSH-241
+- Merge origin/main into agent/opencode/CRUSH-241 (union-resolve CHANGELOG/.dejavue)
+- Merge pull request #402 from nixpt/agent/claude/CRUSH-186
+- Merge origin/main into agent/claude/CRUSH-186 (combine with #398's process.exec map)
+- Merge pull request #398 from nixpt/agent/opencode/CRUSH-242
+- fix(vm): wall deadline uses checked_add so a huge limit can't panic
+- fix: no wall-clock deadline on wasm32 (Instant::now panics there) (CRUSH-186)
+- test(crush-web): host-cap failure is reported as <cap>: <message> (CRUSH-241)
+- fix: bound the whole run by max_wall_time_ms; string + is not output (CRUSH-186)
+- fix(crush-aot): one float-to-text rule across VM, Rust AOT and C AOT (CRUSH-229)
+- docs(CRUSH-240): ticket resolution and changelog
+- feat(sdk): fs.stat, fs.is_file, fs.append and an fs.find type filter (CRUSH-240)
+- test(sdk): pin fs.stat, fs.is_file, fs.append and fs.find -type (CRUSH-240)
+- docs(planning): CRUSH-242 in review — resolution, changelog, dejavue decision
+- feat(sdk): process.exec returns a result map (CRUSH-242)
+- feat: io.read_line() returns null at EOF so blank lines and end of input differ (CRUSH-239)
+- fix(crush-python): import as `crush`; validate_cast verdict; run_casm raises (CRUSH-206)
+- feat(tree-sitter-crush): float_literal accepts decimal exponents (CRUSH-221)
+- fix(crush-frontend): lex decimal exponents in float literals (CRUSH-221)
+- feat: io.eprint, --stats-gated run summary, <cap>: <message> for failing capabilities (CRUSH-241)
+- Merge pull request #383 from nixpt/agent/nova/CRUSH-370-invariant-runtime
+- Merge origin/main into CRUSH-370 (resolve crushc.rs with #380's capability check)
+- Merge pull request #384 from nixpt/agent/nova/CRUSH-371-ai-docs-honesty
+- Merge pull request #382 from nixpt/agent/nova/CRUSH-369-annotation-warnings
+- Merge pull request #381 from nixpt/agent/nova/CRUSH-368-codebase-flag
+- Merge pull request #380 from nixpt/agent/nova/gh-258-crushc-capabilities
+- Merge pull request #379 from nixpt/agent/nova/CRUSH-234-ai-fail-closed
+- Merge pull request #376 from nixpt/agent/nova/gh-375-semantic-match-stack
+- fix(sdk): build the --codebase catalog entry without the wall clock
+- test(crush-pkg): casm::Manifest initializer uses Default for the new field
+- test: drop stray partial test file (duplicate of crushc_invariant_runtime.rs)
+- docs: AI-native status honesty, remove dead ai_runtime and cson_desugar
+- fix(crushc): remove --invariant-runtime, which called a capability that does not exist
+- feat(sdk): annotation warnings in crushc and crush-run, crushc --deny-warnings
+- feat(sdk): crush-run --codebase / crush-repl --codebase serve codebase.* over source files
+- fix(crushc): enforce @capabilities and keep the declaration in the artifact
+- fix(vm): AI ops fail closed when ungranted instead of returning null
+- fix(frontend): ai_semantic_match() from source declares stack_args
+
+
+
 - fix(crush-python): the module imports as `crush` (pyproject `module-name`); `validate_cast` returns False instead of raising; `run_casm` raises on runtime faults; CI smoke-tests the wheel import (CRUSH-206)
 - Float literals take a decimal exponent: `1e10`, `1.5E10`, `1e-7`, `2.5e+3` lex as one Float (CRUSH-221). A malformed exponent (`1e`, `1e+`, `1.5e`, `1.e5`) is now an "invalid number literal" error, not a parse error or a field access. The `--emit ast` view renders large floats (`1e20`) as float literals instead of an out-of-range integer.
 - fix(crush-aot): C AOT printed an exact tie at the last shortest float digit half-to-even (`1000000000000000.2`), the VM half-up (`...0.3`); float-to-text is now one shared function (`crush_vm::float_text`) embedded by Rust AOT, with a VM/Rust/C differential test (CRUSH-229)
