@@ -70,7 +70,9 @@ pub fn deadline_in(limit_ms: u64) -> Option<Instant> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        Some(Instant::now() + Duration::from_millis(limit_ms))
+        // `checked_add`: a huge limit (e.g. u64::MAX for "no limit") must not panic on
+        // platforms whose Instant is a u64 of nanoseconds; it just means no deadline.
+        Instant::now().checked_add(Duration::from_millis(limit_ms))
     }
 }
 
