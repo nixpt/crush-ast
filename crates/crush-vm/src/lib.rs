@@ -26,6 +26,8 @@ pub mod arithmetic;
 pub mod make_range;
 pub mod seq;
 pub mod num_text;
+pub mod float_text;
+pub mod float_text_core;
 pub mod rust_debug;
 pub mod rust_methods;
 pub mod rust_methods_core;

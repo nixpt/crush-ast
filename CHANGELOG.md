@@ -14,6 +14,7 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(crush-aot): C AOT printed an exact tie at the last shortest float digit half-to-even (`1000000000000000.2`), the VM half-up (`...0.3`); float-to-text is now one shared function (`crush_vm::float_text`) embedded by Rust AOT, with a VM/Rust/C differential test (CRUSH-229)
 - feat(sdk): `fs.stat` (type, size, modified), `fs.is_file`, `fs.append`, and a
   `find -type` filter on `fs.find`, behind `--fs` / `--fs-root` (CRUSH-240)
 - feat: `io.read_line()` capability (CRUSH-239). Like `io.read()` but returns `null` at end of input, so a blank line (`""`) and EOF are distinguishable: `while line != null { ... line = io.read_line() }` no longer stops at the first blank line of piped input. Implemented once in `crush_vm::io_read` and wired into the scheduler, PortableVm (including the pause/resume host contract and crush-web), the AOT Rust, AOT C and `crush-aotc` backends. `io.read()` is unchanged (`""` at EOF), so existing scripts keep working; grant `io.read_line` with `--cap io.read_line` where caps are explicit.
