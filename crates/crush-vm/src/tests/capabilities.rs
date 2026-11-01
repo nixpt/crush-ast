@@ -161,6 +161,15 @@ fn map_is_truthy_only_when_non_empty() {
     assert!(Value::new_map(m).is_truthy());
 }
 
+#[test]
+fn cap_io_read_line_is_registered_as_zero_arg_capability() {
+    let spec = crate::capabilities()
+        .get("io.read_line")
+        .expect("io.read_line should be in the portable registry");
+    assert_eq!(spec.argc, Some(0));
+    assert!(spec.returns);
+}
+
 // ── CRUSH-241: `io.eprint` is stdout's stderr twin ──────────────────────────
 
 #[test]
