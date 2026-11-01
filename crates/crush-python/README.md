@@ -13,6 +13,9 @@ pip install maturin
 # Build and install in the current venv
 maturin develop --release
 
+# Smoke test the import (the module is `crush`, not `crush_python`)
+python -I -c "import crush; print(crush.cast_version())"
+
 # Or build a wheel
 maturin build --release
 ```
@@ -22,11 +25,11 @@ maturin build --release
 ```python
 import crush
 
-print(crush.cast_version())  # "0.2"
+print(crush.cast_version())  # "0.1.0" (== crush_cast::CAST_VERSION)
 
 # Parse and validate a CAST program
-program = crush.parse_cast('{"cast_version": "0.2", ...}')
-valid = crush.validate_cast('{"cast_version": "0.2", ...}')
+program = crush.parse_cast('{"cast_version": "0.1.0", ...}')
+valid = crush.validate_cast('{"cast_version": "0.1.0", ...}')  # True/False, never raises
 ```
 
 ## Integration with Chroma
