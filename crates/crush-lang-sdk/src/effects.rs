@@ -31,9 +31,9 @@ pub fn effects_of(name: &str) -> Option<&'static [&'static str]> {
         // Always registered: the program's own arguments, and ending the program.
         "sys.args" | "sys.exit" => &[],
         // --fs
-        "fs.read" | "fs.cat" | "fs.exists" | "fs.is_dir" | "fs.list" | "fs.ls" | "fs.find" | "fs.pwd"
-        | "fs.cd" => FS_READ,
-        "fs.write" | "fs.mkdir" | "fs.rm" | "fs.mv" | "fs.touch" => FS_WRITE,
+        "fs.read" | "fs.cat" | "fs.exists" | "fs.is_dir" | "fs.is_file" | "fs.stat" | "fs.list"
+        | "fs.ls" | "fs.find" | "fs.pwd" | "fs.cd" => FS_READ,
+        "fs.write" | "fs.append" | "fs.mkdir" | "fs.rm" | "fs.mv" | "fs.touch" => FS_WRITE,
         "fs.cp" => &["fs/read", "fs/write"],
         "text.head" | "text.tail" | "text.wc" | "text.cut" | "text.grep" => FS_READ,
         // --env
@@ -536,6 +536,9 @@ mod tests {
         let caps = everything();
         let effects = |n: &str| caps.get(n).unwrap().effects().unwrap().to_vec();
         assert_eq!(effects("fs.read"), ["fs/read"]);
+        assert_eq!(effects("fs.stat"), ["fs/read"]);
+        assert_eq!(effects("fs.is_file"), ["fs/read"]);
+        assert_eq!(effects("fs.append"), ["fs/write"]);
         assert_eq!(effects("fs.cp"), ["fs/read", "fs/write"]);
         assert_eq!(effects("env.all"), ["env/read"]);
         assert_eq!(effects("time.sleep"), ["time/sleep"]);

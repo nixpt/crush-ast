@@ -302,8 +302,8 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
 /// elevated sandbox grant even if registered by the host. Every `fs.*` cap
 /// that changes the filesystem is here, not just `fs.write` (CRUSH-151).
 const PRIVILEGED_PREFIXES: &[&str] = &[
-    "net.", "fs.write", "fs.mkdir", "fs.rm", "fs.cp", "fs.mv", "fs.touch", "wallet.", "vm.fork",
-    "vm.exec",
+    "net.", "fs.write", "fs.append", "fs.mkdir", "fs.rm", "fs.cp", "fs.mv", "fs.touch", "wallet.",
+    "vm.fork", "vm.exec",
 ];
 
 pub fn is_privileged(cap: &str) -> bool {
@@ -321,12 +321,13 @@ mod tests {
     #[test]
     fn filesystem_mutations_are_privileged_reads_are_not() {
         for cap in [
-            "fs.write", "fs.mkdir", "fs.rm", "fs.cp", "fs.mv", "fs.touch",
+            "fs.write", "fs.append", "fs.mkdir", "fs.rm", "fs.cp", "fs.mv", "fs.touch",
         ] {
             assert!(is_privileged(cap), "{cap}");
         }
         for cap in [
-            "fs.read", "fs.cat", "fs.ls", "fs.list", "fs.find", "fs.pwd", "fs.cd",
+            "fs.read", "fs.cat", "fs.ls", "fs.list", "fs.find", "fs.pwd", "fs.cd", "fs.is_dir",
+            "fs.is_file", "fs.stat",
         ] {
             assert!(!is_privileged(cap), "{cap}");
         }

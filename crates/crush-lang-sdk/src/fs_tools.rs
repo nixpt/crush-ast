@@ -1,5 +1,6 @@
 //! `fs.ls` / `fs.cat` / `fs.pwd` / `fs.cd` / `fs.mkdir` / `fs.rm` / `fs.cp` /
 //! `fs.mv` / `fs.touch` / `fs.find` — the filesystem coreutils (CRUSH-151).
+//! `fs.find dir [pattern] [type]` takes a `find -type` filter too (CRUSH-240).
 //!
 //! Registered next to `fs.read` / `fs.write` / `fs.exists` / `fs.list`, and
 //! only when the host grants filesystem access (`HostCapsBuilder::fs` /
@@ -163,12 +164,13 @@ impl HostCap for FsToolCap {
                 Value::Null
             }
             "fs.find" => {
-                arity(name, &args, 1, 2)?;
+                arity(name, &args, 1, 3)?;
                 let base = crate::caps::value_as_text(&args[0]);
                 let dir = fs.resolve(&args[0])?;
                 let pattern = args.get(1).map(crate::caps::value_as_text);
+                let want = args.get(2).map(|v| find_type(name, v)).transpose()?;
                 let mut found = Vec::new();
-                find(fs, &dir, Path::new(&base), pattern.as_deref(), &mut found)
+                find(fs, &dir, Path::new(&base), pattern.as_deref(), want, &mut found)
                     .map_err(|e| format!("{name} {base}: {e}"))?;
                 found.sort();
                 Value::new_array(found.into_iter().map(Value::Str).collect())
@@ -247,19 +249,22 @@ fn copy_tree(fs: &FsSandbox, src: &Path, dst: &Path) -> Result<(), String> {
 
 /// Walk `dir` (not following symlinks), collecting every entry below it as
 /// `base/<relative path>` — the form the caller can pass straight back to
-/// another `fs.*` call — optionally filtered by a `*`/`?` name glob.
+/// another `fs.*` call — optionally filtered by a `*`/`?` name glob and by
+/// type (CRUSH-240: `find -type f`), and always descending into directories.
 fn find(
     fs: &FsSandbox,
     dir: &Path,
     base: &Path,
     pattern: Option<&str>,
+    want: Option<Kind>,
     found: &mut Vec<String>,
 ) -> std::io::Result<()> {
     for entry in fs.backend().read_dir(dir)? {
         let entry = entry?;
         let name = entry.name;
+        let kind = entry.kind?;
         let shown = base.join(&name);
-        if pattern.is_none_or(|p| glob_match(p, &name.to_string_lossy())) {
+        if want.is_none_or(|w| w == kind) && pattern.is_none_or(|p| glob_match(p, &name.to_string_lossy())) {
             if found.len() >= FIND_MAX_RESULTS {
                 return Err(std::io::Error::other(format!(
                     "more than {FIND_MAX_RESULTS} results"
@@ -267,11 +272,28 @@ fn find(
             }
             found.push(clean(&shown));
         }
-        if entry.kind? == Kind::Dir {
-            find(fs, &dir.join(&name), &shown, pattern, found)?;
+        if kind == Kind::Dir {
+            find(fs, &dir.join(&name), &shown, pattern, want, found)?;
         }
     }
     Ok(())
+}
+
+/// The `fs.find` type filter, the names `find -type` uses: `"file"`, `"dir"`,
+/// `"symlink"` or `"other"`. The entry's own type, so a symlink is
+/// `"symlink"` even when it points at a file (that is what `find -type l`
+/// means; `fs.stat` follows the link instead).
+fn find_type(cap: &str, value: &Value) -> Result<Kind, String> {
+    let text = crate::caps::value_as_text(value);
+    match text.as_str() {
+        "file" => Ok(Kind::File),
+        "dir" => Ok(Kind::Dir),
+        "symlink" => Ok(Kind::Symlink),
+        "other" => Ok(Kind::Other),
+        other => Err(format!(
+            "{cap}: unknown type {other:?} (expected \"file\", \"dir\", \"symlink\" or \"other\")"
+        )),
+    }
 }
 
 /// `./a/b` → `a/b`, so a search from the working directory reads naturally.
@@ -407,6 +429,9 @@ mod tests {
             "/etc/passwd",
         ] {
             assert_escape(sb.call("fs.cat", &[path]), &format!("cat {path}"));
+            assert_escape(sb.call("fs.stat", &[path]), &format!("stat {path}"));
+            assert_escape(sb.call("fs.is_file", &[path]), &format!("is_file {path}"));
+            assert_escape(sb.call("fs.append", &[path, "x"]), &format!("append {path}"));
             assert_escape(sb.call("fs.touch", &[path]), &format!("touch {path}"));
             assert_escape(
                 sb.call("fs.mkdir", &[path, "true"]),
@@ -427,6 +452,9 @@ mod tests {
         // Through the symlink `out` -> outside: existing and not-yet-existing.
         for path in ["out/secret.txt", "out/new.txt", "out"] {
             assert_escape(sb.call("fs.cat", &[path]), &format!("cat {path}"));
+            assert_escape(sb.call("fs.stat", &[path]), &format!("stat {path}"));
+            assert_escape(sb.call("fs.is_file", &[path]), &format!("is_file {path}"));
+            assert_escape(sb.call("fs.append", &[path, "x"]), &format!("append {path}"));
             assert_escape(sb.call("fs.touch", &[path]), &format!("touch {path}"));
             assert_escape(sb.call("fs.cp", &["a.txt", path]), &format!("cp -> {path}"));
             assert_escape(sb.call("fs.cd", &[path]), &format!("cd {path}"));
@@ -773,6 +801,29 @@ mod tests {
             strings(sb.call("fs.find", &["sub", "*.txt"]).unwrap()),
             ["sub/deep/three.txt", "sub/one.txt"]
         );
+        // CRUSH-240: the `find -type` filter.
+        assert_eq!(
+            strings(sb.call("fs.find", &["sub", "*", "file"]).unwrap()),
+            ["sub/deep/three.txt", "sub/one.txt", "sub/two.log"]
+        );
+        assert_eq!(
+            strings(sb.call("fs.find", &["sub", "*", "dir"]).unwrap()),
+            ["sub/deep"]
+        );
+        assert_eq!(
+            strings(sb.call("fs.find", &["sub", "*.txt", "dir"]).unwrap()),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            strings(sb.call("fs.find", &[".", "*", "symlink"]).unwrap()),
+            ["out"]
+        );
+        assert!(
+            sb.call("fs.find", &["sub", "*", "bogus"])
+                .unwrap_err()
+                .contains("unknown type \"bogus\""),
+            "an unknown type is an error, not an empty list"
+        );
         // From inside `sub`, results are relative to the working directory
         // and can be passed straight back.
         sb.call("fs.cd", &["sub"]).unwrap();
@@ -785,6 +836,65 @@ mod tests {
             !strings(sb.call("fs.find", &["."]).unwrap())
                 .iter()
                 .any(|p| p.contains("secret"))
+        );
+    }
+
+    /// CRUSH-240: `fs.is_file`, `fs.stat` and `fs.append` — the type, size and
+    /// time a script needs to tell files from directories, and to log a line at
+    /// a time.
+    #[test]
+    fn file_type_size_time_and_append() {
+        let sb = Sandbox::new();
+        let map = |v: Option<Value>| match v {
+            Some(Value::Map(m)) => m.borrow().clone(),
+            other => panic!("expected a map, got {other:?}"),
+        };
+        let stat = |p: &str| map(sb.call("fs.stat", &[p]).unwrap());
+
+        let st = stat("a.txt");
+        assert_eq!(st["type"], Value::Str("file".into()));
+        assert_eq!(st["size"], Value::Int(5));
+        let Value::Int(modified) = &st["modified"] else {
+            panic!("modified is not an int: {:?}", st["modified"]);
+        };
+        let modified = *modified;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert!((now - modified).abs() < 300, "{modified} vs {now}");
+
+        // A directory's size is 0: what the platform reports for one differs.
+        assert_eq!(stat("sub")["type"], Value::Str("dir".into()));
+        assert_eq!(stat("sub")["size"], Value::Int(0));
+
+        // `fs.stat` follows a symlink inside the root, like stat(2).
+        std::os::unix::fs::symlink("a.txt", sb.root().join("alink")).unwrap();
+        assert_eq!(stat("alink")["type"], Value::Str("file".into()));
+        assert_eq!(stat("alink")["size"], Value::Int(5));
+
+        // The two predicates agree with it.
+        assert_eq!(sb.call("fs.is_file", &["a.txt"]).unwrap(), Some(Value::Int(1)));
+        assert_eq!(sb.call("fs.is_file", &["sub"]).unwrap(), Some(Value::Int(0)));
+        assert_eq!(sb.call("fs.is_file", &["nope"]).unwrap(), Some(Value::Int(0)));
+
+        // A missing path is an error, naming the sandbox path only.
+        let err = sb.call("fs.stat", &["nope"]).unwrap_err();
+        assert!(err.starts_with("fs.stat nope:"), "{err}");
+        assert!(!err.contains(sb.dir.path().to_str().unwrap()), "{err}");
+
+        // `fs.append` creates the file, then adds to it instead of replacing.
+        sb.call("fs.append", &["log.txt", "one\n"]).unwrap();
+        sb.call("fs.append", &["log.txt", "two\n"]).unwrap();
+        sb.call("fs.append", &["a.txt", "!"]).unwrap();
+        assert_eq!(text(sb.call("fs.cat", &["log.txt"]).unwrap()), "one\ntwo\n");
+        assert_eq!(text(sb.call("fs.cat", &["a.txt"]).unwrap()), "alpha!");
+        assert_eq!(stat("log.txt")["size"], Value::Int(8));
+        // A directory is refused, not replaced by a file.
+        assert!(
+            sb.call("fs.append", &["sub", "x"])
+                .unwrap_err()
+                .starts_with("fs.append sub:")
         );
     }
 
