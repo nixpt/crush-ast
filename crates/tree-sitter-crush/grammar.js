@@ -573,7 +573,8 @@ module.exports = grammar({
 
         // Decimal, plus the hex (0x/0X) and binary (0b/0B) forms crush-frontend's lexer reads.
         int_literal: $ => token(choice(/-?0[xX][0-9a-fA-F]+/, /-?0[bB][01]+/, /-?\d+/)),
-        float_literal: $ => /-?\d+\.\d+/,
+        // CRUSH-221: a decimal exponent (`1e10`, `1.5E-7`, `2.5e+3`) makes a float too.
+        float_literal: $ => /-?\d+(\.\d+)?[eE][+-]?\d+|-?\d+\.\d+/,
         // Escapes matter: `"a\"b"` and `"a\nb"` are ordinary in the corpus, and
         // the old `/[^"]*/` stopped at the escaped quote (CRUSH-207).
         string_literal: $ => choice(

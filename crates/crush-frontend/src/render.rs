@@ -650,11 +650,11 @@ impl Renderer {
                 self.push_str(&value.to_string());
             }
             Expression::FloatLiteral { value, .. } => {
-                let s = value.to_string();
-                self.push_str(&s);
-                if s.parse::<i64>().is_ok() && !s.contains('.') && !s.contains('e') {
-                    self.push_str(".0");
-                }
+                // CRUSH-221: Debug is the shortest round-trip form and always
+                // keeps a `.` or an `e` (`1.0`, `1e20`, `1e-7`), so the text
+                // re-lexes as a Float. Display wrote `1e20` as 21 bare digits,
+                // which re-lexes as an out-of-range Int.
+                self.push_str(&format!("{value:?}"));
             }
             Expression::StringLiteral { value, .. } => {
                 self.push_str("\"");

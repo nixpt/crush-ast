@@ -47,6 +47,16 @@ fn test_c_codegen_io_read() {
 }
 
 #[test]
+fn test_c_codegen_io_read_line_yields_null_at_eof() {
+    let source = r#"fn main() { let line = io.read_line(); io.print(line); }"#;
+    let c_src =
+        crush_aot::codegen_c::gen_c_source(&crush_frontend::compile_crush_source(source).unwrap())
+            .unwrap();
+    assert!(c_src.contains("io_read_line_opt"));
+    assert!(c_src.contains("cap_call io.read_line"));
+}
+
+#[test]
 fn test_c_codegen_arithmetic() {
     let source = r#"fn main() { return 40 + 2; }"#;
     let c_src = crush_aot::codegen_c::gen_c_source(

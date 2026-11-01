@@ -33,6 +33,11 @@ fn program_stdout(so: &Path) -> String {
     }
 }
 
+/// Like [`assert_prints`], with the expected text taken from the VM, not a literal.
+fn assert_prints_like_vm(name: &str, source: &str) {
+    assert_prints(name, source, &vm_stdout(source));
+}
+
 fn assert_prints(name: &str, source: &str, expected: &str) {
     let program = crush_frontend::compile_crush_source(source).expect("frontend");
     let compiler = AotCompiler::new();
@@ -129,7 +134,7 @@ fn print_inside_an_expression_keeps_the_stack() {
 // with `%.15g`; `1e20` was emitted as an integer literal too large for C.
 #[test]
 fn floats_print_like_the_vm() {
-    assert_prints(
+    assert_prints_like_vm(
         "floats",
         r#"fn main() {
                io.print(1.0);
@@ -142,8 +147,6 @@ fn floats_print_like_the_vm() {
                io.print("x=" + (0.1 + 0.2));
                return 0;
            }"#,
-        "1.0\n0.30000000000000004\n0.6666666666666666\n15000000000.0\n\
-         100000000000000000000.0\n0.0000001\n-2.5\nx=0.30000000000000004\n",
     );
 }
 

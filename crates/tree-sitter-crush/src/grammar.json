@@ -3464,7 +3464,7 @@
     },
     "float_literal": {
       "type": "PATTERN",
-      "value": "-?\\d+\\.\\d+"
+      "value": "-?\\d+(\\.\\d+)?[eE][+-]?\\d+|-?\\d+\\.\\d+"
     },
     "string_literal": {
       "type": "CHOICE",

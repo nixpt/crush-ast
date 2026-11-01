@@ -1,9 +1,16 @@
 //! Shared `io.read` line-reading semantics used by the CVM1 backends.
 //!
-//! A read returns one line without its trailing LF/CRLF terminator. EOF is
-//! represented by an empty string, matching the behavior of common scripting
-//! language input helpers and keeping EOF usable in ordinary Crush control
-//! flow.
+//! A read returns one line without its trailing LF/CRLF terminator. Two
+//! capabilities share this module (CRUSH-239):
+//!
+//! - `io.read` reports EOF as an empty string. That keeps EOF usable in
+//!   ordinary control flow (`while line != ""`), but it cannot tell EOF from a
+//!   blank line; it is kept unchanged so existing scripts behave the same.
+//! - `io.read_line` reports EOF as `null`, so a blank line (`""`) and the end
+//!   of input are distinct.
+//!
+//! Both are built on [`read_io_line_opt_from`], which is the only place a
+//! line is actually read.
 //!
 //! [`InputSource`] lets a host choose where those lines come from: process
 //! stdin (the default, and the only source a native CLI needs), text supplied
@@ -17,12 +24,29 @@ use std::io::{self, BufRead, Cursor};
 /// Read errors are returned to the caller. A source that is already at EOF
 /// yields an empty string, the documented `io.read` EOF convention.
 pub fn read_io_line_from<R: BufRead>(reader: &mut R) -> io::Result<String> {
+    Ok(read_io_line_opt_from(reader)?.unwrap_or_default())
+}
+
+/// Read one line and remove its terminator, or `None` at end of input.
+///
+/// `Some("")` is a blank line; `None` is EOF. This is the `io.read_line`
+/// semantics and the single implementation `io.read` is derived from.
+pub fn read_io_line_opt_from<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     let mut line = String::new();
-    reader.read_line(&mut line)?;
+    if reader.read_line(&mut line)? == 0 {
+        return Ok(None);
+    }
     while matches!(line.as_bytes().last(), Some(b'\n' | b'\r')) {
         line.pop();
     }
-    Ok(line)
+    Ok(Some(line))
+}
+
+/// Read one line from the process stdin for `io.read_line` (`None` at EOF).
+pub fn read_io_line_opt() -> io::Result<Option<String>> {
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+    read_io_line_opt_from(&mut reader)
 }
 
 /// Read one line from the process stdin for the `io.read` capability.
@@ -109,12 +133,17 @@ impl InputSource {
         }
     }
 
-    /// Read the next line for `io.read`.
+    /// Read the next line for `io.read` (`""` at EOF).
     pub fn read_line(&mut self) -> io::Result<String> {
+        Ok(self.read_line_opt()?.unwrap_or_default())
+    }
+
+    /// Read the next line for `io.read_line` (`None` at EOF).
+    pub fn read_line_opt(&mut self) -> io::Result<Option<String>> {
         match self {
-            Self::Stdin => read_io_line(),
+            Self::Stdin => read_io_line_opt(),
             Self::Supplied(input) | Self::Interactive { pending: input, .. } => {
-                read_io_line_from(input)
+                read_io_line_opt_from(input)
             }
         }
     }
@@ -141,6 +170,16 @@ mod tests {
     fn eof_returns_empty_string() {
         let mut input = Cursor::new(b"");
         assert_eq!(read_io_line_from(&mut input).unwrap(), "");
+    }
+
+    #[test]
+    fn opt_read_distinguishes_blank_line_from_eof() {
+        let mut input = Cursor::new(b"a\n\nb");
+        assert_eq!(read_io_line_opt_from(&mut input).unwrap(), Some("a".into()));
+        assert_eq!(read_io_line_opt_from(&mut input).unwrap(), Some("".into()));
+        assert_eq!(read_io_line_opt_from(&mut input).unwrap(), Some("b".into()));
+        assert_eq!(read_io_line_opt_from(&mut input).unwrap(), None);
+        assert_eq!(read_io_line_opt_from(&mut input).unwrap(), None);
     }
 
     #[test]
