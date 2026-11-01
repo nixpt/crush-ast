@@ -17,6 +17,14 @@ add its entry after yours.
 - feat: `io.eprint(...)` writes to stderr (same concatenation + newline as `io.print`), on the scheduler, PortableVm and both AOT backends (`crush-aotc` refuses it with a named error); `crush-run` streams it to the real stderr, and `VmResult::stderr` / `PortableVm::take_stderr` carry it (CRUSH-241, #370)
 - fix: `crush-run run` no longer prints `[steps=N, stack=M]` on every run; pass `--stats` or set `CRUSH_DEBUG` to get it back (CRUSH-241, closes #386)
 - fix: a registered capability that fails reads `<cap>: <message>` (new `VmError::CapFailed`), not `unknown capability: <cap>: <message>` (CRUSH-241, #370)
+- fix: string `+` no longer counts against the output quota (a >1 MiB string built with `+` used to fail with `output quota exceeded` while `str.concat` was unlimited); a size limit for both is the memory quota, CRUSH-235 (CRUSH-186)
+- fix: `max_wall_time_ms` bounds the whole run: the scheduler and `PortableVm` check the clock every 1024 instructions (`wall-clock quota exceeded`), and a blocking `process.exec` gets the remaining time and is killed on expiry (CRUSH-186)
+- **Behaviour change (scripting, CRUSH-242):** `process.exec(cmd, args)` returns a map
+  `{exit_code, stdout, stderr}` instead of a JSON string — drop the `json.parse(...)`
+  wrapper and read `r.exit_code` / `r.stdout` / `r.stderr` directly (use `json.stringify(r)`
+  if you want JSON back). A command that can't start (missing, not executable) is no
+  longer a run-ending error: the result carries `exit_code: -1` with the OS reason on
+  `stderr`. Map bracket access `r["exit_code"]` still errors everywhere — CRUSH-217.
 
 ## [0.10.0] - 2026-10-31
 
