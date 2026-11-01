@@ -429,6 +429,24 @@ impl Runtime {
         )?)
     }
 
+    /// [`run_streaming`](Self::run_streaming) with stderr as its own stream
+    /// (CRUSH-241): `out_sink` gets what `io.print` wrote, `err_sink` what
+    /// `io.eprint` wrote, each as soon as the program prints it.
+    pub fn run_streaming_split(
+        &self,
+        program: &Program,
+        out_sink: &mut dyn FnMut(&str),
+        err_sink: &mut dyn FnMut(&str),
+    ) -> Result<VmResult, RuntimeError> {
+        Ok(crush_vm::vm::run_with_caps_streaming_split(
+            program,
+            &self.quotas,
+            self.host_caps.as_ref(),
+            out_sink,
+            err_sink,
+        )?)
+    }
+
     /// Load a CVM1 binary blob and run it.
     pub fn run_blob(&self, blob: &[u8]) -> Result<VmResult, RuntimeError> {
         let program =

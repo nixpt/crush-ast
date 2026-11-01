@@ -103,7 +103,8 @@ fn the_executor_runs_the_block_on_the_scheduler_vm() {
     assert_eq!(call.outputs, vec!["y".to_string()]);
     assert!(call.deps.is_empty());
     assert_eq!(call.gate, "polyglot.python");
-    assert_eq!(call.deadline_ms, Quotas::default().max_wall_time_ms);
+    // CRUSH-186: the block gets what is left of the run's wall-clock budget.
+    assert!(call.deadline_ms > 0 && call.deadline_ms <= Quotas::default().max_wall_time_ms);
     assert!(call.code_mentions_body, "the executor gets the block's source");
 }
 
@@ -117,7 +118,9 @@ fn both_engines_agree_with_the_same_executor() {
     assert_eq!(native, port);
     let seen = doubler.seen.lock().unwrap();
     assert_eq!(seen.len(), 2);
-    assert_eq!(seen[0], seen[1], "both engines hand the executor the same request");
+    // The remaining wall budget differs by a few ms between the two runs (CRUSH-186).
+    let norm = |c: &Seen| Seen { deadline_ms: 0, ..c.clone() };
+    assert_eq!(norm(&seen[0]), norm(&seen[1]), "both engines hand the executor the same request");
 }
 
 #[test]

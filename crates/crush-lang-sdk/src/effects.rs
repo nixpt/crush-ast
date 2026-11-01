@@ -167,7 +167,7 @@ pub fn catalog() -> Vec<CapInfo> {
     for spec in crush_vm::capabilities().values() {
         let effects: &[&str] = match spec.name {
             "io.print" => &["stdout/write"],
-            "io.read" => &["stdin/read"],
+            "io.read" | "io.read_line" => &["stdin/read"],
             _ => &[],
         };
         out.insert(

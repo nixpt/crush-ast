@@ -39,6 +39,15 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             privileged: false,
             summary: "write args (concatenated) to output",
         });
+        // stdout's twin (CRUSH-241): same line shape, different stream, so a
+        // script's data and its diagnostics can be redirected separately.
+        reg(CapabilitySpec {
+            name: "io.eprint",
+            argc: None,
+            returns: false,
+            privileged: false,
+            summary: "write args (concatenated) to stderr, with a trailing newline",
+        });
         reg(CapabilitySpec {
             name: "io.write",
             argc: Some(1),
@@ -177,7 +186,14 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             argc: Some(0),
             returns: true,
             privileged: false,
-            summary: "read one line from stdin, trimmed of trailing newline; empty string on EOF",
+            summary: "read one line from stdin, trimmed of trailing newline; empty string on EOF (cannot tell EOF from a blank line; see io.read_line)",
+        });
+        reg(CapabilitySpec {
+            name: "io.read_line",
+            argc: Some(0),
+            returns: true,
+            privileged: false,
+            summary: "read one line from stdin, trimmed of trailing newline; null on EOF (a blank line is \"\")",
         });
         // String
         reg(CapabilitySpec {

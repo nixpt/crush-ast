@@ -60,7 +60,8 @@ wasm-pack build --target web -- --no-default-features --features panic-hook
 ### `io.read` in the browser
 
 A browser has no stdin, so where `io.read` gets its lines depends on the entry
-point:
+point (`io.read_line` behaves the same except that end of input is `null`
+instead of `""`, so a blank line and EOF differ; CRUSH-239):
 
 - `execute` / `run_blob`: no input; every read returns `""` (EOF).
 - `execute_with`: lines of `stdin`, then `""` once it runs out.
