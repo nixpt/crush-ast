@@ -14,6 +14,7 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Float literals take a decimal exponent: `1e10`, `1.5E10`, `1e-7`, `2.5e+3` lex as one Float (CRUSH-221). A malformed exponent (`1e`, `1e+`, `1.5e`, `1.e5`) is now an "invalid number literal" error, not a parse error or a field access. The `--emit ast` view renders large floats (`1e20`) as float literals instead of an out-of-range integer.
 - fix(crush-aot): C AOT printed an exact tie at the last shortest float digit half-to-even (`1000000000000000.2`), the VM half-up (`...0.3`); float-to-text is now one shared function (`crush_vm::float_text`) embedded by Rust AOT, with a VM/Rust/C differential test (CRUSH-229)
 - feat(sdk): `fs.stat` (type, size, modified), `fs.is_file`, `fs.append`, and a
   `find -type` filter on `fs.find`, behind `--fs` / `--fs-root` (CRUSH-240)

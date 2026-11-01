@@ -88,3 +88,32 @@ let n = -0XFF
     (identifier)
     (expression
       (int_literal))))
+
+==================
+Float Literals With A Decimal Exponent
+==================
+
+let a = 1.5e10
+let b = 1e-7
+let c = 2.5E+3
+let d = 0x1E5
+
+---
+
+(program
+  (var_decl
+    (identifier)
+    (expression
+      (float_literal)))
+  (var_decl
+    (identifier)
+    (expression
+      (float_literal)))
+  (var_decl
+    (identifier)
+    (expression
+      (float_literal)))
+  (var_decl
+    (identifier)
+    (expression
+      (int_literal))))
