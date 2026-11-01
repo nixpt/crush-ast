@@ -1,0 +1,8 @@
+// Run a command that doesn't exist; report it without dying.
+fn main() {
+  let r = process.exec("not-a-command-crush-242", [])
+  if r.exit_code != 0 {
+    io.print("missing")
+  }
+  return 0
+}

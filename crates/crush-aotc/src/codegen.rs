@@ -451,9 +451,19 @@ impl AotcCompiler {
                             writeln!(out, "    CrushValue {} = CV_NULL;", t)?;
                             stack.push((t, ty));
                         }
+                        // No stderr in this backend's runtime header yet: refuse
+                        // loudly instead of the silent-null fallback below (CRUSH-241).
+                        "io.eprint" => anyhow::bail!(
+                            "crush-aotc does not support `io.eprint` (no stderr channel in its C runtime); use the VM or the crush-aot backends"
+                        ),
                         "io.read" => {
                             let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
                             writeln!(out, "    CrushValue {} = cap_io_read();", t)?;
+                            stack.push((t, ty));
+                        }
+                        "io.read_line" => {
+                            let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
+                            writeln!(out, "    CrushValue {} = cap_io_read_line();", t)?;
                             stack.push((t, ty));
                         }
                         "math.sqrt"  => emit_math_cap(out, "cap_math_sqrt",  &boxed_args, &mut stack, &mut tmp_count)?,
@@ -759,6 +769,20 @@ mod tests {
             .compile(&program).expect("emit C");
         assert!(c.contains("cap_io_read"), "generated C should call cap_io_read");
         assert!(c.contains("CRUSH_INPUT_BUF_SIZE"), "generated runtime should define stdin storage");
+    }
+
+    #[test]
+    fn c_aot_io_read_line_yields_null_at_eof() {
+        let source = r#"
+            fn main() {
+                let line = io.read_line()
+                print(line)
+            }
+        "#;
+        let program = crush_frontend::compile_crush_source(source).expect("compile");
+        let c = AotcCompiler::new(AotcOpts::default())
+            .compile(&program).expect("emit C");
+        assert!(c.contains("cap_io_read_line()"), "generated C should call cap_io_read_line");
     }
 
     #[test]

@@ -91,9 +91,10 @@ impl HostCapsBuilder {
         self
     }
 
-    /// Enable filesystem capabilities: `fs.read`, `fs.write`, `fs.exists`,
-    /// `fs.list`, the coreutils `fs.ls/cat/pwd/cd/mkdir/rm/cp/mv/touch/find`,
-    /// and the `text.*` file tools — all confined to [`fs_root`](Self::fs_root).
+    /// Enable filesystem capabilities: `fs.read`, `fs.write`, `fs.append`,
+    /// `fs.exists`, `fs.is_dir`, `fs.is_file`, `fs.stat`, `fs.list`, the
+    /// coreutils `fs.ls/cat/pwd/cd/mkdir/rm/cp/mv/touch/find`, and the
+    /// `text.*` file tools — all confined to [`fs_root`](Self::fs_root).
     pub fn fs(mut self, enable: bool) -> Self {
         self.fs = enable;
         self
@@ -745,25 +746,60 @@ impl HostCap for FsWriteCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        let data = fs_write_payload(&args[1])?;
+        let data = fs_write_payload("fs.write", &args[1])?;
         self.fs.backend().write(&path, &data)
             .map_err(|e| format!("fs.write {}: {e}", self.fs.display(&path)))?;
         Ok(None)
     }
 }
 
-/// The bytes `fs.write` puts in the file (#302): a string as UTF-8, `bytes`
-/// and buffers raw (the same reading `bytes.*` / `binary.*` give them, so a
-/// buffer cell outside 0..=255 is an error), and any other data value as its
-/// text form. A value whose text form is only a placeholder (`<fn f>`,
-/// `<handle 3>`, …) is refused instead of being written.
-fn fs_write_payload(value: &Value) -> Result<Vec<u8>, String> {
+/// `fs.append(path, data)`: like [`FsWriteCap`], but keeps what is already in
+/// the file and adds `data` after it (CRUSH-240). Creates the file if it does
+/// not exist. `>>` in a Crush script, and a log line at a time.
+pub struct FsAppendCap {
+    fs: FsSandbox,
+}
+
+impl FsAppendCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
+    pub fn new(root: &str) -> Self {
+        Self {
+            fs: FsSandbox::new(root),
+        }
+    }
+}
+
+impl HostCap for FsAppendCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "fs.append".to_string(),
+            argc: Some(2),
+            returns: false,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let path = self.fs.resolve(&args[0])?;
+        let data = fs_write_payload("fs.append", &args[1])?;
+        self.fs.backend().append(&path, &data)
+            .map_err(|e| format!("fs.append {}: {e}", self.fs.display(&path)))?;
+        Ok(None)
+    }
+}
+
+/// The bytes `fs.write` and `fs.append` put in the file (#302): a string as
+/// UTF-8, `bytes` and buffers raw (the same reading `bytes.*` / `binary.*`
+/// give them, so a buffer cell outside 0..=255 is an error), and any other
+/// data value as its text form. A value whose text form is only a placeholder
+/// (`<fn f>`, `<handle 3>`, …) is refused instead of being written.
+fn fs_write_payload(cap: &str, value: &Value) -> Result<Vec<u8>, String> {
     match value {
         Value::Str(s) => Ok(s.as_bytes().to_vec()),
-        Value::Bytes(_) | Value::Vector(_) => crate::stdlib::bytes::byte_view("fs.write", value),
+        Value::Bytes(_) | Value::Vector(_) => crate::stdlib::bytes::byte_view(cap, value),
         Value::Func(_) | Value::Handle(_) | Value::Foreign(_) | Value::Cell(_) | Value::Kind(_) => {
             Err(format!(
-                "fs.write: a {} has no file form; write a string, bytes or a buffer",
+                "{cap}: a {} has no file form; write a string, bytes or a buffer",
                 value.type_name()
             ))
         }
@@ -801,8 +837,9 @@ impl HostCap for FsExistsCap {
 }
 
 /// Register the whole filesystem capability group into `caps`, confined to
-/// `root`: the file caps (`fs.read`, `fs.write`, `fs.exists`, `fs.is_dir`,
-/// `fs.list`) plus the `fs.*` / `text.*` coreutils. `HostCapsBuilder::fs(true)`
+/// `root`: the file caps (`fs.read`, `fs.write`, `fs.append`, `fs.exists`,
+/// `fs.is_dir`, `fs.is_file`, `fs.stat`, `fs.list`) plus the `fs.*` /
+/// `text.*` coreutils. `HostCapsBuilder::fs(true)`
 /// builds this group for hosts that want a builder; this is for a host that
 /// already owns its registry — `crush-walk-run`, whose shell programs need the
 /// coreutils for `>`, `<`, `cat`, `cp`, …
@@ -813,8 +850,11 @@ pub fn register_fs(caps: &mut HostCaps, root: &str) {
 fn register_fs_caps(caps: &mut HostCaps, fs: &FsSandbox) {
     caps.register(Box::new(FsReadCap { fs: fs.clone() }));
     caps.register(Box::new(FsWriteCap { fs: fs.clone() }));
+    caps.register(Box::new(FsAppendCap { fs: fs.clone() }));
     caps.register(Box::new(FsExistsCap { fs: fs.clone() }));
     caps.register(Box::new(FsIsDirCap { fs: fs.clone() }));
+    caps.register(Box::new(FsIsFileCap { fs: fs.clone() }));
+    caps.register(Box::new(FsStatCap { fs: fs.clone() }));
     caps.register(Box::new(FsListCap { fs: fs.clone() }));
     crate::fs_tools::register(caps, fs);
     crate::text_tools::register(caps, fs);
@@ -852,6 +892,116 @@ impl HostCap for FsIsDirCap {
         let path = self.fs.resolve(&args[0])?;
         let is_dir = matches!(self.fs.backend().kind(&path), Ok(crate::fs_backend::Kind::Dir));
         Ok(Some(Value::Int(if is_dir { 1 } else { 0 })))
+    }
+}
+
+/// `fs.is_file(path)`: 1 when `path` is a regular file *inside* the sandbox,
+/// else 0 (also 0 for a directory or a path that does not exist). The other
+/// half of [`FsIsDirCap`] (CRUSH-240): `fs.find` returns files and
+/// directories alike, and this is how a script tells them apart.
+pub struct FsIsFileCap {
+    fs: FsSandbox,
+}
+
+impl FsIsFileCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
+    pub fn new(root: &str) -> Self {
+        Self {
+            fs: FsSandbox::new(root),
+        }
+    }
+}
+
+impl HostCap for FsIsFileCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "fs.is_file".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let path = self.fs.resolve(&args[0])?;
+        let is_file = matches!(self.fs.backend().kind(&path), Ok(crate::fs_backend::Kind::File));
+        Ok(Some(Value::Int(if is_file { 1 } else { 0 })))
+    }
+}
+
+/// `fs.stat(path)`: what `stat(2)` says about a path inside the sandbox, as a
+/// map with three keys (CRUSH-240):
+///
+/// - `"type"`: `"file"`, `"dir"`, `"symlink"` or `"other"` (a socket, a
+///   device, …). Symlinks are followed, as `stat` follows them — a link to a
+///   file reports `"file"`; use `fs.find`'s type filter to see the links
+///   themselves.
+/// - `"size"`: the length in bytes for a regular file, and `0` for anything
+///   else: the size a directory reports differs between filesystems, so it is
+///   not passed through.
+/// - `"modified"`: seconds since the Unix epoch (UTC), the same unit as
+///   `time.now`.
+///
+/// A missing path is an error, as `fs.cat` on it is; `fs.exists` answers 0 for
+/// it instead. Read-only metadata, so `fs/read`, not `fs/write`.
+pub struct FsStatCap {
+    fs: FsSandbox,
+}
+
+impl FsStatCap {
+    /// A stand-alone cap confined to `root`, with its own working directory
+    /// (the builder shares one sandbox across all file caps instead).
+    pub fn new(root: &str) -> Self {
+        Self {
+            fs: FsSandbox::new(root),
+        }
+    }
+}
+
+impl HostCap for FsStatCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "fs.stat".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
+    }
+
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        let path = self.fs.resolve(&args[0])?;
+        let meta = self
+            .fs
+            .backend()
+            .metadata(&path)
+            .map_err(|e| format!("fs.stat {}: {e}", self.fs.display(&path)))?;
+        let kind = match meta.kind {
+            crate::fs_backend::Kind::File => "file",
+            crate::fs_backend::Kind::Dir => "dir",
+            crate::fs_backend::Kind::Symlink => "symlink",
+            crate::fs_backend::Kind::Other => "other",
+        };
+        let size = if meta.kind == crate::fs_backend::Kind::File {
+            meta.size as i64
+        } else {
+            0
+        };
+        Ok(Some(Value::new_map([
+            ("type".to_string(), Value::Str(kind.to_string())),
+            ("size".to_string(), Value::Int(size)),
+            (
+                "modified".to_string(),
+                Value::Int(epoch_seconds(meta.modified)),
+            ),
+        ])))
+    }
+}
+
+/// `SystemTime` as seconds since the Unix epoch, rounded towards the past for
+/// a time before it.
+fn epoch_seconds(time: std::time::SystemTime) -> i64 {
+    match time.duration_since(std::time::UNIX_EPOCH) {
+        Ok(after) => after.as_secs() as i64,
+        Err(before) => -(before.duration().as_secs() as i64),
     }
 }
 
@@ -1173,6 +1323,59 @@ sleep_cap!(AsyncSleepCap, "async.sleep");
 // Process helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Prefix of the error `exec_with_wall_limit` returns on expiry; `ProcessExecCap::call_with_deadline`
+/// turns it into `HostCapError::Timeout` so the VM names the limit.
+const EXEC_TIMEOUT_MARK: &str = "wall-clock limit expired";
+
+/// Run `cmd`, killing it if the VM run's remaining wall-clock budget
+/// (`crush_vm::wall`, CRUSH-186) runs out. Outside a VM run there is no
+/// budget and this is a plain blocking `output()`.
+fn exec_with_wall_limit(cmd: &str, args: &[String]) -> Result<std::process::Output, String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let err = |e: std::io::Error| format!("process.exec {cmd}: {e}");
+    let Some(budget) = crush_vm::wall::remaining() else {
+        return std::process::Command::new(cmd).args(args).output().map_err(err);
+    };
+    let mut child = std::process::Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(err)?;
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let errp = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let deadline = std::time::Instant::now() + budget;
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(err)? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "{EXEC_TIMEOUT_MARK}: process.exec {cmd} killed"
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: errp.join().unwrap_or_default(),
+    })
+}
+
 pub struct ProcessExecCap;
 
 impl HostCap for ProcessExecCap {
@@ -1184,6 +1387,22 @@ impl HostCap for ProcessExecCap {
         }
     }
 
+    fn call_with_deadline(
+        &self,
+        args: Vec<Value>,
+        _deadline_ms: u64,
+    ) -> Result<Option<Value>, crush_vm::host::HostCapError> {
+        // The budget is the run's remaining wall time (`crush_vm::wall`), already
+        // reflected in `exec_with_wall_limit`; this only maps its expiry to a Timeout.
+        self.call(args).map_err(|m| {
+            if m.contains(EXEC_TIMEOUT_MARK) {
+                crush_vm::host::HostCapError::Timeout
+            } else {
+                crush_vm::host::HostCapError::Message(m)
+            }
+        })
+    }
+
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let cmd = crate::caps::value_as_text(&args[0]);
         let exec_args: Vec<String> = match &args[1] {
@@ -1191,17 +1410,32 @@ impl HostCap for ProcessExecCap {
             v => vec![crate::caps::value_as_text(v)],
         };
 
-        let output = std::process::Command::new(&cmd)
-            .args(&exec_args)
-            .output()
-            .map_err(|e| format!("process.exec {cmd}: {e}"))?;
+        // A command that can't start (missing, not executable, …) is part of
+        // the result, not a run-ending error: no process ran, so there is no
+        // exit status and `exit_code` carries the `-1` "no status" sentinel
+        // the signal-killed path below uses, with the reason on `stderr`
+        // (CRUSH-242). A catchable error would be the better shape, but cap
+        // failures aren't catchable yet (CRUSH-219); when that lands this can
+        // move to `Err` without breaking the success path. The one error that
+        // stays an error is the run's wall-clock budget running out (CRUSH-186):
+        // `call_with_deadline` turns it into a timeout that names the limit.
+        let (exit_code, stdout, stderr) = match exec_with_wall_limit(&cmd, &exec_args) {
+            Ok(output) => (
+                i64::from(output.status.code().unwrap_or(-1)),
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            ),
+            Err(e) if e.contains(EXEC_TIMEOUT_MARK) => return Err(e),
+            Err(e) => (-1, String::new(), e),
+        };
 
-        let result = serde_json::json!({
-            "stdout": String::from_utf8_lossy(&output.stdout),
-            "stderr": String::from_utf8_lossy(&output.stderr),
-            "exit_code": output.status.code().unwrap_or(-1),
-        });
-        Ok(Some(Value::Str(result.to_string())))
+        // Key order (exit_code, stdout, stderr) is insertion-ordered, so the
+        // printed form is deterministic.
+        Ok(Some(Value::new_map(vec![
+            ("exit_code".to_string(), Value::Int(exit_code)),
+            ("stdout".to_string(), Value::Str(stdout)),
+            ("stderr".to_string(), Value::Str(stderr)),
+        ])))
     }
 }
 
@@ -1282,6 +1516,9 @@ mod tests {
 
         assert!(caps.get("fs.read").is_some());
         assert!(caps.get("fs.is_dir").is_some());
+        assert!(caps.get("fs.is_file").is_some());
+        assert!(caps.get("fs.stat").is_some());
+        assert!(caps.get("fs.append").is_some());
         assert!(caps.get("env.get").is_some());
         assert!(caps.get("time.now").is_some());
         assert!(caps.get("time.now_ms").is_some());
@@ -1351,6 +1588,62 @@ mod tests {
         let err = write.call(vec![path("h.txt"), Value::Handle(3)]).unwrap_err();
         assert!(err.contains("has no file form"), "{err}");
         assert!(!dir.path().join("bad.bin").exists() && !dir.path().join("h.txt").exists());
+    }
+
+    /// CRUSH-240: `fs.append` creates and extends, with the same payload rules
+    /// as `fs.write`, and is confined to the sandbox like every other fs cap.
+    #[test]
+    fn fs_append_extends_and_stays_in_the_sandbox() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("out")).unwrap();
+        let append = FsAppendCap::new(root.to_str().unwrap());
+        let path = |s: &str| Value::Str(s.to_string());
+
+        append.call(vec![path("log.txt"), path("one\n")]).unwrap();
+        append.call(vec![path("log.txt"), path("two\n")]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("log.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+
+        // Bytes and other data values land the way `fs.write` puts them.
+        append
+            .call(vec![path("log.txt"), Value::Bytes(vec![b'!'])])
+            .unwrap();
+        append.call(vec![path("log.txt"), Value::Int(3)]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("log.txt")).unwrap(),
+            "one\ntwo\n!3"
+        );
+
+        // Placeholders are refused, naming this cap.
+        let err = append
+            .call(vec![path("h.txt"), Value::Handle(3)])
+            .unwrap_err();
+        assert!(err.contains("fs.append") && err.contains("has no file form"), "{err}");
+        assert!(!root.join("h.txt").exists());
+
+        // `..` and a symlink out of the root are both refused.
+        for escape in ["../out.txt", "out/new.txt"] {
+            let err = append
+                .call(vec![path(escape), path("x")])
+                .unwrap_err();
+            assert!(err.contains("escapes sandbox"), "{escape}: {err}");
+        }
+        let mut outside: Vec<_> = std::fs::read_dir(&outside)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        outside.sort();
+        assert!(outside.is_empty(), "something was created outside: {outside:?}");
+        let missing = append
+            .call(vec![path("nodir/log.txt"), path("x")])
+            .unwrap_err();
+        assert!(missing.starts_with("fs.append nodir/log.txt:"), "{missing}");
     }
 
     #[test]
@@ -1546,8 +1839,66 @@ mod tests {
         assert_eq!(result, Some(Value::Str("bar".to_string())));
     }
 
+    // CRUSH-186: the run has ONE wall-clock budget, enforced across a blocking
+    // `process.exec` and a plain loop, on the scheduler and on PortableVm.
+    fn run_both_with_wall(source: &str, ms: u64, caps: &crush_vm::HostCaps) -> [(String, std::time::Duration); 2] {
+        let prog = crate::compile::compile_crush_source(source).expect("compile");
+        let quotas = crush_vm::Quotas { max_wall_time_ms: ms, max_steps: usize::MAX, ..Default::default() };
+        let t = std::time::Instant::now();
+        let sched = crush_vm::run_with_caps(&prog, &quotas, Some(caps)).expect_err("scheduler must time out");
+        let sched = (sched.to_string(), t.elapsed());
+        let mut vm = crush_vm::PortableVm::new(prog);
+        vm.set_quotas(quotas);
+        vm.set_host_caps(caps.clone());
+        let t = std::time::Instant::now();
+        let portable = vm.run().expect_err("PortableVm must time out");
+        [sched, (portable.to_string(), t.elapsed())]
+    }
+
     #[test]
-    fn process_exec_runs_echo() {
+    fn wall_limit_stops_while_true() {
+        let caps = HostCapsBuilder::new().build();
+        for (msg, took) in run_both_with_wall("fn main() {\n    while true {\n    }\n}\n", 200, &caps) {
+            assert!(msg.contains("wall-clock quota exceeded (200ms)"), "{msg}");
+            assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+        }
+    }
+
+    #[test]
+    fn wall_limit_kills_blocking_process_exec() {
+        let caps = HostCapsBuilder::new().process(true).build();
+        let src = "fn main() {\n    process.exec(\"sleep\", [\"2\"])\n}\n";
+        for (msg, took) in run_both_with_wall(src, 200, &caps) {
+            assert!(msg.contains("process.exec") && msg.contains("wall-clock quota") && msg.contains("killed"), "{msg}");
+            assert!(took < std::time::Duration::from_millis(1500), "sleep 2 must be killed, took {took:?}");
+        }
+    }
+
+    #[test]
+    fn wall_budget_is_shared_not_per_call() {
+        // Two 150ms sleeps against a 200ms budget: each alone fits the limit, together they don't.
+        let caps = HostCapsBuilder::new().process(true).build();
+        let src = "fn main() {\n    process.exec(\"sleep\", [\"0.15\"])\n    process.exec(\"sleep\", [\"0.15\"])\n}\n";
+        for (msg, _) in run_both_with_wall(src, 200, &caps) {
+            assert!(msg.contains("wall-clock"), "{msg}");
+        }
+    }
+
+    // CRUSH-186: `+` is not output; building a >1 MiB string must work, like `str.concat`.
+    #[test]
+    fn plus_builds_strings_past_the_output_quota() {
+        let src = "fn main() {\n    let s = \"x\"\n    let i = 0\n    while i < 21 {\n        s = s + s\n        i = i + 1\n    }\n    io.print(str.len(s))\n}\n";
+        let prog = crate::compile::compile_crush_source(src).expect("compile");
+        let quotas = crush_vm::Quotas::default();
+        let sched = crush_vm::run_with_caps(&prog, &quotas, None).expect("scheduler");
+        let mut vm = crush_vm::PortableVm::new(prog);
+        let portable = vm.run().expect("PortableVm");
+        assert_eq!(sched.output.trim(), "2097152");
+        assert_eq!(portable.output.trim(), "2097152");
+    }
+
+    #[test]
+    fn process_exec_returns_result_map() {
         let cap = ProcessExecCap;
         let result = cap
             .call(vec![
@@ -1555,9 +1906,48 @@ mod tests {
                 Value::new_array(vec![Value::Str("hello".to_string())]),
             ])
             .unwrap();
-        let text = crate::caps::value_as_text(&result.unwrap());
-        assert!(text.contains("\"stdout\":\"hello"));
-        assert!(text.contains("\"exit_code\":0"));
+        let Some(Value::Map(m)) = result else {
+            panic!("process.exec must return a map, got {result:?}");
+        };
+        let map = m.borrow();
+        // Field order is pinned so the printed form is deterministic.
+        let keys: Vec<&String> = map.keys().collect();
+        assert_eq!(keys, ["exit_code", "stdout", "stderr"]);
+        assert_eq!(map.get("exit_code"), Some(&Value::Int(0)));
+        let stdout = match map.get("stdout") {
+            Some(Value::Str(s)) => s.clone(),
+            other => panic!("stdout must be a string, got {other:?}"),
+        };
+        assert!(stdout.starts_with("hello"), "stdout: {stdout:?}");
+        assert_eq!(map.get("stderr"), Some(&Value::Str(String::new())));
+    }
+
+    #[test]
+    fn process_exec_missing_command_is_a_result_not_an_error() {
+        let cap = ProcessExecCap;
+        let result = cap
+            .call(vec![
+                Value::Str("definitely-not-a-command-crush-242".to_string()),
+                Value::new_array(vec![]),
+            ])
+            .unwrap();
+        let Some(Value::Map(m)) = result else {
+            panic!("process.exec must return a map, got {result:?}");
+        };
+        let map = m.borrow();
+        // No process ran, so there is no exit status: -1, the same sentinel
+        // the signal-killed path uses, with the reason on stderr.
+        assert_eq!(map.get("exit_code"), Some(&Value::Int(-1)));
+        assert_eq!(map.get("stdout"), Some(&Value::Str(String::new())));
+        match map.get("stderr") {
+            Some(Value::Str(s)) => {
+                assert!(
+                    s.contains("definitely-not-a-command-crush-242"),
+                    "stderr names the command: {s:?}"
+                );
+            }
+            other => panic!("stderr must be a string, got {other:?}"),
+        }
     }
 
     #[test]

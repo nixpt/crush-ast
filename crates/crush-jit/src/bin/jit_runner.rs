@@ -79,13 +79,7 @@ fn main() {
 fn print_value(v: &RuntimeValue, arena: &Arena) {
     match v {
         RuntimeValue::Int(i) => println!("int:{}", i),
-        RuntimeValue::Float(f) => {
-            if f.is_finite() && f.fract() == 0.0 {
-                println!("float:{:.1}", f);
-            } else {
-                println!("float:{}", f);
-            }
-        }
+        RuntimeValue::Float(f) => println!("float:{}", crush_vm::float_text::crush_float_to_text(*f)),
         RuntimeValue::Bool(b) => println!("bool:{}", b),
         RuntimeValue::Null => println!("null:null"),
         RuntimeValue::String(s) => println!("str:{}", s),

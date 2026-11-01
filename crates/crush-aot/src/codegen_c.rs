@@ -421,6 +421,20 @@ static inline const char* io_read_line(void) {
     return _str_dup(input);
 }
 
+// `io.read_line`: as io_read_line, but EOF yields null (a blank line stays
+// the empty string), so the two differ (CRUSH-239).
+static inline Value io_read_line_opt(void) {
+    static char input[4096];
+    if (fgets(input, sizeof(input), stdin) == NULL) {
+        return mk_null();
+    }
+    size_t len = strlen(input);
+    while (len > 0 && (input[len - 1] == '\n' || input[len - 1] == '\r')) {
+        input[--len] = '\0';
+    }
+    return mk_string(_str_dup(input));
+}
+
 "#);
 }
 
@@ -622,9 +636,26 @@ static const char* _float_text(double f, char* buf) {
     if (isinf(f)) return f > 0 ? "inf" : "-inf";
     if (f == trunc(f)) { snprintf(buf, TEXTBUF_SIZE, "%.1f", f); return buf; }
     char sci[40];
-    for (int prec = 0; prec < 17; prec++) {
+    int prec;
+    for (prec = 0; prec < 17; prec++) {
         snprintf(sci, sizeof(sci), "%.*e", prec, f);
         if (strtod(sci, NULL) == f) break;
+    }
+    // Two shortest strings can be equally near the double (an exact tie at the last
+    // digit). glibc rounds that to even, Rust to the larger digits; follow Rust
+    // (CRUSH-229: 1000000000000000.25 printed `...0.2`, the VM `...0.3`). A tie means
+    // the exact expansion is `<digits>5` followed only by zeros; 30 extra digits is
+    // more than a 53-bit mantissa can hide a later nonzero behind.
+    int tie_up = 0;
+    if (prec < 17) {
+        char ex[96];
+        snprintf(ex, sizeof(ex), "%.*e", prec + 31, f);
+        char* ep = strchr(ex, 'e');
+        char* d = ex + (ex[0] == '-' ? 1 : 0) + 1 + 1 + prec;   // first digit after the cut
+        if (ep && *d == '5') {
+            tie_up = 1;
+            for (d++; d < ep; d++) if (*d != '0') { tie_up = 0; break; }
+        }
     }
     // sci is "[-]d[.ddd]e[+-]xx": split into digits and a decimal exponent.
     const char* p = sci;
@@ -633,6 +664,20 @@ static const char* _float_text(double f, char* buf) {
     char digits[24]; int nd = 0;
     while (*p && *p != 'e') { if (*p != '.') digits[nd++] = *p; p++; }
     int exp10 = atoi(p + 1);   // value = d.ddd × 10^exp10
+    if (tie_up) {
+        // The cut digits are exactly 5: round half up, carrying through any 9s.
+        char hi[96]; snprintf(hi, sizeof(hi), "%.*e", prec + 31, f);
+        // sci holds the half-to-even result; recompute the up neighbour from digits.
+        int i = nd - 1;
+        const char* q = hi + (hi[0] == '-' ? 1 : 0);
+        int nd2 = 0; char dd[24];
+        while (*q && *q != 'e' && nd2 < nd) { if (*q != '.') dd[nd2++] = *q; q++; }
+        i = nd2 - 1;
+        while (i >= 0 && dd[i] == '9') { dd[i] = '0'; i--; }
+        if (i >= 0) dd[i]++;
+        else { memmove(dd + 1, dd, nd2); dd[0] = '1'; exp10++; }
+        memcpy(digits, dd, nd2); nd = nd2;
+    }
     while (nd > 1 && digits[nd - 1] == '0') nd--;
     if (exp10 < 0) {
         *out++ = '0'; *out++ = '.';
@@ -1939,6 +1984,9 @@ fn emit_c_instr(
                 "conv.ord" => {
                     out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag != TAG_STRING) _crush_arith_error(\"conv.ord: expected string\"); _push(mk_int(_conv_ord(__v.s))); }} _pc={next_pc}; break; // cap_call conv.ord\n"));
                 }
+                "io.read_line" => {
+                    out.push_str(&format!("                {{ _push(io_read_line_opt()); }} _pc={next_pc}; break; // cap_call io.read_line\n"));
+                }
                 "io.print" | "print" => {
                     // Same text as string concatenation (`_to_text_buf`), and pushes null like
                     // the VM: the CASM pops print's result, so pushing nothing popped the
@@ -1947,6 +1995,13 @@ fn emit_c_instr(
                     let n = argc;
                     if n == 0 { out.push_str(&format!("                {{ putchar('\\n'); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n")); } else {
                     out.push_str(&format!("                {{ Value __pa[{n}]; for (int __i = {n} - 1; __i >= 0; __i--) __pa[__i] = _pop(); for (int __i = 0; __i < {n}; __i++) {{ char __tb[TEXTBUF_SIZE]; fputs(_to_text_buf(__pa[__i], __tb), stdout); }} putchar('\\n'); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.print\n"));
+                    }
+                }
+                "io.eprint" => {
+                    // stdout's twin on stderr (CRUSH-241); pushes null like io.print.
+                    let n = argc;
+                    if n == 0 { out.push_str(&format!("                {{ fputc('\\n', stderr); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.eprint\n")); } else {
+                    out.push_str(&format!("                {{ Value __pa[{n}]; for (int __i = {n} - 1; __i >= 0; __i--) __pa[__i] = _pop(); for (int __i = 0; __i < {n}; __i++) {{ char __tb[TEXTBUF_SIZE]; fputs(_to_text_buf(__pa[__i], __tb), stderr); }} fputc('\\n', stderr); _push(mk_null()); }} _pc={next_pc}; break; // cap_call io.eprint\n"));
                     }
                 }
                 "io.write" => {
