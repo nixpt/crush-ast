@@ -14,6 +14,8 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix: string `+` no longer counts against the output quota (a >1 MiB string built with `+` used to fail with `output quota exceeded` while `str.concat` was unlimited); a size limit for both is the memory quota, CRUSH-235 (CRUSH-186)
+- fix: `max_wall_time_ms` bounds the whole run: the scheduler and `PortableVm` check the clock every 1024 instructions (`wall-clock quota exceeded`), and a blocking `process.exec` gets the remaining time and is killed on expiry (CRUSH-186)
 - **Behaviour change (scripting, CRUSH-242):** `process.exec(cmd, args)` returns a map
   `{exit_code, stdout, stderr}` instead of a JSON string — drop the `json.parse(...)`
   wrapper and read `r.exit_code` / `r.stdout` / `r.stderr` directly (use `json.stringify(r)`
