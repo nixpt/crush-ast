@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-01
+
+- Merge pull request #403 from nixpt/fix/cargo-lock-zandbox
+- fix(build): add zandbox to Cargo.lock for buckets' new dependency
+
+
+
 ## [0.11.0] - 2026-11-01
 
 - Merge pull request #396 from nixpt/agent/claude/CRUSH-206
