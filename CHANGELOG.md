@@ -15,6 +15,17 @@ add its entry after yours.
 ## [Unreleased]
 
 - feat: `io.read_line()` capability (CRUSH-239). Like `io.read()` but returns `null` at end of input, so a blank line (`""`) and EOF are distinguishable: `while line != null { ... line = io.read_line() }` no longer stops at the first blank line of piped input. Implemented once in `crush_vm::io_read` and wired into the scheduler, PortableVm (including the pause/resume host contract and crush-web), the AOT Rust, AOT C and `crush-aotc` backends. `io.read()` is unchanged (`""` at EOF), so existing scripts keep working; grant `io.read_line` with `--cap io.read_line` where caps are explicit.
+- feat: `io.eprint(...)` writes to stderr (same concatenation + newline as `io.print`), on the scheduler, PortableVm and both AOT backends (`crush-aotc` refuses it with a named error); `crush-run` streams it to the real stderr, and `VmResult::stderr` / `PortableVm::take_stderr` carry it (CRUSH-241, #370)
+- fix: `crush-run run` no longer prints `[steps=N, stack=M]` on every run; pass `--stats` or set `CRUSH_DEBUG` to get it back (CRUSH-241, closes #386)
+- fix: a registered capability that fails reads `<cap>: <message>` (new `VmError::CapFailed`), not `unknown capability: <cap>: <message>` (CRUSH-241, #370)
+- fix: string `+` no longer counts against the output quota (a >1 MiB string built with `+` used to fail with `output quota exceeded` while `str.concat` was unlimited); a size limit for both is the memory quota, CRUSH-235 (CRUSH-186)
+- fix: `max_wall_time_ms` bounds the whole run: the scheduler and `PortableVm` check the clock every 1024 instructions (`wall-clock quota exceeded`), and a blocking `process.exec` gets the remaining time and is killed on expiry (CRUSH-186)
+- **Behaviour change (scripting, CRUSH-242):** `process.exec(cmd, args)` returns a map
+  `{exit_code, stdout, stderr}` instead of a JSON string — drop the `json.parse(...)`
+  wrapper and read `r.exit_code` / `r.stdout` / `r.stderr` directly (use `json.stringify(r)`
+  if you want JSON back). A command that can't start (missing, not executable) is no
+  longer a run-ending error: the result carries `exit_code: -1` with the OS reason on
+  `stderr`. Map bracket access `r["exit_code"]` still errors everywhere — CRUSH-217.
 
 ## [0.10.0] - 2026-10-31
 

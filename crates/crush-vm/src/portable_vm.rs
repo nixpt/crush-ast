@@ -141,6 +141,10 @@ pub struct PortableVm {
     stack: Vec<Value>,
     /// Output parts.
     out_parts: Vec<String>,
+    /// Everything `io.eprint` wrote, in print order (CRUSH-241).
+    err_parts: Vec<String>,
+    /// How many `err_parts` entries `take_stderr()` has already returned.
+    err_taken: usize,
     /// Current output length.
     out_len: usize,
     /// How many `out_parts` entries `take_output()` has already returned.
@@ -162,6 +166,8 @@ pub struct PortableVm {
     ip: usize,
     /// Total instruction steps executed.
     steps: usize,
+    /// Wall-clock deadline for the run, armed on the first step (CRUSH-186).
+    wall_deadline: Option<std::time::Instant>,
     /// Set by `jump_to` when the current instruction chose the next IP.
     jumped: bool,
     /// Whether the VM has halted.
@@ -269,6 +275,8 @@ impl PortableVm {
             call_stack,
             stack: Vec::new(),
             out_parts: Vec::new(),
+            err_parts: Vec::new(),
+            err_taken: 0,
             out_len: 0,
             out_taken: 0,
             input: crate::io_read::InputSource::Stdin,
@@ -278,6 +286,7 @@ impl PortableVm {
             lang_yield: None,
             ip: start_ip,
             steps: 0,
+            wall_deadline: None,
             jumped: false,
             halted: false,
             privileged_allowed: false,
@@ -373,6 +382,14 @@ impl PortableVm {
     pub fn take_output(&mut self) -> String {
         let fresh = self.out_parts[self.out_taken..].concat();
         self.out_taken = self.out_parts.len();
+        fresh
+    }
+
+    /// Stderr text (`io.eprint`) written since the previous `take_stderr()`
+    /// call (or since the start). `VmResult::stderr` holds the whole thing.
+    pub fn take_stderr(&mut self) -> String {
+        let fresh = self.err_parts[self.err_taken..].concat();
+        self.err_taken = self.err_parts.len();
         fresh
     }
 
@@ -658,6 +675,15 @@ impl PortableVm {
         }
 
         self.check_step_quota()?;
+        let limit_ms = self.quotas.max_wall_time_ms;
+        if self.wall_deadline.is_none() && self.steps == 0 {
+            self.wall_deadline = crate::wall::deadline_in(limit_ms);
+        }
+        if let Some(deadline) = self.wall_deadline
+            && self.steps.is_multiple_of(crate::wall::CHECK_EVERY)
+        {
+            crate::wall::check(deadline, limit_ms)?;
+        }
         self.check_stack_quota()?;
 
         let code = &self.program.code;
@@ -1899,7 +1925,7 @@ impl PortableVm {
                                 outputs: &outputs,
                                 deps: &deps,
                                 gate: &gate,
-                                deadline_ms: self.quotas.max_wall_time_ms,
+                                deadline_ms: crate::wall::remaining_ms(self.quotas.max_wall_time_ms),
                                 crush_line,
                             };
                             let executor =
@@ -1963,7 +1989,7 @@ impl PortableVm {
                     &payload,
                     operands,
                     self.host_caps.as_ref(),
-                    self.quotas.max_wall_time_ms,
+                    crate::wall::remaining_ms(self.quotas.max_wall_time_ms),
                 );
                 // CRUSH-165 hook: an AI opcode, as cap `ai_native.<kind>`.
                 #[cfg(feature = "transcript")]
@@ -2124,6 +2150,9 @@ impl PortableVm {
     }
 
     fn dispatch_cap(&mut self, cap: &str, args: Vec<Value>) -> Result<Option<Value>, VmError> {
+        // CRUSH-186: blocking host caps see the run's remaining wall time.
+        let limit_ms = self.quotas.max_wall_time_ms;
+        let _wall_guard = self.wall_deadline.map(|d| crate::wall::enter(d, limit_ms));
         // Check permission
         crate::scheduler::check_cap_permitted(cap, self.declared_caps.contains(cap), &self.quotas)?;
 
@@ -2147,6 +2176,17 @@ impl PortableVm {
                         return Err(VmError::OutputQuota(self.quotas.max_output));
                     }
                     self.emit_part(line);
+                    Ok(None)
+                }
+                // stdout's twin on stderr (CRUSH-241).
+                "io.eprint" => {
+                    let parts: Vec<String> = args.iter().map(value_to_text).collect();
+                    let line = crate::io_print::format_io_print_line(&parts);
+                    self.out_len += line.len();
+                    if self.out_len > self.quotas.max_output {
+                        return Err(VmError::OutputQuota(self.quotas.max_output));
+                    }
+                    self.err_parts.push(line);
                     Ok(None)
                 }
                 // Like io.print but without the newline (C printf, Rust print!).
@@ -2349,7 +2389,7 @@ impl PortableVm {
                     got: args.len(),
                 });
             }
-            return match handler.call_with_deadline(args, self.quotas.max_wall_time_ms) {
+            return match handler.call_with_deadline(args, crate::wall::remaining_ms(self.quotas.max_wall_time_ms)) {
                 // A host cap that returns nothing (`fs.write`, `akg.write`, …) still
                 // leaves Null: the compiler only knows the built-ins' arity, so it pops
                 // the result of every host call, and `let x = fs.write(..)` stores one
@@ -2360,7 +2400,7 @@ impl PortableVm {
                     limit_ms: self.quotas.max_wall_time_ms,
                 }),
                 Err(crate::host::HostCapError::Message(msg)) => {
-                    Err(VmError::UnknownCap(format!("{cap}: {msg}")))
+                    Err(VmError::CapFailed { cap: cap.to_string(), message: msg })
                 }
                 Err(crate::host::HostCapError::Exit(code)) => Err(VmError::Exit(code)),
             };
@@ -2607,6 +2647,7 @@ impl PortableVm {
     fn take_result(&self) -> VmResult {
         VmResult {
             output: self.out_parts.concat(),
+            stderr: self.err_parts.concat(),
             steps: self.steps,
             halted: self.halted,
             stack: self.stack.clone(),

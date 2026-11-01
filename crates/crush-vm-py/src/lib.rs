@@ -73,7 +73,7 @@ fn value_to_py(py: Python<'_>, v: &Value) -> PyObject {
 /// bridged `HostCap` closure back into a `Value`. Supports the same set
 /// `value_to_py` produces (`None`/`bool`/`int`/`float`/`str`/`bytes`); any
 /// other Python type is a host-cap authoring error, not a VM fault, so it
-/// comes back as a plain `Err(String)` (mapped to `VmError::UnknownCap` by
+/// comes back as a plain `Err(String)` (mapped to `VmError::CapFailed` by
 /// the caller, same as any other host-cap failure message).
 ///
 /// Ordering note: Python `bool` is a subtype of `int` at the C level, so
@@ -177,7 +177,7 @@ impl HostCap for PyHostCap {
 /// (`None` = variadic) and `returns` are enforced the same way as any other
 /// capability's spec — arity mismatches raise `CapArity` before the
 /// callable is ever invoked. A callable's own Python exception surfaces as
-/// `VmError::UnknownCap("<cap>: <message>")` (the existing host-cap failure
+/// `VmError::CapFailed { cap, message }` (the existing host-cap failure
 /// path — `HostCap::call`'s error channel is a flat `String`, so there is
 /// no dedicated Rust trap variant for "the closure's own business-logic
 /// check failed"; this is the same shape any other `HostCap`'s failure

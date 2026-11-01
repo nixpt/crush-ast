@@ -451,6 +451,11 @@ impl AotcCompiler {
                             writeln!(out, "    CrushValue {} = CV_NULL;", t)?;
                             stack.push((t, ty));
                         }
+                        // No stderr in this backend's runtime header yet: refuse
+                        // loudly instead of the silent-null fallback below (CRUSH-241).
+                        "io.eprint" => anyhow::bail!(
+                            "crush-aotc does not support `io.eprint` (no stderr channel in its C runtime); use the VM or the crush-aot backends"
+                        ),
                         "io.read" => {
                             let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
                             writeln!(out, "    CrushValue {} = cap_io_read();", t)?;

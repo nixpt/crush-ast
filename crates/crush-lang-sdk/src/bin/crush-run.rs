@@ -79,6 +79,12 @@ struct RunArgs {
     #[arg(short = 'L', long = "lib-path", value_name = "DIR")]
     lib_paths: Vec<PathBuf>,
 
+    /// Print the run summary (`[steps=N, stack=M]`) to stderr after the program
+    /// finishes. Off by default so an installed program writes only its own
+    /// output; `CRUSH_DEBUG` (any non-empty value but `0`) turns it on too.
+    #[arg(long)]
+    stats: bool,
+
     /// Enable filesystem host capabilities (fs.read/write/exists/list, fs.ls/cat/pwd/cd/mkdir/rm/cp/mv/touch/find, text.head/tail/wc/cut/grep), confined to --fs-root.
     #[arg(long)]
     fs: bool,
@@ -526,7 +532,7 @@ fn list_caps() {
     println!("  codebase.exhaustive_sites NAME / .uncovered_paths NAME / .wip / .temporaries");
     println!("  codebase.stale_temporaries / .decisions / .annotation_history NAME");
     println!("Process capabilities (enable with --process):");
-    println!("  process.exec CMD [ARGS...]  run subprocess, return JSON stdout/stderr/exit_code");
+    println!("  process.exec CMD [ARGS...]  run subprocess, return {{exit_code, stdout, stderr}}");
     println!("Cryptography capabilities (enable with --crypto):");
     println!("  crypto.sha256 DATA          return hex SHA-256 digest");
     println!("  crypto.random N             return N random bytes as base64 (max 4096)");
@@ -796,8 +802,15 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         let _ = out.write_all(part.as_bytes());
         let _ = out.flush();
     };
+    // `io.eprint` goes to the real stderr as it is printed, never to stdout.
+    let mut write_err = |part: &str| {
+        use std::io::Write;
+        let mut err = std::io::stderr().lock();
+        let _ = err.write_all(part.as_bytes());
+        let _ = err.flush();
+    };
     let result = match &preflight {
-        Some(program) => runtime.run_streaming(program, &mut write_out),
+        Some(program) => runtime.run_streaming_split(program, &mut write_out, &mut write_err),
         // A `.cvm1` that doesn't decode: `run_blob` reports it as a typed
         // `RuntimeError::LoadBlob` (E-RT01 in JSON mode).
         None => runtime.run_blob(&std::fs::read(&args.path)?),
@@ -810,11 +823,18 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         other => other?,
     };
 
-    print_result(&result);
+    if args.stats || debug_env_set() {
+        print_result(&result);
+    }
     if !result.halted {
         eprintln!("(program fell off end without HALT)");
     }
     Ok(())
+}
+
+/// `CRUSH_DEBUG` set to anything but empty / `0` asks for the run summary.
+fn debug_env_set() -> bool {
+    std::env::var("CRUSH_DEBUG").is_ok_and(|v| !v.is_empty() && v != "0")
 }
 
 fn print_result(result: &VmResult) {

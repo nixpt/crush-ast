@@ -671,3 +671,16 @@ fn recursion_with_many_locals_agrees_on_every_engine() {
     "#;
     assert_value_everywhere(&compile(src), "c295_recursion", "78", "int:78");
 }
+
+// CRUSH-241: `io.eprint` writes to stderr on both AOT backends, like the VM.
+#[test]
+fn io_eprint_goes_to_stderr_on_both_backends() {
+    let program = compile("fn main() { io.print(\"out\"); io.eprint(\"diag \", 1); return 0; }");
+    for (backend, so) in build_both(&program, "eprint") {
+        let out = run(&so);
+        let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(stdout.contains("out\n"), "{backend}: stdout lost io.print: {stdout:?}");
+        assert!(!stdout.contains("diag"), "{backend}: io.eprint leaked into stdout: {stdout:?}");
+        assert!(stderr.contains("diag 1\n"), "{backend}: io.eprint missing from stderr: {stderr:?}");
+    }
+}
