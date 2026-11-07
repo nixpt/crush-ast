@@ -1,0 +1,18 @@
+body
+finally: normal
+handled
+finally: handled
+finally: no handler matched
+outer caught it
+finally: handler raised
+outer caught the handler's error
+body
+outer caught finally's error
+finally: assigned
+1
+loop body
+finally: inner break stays inside
+loop body
+finally: inner break stays inside
+1
+finally: nested return stays inside

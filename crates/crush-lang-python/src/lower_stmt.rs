@@ -494,15 +494,13 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
 //     dropping the unreachable handlers).
 //   - `except X as name:` binds `name` via a `VarDecl` at the top of that
 //     handler's branch, aliasing the shared `error_var`.
-//   - `finally` is appended to the end of BOTH the try-body (so it runs on
-//     the normal-completion path) AND every terminal branch of the handler
-//     chain (each matched handler's body, and the final re-throw fallback)
-//     — so it also runs whichever handler runs, and on re-throw when no
-//     handler's type matches. Known accepted limitation: an early `return`/
-//     `break`/`continue` inside the try body or a handler will skip the
-//     appended `finally`, matching the fact that CAST's `TryCatch` has no
-//     native finally-block semantics (this is a lowering-level desugar of
-//     the common case, not a VM-level guarantee).
+//   - `finally` has no CAST node, so `try A except B finally C` lowers to
+//         try { try { A } catch { B } } catch (e) { C; throw e }  C
+//     The outer catch covers an error from `A` or from `B`, and running the
+//     normal-path `C` after it keeps `C` outside the protection of `B`, so `C`
+//     runs once and its own errors reach the caller.
+//   - A `return`/`break`/`continue` that jumps out of that shape would skip
+//     `C`, so it is refused (`jumps_out`) rather than silently wrong.
 //   - `try ... except ... else:` (the rarely-used `orelse` clause) bails
 //     loud — no clean desugar attempted for this ticket.
 
@@ -568,54 +566,115 @@ fn lower_try(
         anyhow::bail!("`try ... except ... else:` not yet supported");
     }
 
-    let error_var = fresh_exc_temp();
+    let mut protected = [body, finalbody].into_iter().chain(handlers.iter().map(|h| {
+        let py_ast::ExceptHandler::ExceptHandler(h) = h;
+        h.body.as_slice()
+    }));
+    if !finalbody.is_empty() && protected.any(|b| jumps_out(b, false)) {
+        anyhow::bail!(
+            "`return`, `break` or `continue` that leaves a `try` with a `finally` is not \
+             supported yet: it would skip the `finally`"
+        );
+    }
+
+    let lowered_body: Vec<Statement> = body
+        .iter()
+        .map(|s| lower_stmt(s, ctx))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut guarded = if handlers.is_empty() {
+        lowered_body
+    } else {
+        let error_var = fresh_exc_temp();
+        let handler = lower_except_chain(handlers, 0, &error_var, ctx, &meta)?;
+        vec![Statement::TryCatch {
+            body: lowered_body,
+            error_var,
+            handler,
+            meta: meta.clone(),
+        }]
+    };
+    if finalbody.is_empty() {
+        anyhow::ensure!(!handlers.is_empty(), "`try` needs an `except` or a `finally`");
+        return Ok(guarded.remove(0));
+    }
 
     let finally_stmts: Vec<Statement> = finalbody
         .iter()
         .map(|s| lower_stmt(s, ctx))
         .collect::<Result<Vec<_>, _>>()?;
-
-    let mut try_body: Vec<Statement> = body
-        .iter()
-        .map(|s| lower_stmt(s, ctx))
-        .collect::<Result<Vec<_>, _>>()?;
-    try_body.extend(finally_stmts.clone());
-
-    let handler_body = lower_except_chain(handlers, 0, &error_var, &finally_stmts, ctx, &meta)?;
-
-    Ok(Statement::TryCatch {
-        body: try_body,
+    let error_var = fresh_exc_temp();
+    let mut on_error = finally_stmts.clone();
+    on_error.push(Statement::Throw {
+        value: Expression::Var {
+            name: error_var.clone(),
+            meta: meta.clone(),
+        },
+        meta: meta.clone(),
+    });
+    let mut block = vec![Statement::TryCatch {
+        body: guarded,
         error_var,
-        handler: handler_body,
+        handler: on_error,
+        meta: meta.clone(),
+    }];
+    block.extend(finally_stmts);
+    Ok(Statement::If {
+        condition: Expression::BoolLiteral {
+            value: true,
+            meta: meta.clone(),
+        },
+        then_body: block,
+        else_body: None,
         meta,
     })
 }
 
-/// Build the (possibly nested-if) handler body starting at `handlers[idx]`.
-/// `epilogue` (the lowered `finally` statements) is appended at the end of
-/// every terminal branch: each matched handler's body, and the final
-/// no-handler-matched re-throw.
+/// Would a statement in `stmts` jump out of the block holding them? `in_loop`
+/// says a `break`/`continue` here still lands inside it. A nested `def` or
+/// `class` has its own control flow, so it's skipped.
+fn jumps_out(stmts: &[py_ast::Stmt], in_loop: bool) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        py_ast::Stmt::Return(_) => true,
+        py_ast::Stmt::Break(_) | py_ast::Stmt::Continue(_) => !in_loop,
+        py_ast::Stmt::If(s) => jumps_out(&s.body, in_loop) || jumps_out(&s.orelse, in_loop),
+        py_ast::Stmt::For(s) => jumps_out(&s.body, true) || jumps_out(&s.orelse, in_loop),
+        py_ast::Stmt::AsyncFor(s) => jumps_out(&s.body, true) || jumps_out(&s.orelse, in_loop),
+        py_ast::Stmt::While(s) => jumps_out(&s.body, true) || jumps_out(&s.orelse, in_loop),
+        py_ast::Stmt::With(s) => jumps_out(&s.body, in_loop),
+        py_ast::Stmt::AsyncWith(s) => jumps_out(&s.body, in_loop),
+        py_ast::Stmt::Match(s) => s.cases.iter().any(|c| jumps_out(&c.body, in_loop)),
+        py_ast::Stmt::Try(s) => {
+            jumps_out(&s.body, in_loop)
+                || jumps_out(&s.orelse, in_loop)
+                || jumps_out(&s.finalbody, in_loop)
+                || s.handlers.iter().any(|h| {
+                    let py_ast::ExceptHandler::ExceptHandler(h) = h;
+                    jumps_out(&h.body, in_loop)
+                })
+        }
+        _ => false,
+    })
+}
+
+/// Build the (possibly nested-if) handler body starting at `handlers[idx]`,
+/// ending in a re-throw when no handler matches.
 fn lower_except_chain(
     handlers: &[py_ast::ExceptHandler],
     idx: usize,
     error_var: &str,
-    epilogue: &[Statement],
     ctx: &LowerCtx<'_>,
     meta: &HashMap<String, serde_json::Value>,
 ) -> anyhow::Result<Vec<Statement>> {
     if idx >= handlers.len() {
-        // No (more) handlers to try — either there were none at all (a bare
-        // `try/finally`) or none of the typed handlers matched: run
-        // `finally`, then re-raise so the exception keeps propagating.
-        let mut out = epilogue.to_vec();
-        out.push(Statement::Throw {
+        // None of the typed handlers matched: keep the exception propagating.
+        return Ok(vec![Statement::Throw {
             value: Expression::Var {
                 name: error_var.to_string(),
                 meta: meta.clone(),
             },
             meta: meta.clone(),
-        });
-        return Ok(out);
+        }]);
     }
 
     let py_ast::ExceptHandler::ExceptHandler(py_ast::ExceptHandlerExceptHandler {
@@ -640,7 +699,6 @@ fn lower_except_chain(
     for s in body {
         branch_body.push(lower_stmt(s, ctx)?);
     }
-    branch_body.extend(epilogue.iter().cloned());
 
     match type_ {
         None => {
@@ -659,7 +717,7 @@ fn lower_except_chain(
         Some(type_expr) => {
             let type_names = exception_type_names(type_expr)?;
             let cond = build_type_match_cond(&type_names, error_var, meta);
-            let rest = lower_except_chain(handlers, idx + 1, error_var, epilogue, ctx, meta)?;
+            let rest = lower_except_chain(handlers, idx + 1, error_var, ctx, meta)?;
             Ok(vec![Statement::If {
                 condition: cond,
                 then_body: branch_body,

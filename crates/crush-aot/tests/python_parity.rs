@@ -19,8 +19,12 @@ mod common;
 /// the AOT backends refuse make_closure / call_value).
 const CLOSURES: &str = "function values / closures are VM-only (CRUSH-251)";
 
+/// Exceptions run on the VMs only: the AOT backends refuse enter_try / throw.
+const EXCEPTIONS: &str = "try/finally has no AOT lowering (CRUSH-zorro-7)";
+
 /// Rust backend gaps that must stay loud (compile error), not wrong.
-const LOUD_ON_RUST: &[(&str, &str)] = &[("21_lambda", CLOSURES), ("22_closures", CLOSURES)];
+const LOUD_ON_RUST: &[(&str, &str)] =
+    &[("21_lambda", CLOSURES), ("22_closures", CLOSURES), ("26_try_finally", EXCEPTIONS)];
 
 /// C backend gaps that must stay loud (compile error), not wrong.
 const LOUD_ON_C: &[(&str, &str)] = &[
@@ -28,6 +32,7 @@ const LOUD_ON_C: &[(&str, &str)] = &[
     ("18_methods", "str_split is not implemented in the C runtime"),
     ("21_lambda", CLOSURES),
     ("22_closures", CLOSURES),
+    ("26_try_finally", EXCEPTIONS),
 ];
 
 fn corpus() -> Vec<PathBuf> {
