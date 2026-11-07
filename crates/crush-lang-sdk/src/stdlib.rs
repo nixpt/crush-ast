@@ -277,7 +277,12 @@ macro_rules! str_cap {
 str_cap!(StrSplitCap, "split", 2, |args: &[Value]| {
     let s = get_str(args, 0)?;
     let delim = get_str(args, 1)?;
-    let parts: Vec<Value> = s.split(&delim).map(|p| Value::Str(p.to_string())).collect();
+    // Same as the VM built-in: an empty delimiter splits into characters.
+    let parts: Vec<Value> = if delim.is_empty() {
+        s.chars().map(|c| Value::Str(c.to_string())).collect()
+    } else {
+        s.split(&delim).map(|p| Value::Str(p.to_string())).collect()
+    };
     Ok(Some(Value::new_array(parts)))
 });
 
