@@ -568,6 +568,34 @@ impl SemanticAnalyzer {
                             )
                         }
                     }
+                    // Python's words. They yield an operand there but a bool once
+                    // compiled, so unlike `&&`/`||` an `Any` operand is refused:
+                    // it could be a non-bool that would silently become one.
+                    "and" | "or" => {
+                        if l_type == Type::Bool && r_type == Type::Bool {
+                            Ok(Type::Bool)
+                        } else {
+                            bail!(
+                                "Logical operator {} requires bool operands, found {} and {}",
+                                operator,
+                                l_type,
+                                r_type
+                            )
+                        }
+                    }
+                    // Exact for int ** non-negative int, float otherwise, so an
+                    // int result type can't be promised.
+                    "**" => {
+                        if l_type == Type::Float || r_type == Type::Float {
+                            Ok(Type::Float)
+                        } else if (self.is_numeric(&l_type) || l_type == Type::Any)
+                            && (self.is_numeric(&r_type) || r_type == Type::Any)
+                        {
+                            Ok(Type::Any)
+                        } else {
+                            bail!("Invalid binary op ** for types {} and {}", l_type, r_type)
+                        }
+                    }
                     _ => bail!("Unknown operator: {}", operator),
                 }
             }
