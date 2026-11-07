@@ -14,6 +14,27 @@ add its entry after yours.
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-11-07
+
+- Merge pull request #410 from nixpt/agent/altair/CRUSH-372-374-followups
+- test(python): chained comparisons on the CLI route; close CRUSH-372/373/374
+- Merge pull request #409 from nixpt/agent/altair/CRUSH-block-apostrophe-ticket
+- Merge pull request #408 from nixpt/agent/altair/CRUSH-374
+- Merge pull request #407 from nixpt/agent/altair/CRUSH-377
+- Merge pull request #406 from nixpt/agent/altair/CRUSH-373
+- Merge pull request #405 from nixpt/agent/altair/CRUSH-372
+- planning: file CRUSH-385, comment quotes break the polyglot block scanner
+- test(python): avoid an apostrophe in the chained-compare corpus comment (CRUSH-372)
+- Merge pull request #404 from nixpt/agent/altair/CRUSH-maya-audit-tickets
+- fix(python): run finally exactly once, or refuse (CRUSH-374)
+- fix(frontend): check and, or and ** on the CLI route (CRUSH-377)
+- test: format the float round-trip test (CRUSH-373)
+- fix(cast): keep float literals exact when reading JSON (CRUSH-373)
+- fix(python): keep every link of a chained comparison (CRUSH-372)
+- planning: file the Maya audit tickets (CRUSH-372..384)
+
+
+
 ## [0.11.1] - 2026-11-01
 
 - Merge pull request #403 from nixpt/fix/cargo-lock-zandbox
