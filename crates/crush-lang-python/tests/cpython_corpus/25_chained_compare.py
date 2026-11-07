@@ -1,5 +1,5 @@
 # CRUSH-372: every link of a comparison chain counts, and the chain
-# short-circuits, so a later operand isn't evaluated once a link is false.
+# short-circuits, so a later operand is not evaluated once a link is false.
 def later():
     print("evaluated")
     return 10
