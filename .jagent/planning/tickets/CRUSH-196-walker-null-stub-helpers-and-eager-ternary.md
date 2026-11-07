@@ -55,3 +55,7 @@
 ## Survey 2026-10-31 (status)
 
 `2b45593` (2026-10-14, `**` and Python slicing via `seq.slice` in every engine) implements the slice part of criterion 2. No evidence was found for `in` / `is`. Previous status: `` Partial — ternary/if-expression done (2026-10-14); slice / `in` / `is` now fail loudly, not implemented ``.
+
+## Audit 2026-11-06
+
+Still open at `495d9995`: `print(x is None)` reports `Undefined function: __crush_is__` and `print(3 in [1, 3])` reports `Undefined function: __crush_contains__` on `crush-run`. The Maya audit counted 622 uses of `is` and 533 of `in`. Both pass the walker, so the failure arrives late; implementing them or refusing at walk time would both satisfy the audit.
