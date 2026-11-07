@@ -105,3 +105,30 @@ fn the_right_operand_is_not_evaluated_when_the_left_decides() {
     let out = run("function boom() { console.log('boom'); return 1; }\nconsole.log(1 || boom(), 0 && boom());").unwrap();
     assert_eq!(out.trim_end(), "1 0");
 }
+
+/// Every compound assignment lowers like its expanded form, `x = x op y`.
+/// `>>>=` used to panic in the swc lowering (`unreachable!`).
+#[test]
+fn compound_assignment_lowers_like_its_expanded_form() {
+    fn shape(source: &str) -> serde_json::Value {
+        fn strip(v: &mut serde_json::Value) {
+            match v {
+                serde_json::Value::Object(m) => {
+                    m.remove("meta");
+                    m.values_mut().for_each(strip);
+                }
+                serde_json::Value::Array(a) => a.iter_mut().for_each(strip),
+                _ => {}
+            }
+        }
+        let cast = crush_lang_js::js_to_cast(source, "js").unwrap();
+        let mut v = serde_json::to_value(&cast).unwrap();
+        strip(&mut v);
+        v
+    }
+    for op in ["-", "*", "%", "**", "&", "|", "^", "<<", ">>", ">>>"] {
+        let compound = shape(&format!("let x = 9; x {op}= 2;"));
+        let expanded = shape(&format!("let x = 9; x = x {op} 2;"));
+        assert_eq!(compound, expanded, "`{op}=`");
+    }
+}
