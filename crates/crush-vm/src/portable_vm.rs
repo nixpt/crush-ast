@@ -2530,14 +2530,6 @@ impl PortableVm {
         self.stack.last().ok_or(VmError::StackUnderflow)
     }
 
-    /// Peek `n` values down the stack without popping (0 = top).
-    ///
-    /// The ADD arms must inspect operand TYPES before committing to a numeric or a string
-    /// interpretation, which they cannot do after popping.
-    fn peek_n(&self, n: usize) -> Option<&Value> {
-        self.stack.len().checked_sub(n + 1).and_then(|k| self.stack.get(k))
-    }
-
     fn check_step_quota(&self) -> Result<(), VmError> {
         if self.steps >= self.quotas.max_steps {
             return Err(VmError::StepQuota(self.quotas.max_steps));
