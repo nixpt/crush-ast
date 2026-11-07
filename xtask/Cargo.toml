@@ -11,7 +11,6 @@ crush-vm.workspace = true
 # `stdlib` for the corpus's `// caps: stdlib` annotation (see conformance.rs).
 crush-lang-sdk = { workspace = true, features = ["stdlib"] }
 serde_json.workspace = true
-anyhow.workspace = true
 regex = "1.10"
 
 [[bin]]

@@ -17,6 +17,3 @@ serde.workspace = true
 serde_json.workspace = true
 rmp-serde = "1.1"
 hex = "0.4"
-bitflags = "2.6"
-sha2 = "0.10"
-byteorder = "1.5"
