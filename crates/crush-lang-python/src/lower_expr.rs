@@ -49,6 +49,65 @@ fn refuse_tuple_if_strict() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// One `left op right` link of a comparison.
+fn lower_compare_link(
+    op: &py_ast::CmpOp,
+    left: Expression,
+    right: Expression,
+    meta: HashMap<String, serde_json::Value>,
+) -> Expression {
+    match op {
+        py_ast::CmpOp::Eq => Expression::BinaryOp { operator: "==".to_string(), left: Box::new(left), right: Box::new(right), meta },
+        py_ast::CmpOp::NotEq => Expression::BinaryOp { operator: "!=".to_string(), left: Box::new(left), right: Box::new(right), meta },
+        py_ast::CmpOp::Lt => Expression::BinaryOp { operator: "<".to_string(), left: Box::new(left), right: Box::new(right), meta },
+        py_ast::CmpOp::LtE => Expression::BinaryOp { operator: "<=".to_string(), left: Box::new(left), right: Box::new(right), meta },
+        py_ast::CmpOp::Gt => Expression::BinaryOp { operator: ">".to_string(), left: Box::new(left), right: Box::new(right), meta },
+        py_ast::CmpOp::GtE => Expression::BinaryOp { operator: ">=".to_string(), left: Box::new(left), right: Box::new(right), meta },
+        py_ast::CmpOp::In => Expression::Call {
+            function: "__crush_contains__".to_string(),
+            args: vec![right, left],
+            meta,
+        },
+        py_ast::CmpOp::NotIn => Expression::UnaryOp {
+            operator: "not".to_string(),
+            operand: Box::new(Expression::Call {
+                function: "__crush_contains__".to_string(),
+                args: vec![right, left],
+                meta: meta.clone(),
+            }),
+            meta,
+        },
+        py_ast::CmpOp::Is => Expression::Call {
+            function: "__crush_is__".to_string(),
+            args: vec![left, right],
+            meta,
+        },
+        py_ast::CmpOp::IsNot => Expression::UnaryOp {
+            operator: "not".to_string(),
+            operand: Box::new(Expression::Call {
+                function: "__crush_is__".to_string(),
+                args: vec![left, right],
+                meta: meta.clone(),
+            }),
+            meta,
+        },
+    }
+}
+
+/// True when evaluating `expr` twice can't be told apart from evaluating it
+/// once. Lowered Python has no operator overloading or properties, so only a
+/// call-like form can run code; those stay out of this list.
+fn is_repeatable(expr: &py_ast::Expr) -> bool {
+    match expr {
+        py_ast::Expr::Name(_) | py_ast::Expr::Constant(_) => true,
+        py_ast::Expr::UnaryOp(u) => is_repeatable(&u.operand),
+        py_ast::Expr::BinOp(b) => is_repeatable(&b.left) && is_repeatable(&b.right),
+        py_ast::Expr::Attribute(a) => is_repeatable(&a.value),
+        py_ast::Expr::Subscript(i) => is_repeatable(&i.value) && is_repeatable(&i.slice),
+        _ => false,
+    }
+}
+
 /// Lower a Python AST expression to a CAST expression.
 pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
     let offset = u32::from(expr.start()) as usize;
@@ -256,45 +315,37 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
             comparators,
             ..
         }) => {
-            let left = lower_expr(left, ctx)?;
-            let op = &ops[0];
-            let right = lower_expr(&comparators[0], ctx)?;
-            match op {
-                py_ast::CmpOp::Eq => Ok(Expression::BinaryOp { operator: "==".to_string(), left: Box::new(left), right: Box::new(right), meta }),
-                py_ast::CmpOp::NotEq => Ok(Expression::BinaryOp { operator: "!=".to_string(), left: Box::new(left), right: Box::new(right), meta }),
-                py_ast::CmpOp::Lt => Ok(Expression::BinaryOp { operator: "<".to_string(), left: Box::new(left), right: Box::new(right), meta }),
-                py_ast::CmpOp::LtE => Ok(Expression::BinaryOp { operator: "<=".to_string(), left: Box::new(left), right: Box::new(right), meta }),
-                py_ast::CmpOp::Gt => Ok(Expression::BinaryOp { operator: ">".to_string(), left: Box::new(left), right: Box::new(right), meta }),
-                py_ast::CmpOp::GtE => Ok(Expression::BinaryOp { operator: ">=".to_string(), left: Box::new(left), right: Box::new(right), meta }),
-                py_ast::CmpOp::In => Ok(Expression::Call {
-                    function: "__crush_contains__".to_string(),
-                    args: vec![right, left],
-                    meta,
-                }),
-                py_ast::CmpOp::NotIn => Ok(Expression::UnaryOp {
-                    operator: "not".to_string(),
-                    operand: Box::new(Expression::Call {
-                        function: "__crush_contains__".to_string(),
-                        args: vec![right, left],
-                        meta: meta.clone(),
-                    }),
-                    meta,
-                }),
-                py_ast::CmpOp::Is => Ok(Expression::Call {
-                    function: "__crush_is__".to_string(),
-                    args: vec![left, right],
-                    meta,
-                }),
-                py_ast::CmpOp::IsNot => Ok(Expression::UnaryOp {
-                    operator: "not".to_string(),
-                    operand: Box::new(Expression::Call {
-                        function: "__crush_is__".to_string(),
-                        args: vec![left, right],
-                        meta: meta.clone(),
-                    }),
-                    meta,
-                }),
+            // `a < b < c` is `a < b and b < c`. `lower_expr` has nowhere to hoist
+            // a temp, so an intermediate operand is lowered twice; refuse any
+            // that could observe that rather than evaluate it twice.
+            for middle in &comparators[..comparators.len().saturating_sub(1)] {
+                anyhow::ensure!(
+                    is_repeatable(middle),
+                    "chained comparison with a middle operand that may have side effects \
+                     is not supported yet (bind it to a variable first)"
+                );
             }
+            let mut lhs: &py_ast::Expr = left;
+            let mut chain: Option<Expression> = None;
+            for (op, rhs) in ops.iter().zip(comparators) {
+                let link = lower_compare_link(
+                    op,
+                    lower_expr(lhs, ctx)?,
+                    lower_expr(rhs, ctx)?,
+                    meta.clone(),
+                );
+                chain = Some(match chain {
+                    None => link,
+                    Some(prev) => Expression::BinaryOp {
+                        operator: "and".to_string(),
+                        left: Box::new(prev),
+                        right: Box::new(link),
+                        meta: meta.clone(),
+                    },
+                });
+                lhs = rhs;
+            }
+            chain.ok_or_else(|| anyhow::anyhow!("comparison with no operators"))
         }
         py_ast::Expr::Call(py_ast::ExprCall {
             func,
@@ -879,6 +930,37 @@ mod comprehension_lowering_tests {
 
     fn ctx() -> LowerCtx<'static> {
         LowerCtx::new("", "<test>", "python")
+    }
+
+    #[test]
+    fn chained_compare_keeps_every_link() {
+        let expr = crate::parser::parse_expression("0 <= x < 3").unwrap();
+        let lowered = lower_expr(&expr, &ctx()).expect("chain should lower");
+        match lowered {
+            Expression::BinaryOp { operator, left, right, .. } => {
+                assert_eq!(operator, "and");
+                let op_of = |e: &Expression| match e {
+                    Expression::BinaryOp { operator, .. } => operator.clone(),
+                    other => panic!("expected a comparison, got {other:?}"),
+                };
+                assert_eq!(op_of(&left), "<=");
+                assert_eq!(op_of(&right), "<");
+            }
+            other => panic!("expected `and` of both links, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chained_compare_refuses_a_call_it_would_evaluate_twice() {
+        let expr = crate::parser::parse_expression("0 < f() < 3").unwrap();
+        let err = lower_expr(&expr, &ctx()).expect_err("middle call must be refused");
+        assert!(err.to_string().contains("chained comparison"), "{err}");
+    }
+
+    #[test]
+    fn chained_compare_allows_a_call_as_the_last_operand() {
+        let expr = crate::parser::parse_expression("0 < x < f()").unwrap();
+        lower_expr(&expr, &ctx()).expect("the last operand is evaluated once");
     }
 
     #[test]
