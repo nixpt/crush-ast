@@ -34,7 +34,6 @@ crush-cast.workspace = true
 crush-cosm.workspace = true
 crush-walker-core = { path = "../crush-walker-core", version = "0.11.2", default-features = false }
 anyhow.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 swc_ecma_parser = { version = "41", optional = true }
 swc_ecma_ast = { version = "25", optional = true }

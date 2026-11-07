@@ -20,5 +20,3 @@ crush-vm = { path = "../crush-vm", version = "0.11.2", default-features = false 
 # 0.1.0 publishes (local verification used a gitignored .cargo/config.toml
 # [patch.crates-io] path override, reverted before commit).
 caison.workspace = true
-serde.workspace = true
-serde_json.workspace = true

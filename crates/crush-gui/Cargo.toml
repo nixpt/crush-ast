@@ -31,7 +31,6 @@ arniko         = { version = "=0.3.1", default-features = false, features = ["re
 # itself (the headless backend parses with the same crates). Same versions
 # arniko 0.3.1 resolves to.
 bliss          = { package = "arniko-bliss", version = "0.3.1" }
-bliss-dom      = "0.3.1"
 parking_lot    = "0.12"
 
 [dev-dependencies]
