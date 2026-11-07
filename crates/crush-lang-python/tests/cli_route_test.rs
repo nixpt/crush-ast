@@ -55,3 +55,35 @@ fn or_with_int_operands_is_refused() {
     let err = run_cli_route("print(0 or 5)\n").expect_err("must not print a bool");
     assert!(err.to_string().contains("Logical operator or"), "{err}");
 }
+
+/// CRUSH-372 on the CLI route: every link of a comparison chain counts, and
+/// the chain short-circuits, so a later operand isn't evaluated once a link
+/// is false.
+#[test]
+fn chained_comparisons_match_cpython() {
+    let out = run_cli_route(
+        "def later():\n    print(\"evaluated\")\n    return 10\n\
+         x = 5\n\
+         print(0 <= x < 3)\n\
+         print(0 <= x < 9)\n\
+         print(1 < 2 < 3 < 4)\n\
+         print(1 < 2 < 3 < 3)\n\
+         print(1 == 1 == 2)\n\
+         print(x > 9 < later())\n\
+         print(0 < x < later())\n\
+         if 0 <= x < 3:\n    print(1)\n",
+    )
+    .unwrap();
+    assert_eq!(
+        out,
+        "False\nTrue\nTrue\nFalse\nFalse\nFalse\nevaluated\nTrue\n"
+    );
+}
+
+/// A call as a middle operand would be evaluated twice, so it is refused.
+#[test]
+fn chained_comparison_with_a_call_in_the_middle_is_refused() {
+    let err = run_cli_route("def f():\n    return 1\nprint(0 < f() < 2)\n")
+        .expect_err("a middle call must not be evaluated twice");
+    assert!(err.to_string().contains("chained comparison"), "{err}");
+}

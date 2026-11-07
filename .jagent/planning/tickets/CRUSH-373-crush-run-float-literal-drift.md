@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-373 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done — merged in PR #406 (`79859626`, 2026-11-07); see Resolution |
 | **Phase** | Maya audit |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -23,5 +23,13 @@ Measured at `main` `495d9995` (v0.11.1) by the 2026-11-06 Maya-through-Crush aud
 
 ## Success criteria
 
-- [ ] A literal survives CAST JSON write and read with identical bits
-- [ ] A test covers a large random literal set through the `crush-run` path
+- [x] A literal survives CAST JSON write and read with identical bits
+- [x] A test covers a large random literal set through the `crush-run` path
+
+## Resolution
+
+PR #406 (altair) proved the cause: serde_json's default float parser doesn't guarantee round-trips. The fix enables `float_roundtrip` on the workspace `serde_json` dependency. The CAST writer was already exact.
+
+- `crates/crush-lang-sdk/tests/cast_float_roundtrip.rs` runs 1000 sampled literals through the real `crush-run` binary. It failed with 81 changed before the fix and passes after.
+- 400 random literals through `python_walker` then `crush-run run` match CPython, with 0 changed against 49 before.
+- **Cost:** that parser is slower on floats. This wasn't measured, and only JSON reading is affected.
