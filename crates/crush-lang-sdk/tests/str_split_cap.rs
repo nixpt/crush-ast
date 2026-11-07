@@ -19,12 +19,20 @@ fn vm_split(s: &str, delim: &str) -> String {
         ".func main\n    PUSH_STR {s:?}\n    PUSH_STR {delim:?}\n    CAP_CALL \"str.split\" 2\n    CAP_CALL \"io.print\" 1\n    RET\n"
     );
     let prog = crush_vm::assembler::assemble(&src, Some(&["io.print", "str.split"]), None).unwrap();
-    crush_vm::run(&prog, &crush_vm::Quotas::default()).unwrap().output
+    crush_vm::run(&prog, &crush_vm::Quotas::default())
+        .unwrap()
+        .output
 }
 
 #[test]
 fn split_matches_the_vm_builtin() {
-    for (s, delim) in [("ab", ""), ("a,b,,c", ","), ("", ","), ("", ""), ("héllo", "")] {
+    for (s, delim) in [
+        ("ab", ""),
+        ("a,b,,c", ","),
+        ("", ","),
+        ("", ""),
+        ("héllo", ""),
+    ] {
         let sdk = format!("[{}]\n", split(s, delim).join(", "));
         assert_eq!(sdk, vm_split(s, delim), "str.split({s:?}, {delim:?})");
     }
