@@ -870,33 +870,9 @@ impl PortableVm {
                 let v = self.stack.remove(idx);
                 self.push(v);
             }
-            // `+` concatenates when EITHER side is a string. This MUST match scheduler.rs exactly:
-            // the two VMs run the same programs, and a divergence here is a silent miscompile.
-            //
-            // It was already diverging. This arm did not guard its operands, and to_f64_p ends in
-            // `_ => 0.0` — so portable_vm silently evaluated `"a" + "b"` to 0 and `"x: " + 5` to 5,
-            // while scheduler.rs raised a TypeError on the very same source. No error either way.
-            ADD if matches!(self.peek_n(0), Some(Value::Str(_)))
-                || matches!(self.peek_n(1), Some(Value::Str(_))) =>
-            {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                self.push(Value::Str(format!("{}{}", a.as_text(), b.as_text())));
-            }
-            // Anything else non-numeric is a LOUD error, not a silent 0.
-            // (Two arrays under ADD concatenate in `add_values`, CRUSH-135.)
-            ADD | SUB | MUL | DIV | MOD
-                if !(opcode == ADD
-                    && matches!(
-                        (self.peek_n(1), self.peek_n(0)),
-                        (Some(Value::Array(_)), Some(Value::Array(_)))
-                    ))
-                    && (!matches!(self.peek_n(0), Some(Value::Int(_)) | Some(Value::Float(_)))
-                        || !matches!(self.peek_n(1), Some(Value::Int(_)) | Some(Value::Float(_)))) =>
-            {
-                let got = self.peek_n(0).map(value_type_name).unwrap_or("nothing");
-                return Err(VmError::TypeError { expected: "numeric", got });
-            }
+            // `+` concatenates when either side is a string and two arrays concatenate
+            // (CRUSH-135); anything else non-numeric is a TypeError naming the bad operand.
+            // `add_values` and the other helpers do all of that, as they do in scheduler.rs.
             ADD | SUB | MUL | DIV | MOD => {
                 let b = self.pop()?;
                 let a = self.pop()?;
@@ -915,14 +891,14 @@ impl PortableVm {
                 self.push(crate::arithmetic::neg_value(&a)?);
             }
             MATH_POW => {
-                let exp = self.pop()?;
-                let base = self.pop()?;
+                let exp = need_num(self.pop()?)?;
+                let base = need_num(self.pop()?)?;
                 let base_f = to_f64_p(&base);
                 let exp_f = to_f64_p(&exp);
                 self.push(Value::Float(base_f.powf(exp_f)));
             }
             MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL => {
-                let a = self.pop()?;
+                let a = need_num(self.pop()?)?;
                 let af = to_f64_p(&a);
                 let res = match opcode {
                     MATH_SQRT => af.sqrt(),
@@ -1045,8 +1021,8 @@ impl PortableVm {
                 });
             }
             BITAND | BITOR | BITXOR | SHL | SHR => {
-                let b = self.pop()?;
-                let a = self.pop()?;
+                let b = need_num(self.pop()?)?;
+                let a = need_num(self.pop()?)?;
                 let ai = to_i64(&a);
                 let bi = to_i64(&b);
                 let result = match opcode {
@@ -1066,7 +1042,7 @@ impl PortableVm {
                 self.push(result);
             }
             BITNOT => {
-                let a = self.pop()?;
+                let a = need_num(self.pop()?)?;
                 self.push(Value::Int(!to_i64(&a)));
             }
             NOT => {
@@ -2668,6 +2644,16 @@ pub enum VmYield {
     },
     /// VM has hit a breakpoint (for debugging).
     DebugBreak { reason: String },
+}
+
+/// A number, or the TypeError scheduler.rs raises with `need_num!`. Without
+/// it `to_i64`/`to_f64_p` read a bool or string as 0.
+fn need_num(v: Value) -> Result<Value, VmError> {
+    if v.is_numeric() {
+        Ok(v)
+    } else {
+        Err(VmError::TypeError { expected: "numeric", got: v.type_name() })
+    }
 }
 
 /// Helper functions for array operations.
