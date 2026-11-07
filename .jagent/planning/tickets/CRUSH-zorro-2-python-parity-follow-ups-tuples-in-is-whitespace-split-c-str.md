@@ -45,3 +45,7 @@ exact, AOT C is exact or loud. These Python features are outside that corpus and
 ## Non-goals
 
 - An embedded Python VM (CRUSH-47, declined 2026-10-15): parser-only frontends, crush-vm executes.
+
+## Audit 2026-11-06
+
+Tuples still become lists at `495d9995`: `print((1, 2) == [1, 2])` prints `True`, silently, on `crush-run` (CPython: `False`). The audit also reports non-string dict keys being stringified.

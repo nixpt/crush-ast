@@ -70,3 +70,16 @@ re-exports (`export … from …`).
   walker gap). This ticket is about *compiling* the modules faithfully.
 - Fixing the swc lowering where the boa lowering is the designated
   replacement, unless the step-6 flip slips.
+
+## Audit 2026-11-06
+
+Measured at `495d9995` against maya-engine `4b4adcb` (the last 37-file commit; 4,611 lines against this ticket's 4,643, difference unresolved). The tip `6eeddef` has 52 files.
+
+| Stage | boa 37 | swc 37 |
+|---|---|---|
+| Walk fully | 3 | 3 (2 hollow) |
+| Reach CASM/CVM1, walker door | 2 | 1 |
+| Reach CVM1, `crush-run` | 2 | 0 |
+| Run faithfully against node | 2 | 1, walker door only |
+
+First blockers on boa (34 files): `new` of a host, imported or non-local class 11; undefined names 5; 8 singletons; the rest 2 each. On swc: class `constructor` 20, method receiver 5, `new` 3. Method default parameters are no longer anyone's first blocker. Follow-ups: CRUSH-381, CRUSH-382, CRUSH-383.
