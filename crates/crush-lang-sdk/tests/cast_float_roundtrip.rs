@@ -54,7 +54,11 @@ fn crush_run_keeps_float_literals_exact() {
         .output()
         .expect("run crush-run");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let printed: Vec<f64> = stdout.lines().map(|l| l.parse().unwrap()).collect();
     assert_eq!(printed.len(), values.len());
