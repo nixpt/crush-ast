@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-374 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done — merged in PR #408 (`f65db104`, 2026-11-07); see Resolution |
 | **Phase** | Maya audit |
 | **Assignee** | unassigned |
 | **Dependencies** | CRUSH-199 |
@@ -31,5 +31,15 @@ The same happens with `break` in a loop. Re-run independently on `495d9995` thro
 
 ## Success criteria
 
-- [ ] `finally` runs on every exit path, or the construct is refused loudly
-- [ ] Tests cover `return`, `break`, `continue` and a raising handler
+- [x] `finally` runs on every exit path, or the construct is refused loudly
+- [x] Tests cover `return`, `break`, `continue` and a raising handler
+
+## Resolution
+
+PR #408 (altair) lowers `try A except B finally C` to `try { try { A } catch { B } } catch (e) { C; throw e } C`, so `C` runs exactly once, outside the protection of `B`. A `try` with no `finally` is unchanged.
+
+- **Early exits are refused, not implemented, as the criteria allow:** a `return`, `break` or `continue` that leaves the `try`, including a `return` inside `finally`, is refused with a clear error. Jumps that stay inside, and a `return` in a nested `def`, are still allowed. In a copy of the Maya source, 1 of 20 `try/finally` blocks hits this.
+- **Also fixed:** a `finally` that raised could be caught by its own `except` and then run twice. That case wasn't in the audit.
+- **Tests:** corpus program `26_try_finally` (CPython-checked) covers a raising handler. `try_finally_test.rs` covers the refusals for `return`, `break`, `continue`, a nested `return` and a `return` in `finally`.
+- **AOT:** a `finally` stays VM-only, because the AOT backends refuse exceptions. `26_try_finally` is on the loud list as CRUSH-zorro-7.
+- **JS:** CRUSH-199 still covers `finally` in JavaScript.

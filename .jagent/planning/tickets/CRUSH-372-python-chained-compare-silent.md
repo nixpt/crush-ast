@@ -4,7 +4,7 @@
 |-------|-------|
 | **ID** | CRUSH-372 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Done — merged in PR #405 (`83989ddb`, 2026-11-07); see Resolution |
 | **Phase** | Maya audit |
 | **Assignee** | unassigned |
 | **Dependencies** | none |
@@ -28,5 +28,13 @@ Re-run independently on `495d9995` through `python_walker` then `crush-run run`.
 
 ## Success criteria
 
-- [ ] `a op b op c` lowers to `a op b and b op c` with `b` evaluated once, or is refused loudly
-- [ ] Both doors agree with CPython, including when `b` has side effects
+- [x] `a op b op c` lowers to `a op b and b op c` with `b` evaluated once, or is refused loudly
+- [x] Both doors agree with CPython, including when `b` has side effects
+
+## Resolution
+
+PR #405 (altair) lowers a chain to `and` of all its links, in order, with short-circuiting. The middle operand is lowered twice, so it must be a name, constant, attribute, subscript, or arithmetic on those. Anything else, such as a call, is refused with `chained comparison with a middle operand that may have side effects is not supported yet`.
+
+- **Walker door:** corpus program `25_chained_compare`, checked against CPython.
+- **CLI route:** PR #407 made the checker accept `and` on bools, after which chains work there too. `cli_route_test.rs` covers it with `chained_comparisons_match_cpython` and `chained_comparison_with_a_call_in_the_middle_is_refused`. Both fail with the lowering from before #405.
+- **Refused, not implemented:** a call in the middle of a chain, for example `500 < len(land) < 3500`, is refused, as the success criteria allow. In a copy of the Maya source, 16 of 119 chains are refused this way. Hoisting the operand into a temp would make them work.
