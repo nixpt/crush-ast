@@ -827,6 +827,17 @@ impl SemanticAnalyzer {
                 }
                 Ok(Type::Any)
             }
+            Expression::CallValue { callee, args, .. } => {
+                // CRUSH-363: the callee's value is called at run time. Its
+                // static type isn't reliable here (an indexed map field, a
+                // call result); a non-function is caught at run time:
+                // "<type> is not callable".
+                self.check_expr(callee)?;
+                for arg in args {
+                    self.check_expr(arg)?;
+                }
+                Ok(Type::Any)
+            }
             // `!x` is always a bool (the VM negates truthiness, so the operand
             // may be anything); `-x` keeps a numeric operand's type. Falling
             // through to `Any` made `if !is_digit(c)` a type error once
@@ -1188,6 +1199,12 @@ fn collect_called_in_expr<'a>(expr: &'a Expression, out: &mut Vec<&'a str>) {
         }
         Expression::MethodCall { target, args, .. } => {
             collect_called_in_expr(target, out);
+            for arg in args {
+                collect_called_in_expr(arg, out);
+            }
+        }
+        Expression::CallValue { callee, args, .. } => {
+            collect_called_in_expr(callee, out);
             for arg in args {
                 collect_called_in_expr(arg, out);
             }

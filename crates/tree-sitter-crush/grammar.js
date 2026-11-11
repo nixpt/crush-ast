@@ -297,7 +297,17 @@ module.exports = grammar({
                 field('name', choice(
                     $.identifier,
                     $.field_access,
+                    // A call on a computed callee (CRUSH-363):
+                    // `h[k](41)` — the value is looked up and called.
+                    $.index_expression,
                 )),
+                field('arguments', $.argument_list),
+            )),
+            // A call on a call (`f(x)(y)`, `obj.f(x)(y)`): the callee is
+            // itself a call, whose value is called with the second
+            // argument list (CRUSH-363).
+            prec(2, seq(
+                field('name', $.capability_call),
                 field('arguments', $.argument_list),
             )),
             // Sugar call: cmd arg1 arg2

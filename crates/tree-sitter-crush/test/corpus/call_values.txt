@@ -1,0 +1,130 @@
+==================
+Call on a subscript (CRUSH-363)
+==================
+fn main() {
+    let h = { add: |a| => a + 1 }
+    let k = "add"
+    print(h[k](41))
+}
+
+---
+
+(program
+  (fn_def
+    name: (identifier)
+    parameters: (parameter_list)
+    body: (block
+      (var_decl
+        name: (identifier)
+        value: (object_literal
+          (object_property
+            key: (identifier)
+            value: (expression
+              (lambda
+                parameters: (lambda_parameter
+                  name: (identifier))
+                expression: (expression
+                  (binary_op
+                    left: (identifier)
+                    right: (int_literal))))))))
+      (var_decl
+        name: (identifier)
+        value: (expression
+          (string_literal)))
+      (expr_stmt
+        (expression
+          (capability_call
+            name: (identifier)
+            arguments: (argument_list
+              (expression
+                (capability_call
+                  name: (index_expression
+                    target: (identifier)
+                    index: (expression
+                      (identifier)))
+                  arguments: (argument_list
+                    (expression
+                      (int_literal))))))))))))
+
+==================
+Two-step form still parses (CRUSH-363)
+==================
+fn main() {
+    let h = { add: |a| => a + 1 }
+    let k = "add"
+    let f = h[k]
+    print(f(41))
+}
+
+---
+
+(program
+  (fn_def
+    name: (identifier)
+    parameters: (parameter_list)
+    body: (block
+      (var_decl
+        name: (identifier)
+        value: (object_literal
+          (object_property
+            key: (identifier)
+            value: (expression
+              (lambda
+                parameters: (lambda_parameter
+                  name: (identifier))
+                expression: (expression
+                  (binary_op
+                    left: (identifier)
+                    right: (int_literal))))))))
+      (var_decl
+        name: (identifier)
+        value: (expression
+          (string_literal)))
+      (var_decl
+        name: (identifier)
+        value: (expression
+          (index_expression
+            target: (identifier)
+            index: (expression
+              (identifier)))))
+      (expr_stmt
+        (expression
+          (capability_call
+            name: (identifier)
+            arguments: (argument_list
+              (expression
+                (capability_call
+                  name: (identifier)
+                  arguments: (argument_list
+                    (expression
+                      (int_literal))))))))))))
+
+==================
+Call on a call (CRUSH-363)
+==================
+fn main() {
+    print(make_adder(3)(4))
+}
+
+---
+
+(program
+  (fn_def
+    name: (identifier)
+    parameters: (parameter_list)
+    body: (block
+      (expr_stmt
+        (expression
+          (capability_call
+            name: (identifier)
+            arguments: (argument_list
+              (expression
+                (capability_call
+                  name: (capability_call
+                    name: (identifier)
+                    arguments: (argument_list
+                      (expression
+                        (int_literal))))
+                  arguments: (argument_list
+                    (expression
+                      (int_literal))))))))))))

@@ -736,6 +736,17 @@ impl Renderer {
                 }
                 self.push_str(")");
             }
+            Expression::CallValue { callee, args, .. } => {
+                self.render_expression(callee, 90);
+                self.push_str("(");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        self.push_str(", ");
+                    }
+                    self.render_expression(arg, 0);
+                }
+                self.push_str(")");
+            }
             Expression::Pipeline { segments, .. } => {
                 for (i, seg) in segments.iter().enumerate() {
                     if i > 0 {
@@ -1405,6 +1416,7 @@ fn expr_precedence(expr: &Expression) -> u8 {
         Expression::GetField { .. }
         | Expression::Index { .. }
         | Expression::Call { .. }
+        | Expression::CallValue { .. }
         | Expression::CapabilityCall { .. }
         | Expression::Construct { .. }
         | Expression::MethodCall { .. }

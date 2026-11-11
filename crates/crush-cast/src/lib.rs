@@ -352,6 +352,18 @@ pub enum Expression {
         #[serde(default)]
         meta: HashMap<String, serde_json::Value>,
     },
+    /// A call whose callee is an arbitrary expression (`h[k](41)`,
+    /// `f(x)(y)`, `make_adder()(3)`, `(|| a + 1)(…)`): the callee's value
+    /// is looked up and called at run time (`call_value`), the same op a
+    /// call on a variable holding a function value compiles to —
+    /// identical semantics to binding it to a name first (CRUSH-251,
+    /// CRUSH-363).
+    CallValue {
+        callee: Box<Expression>,
+        args: Vec<Expression>,
+        #[serde(default)]
+        meta: HashMap<String, serde_json::Value>,
+    },
     CapabilityCall {
         name: String,
         args: Vec<Expression>,
