@@ -80,13 +80,15 @@ fn lang_block_outputs(source: &str) -> Vec<String> {
 #[test]
 fn bare_two_output_list_parses_in_order() {
     let src = "fn main() {\n    @python -> a, b {\n        a = 1\n        b = 2\n    }\n}\n";
-    assert_eq!(lang_block_outputs(src), vec!["a".to_string(), "b".to_string()]);
+    assert_eq!(
+        lang_block_outputs(src),
+        vec!["a".to_string(), "b".to_string()]
+    );
 }
 
 #[test]
 fn bare_three_output_list_parses_in_order() {
-    let src =
-        "fn main() {\n    @javascript -> a, b, c {\n        let a = 1\n        let b = 2\n        let c = 3\n    }\n}\n";
+    let src = "fn main() {\n    @javascript -> a, b, c {\n        let a = 1\n        let b = 2\n        let c = 3\n    }\n}\n";
     assert_eq!(
         lang_block_outputs(src),
         vec!["a".to_string(), "b".to_string(), "c".to_string()]
@@ -96,7 +98,10 @@ fn bare_three_output_list_parses_in_order() {
 #[test]
 fn parenthesized_output_list_still_parses_in_order() {
     let src = "fn main() {\n    @python -> (a, b) {\n        a = 1\n        b = 2\n    }\n}\n";
-    assert_eq!(lang_block_outputs(src), vec!["a".to_string(), "b".to_string()]);
+    assert_eq!(
+        lang_block_outputs(src),
+        vec!["a".to_string(), "b".to_string()]
+    );
 }
 
 #[test]

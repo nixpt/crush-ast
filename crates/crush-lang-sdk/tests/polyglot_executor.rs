@@ -266,7 +266,10 @@ fn multiple_declared_outputs_arrive_in_order_on_both_engines() {
             .enumerate()
             .map(|(i, name)| (name.clone(), serde_json::json!(i + 1)))
             .collect();
-        Ok(format!("{CRUSH_RESULT_SENTINEL}{}\n", serde_json::Value::Object(outs)))
+        Ok(format!(
+            "{CRUSH_RESULT_SENTINEL}{}\n",
+            serde_json::Value::Object(outs)
+        ))
     });
     let caps = granted_with(numberer);
 
