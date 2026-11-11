@@ -133,7 +133,10 @@ pub fn catalog() -> Vec<CapInfo> {
         ("--akg", new().akg(true)),
         ("--process", new().process(true)),
         ("--crypto", new().crypto(true)),
-        ("--polyglot", new().polyglot(&["python", "javascript", "bash"])),
+        (
+            "--polyglot",
+            new().polyglot(&["python", "javascript", "bash"]),
+        ),
     ]);
     #[cfg(feature = "gpu")]
     grants.push(("--gpu", new().gpu(true)));
@@ -283,7 +286,10 @@ pub fn renamed_to(cap: &str) -> Option<&'static str> {
 /// Inference is static: a capability only reachable through a function name
 /// computed at run time (`spawn`) isn't seen, and the VM's own check still
 /// applies when the program runs.
-pub fn missing_grants(program: &crush_vm::Program, host_caps: Option<&HostCaps>) -> anyhow::Result<Vec<MissingGrant>> {
+pub fn missing_grants(
+    program: &crush_vm::Program,
+    host_caps: Option<&HostCaps>,
+) -> anyhow::Result<Vec<MissingGrant>> {
     let builtins = crush_vm::capabilities();
     let missing: Vec<String> = used_by(program)?
         .into_iter()
@@ -385,7 +391,11 @@ impl HostCap for Declared {
 
 /// Move every handler of `from` into `into`, declaring `effects` for each
 /// one that has not declared its own.
-pub(crate) fn register_all(into: &mut HostCaps, mut from: HostCaps, effects: &'static [&'static str]) {
+pub(crate) fn register_all(
+    into: &mut HostCaps,
+    mut from: HostCaps,
+    effects: &'static [&'static str],
+) {
     // Not a handler; keep it unless `into` already has one (CRUSH-271).
     if let Some(executor) = from.take_polyglot_executor()
         && into.polyglot_executor().is_none()
@@ -439,7 +449,10 @@ mod tests {
             renamed_to: Some("net.http_get"),
         };
         let text = super::describe_missing(&[renamed]);
-        assert!(text.starts_with("  http.get was renamed to net.http_get"), "{text}");
+        assert!(
+            text.starts_with("  http.get was renamed to net.http_get"),
+            "{text}"
+        );
         #[cfg(feature = "net")]
         assert!(text.ends_with("(grant it with --net)"), "{text}");
     }
@@ -447,11 +460,17 @@ mod tests {
     #[test]
     fn undeclared_ignores_ambient_and_honours_families() {
         use std::collections::BTreeSet;
-        let used: BTreeSet<String> =
-            ["io.print", "str.len", "fs.cat", "fs.list", "time.now", "env.get"].map(String::from).into();
+        let used: BTreeSet<String> = [
+            "io.print", "str.len", "fs.cat", "fs.list", "time.now", "env.get",
+        ]
+        .map(String::from)
+        .into();
         let declared = vec!["fs".to_string(), "time.now:anything".to_string()];
         assert_eq!(super::undeclared(&used, &declared), ["env.get"]);
-        assert_eq!(super::undeclared(&used, &[]), ["env.get", "fs.cat", "fs.list", "time.now"]);
+        assert_eq!(
+            super::undeclared(&used, &[]),
+            ["env.get", "fs.cat", "fs.list", "time.now"]
+        );
     }
 
     #[test]
@@ -461,10 +480,20 @@ mod tests {
         )
         .unwrap();
         let none = super::missing_grants(&program, None).unwrap();
-        let names: Vec<_> = none.iter().map(|m| (m.capability.as_str(), m.grant)).collect();
-        assert_eq!(names, [("fs.cat", Some("--fs")), ("time.now", Some("--time"))]);
+        let names: Vec<_> = none
+            .iter()
+            .map(|m| (m.capability.as_str(), m.grant))
+            .collect();
+        assert_eq!(
+            names,
+            [("fs.cat", Some("--fs")), ("time.now", Some("--time"))]
+        );
         let granted = HostCapsBuilder::new().fs(true).time(true).build();
-        assert!(super::missing_grants(&program, Some(&granted)).unwrap().is_empty());
+        assert!(
+            super::missing_grants(&program, Some(&granted))
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             super::describe_missing(&none),
             "  --fs: fs.cat\n  --time: time.now"
@@ -474,10 +503,14 @@ mod tests {
     #[test]
     fn ui_caps_point_at_crush_gui() {
         let program =
-            crate::compile::compile_crush_source("fn main() { ui.render(\"x\"); return 0 }").unwrap();
+            crate::compile::compile_crush_source("fn main() { ui.render(\"x\"); return 0 }")
+                .unwrap();
         let missing = super::missing_grants(&program, None).unwrap();
         assert_eq!(missing.len(), 1);
-        assert!(missing[0].grant.is_some_and(|g| g.starts_with("--ui")), "{missing:?}");
+        assert!(
+            missing[0].grant.is_some_and(|g| g.starts_with("--ui")),
+            "{missing:?}"
+        );
     }
 
     /// Every grant at once — the most a builder can register.
@@ -559,7 +592,12 @@ mod tests {
     #[test]
     fn catalog_names_each_capability_once_with_its_grant() {
         let catalog = super::catalog();
-        let get = |n: &str| catalog.iter().find(|c| c.name == n).unwrap_or_else(|| panic!("{n}"));
+        let get = |n: &str| {
+            catalog
+                .iter()
+                .find(|c| c.name == n)
+                .unwrap_or_else(|| panic!("{n}"))
+        };
         assert!(get("io.print").is_ambient());
         assert!(get("push").is_ambient());
         assert!(get("caison.parse").is_ambient());

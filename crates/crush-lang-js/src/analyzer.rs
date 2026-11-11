@@ -1,5 +1,5 @@
-use swc_ecma_ast::*;
 use crush_walker_core::FeatureReport;
+use swc_ecma_ast::*;
 
 fn wtf8_str(a: &swc_atoms::Wtf8Atom) -> &str {
     a.as_str().unwrap_or_default()
@@ -56,15 +56,13 @@ fn analyze_stmt(stmt: &Stmt, r: &mut FeatureReport) {
             | Decl::TsModule(_) => {}
         },
         Stmt::Expr(ExprStmt { expr, .. }) => {
-            if let Expr::Call(CallExpr { callee, .. }) = expr.as_ref() {
-                if let Callee::Expr(callee_expr) = callee {
-                    if let Expr::Ident(ident) = callee_expr.as_ref() {
-                        if ident.sym.as_ref() == "eval" || ident.sym.as_ref() == "Function" {
-                            r.dangerous_imports
-                                .push(format!("eval-like: {}", ident.sym));
-                        }
-                    }
-                }
+            if let Expr::Call(CallExpr { callee, .. }) = expr.as_ref()
+                && let Callee::Expr(callee_expr) = callee
+                && let Expr::Ident(ident) = callee_expr.as_ref()
+                && (ident.sym.as_ref() == "eval" || ident.sym.as_ref() == "Function")
+            {
+                r.dangerous_imports
+                    .push(format!("eval-like: {}", ident.sym));
             }
         }
         Stmt::ForOf(ForOfStmt { is_await: true, .. }) => {

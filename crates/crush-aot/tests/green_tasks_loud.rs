@@ -23,14 +23,22 @@ fn casm(source: &str) -> casm::Program {
 fn aot_rust_refuses_spawn_by_name() {
     let e = crush_aot::codegen::gen_rust_source(&casm(SPAWN)).expect_err("must not compile");
     assert!(e.ops.iter().any(|o| o.contains("spawn")), "{:?}", e.ops);
-    assert!(!e.ops.iter().any(|o| o.contains("make_closure")), "{:?}", e.ops);
+    assert!(
+        !e.ops.iter().any(|o| o.contains("make_closure")),
+        "{:?}",
+        e.ops
+    );
 }
 
 #[test]
 fn aot_c_refuses_spawn_by_name() {
     let e = crush_aot::codegen_c::gen_c_source(&casm(SPAWN)).expect_err("must not compile");
     assert!(e.ops.iter().any(|o| o.contains("spawn")), "{:?}", e.ops);
-    assert!(!e.ops.iter().any(|o| o.contains("make_closure")), "{:?}", e.ops);
+    assert!(
+        !e.ops.iter().any(|o| o.contains("make_closure")),
+        "{:?}",
+        e.ops
+    );
 }
 
 #[test]
@@ -63,8 +71,13 @@ fn await_alone_is_not_loud() {
 /// must still be refused as `make_closure` — not re-reported as `spawn`.
 #[test]
 fn a_closure_value_without_spawn_is_not_reported_as_spawn() {
-    let source = "fn apply(f, v) {\n  return f(v)\n}\nfn main() {\n  print(apply(|x| x * 2, 21))\n}\n";
+    let source =
+        "fn apply(f, v) {\n  return f(v)\n}\nfn main() {\n  print(apply(|x| x * 2, 21))\n}\n";
     let e = crush_aot::codegen::gen_rust_source(&casm(source)).expect_err("must not compile");
-    assert!(e.ops.iter().any(|o| o.contains("make_closure")), "{:?}", e.ops);
+    assert!(
+        e.ops.iter().any(|o| o.contains("make_closure")),
+        "{:?}",
+        e.ops
+    );
     assert!(!e.ops.iter().any(|o| o.contains("spawn")), "{:?}", e.ops);
 }

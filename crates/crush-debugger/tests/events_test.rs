@@ -88,14 +88,25 @@ fn full_visibility_reports_stops_with_frames_output_and_finish() {
 fn redacted_visibility_never_emits_plain_values() {
     let events = events_for(
         DebugVisibility::InspectRedacted,
-        &["watch 0", "continue", "step", "step", "step", "step", "step"],
+        &[
+            "watch 0", "continue", "step", "step", "step", "step", "step",
+        ],
     );
     assert!(!events.is_empty());
     let mut views = 0;
     for e in &events {
         if let DebugEvent::Stopped { reason, frames } = e {
             if let StopReason::Watchpoint { new, .. } = reason {
-                assert!(matches!(new, ValueView::Redacted { type_name: "int", .. }), "{new:?}");
+                assert!(
+                    matches!(
+                        new,
+                        ValueView::Redacted {
+                            type_name: "int",
+                            ..
+                        }
+                    ),
+                    "{new:?}"
+                );
                 views += 1;
             }
             for (_, v) in frames.iter().flat_map(|f| &f.locals) {
@@ -109,13 +120,21 @@ fn redacted_visibility_never_emits_plain_values() {
 
 #[test]
 fn control_only_visibility_hides_every_value() {
-    let events = events_for(DebugVisibility::ControlOnly, &["watch 0", "continue", "next"]);
+    let events = events_for(
+        DebugVisibility::ControlOnly,
+        &["watch 0", "continue", "next"],
+    );
     for e in &events {
         if let DebugEvent::Stopped { reason, frames } = e {
             if let StopReason::Watchpoint { new, .. } = reason {
                 assert_eq!(new, &ValueView::Hidden);
             }
-            assert!(frames.iter().flat_map(|f| &f.locals).all(|(_, v)| *v == ValueView::Hidden));
+            assert!(
+                frames
+                    .iter()
+                    .flat_map(|f| &f.locals)
+                    .all(|(_, v)| *v == ValueView::Hidden)
+            );
         }
     }
 }
@@ -149,7 +168,9 @@ fn a_channel_carries_events_to_another_thread() {
     let (tx, rx) = std::sync::mpsc::channel();
     session.set_event_sink(tx);
     let reader = std::thread::spawn(move || rx.iter().collect::<Vec<_>>());
-    session.handle_command(parse_command("continue").unwrap()).unwrap();
+    session
+        .handle_command(parse_command("continue").unwrap())
+        .unwrap();
     drop(session);
     assert_eq!(
         reader.join().unwrap(),

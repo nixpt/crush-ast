@@ -20,8 +20,7 @@ fn string_slice_bounds_count_by_character() {
     let program = crush_lang_sdk::compile::casm_to_vm(&casm).expect("lower");
     let out = run(&program, &Quotas::default()).expect("run").output;
     assert_eq!(
-        out,
-        "héllo\nwörld\nörld\nhéllo \n\n",
+        out, "héllo\nwörld\nörld\nhéllo \n\n",
         "slices must cut at char boundaries (é/ö are 2 bytes in UTF-8)"
     );
 }
@@ -38,10 +37,7 @@ fn multibyte_scalar_cannot_be_split_by_slicing() {
     let casm = crush_frontend::compile_crush_source(src).expect("compile");
     let program = crush_lang_sdk::compile::casm_to_vm(&casm).expect("lower");
     let out = run(&program, &Quotas::default()).expect("run").output;
-    assert_eq!(
-        out,
-        "🎉\n!🎉語本日\n日語!\n本🎉\n"
-    );
+    assert_eq!(out, "🎉\n!🎉語本日\n日語!\n本🎉\n");
 }
 
 #[test]

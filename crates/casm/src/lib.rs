@@ -605,12 +605,16 @@ impl Instruction {
                 kind: self.require_field("kind", |v| v.as_str().map(String::from))?,
                 argc: self.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
             }),
-            "get_slot" => Ok(OpCode::GetSlot(
-                self.require_field("slot", |v| v.as_u64().map(|n| n as usize))?,
-            )),
-            "set_slot" => Ok(OpCode::SetSlot(
-                self.require_field("slot", |v| v.as_u64().map(|n| n as usize))?,
-            )),
+            "get_slot" => {
+                Ok(OpCode::GetSlot(self.require_field("slot", |v| {
+                    v.as_u64().map(|n| n as usize)
+                })?))
+            }
+            "set_slot" => {
+                Ok(OpCode::SetSlot(self.require_field("slot", |v| {
+                    v.as_u64().map(|n| n as usize)
+                })?))
+            }
             "is_kind" => Ok(OpCode::IsKind(
                 self.require_field("kind", |v| v.as_str().map(String::from))?,
             )),
@@ -709,8 +713,16 @@ impl Program {
 
     /// [`Program::refuse_cosm`] for an engine that implements `support`
     /// ([`cosm_unsupported_reason_on`]).
-    pub fn refuse_cosm_on(&self, engine: &str, support: CosmSupport) -> std::result::Result<(), String> {
-        match self.cosm.as_ref().and_then(|m| cosm_unsupported_reason_on(m, engine, support)) {
+    pub fn refuse_cosm_on(
+        &self,
+        engine: &str,
+        support: CosmSupport,
+    ) -> std::result::Result<(), String> {
+        match self
+            .cosm
+            .as_ref()
+            .and_then(|m| cosm_unsupported_reason_on(m, engine, support))
+        {
             Some(reason) => Err(reason),
             None => Ok(()),
         }
@@ -742,7 +754,9 @@ impl Program {
     /// without `spawn` is not refused here; each backend lowers it to a no-op.
     pub fn refuse_green_task(&self, engine: &str) -> std::result::Result<(), String> {
         match self.green_task_op() {
-            Some(op) => Err(format!("`{op}` (green tasks) isn't supported on {engine} yet (#161)")),
+            Some(op) => Err(format!(
+                "`{op}` (green tasks) isn't supported on {engine} yet (#161)"
+            )),
             None => Ok(()),
         }
     }
@@ -939,7 +953,10 @@ pub fn kind_unsupported_strategies(k: &crush_cosm::KindDecl) -> Vec<String> {
 ///   resolution `embedding_promotion` (the Go walker, K3), a `py_new_init`
 ///   with a `new_fn`, and every other hook (operators and the
 ///   eq/hash/cmp/iter/call/missing/set protocols, K2).
-pub fn kind_unsupported_strategies_on(k: &crush_cosm::KindDecl, support: CosmSupport) -> Vec<String> {
+pub fn kind_unsupported_strategies_on(
+    k: &crush_cosm::KindDecl,
+    support: CosmSupport,
+) -> Vec<String> {
     use crush_cosm::{Construct, Resolution, Strategy};
     if support == CosmSupport::Maps {
         return kind_unsupported_strategies(k);
@@ -948,7 +965,10 @@ pub fn kind_unsupported_strategies_on(k: &crush_cosm::KindDecl, support: CosmSup
     if matches!(k.resolution, Resolution::EmbeddingPromotion) {
         why.push(format!("resolution: {}", k.resolution.as_str()));
     }
-    if let Construct::PyNewInit { new_fn: Some(f), .. } = &k.construct {
+    if let Construct::PyNewInit {
+        new_fn: Some(f), ..
+    } = &k.construct
+    {
         why.push(format!("construct: py_new_init with a `__new__` (`{f}`)"));
     }
     let h = &k.hooks;
@@ -966,7 +986,11 @@ pub fn kind_unsupported_strategies_on(k: &crush_cosm::KindDecl, support: CosmSup
     .map(|(name, _)| name.to_string())
     .collect();
     hooks.extend(h.op.keys().map(|op| format!("op:{}", op_symbol(*op))));
-    hooks.extend(h.op_reflected.keys().map(|op| format!("op_reflected:{}", op_symbol(*op))));
+    hooks.extend(
+        h.op_reflected
+            .keys()
+            .map(|op| format!("op_reflected:{}", op_symbol(*op))),
+    );
     if !hooks.is_empty() {
         why.push(format!("hooks {}", hooks.join(", ")));
     }
@@ -981,7 +1005,9 @@ pub fn kind_unsupported_strategies_on(k: &crush_cosm::KindDecl, support: CosmSup
 pub fn sealed_fields<'m>(module: &'m crush_cosm::CosmModule, kind: &str) -> Option<Vec<&'m str>> {
     let k = module.kind(kind)?;
     match &k.storage {
-        crush_cosm::Storage::Sealed { fields } => Some(fields.iter().map(|f| f.name.as_str()).collect()),
+        crush_cosm::Storage::Sealed { fields } => {
+            Some(fields.iter().map(|f| f.name.as_str()).collect())
+        }
         _ => None,
     }
 }
@@ -989,7 +1015,11 @@ pub fn sealed_fields<'m>(module: &'m crush_cosm::CosmModule, kind: &str) -> Opti
 /// The one error text for a write of `field` to an instance of the sealed
 /// Kind `kind` declaring `fields`.
 pub fn sealed_field_error(kind: &str, field: &str, fields: &[&str]) -> String {
-    let list = if fields.is_empty() { "none".to_string() } else { fields.join(", ") };
+    let list = if fields.is_empty() {
+        "none".to_string()
+    } else {
+        fields.join(", ")
+    };
     format!("`{kind}` is sealed: it has no field `{field}` (fields: {list})")
 }
 
@@ -1023,17 +1053,31 @@ pub fn kind_constructor<'d>(
         Construct::Literal => None,
         Construct::Ctor { func } => Some(func),
         Construct::JsNew { ctor_fn } => Some(ctor_fn),
-        Construct::PyNewInit { init_fn: Some(f), .. } => Some(f),
-        Construct::PyNewInit { init_fn: None, .. } => mro.iter().find_map(|k| match k.member("__init__") {
-            Some(crush_cosm::MemberDecl { member: Member::Method { func, .. }, .. }) => Some(func),
-            _ => None,
-        }),
+        Construct::PyNewInit {
+            init_fn: Some(f), ..
+        } => Some(f),
+        Construct::PyNewInit { init_fn: None, .. } => {
+            mro.iter().find_map(|k| match k.member("__init__") {
+                Some(crush_cosm::MemberDecl {
+                    member: Member::Method { func, .. },
+                    ..
+                }) => Some(func),
+                _ => None,
+            })
+        }
     }?;
     let factory = decl
         .members
         .iter()
         .any(|m| matches!(&m.member, Member::Static { value: StaticValue::Fn(f) } if f == func));
-    Some((func, if factory { ConstructorUse::Factory } else { ConstructorUse::Initialiser }))
+    Some((
+        func,
+        if factory {
+            ConstructorUse::Factory
+        } else {
+            ConstructorUse::Initialiser
+        },
+    ))
 }
 
 /// [`kind_constructor`] for the Kind named `kind` in `module` (its
@@ -1044,13 +1088,19 @@ pub fn kind_constructor_in<'m>(
     kind: &str,
 ) -> Option<(&'m crush_cosm::FnRef, ConstructorUse)> {
     let order = crush_cosm::resolution_order(&crush_cosm::KindRef::new(kind), module).ok()?;
-    let mro: Vec<&crush_cosm::KindDecl> = order.iter().filter_map(|r| module.kind(r.as_str())).collect();
+    let mro: Vec<&crush_cosm::KindDecl> = order
+        .iter()
+        .filter_map(|r| module.kind(r.as_str()))
+        .collect();
     kind_constructor(&mro)
 }
 
 /// An operator's COSM spelling (`+`, `[]`, `neg`).
 fn op_symbol(op: crush_cosm::Op) -> String {
-    serde_json::to_value(op).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| format!("{op:?}"))
+    serde_json::to_value(op)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| format!("{op:?}"))
 }
 
 /// The one COSM load/compile-time rule for an engine whose struct instances
@@ -1152,7 +1202,10 @@ mod tests {
         // refusal list; Go's embedding stays on it.
         let mut k = crush_cosm::KindDecl::crush("C");
         k.resolution = crush_cosm::Resolution::PrototypeChain;
-        assert_eq!(kind_unsupported_strategies_on(&k, CosmSupport::Kinds), Vec::<String>::new());
+        assert_eq!(
+            kind_unsupported_strategies_on(&k, CosmSupport::Kinds),
+            Vec::<String>::new()
+        );
         k.resolution = crush_cosm::Resolution::EmbeddingPromotion;
         assert_eq!(
             kind_unsupported_strategies_on(&k, CosmSupport::Kinds),
@@ -1160,7 +1213,9 @@ mod tests {
         );
         // A maps-level engine still can't honour a JS construction.
         k.resolution = crush_cosm::Resolution::PrototypeChain;
-        k.construct = crush_cosm::Construct::JsNew { ctor_fn: crush_cosm::FnRef::new("C::constructor") };
+        k.construct = crush_cosm::Construct::JsNew {
+            ctor_fn: crush_cosm::FnRef::new("C::constructor"),
+        };
         assert_eq!(
             kind_unsupported_strategies_on(&k, CosmSupport::Maps),
             vec!["construct: js_new".to_string()]
@@ -1231,24 +1286,35 @@ mod tests {
 
         // `spawn` is the only green-task construct refused by name — it is what
         // *starts* the task (issue #161), even though `yield` appears first.
-        program.functions.insert("main".to_string(), body_of(&["make_closure", "yield", "spawn"]));
+        program.functions.insert(
+            "main".to_string(),
+            body_of(&["make_closure", "yield", "spawn"]),
+        );
         assert_eq!(program.green_task_op(), Some("spawn"));
 
         // `yield` and `await` without `spawn` are no-ops, not green-task
         // constructs: they are not reported (each backend lowers them to
         // nothing / a null push).
-        program.functions.insert("main".to_string(), body_of(&["yield"]));
+        program
+            .functions
+            .insert("main".to_string(), body_of(&["yield"]));
         assert_eq!(program.green_task_op(), None);
-        program.functions.insert("main".to_string(), body_of(&["await"]));
+        program
+            .functions
+            .insert("main".to_string(), body_of(&["await"]));
         assert_eq!(program.green_task_op(), None);
 
         // A `make_closure` by itself (a function value used without `spawn`) is
         // NOT a green-task construct.
-        program.functions.insert("main".to_string(), body_of(&["make_closure"]));
+        program
+            .functions
+            .insert("main".to_string(), body_of(&["make_closure"]));
         assert_eq!(program.green_task_op(), None);
 
         // `refuse_green_task` names the construct and the engine.
-        program.functions.insert("main".to_string(), body_of(&["spawn"]));
+        program
+            .functions
+            .insert("main".to_string(), body_of(&["spawn"]));
         assert_eq!(
             program.refuse_green_task("the test backend"),
             Err("`spawn` (green tasks) isn't supported on the test backend yet (#161)".to_string())

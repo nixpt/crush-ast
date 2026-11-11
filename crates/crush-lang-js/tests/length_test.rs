@@ -14,7 +14,9 @@ fn run_js(source: &str) -> String {
     // The walker pipeline's compile step (crush-walk-run / crush-aotc): it
     // understands the walker's lowering helpers (`__crush_assign__`,
     // `make_range`) that `compile_cast`'s semantic check rejects.
-    let casm = crush_frontend::compiler::Compiler::new().compile(cast).expect("cast to casm");
+    let casm = crush_frontend::compiler::Compiler::new()
+        .compile(cast)
+        .expect("cast to casm");
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm to vm");
     let quotas = crush_vm::Quotas::default();
     let caps = crush_lang_sdk::HostCapsBuilder::new().stdlib(true).build();

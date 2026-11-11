@@ -40,60 +40,165 @@ use std::path::{Path, PathBuf};
 const KNOWN_LOUD: &[(&str, &str)] = &[
     ("arr_basic", "CRUSH-zorro-15: indexOf/includes"),
     ("arr_hof", "CRUSH-zorro-20: map/filter/reduce callbacks"),
-    ("arr_push_loop_multi", "CRUSH-250: `push` with several arguments (fixed on boa)"),
-    ("arr_push_multi", "CRUSH-250: `push` with several arguments (fixed on boa)"),
+    (
+        "arr_push_loop_multi",
+        "CRUSH-250: `push` with several arguments (fixed on boa)",
+    ),
+    (
+        "arr_push_multi",
+        "CRUSH-250: `push` with several arguments (fixed on boa)",
+    ),
     ("arr_slice_splice", "CRUSH-zorro-15: slice/splice"),
     ("arr_sort", "CRUSH-zorro-15/20: sort, sort(cmp)"),
-    ("arr_spread", "CRUSH-zorro-23: array spread loses `...` (loud only via the out-of-range read)"),
+    (
+        "arr_spread",
+        "CRUSH-zorro-23: array spread loses `...` (loud only via the out-of-range read)",
+    ),
     ("arr_spread_call", "CRUSH-zorro-23: call-argument spread"),
     ("async_generator", "out of scope: generators"),
     ("async_then", "out of scope: async/Promise"),
     ("builtin_json", "CRUSH-zorro-17: JSON"),
     ("builtin_map_set", "CRUSH-zorro-17: Map/Set"),
     ("builtin_math", "CRUSH-zorro-17: variadic Math.max"),
-    ("builtin_number_conv", "CRUSH-zorro-17: parseInt/Number/String/toFixed"),
-    ("class_accessor", "out of scope: classes (CRUSH-251 object model)"),
-    ("class_basic", "out of scope: classes (CRUSH-251 object model)"),
-    ("class_defaults", "out of scope: classes (CRUSH-251 object model)"),
-    ("class_destructuring", "out of scope: classes (CRUSH-251 object model)"),
-    ("class_extends", "out of scope: classes (CRUSH-251 object model)"),
-    ("class_fields", "out of scope: classes (CRUSH-251 object model)"),
-    ("class_static", "out of scope: classes (CRUSH-251 object model)"),
-    ("ctrl_finally", "CRUSH-zorro-7: `try … finally` is not supported by the JS walker yet"),
-    ("ctrl_for_in", "CRUSH-zorro-16: for-in (+ join, CRUSH-zorro-15)"),
-    ("ctrl_for_in_array", "CRUSH-zorro-23: `for-in` over an array/string is not supported by the JS walker yet"),
-    ("ctrl_labels", "CRUSH-zorro-6: a labeled `continue` (`continue label`) is not supported by the JS walker yet"),
+    (
+        "builtin_number_conv",
+        "CRUSH-zorro-17: parseInt/Number/String/toFixed",
+    ),
+    (
+        "class_accessor",
+        "out of scope: classes (CRUSH-251 object model)",
+    ),
+    (
+        "class_basic",
+        "out of scope: classes (CRUSH-251 object model)",
+    ),
+    (
+        "class_defaults",
+        "out of scope: classes (CRUSH-251 object model)",
+    ),
+    (
+        "class_destructuring",
+        "out of scope: classes (CRUSH-251 object model)",
+    ),
+    (
+        "class_extends",
+        "out of scope: classes (CRUSH-251 object model)",
+    ),
+    (
+        "class_fields",
+        "out of scope: classes (CRUSH-251 object model)",
+    ),
+    (
+        "class_static",
+        "out of scope: classes (CRUSH-251 object model)",
+    ),
+    (
+        "ctrl_finally",
+        "CRUSH-zorro-7: `try … finally` is not supported by the JS walker yet",
+    ),
+    (
+        "ctrl_for_in",
+        "CRUSH-zorro-16: for-in (+ join, CRUSH-zorro-15)",
+    ),
+    (
+        "ctrl_for_in_array",
+        "CRUSH-zorro-23: `for-in` over an array/string is not supported by the JS walker yet",
+    ),
+    (
+        "ctrl_labels",
+        "CRUSH-zorro-6: a labeled `continue` (`continue label`) is not supported by the JS walker yet",
+    ),
     ("ctrl_try_catch", "CRUSH-zorro-19: new Error / e.message"),
-    ("fn_default_param", "CRUSH-zorro-18: default parameters (fixed on boa)"),
-    ("fn_default_param_more", "CRUSH-zorro-18: default parameters (fixed on boa)"),
-    ("fn_script_late", "CRUSH-250: a top-level function reading a script variable (fixed on boa)"),
-    ("fn_script_vars", "CRUSH-250: a top-level function reading a script variable (fixed on boa)"),
-    ("fn_rest_param", "CRUSH-zorro-18: rest parameters (fixed on boa)"),
-    ("fn_rest_param_more", "CRUSH-zorro-18: rest parameters (fixed on boa)"),
-    ("misc_console_error", "CRUSH-zorro-23: `console.error` / `console.warn` (stderr output) is not supported by the JS walker yet"),
-    ("misc_console_multi", "CRUSH-zorro-12: `undefined` as a value"),
+    (
+        "fn_default_param",
+        "CRUSH-zorro-18: default parameters (fixed on boa)",
+    ),
+    (
+        "fn_default_param_more",
+        "CRUSH-zorro-18: default parameters (fixed on boa)",
+    ),
+    (
+        "fn_script_late",
+        "CRUSH-250: a top-level function reading a script variable (fixed on boa)",
+    ),
+    (
+        "fn_script_vars",
+        "CRUSH-250: a top-level function reading a script variable (fixed on boa)",
+    ),
+    (
+        "fn_rest_param",
+        "CRUSH-zorro-18: rest parameters (fixed on boa)",
+    ),
+    (
+        "fn_rest_param_more",
+        "CRUSH-zorro-18: rest parameters (fixed on boa)",
+    ),
+    (
+        "misc_console_error",
+        "CRUSH-zorro-23: `console.error` / `console.warn` (stderr output) is not supported by the JS walker yet",
+    ),
+    (
+        "misc_console_multi",
+        "CRUSH-zorro-12: `undefined` as a value",
+    ),
     ("misc_undefined", "CRUSH-zorro-12: `undefined` as a value"),
-    ("obj_computed_key", "CRUSH-zorro-23: a computed property key (`[k]: v`) is not supported by the JS walker yet"),
+    (
+        "obj_computed_key",
+        "CRUSH-zorro-23: a computed property key (`[k]: v`) is not supported by the JS walker yet",
+    ),
     ("obj_destructure", "CRUSH-zorro-16: destructuring"),
     ("obj_literal", "CRUSH-zorro-16: Object.keys"),
-    ("obj_setter", "CRUSH-zorro-23: an object setter (`set x(v)`) is not supported by the JS walker yet"),
+    (
+        "obj_setter",
+        "CRUSH-zorro-23: an object setter (`set x(v)`) is not supported by the JS walker yet",
+    ),
     ("obj_spread", "CRUSH-zorro-16: object spread"),
     ("ops_bitwise", "CRUSH-zorro-12: bitwise operators"),
-    ("ops_division_inf", "CRUSH-zorro-12: Infinity/NaN from division"),
+    (
+        "ops_division_inf",
+        "CRUSH-zorro-12: Infinity/NaN from division",
+    ),
     ("ops_int_overflow", "CRUSH-zorro-13: number model"),
-    ("ops_logical_assign", "CRUSH-292: logical assignment (`&&=`, `||=`, `??=`) is not supported by the swc walker yet"),
+    (
+        "ops_logical_assign",
+        "CRUSH-292: logical assignment (`&&=`, `||=`, `??=`) is not supported by the swc walker yet",
+    ),
     ("ops_nan", "CRUSH-zorro-12: NaN"),
-    ("ops_null_eq_undefined", "CRUSH-zorro-12: `undefined` as a value"),
+    (
+        "ops_null_eq_undefined",
+        "CRUSH-zorro-12: `undefined` as a value",
+    ),
     ("ops_nullish", "CRUSH-zorro-12: ??"),
     ("ops_optional_chain", "CRUSH-zorro-12: ?."),
     ("ops_typeof", "CRUSH-zorro-12: typeof"),
-    ("scope_block_shadow", "CRUSH-zorro-5: a nested `let`/`const`/`class`/`for`/`catch` binding that shadows an outer `x` is not supported by the JS walker yet"),
-    ("scope_catch_shadow", "CRUSH-zorro-5: a `catch` parameter that shadows an outer binding"),
-    ("scope_hoist_block_loop", "CRUSH-250: a nested `function` that uses its enclosing function's locals (fixed on boa)"),
-    ("scope_hoist_late_let", "CRUSH-250: a nested `function` that uses its enclosing function's locals (fixed on boa)"),
-    ("scope_nested_fn_decl", "CRUSH-250: a nested `function` that uses its enclosing function's locals (fixed on boa)"),
-    ("scope_shadow_closure", "CRUSH-zorro-5: a block `let` that shadows an outer binding"),
-    ("scope_shadow_loop", "CRUSH-zorro-5: a loop/block `let` that shadows an outer binding"),
+    (
+        "scope_block_shadow",
+        "CRUSH-zorro-5: a nested `let`/`const`/`class`/`for`/`catch` binding that shadows an outer `x` is not supported by the JS walker yet",
+    ),
+    (
+        "scope_catch_shadow",
+        "CRUSH-zorro-5: a `catch` parameter that shadows an outer binding",
+    ),
+    (
+        "scope_hoist_block_loop",
+        "CRUSH-250: a nested `function` that uses its enclosing function's locals (fixed on boa)",
+    ),
+    (
+        "scope_hoist_late_let",
+        "CRUSH-250: a nested `function` that uses its enclosing function's locals (fixed on boa)",
+    ),
+    (
+        "scope_nested_fn_decl",
+        "CRUSH-250: a nested `function` that uses its enclosing function's locals (fixed on boa)",
+    ),
+    (
+        "scope_shadow_closure",
+        "CRUSH-zorro-5: a block `let` that shadows an outer binding",
+    ),
+    (
+        "scope_shadow_loop",
+        "CRUSH-zorro-5: a loop/block `let` that shadows an outer binding",
+    ),
     ("str_methods", "CRUSH-zorro-14: string methods"),
     ("str_methods2", "CRUSH-zorro-14: string methods"),
     ("str_replace", "CRUSH-zorro-14: string methods"),
@@ -103,53 +208,129 @@ const KNOWN_LOUD: &[(&str, &str)] = &[
 /// can't: on boa they are expected to match, not to be loud.
 const BOA_FIXED: &[(&str, &str)] = &[
     ("class_accessor", "get/set accessors on COSM (CRUSH-277)"),
-    ("class_basic", "classes, `new` and `this` on COSM (CRUSH-277)"),
-    ("class_defaults", "default/rest parameters on class members (CRUSH-280)"),
-    ("class_destructuring", "destructuring parameters (CRUSH-284)"),
+    (
+        "class_basic",
+        "classes, `new` and `this` on COSM (CRUSH-277)",
+    ),
+    (
+        "class_defaults",
+        "default/rest parameters on class members (CRUSH-280)",
+    ),
+    (
+        "class_destructuring",
+        "destructuring parameters (CRUSH-284)",
+    ),
     ("obj_destructure", "destructuring declarations (CRUSH-287)"),
     ("builtin_map_set", "Map/Set host constructors (CRUSH-288)"),
     ("ops_optional_chain", "optional chaining (CRUSH-289)"),
-    ("class_extends", "`extends` + `super.m()` on COSM (CRUSH-277)"),
-    ("class_fields", "class fields (D7 injection) on COSM (CRUSH-277)"),
+    (
+        "class_extends",
+        "`extends` + `super.m()` on COSM (CRUSH-277)",
+    ),
+    (
+        "class_fields",
+        "class fields (D7 injection) on COSM (CRUSH-277)",
+    ),
     ("class_static", "static members on COSM (CRUSH-277)"),
-    ("arr_push_loop_multi", "`push(a, b, …)` evaluates the arguments, then pushes each"),
-    ("arr_push_multi", "`push(a, b, …)` evaluates the arguments, then pushes each"),
-    ("arr_spread_call", "a spread argument at a known plain signature expands to slot reads (CRUSH-293)"),
-    ("fn_default_param", "a call passes defaulted arguments with a \"given\" flag (CRUSH-zorro-18)"),
-    ("fn_default_param_more", "a call passes defaulted arguments with a \"given\" flag (CRUSH-zorro-18)"),
-    ("fn_rest_param", "a call packs the rest arguments into an array (CRUSH-zorro-18)"),
-    ("fn_rest_param_more", "a call packs the rest arguments into an array (CRUSH-zorro-18)"),
-    ("fn_script_late", "a top-level function using script variables is a closure over them"),
-    ("fn_script_vars", "a top-level function using script variables is a closure over them"),
-    ("ops_logical_assign", "logical assignment reuses the binary operators' conditions (CRUSH-292)"),
-    ("scope_block_shadow", "block bindings get their own crush local (alpha-renamed)"),
-    ("scope_catch_shadow", "block bindings get their own crush local (alpha-renamed)"),
-    ("scope_hoist_block_loop", "a scope's `let`/`const` exist before the closures hoisted into it"),
-    ("scope_hoist_late_let", "a scope's `let`/`const` exist before the closures hoisted into it"),
-    ("scope_nested_fn_decl", "a nested `function` is a hoisted closure"),
-    ("scope_shadow_closure", "block bindings get their own crush local (alpha-renamed)"),
-    ("scope_shadow_loop", "block bindings get their own crush local (alpha-renamed)"),
-    ("ctrl_finally", "`finally` runs on every JS-level exit (CRUSH-zorro-7)"),
+    (
+        "arr_push_loop_multi",
+        "`push(a, b, …)` evaluates the arguments, then pushes each",
+    ),
+    (
+        "arr_push_multi",
+        "`push(a, b, …)` evaluates the arguments, then pushes each",
+    ),
+    (
+        "arr_spread_call",
+        "a spread argument at a known plain signature expands to slot reads (CRUSH-293)",
+    ),
+    (
+        "fn_default_param",
+        "a call passes defaulted arguments with a \"given\" flag (CRUSH-zorro-18)",
+    ),
+    (
+        "fn_default_param_more",
+        "a call passes defaulted arguments with a \"given\" flag (CRUSH-zorro-18)",
+    ),
+    (
+        "fn_rest_param",
+        "a call packs the rest arguments into an array (CRUSH-zorro-18)",
+    ),
+    (
+        "fn_rest_param_more",
+        "a call packs the rest arguments into an array (CRUSH-zorro-18)",
+    ),
+    (
+        "fn_script_late",
+        "a top-level function using script variables is a closure over them",
+    ),
+    (
+        "fn_script_vars",
+        "a top-level function using script variables is a closure over them",
+    ),
+    (
+        "ops_logical_assign",
+        "logical assignment reuses the binary operators' conditions (CRUSH-292)",
+    ),
+    (
+        "scope_block_shadow",
+        "block bindings get their own crush local (alpha-renamed)",
+    ),
+    (
+        "scope_catch_shadow",
+        "block bindings get their own crush local (alpha-renamed)",
+    ),
+    (
+        "scope_hoist_block_loop",
+        "a scope's `let`/`const` exist before the closures hoisted into it",
+    ),
+    (
+        "scope_hoist_late_let",
+        "a scope's `let`/`const` exist before the closures hoisted into it",
+    ),
+    (
+        "scope_nested_fn_decl",
+        "a nested `function` is a hoisted closure",
+    ),
+    (
+        "scope_shadow_closure",
+        "block bindings get their own crush local (alpha-renamed)",
+    ),
+    (
+        "scope_shadow_loop",
+        "block bindings get their own crush local (alpha-renamed)",
+    ),
+    (
+        "ctrl_finally",
+        "`finally` runs on every JS-level exit (CRUSH-zorro-7)",
+    ),
 ];
 
 /// Programs that are silently wrong on the VM today: `(program, fixing ticket, symptom)`.
-const KNOWN_SILENT: &[(&str, &str, &str)] = &[
-];
+const KNOWN_SILENT: &[(&str, &str, &str)] = &[];
 
 /// TS twin: programs that must stay loud under the `ts` dialect.
 #[cfg(feature = "ts")]
 const TS_KNOWN_LOUD: &[(&str, &str)] = &[
-    ("class_fields", "out of scope: classes (CRUSH-251 object model)"),
-    ("ctrl_finally", "CRUSH-zorro-7: `try … finally` is not supported by the JS walker yet"),
+    (
+        "class_fields",
+        "out of scope: classes (CRUSH-251 object model)",
+    ),
+    (
+        "ctrl_finally",
+        "CRUSH-zorro-7: `try … finally` is not supported by the JS walker yet",
+    ),
     ("fn_default_param", "CRUSH-zorro-18: default parameters"),
-    ("fn_optional_param", "CRUSH-zorro-18: missing argument is `undefined`"),
+    (
+        "fn_optional_param",
+        "CRUSH-zorro-18: missing argument is `undefined`",
+    ),
     ("str_methods", "CRUSH-zorro-14: string methods"),
 ];
 
 /// TS twin: silently-wrong programs, keyed to their fixing ticket.
 #[cfg(feature = "ts")]
-const TS_KNOWN_SILENT: &[(&str, &str, &str)] = &[
-];
+const TS_KNOWN_SILENT: &[(&str, &str, &str)] = &[];
 
 fn corpus(dir: &str, ext: &str) -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
@@ -211,7 +392,10 @@ fn run_crush(source: &str, how: Lowering) -> anyhow::Result<String> {
         .compile(cast)
         .map_err(|e| anyhow::anyhow!("CAST→CASM: {e}"))?;
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm)?;
-    let quotas = crush_vm::Quotas { max_steps: 10_000_000, ..Default::default() };
+    let quotas = crush_vm::Quotas {
+        max_steps: 10_000_000,
+        ..Default::default()
+    };
     let caps = crush_lang_sdk::HostCapsBuilder::new().stdlib(true).build();
     Ok(crush_vm::run_with_caps(&vm, &quotas, Some(&caps))?.output)
 }
@@ -249,7 +433,10 @@ impl Tally {
 
     fn print(&self, title: &str) {
         println!("\n{title}");
-        println!("  {:<10} {:>5} {:>5} {:>6}", "area", "match", "loud", "silent");
+        println!(
+            "  {:<10} {:>5} {:>5} {:>6}",
+            "area", "match", "loud", "silent"
+        );
         let mut total = [0; 3];
         for (a, c) in &self.by_area {
             println!("  {a:<10} {:>5} {:>5} {:>6}", c[0], c[1], c[2]);
@@ -257,7 +444,10 @@ impl Tally {
                 *t += n;
             }
         }
-        println!("  {:<10} {:>5} {:>5} {:>6}", "TOTAL", total[0], total[1], total[2]);
+        println!(
+            "  {:<10} {:>5} {:>5} {:>6}",
+            "TOTAL", total[0], total[1], total[2]
+        );
     }
 }
 
@@ -271,9 +461,15 @@ fn check(
 ) -> (Tally, Vec<String>) {
     let mut problems = Vec::new();
     let names: Vec<String> = files.iter().map(|p| stem(p)).collect();
-    for n in known_loud.iter().map(|e| e.0).chain(known_silent.iter().map(|e| e.0)) {
+    for n in known_loud
+        .iter()
+        .map(|e| e.0)
+        .chain(known_silent.iter().map(|e| e.0))
+    {
         if !names.iter().any(|x| x == n) {
-            problems.push(format!("{n}: listed in {title}, but no such corpus program"));
+            problems.push(format!(
+                "{n}: listed in {title}, but no such corpus program"
+            ));
         }
     }
     println!("\n{title}");
@@ -310,7 +506,12 @@ fn check(
 }
 
 fn assert_clean(title: &str, problems: Vec<String>) {
-    assert!(problems.is_empty(), "{} problem(s) in {title}:\n{}", problems.len(), problems.join("\n"));
+    assert!(
+        problems.is_empty(),
+        "{} problem(s) in {title}:\n{}",
+        problems.len(),
+        problems.join("\n")
+    );
 }
 
 #[test]
@@ -320,7 +521,13 @@ fn crush_output_matches_node() {
     let mut problems = Vec::new();
     #[cfg(feature = "swc-backend")]
     let swc = {
-        let (tally, p) = check("JS corpus on the VM (swc lowering)", &files, Lowering::Swc, KNOWN_LOUD, KNOWN_SILENT);
+        let (tally, p) = check(
+            "JS corpus on the VM (swc lowering)",
+            &files,
+            Lowering::Swc,
+            KNOWN_LOUD,
+            KNOWN_SILENT,
+        );
         problems.extend(p);
         tally
     };
@@ -328,11 +535,16 @@ fn crush_output_matches_node() {
     {
         for (n, _) in BOA_FIXED {
             if !KNOWN_LOUD.iter().any(|e| e.0 == *n) {
-                problems.push(format!("{n}: in BOA_FIXED but not in KNOWN_LOUD (fixed on swc too? drop it)"));
+                problems.push(format!(
+                    "{n}: in BOA_FIXED but not in KNOWN_LOUD (fixed on swc too? drop it)"
+                ));
             }
         }
-        let boa_loud: Vec<(&str, &str)> =
-            KNOWN_LOUD.iter().copied().filter(|(n, _)| !BOA_FIXED.iter().any(|f| f.0 == *n)).collect();
+        let boa_loud: Vec<(&str, &str)> = KNOWN_LOUD
+            .iter()
+            .copied()
+            .filter(|(n, _)| !BOA_FIXED.iter().any(|f| f.0 == *n))
+            .collect();
         let title = "JS corpus on the VM (boa lowering)";
         let (boa, p) = check(title, &files, Lowering::Boa, &boa_loud, KNOWN_SILENT);
         problems.extend(p.into_iter().map(|p| format!("[boa] {p}")));
@@ -345,9 +557,15 @@ fn crush_output_matches_node() {
                 let b = boa.by_area.get(a).copied().unwrap_or_default();
                 let ok = b[0] >= s[0] && b[2] == 0;
                 gate &= ok;
-                println!("  {a:<10} swc {s:?}  boa {b:?}{}", if ok { "" } else { "  <- boa behind" });
+                println!(
+                    "  {a:<10} swc {s:?}  boa {b:?}{}",
+                    if ok { "" } else { "  <- boa behind" }
+                );
             }
-            println!("switch-over gate (boa >= swc in every area, 0 silent): {}", if gate { "PASS" } else { "not yet" });
+            println!(
+                "switch-over gate (boa >= swc in every area, 0 silent): {}",
+                if gate { "PASS" } else { "not yet" }
+            );
         }
         #[cfg(not(feature = "swc-backend"))]
         let _ = boa;
@@ -367,7 +585,10 @@ fn ts_twin_matches_node() {
 }
 
 fn node_available() -> bool {
-    std::process::Command::new("node").arg("--version").output().is_ok_and(|o| o.status.success())
+    std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
 }
 
 /// Every `.out` must be what `node` prints today (stdout only). node 26 runs
@@ -381,12 +602,20 @@ fn expected_outputs_match_node() {
         return;
     }
     let mut stale = Vec::new();
-    let all = corpus("tests/node_corpus", "js").into_iter().chain(corpus("tests/ts_corpus", "ts"));
+    let all = corpus("tests/node_corpus", "js")
+        .into_iter()
+        .chain(corpus("tests/ts_corpus", "ts"));
     for path in all {
-        let out = std::process::Command::new("node").arg(&path).output().unwrap();
+        let out = std::process::Command::new("node")
+            .arg(&path)
+            .output()
+            .unwrap();
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
         if !out.status.success() || String::from_utf8_lossy(&out.stdout) != expected {
-            stale.push(format!("{}: .out is stale (or node failed)", path.display()));
+            stale.push(format!(
+                "{}: .out is stale (or node failed)",
+                path.display()
+            ));
         }
     }
     assert!(stale.is_empty(), "{}", stale.join("\n"));
@@ -396,6 +625,7 @@ fn expected_outputs_match_node() {
 #[cfg(feature = "swc-backend")]
 #[test]
 fn side_effecting_comma_in_value_position_fails_loudly() {
-    let err = crush_lang_js::js_to_cast("var i = 0; var x = (i++, 5); console.log(x);", "js").unwrap_err();
+    let err = crush_lang_js::js_to_cast("var i = 0; var x = (i++, 5); console.log(x);", "js")
+        .unwrap_err();
     assert!(format!("{err:#}").contains("comma expression"), "{err:#}");
 }

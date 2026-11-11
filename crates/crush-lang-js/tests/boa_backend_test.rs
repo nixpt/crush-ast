@@ -26,7 +26,9 @@ fn loud(source: &str) -> String {
     .unwrap_err();
     let msg = format!("{err:#}");
     assert!(
-        err.chain().any(|e| e.downcast_ref::<crush_lang_js::lower::Unsupported>().is_some()),
+        err.chain().any(|e| e
+            .downcast_ref::<crush_lang_js::lower::Unsupported>()
+            .is_some()),
         "not an Unsupported error: {msg}"
     );
     msg
@@ -35,8 +37,11 @@ fn loud(source: &str) -> String {
 #[test]
 fn test_boa_var_decl_and_arithmetic() {
     let source = "const x = 42;\nlet y = x + 1;\n";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let (_report, program) = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap();
     let main = program.functions.get("main").unwrap();
     assert!(
         main.body
@@ -53,40 +58,55 @@ fn test_boa_var_decl_and_arithmetic() {
 #[test]
 fn test_boa_if_else() {
     let source = "if (true) { console.log('yes'); } else { console.log('no'); }";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let (_report, program) = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
 #[test]
 fn test_boa_while_loop() {
     let source = "let i = 0;\nwhile (i < 10) { i++; }\n";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let (_report, program) = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
 #[test]
 fn test_boa_for_loop() {
     let source = "for (let i = 0; i < 10; i++) { console.log(i); }";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let (_report, program) = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
 #[test]
 fn test_boa_for_in_loop() {
     let source = "const obj = { a: 1, b: 2 };\nfor (let k in obj) { console.log(k); }\n";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let (_report, program) = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
 #[test]
 fn test_boa_for_of_loop() {
     let source = "const arr = [1, 2, 3];\nfor (let v of arr) { console.log(v); }\n";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let (_report, program) = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
@@ -95,8 +115,11 @@ fn test_boa_try_catch() {
     let source = "function x() { throw 1; }\ntry { x(); } catch(e) { console.log(e); }";
     let report = test_analyze(source, "js");
     assert!(report.uses_exceptions);
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let (_report, program) = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
@@ -107,7 +130,9 @@ fn test_boa_try_catch() {
 fn test_boa_try_finally_completions() {
     // return runs finally, then yields the captured value (node: fin\n1)
     assert_eq!(
-        run_js("function f() { try { return 1; } finally { console.log('fin'); } } console.log(f());"),
+        run_js(
+            "function f() { try { return 1; } finally { console.log('fin'); } } console.log(f());"
+        ),
         "fin\n1\n"
     );
     // finally's return overrides the pending one
@@ -117,7 +142,9 @@ fn test_boa_try_finally_completions() {
     );
     // value captured before finally mutates the binding
     assert_eq!(
-        run_js("let x = 1; function f() { try { return x; } finally { x = 9; } } console.log(f()); console.log(x);"),
+        run_js(
+            "let x = 1; function f() { try { return x; } finally { x = 9; } } console.log(f()); console.log(x);"
+        ),
         "1\n9\n"
     );
     // fall-through
@@ -127,42 +154,58 @@ fn test_boa_try_finally_completions() {
     );
     // explicit throw: finally then propagate
     assert_eq!(
-        run_js("try { try { throw 7; } finally { console.log('fin'); } } catch (e) { console.log(e); }"),
+        run_js(
+            "try { try { throw 7; } finally { console.log('fin'); } } catch (e) { console.log(e); }"
+        ),
         "fin\n7\n"
     );
     // catch runs before finally
     assert_eq!(
-        run_js("try { throw 3; } catch (e) { console.log('c'+e); } finally { console.log('fin'); }"),
+        run_js(
+            "try { throw 3; } catch (e) { console.log('c'+e); } finally { console.log('fin'); }"
+        ),
         "c3\nfin\n"
     );
     // throw from catch still runs finally
     assert_eq!(
-        run_js("try { try { throw 1; } catch (e) { throw 2; } finally { console.log('fin'); } } catch (e) { console.log(e); }"),
+        run_js(
+            "try { try { throw 1; } catch (e) { throw 2; } finally { console.log('fin'); } } catch (e) { console.log(e); }"
+        ),
         "fin\n2\n"
     );
     // nested finallys: inner then outer
     assert_eq!(
-        run_js("try { try { console.log('t'); } finally { console.log('i'); } } finally { console.log('o'); }"),
+        run_js(
+            "try { try { console.log('t'); } finally { console.log('i'); } } finally { console.log('o'); }"
+        ),
         "t\ni\no\n"
     );
     // break across try runs finally once; loop-internal break does not
     // (no Array.join — CRUSH-zorro-15; log each push instead)
     assert_eq!(
-        run_js("for (const n of [1, 2, 3]) { try { if (n == 2) break; console.log(n); } finally { console.log('f'+n); } }"),
+        run_js(
+            "for (const n of [1, 2, 3]) { try { if (n == 2) break; console.log(n); } finally { console.log('f'+n); } }"
+        ),
         "1\nf1\nf2\n"
     );
     assert_eq!(
-        run_js("try { for (const n of [1, 2]) { if (n == 2) break; console.log(n); } } finally { console.log('fin'); }"),
+        run_js(
+            "try { for (const n of [1, 2]) { if (n == 2) break; console.log(n); } } finally { console.log('fin'); }"
+        ),
         "1\nfin\n"
     );
     // continue across try
     assert_eq!(
-        run_js("for (const n of [1, 2, 3]) { try { if (n == 2) continue; console.log(n); } finally { console.log('f'+n); } }"),
+        run_js(
+            "for (const n of [1, 2, 3]) { try { if (n == 2) continue; console.log(n); } finally { console.log('f'+n); } }"
+        ),
         "1\nf1\nf2\n3\nf3\n"
     );
     // nested function return does not run the outer finally
     assert_eq!(
-        run_js("function outer() { try { function inner() { return 5; } return inner(); } finally { console.log('fin'); } } console.log(outer());"),
+        run_js(
+            "function outer() { try { function inner() { return 5; } return inner(); } finally { console.log('fin'); } } console.log(outer());"
+        ),
         "fin\n5\n"
     );
 }
@@ -170,16 +213,22 @@ fn test_boa_try_finally_completions() {
 #[test]
 fn test_boa_function_decl() {
     let source = "function greet(name) { return 'hello ' + name; }";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let (_report, program) = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap();
     assert!(program.functions.contains_key("greet"));
 }
 
 #[test]
 fn test_boa_arrow_function() {
     let source = "const add = (a, b) => a + b;";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let (_report, program) = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
@@ -224,7 +273,8 @@ fn test_boa_generator_rejected() {
 
 #[test]
 fn test_boa_property_access() {
-    let source = "const obj = {prop: 1};\nconst arr = [2];\nconst val = obj.prop;\nconst idx = arr[0];\n";
+    let source =
+        "const obj = {prop: 1};\nconst arr = [2];\nconst val = obj.prop;\nconst idx = arr[0];\n";
     let program = test_lower(source);
     assert!(program.functions.contains_key("main"));
 }
@@ -233,7 +283,10 @@ fn test_boa_property_access() {
 #[test]
 fn test_boa_this_keyword_is_loud() {
     let msg = loud("function f() { return this; }");
-    assert!(msg.contains("`this`") && msg.contains("line 1, column 23"), "{msg}");
+    assert!(
+        msg.contains("`this`") && msg.contains("line 1, column 23"),
+        "{msg}"
+    );
 }
 
 #[test]
@@ -259,7 +312,10 @@ fn test_boa_labeled_continue_is_loud() {
         "outer: for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) { \
          if (j == 1) continue outer; if (i == 2) break outer; console.log(i, j); } }",
     );
-    assert!(msg.contains("labeled `continue` (`continue label`)"), "{msg}");
+    assert!(
+        msg.contains("labeled `continue` (`continue label`)"),
+        "{msg}"
+    );
     // A labeled block (not a loop) can't be a jump target either: CAST has no
     // labeled jump, so it must stay loud rather than break the inner loop.
     let msg = loud("l: { console.log(1); break l; }");
@@ -311,8 +367,11 @@ fn test_boa_compound_assignment() {
 #[test]
 fn test_boa_update_operators() {
     let source = "let i = 0;\ni++;\n++i;\ni--;\n";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let (_report, program) = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap();
     assert!(program.functions.contains_key("main"));
 }
 
@@ -324,8 +383,11 @@ fn test_boa_tagged_template_is_loud() {
 #[test]
 fn test_boa_nested_functions() {
     let source = "function outer() { function inner() { return 1; } return inner(); }";
-    let (_report, program) =
-        crush_walker_core::frontend_pipeline(&crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa), source).unwrap();
+    let (_report, program) = crush_walker_core::frontend_pipeline(
+        &crush_lang_js::JsFrontend::with_lowering("js", crush_lang_js::JsLowering::Boa),
+        source,
+    )
+    .unwrap();
     assert!(program.functions.contains_key("outer"));
 }
 
@@ -333,21 +395,43 @@ fn test_boa_nested_functions() {
 // a float; one it can stays an int (indexing, loops).
 #[test]
 fn test_boa_integer_literals_past_i64_are_floats() {
-    let program = test_lower("const big = 1e19;\nconst edge = 9223372036854775807;\nconst ok = 9007199254740993;\n");
+    let program = test_lower(
+        "const big = 1e19;\nconst edge = 9223372036854775807;\nconst ok = 9007199254740993;\n",
+    );
     let main = program.functions.get("main").unwrap();
     let value = |n: &str| {
         main.body
             .iter()
             .find_map(|s| match s {
-                crush_cast::Statement::VarDecl { name, value, .. } if name == n => Some(value.clone()),
+                crush_cast::Statement::VarDecl { name, value, .. } if name == n => {
+                    Some(value.clone())
+                }
                 _ => None,
             })
             .unwrap()
     };
-    assert!(matches!(value("big"), crush_cast::Expression::FloatLiteral { .. }), "{:?}", value("big"));
+    assert!(
+        matches!(value("big"), crush_cast::Expression::FloatLiteral { .. }),
+        "{:?}",
+        value("big")
+    );
     // 9223372036854775807 is 2^63 as a double: past i64::MAX.
-    assert!(matches!(value("edge"), crush_cast::Expression::FloatLiteral { .. }), "{:?}", value("edge"));
-    assert!(matches!(value("ok"), crush_cast::Expression::IntLiteral { value: 9007199254740992, .. }), "{:?}", value("ok"));
+    assert!(
+        matches!(value("edge"), crush_cast::Expression::FloatLiteral { .. }),
+        "{:?}",
+        value("edge")
+    );
+    assert!(
+        matches!(
+            value("ok"),
+            crush_cast::Expression::IntLiteral {
+                value: 9007199254740992,
+                ..
+            }
+        ),
+        "{:?}",
+        value("ok")
+    );
 }
 
 // CRUSH-250 scope pass: a block binding that shadows an outer one gets its own
@@ -378,8 +462,17 @@ fn test_boa_capture_free_nested_functions_are_lifted() {
     let program = test_lower(
         "function outer(k) {\n  function sq(x) { return x * x; }\n  function addK(n) { return n + k; }\n  return sq(addK(1));\n}\nconsole.log(outer(2));\n",
     );
-    let lifted: Vec<&String> = program.functions.keys().filter(|n| n.starts_with("sq__")).collect();
-    assert_eq!(lifted.len(), 1, "{:?}", program.functions.keys().collect::<Vec<_>>());
+    let lifted: Vec<&String> = program
+        .functions
+        .keys()
+        .filter(|n| n.starts_with("sq__"))
+        .collect();
+    assert_eq!(
+        lifted.len(),
+        1,
+        "{:?}",
+        program.functions.keys().collect::<Vec<_>>()
+    );
     assert!(!program.functions.keys().any(|n| n.starts_with("addK")));
     let outer = &program.functions["outer"];
     assert!(
@@ -397,7 +490,10 @@ fn test_boa_capture_free_nested_functions_are_lifted() {
 fn test_boa_builtin_table_refusals() {
     // A planned row names the ticket that adds it.
     assert!(loud("console.log(parseInt('4'));").contains("`parseInt()` (CRUSH-zorro-17"));
-    assert!(loud("let s = 'a';\nconsole.log(s.toUpperCase());").contains("`.toUpperCase()` (CRUSH-zorro-14"));
+    assert!(
+        loud("let s = 'a';\nconsole.log(s.toUpperCase());")
+            .contains("`.toUpperCase()` (CRUSH-zorro-14")
+    );
     // Not a row and not defined: refused here, not as an unknown function later.
     assert!(loud("nope(1);").contains("calling `nope`, which is not defined"));
     assert!(loud("console.log(Math.cbrt(8));").contains("`Math.cbrt()`"));
@@ -406,16 +502,24 @@ fn test_boa_builtin_table_refusals() {
     // Arity is checked; `push`'s result (the array, not JS's new length) can't be used.
     assert!(loud("console.log(Math.max(1, 2, 3));").contains("with 3 argument(s)"));
     // Several values are expanded in statement position only.
-    assert!(loud("const a = [];\nconsole.log(a.push(1, 2));").contains("using the result of `.push()` with 2 arguments"));
+    assert!(
+        loud("const a = [];\nconsole.log(a.push(1, 2));")
+            .contains("using the result of `.push()` with 2 arguments")
+    );
 }
 
 // A user binding shadows a builtin name: it's called, not looked up.
 #[test]
 fn test_boa_user_bindings_shadow_builtins() {
-    let program = test_lower("function parseInt(s) { return 7; }\nconst Math = {floor: 1};\nconsole.log(parseInt('1'));\n");
+    let program = test_lower(
+        "function parseInt(s) { return 7; }\nconst Math = {floor: 1};\nconsole.log(parseInt('1'));\n",
+    );
     assert!(program.functions.contains_key("parseInt"));
     let msg = loud("const Math = {floor: (x) => x};\nconsole.log(Math.floor(2));");
-    assert!(msg.contains("`.floor()`"), "a user `Math` is a receiver, not the namespace: {msg}");
+    assert!(
+        msg.contains("`.floor()`"),
+        "a user `Math` is a receiver, not the namespace: {msg}"
+    );
 }
 
 // A name no scope binds is refused at walk time (never "uninitialised slot"
@@ -454,9 +558,11 @@ fn test_boa_push_forms() {
     let pushes = main
         .body
         .iter()
-        .filter(|s| matches!(s, crush_cast::Statement::ExprStmt {
+        .filter(|s| {
+            matches!(s, crush_cast::Statement::ExprStmt {
             expr: crush_cast::Expression::Call { function, args, .. }, ..
-        } if function == "xs.push" && args.len() == 1))
+        } if function == "xs.push" && args.len() == 1)
+        })
         .count();
     assert_eq!(pushes, 3, "{:#?}", main.body);
     let temps = main
@@ -465,9 +571,13 @@ fn test_boa_push_forms() {
         .filter(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name.starts_with("__push_")))
         .count();
     assert_eq!(temps, 3);
-    assert!(main.body.iter().any(|s| matches!(s, crush_cast::Statement::VarDecl {
+    assert!(
+        main.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::VarDecl {
         name, value: crush_cast::Expression::Call { function, .. }, ..
-    } if name == "n" && function == "len")));
+    } if name == "n" && function == "len"))
+    );
 }
 
 // CRUSH-zorro-18: a `function` declaration's calls are adapted to its
@@ -479,7 +589,10 @@ fn test_boa_parameter_adaptation_refusals() {
     assert!(msg.contains("calling `f` without its argument 2"), "{msg}");
     // An extra argument with side effects (pure ones are dropped).
     let msg = loud("let n = 0;\nfunction f(a) { return a; }\nconsole.log(f(1, n++));");
-    assert!(msg.contains("extra argument that has side effects"), "{msg}");
+    assert!(
+        msg.contains("extra argument that has side effects"),
+        "{msg}"
+    );
     // Its hidden arguments come from direct calls only.
     let msg = loud("function f(a = 1) { return a; }\nconst g = f;\nconsole.log(g());");
     assert!(msg.contains("using `f` as a value"), "{msg}");
@@ -488,8 +601,14 @@ fn test_boa_parameter_adaptation_refusals() {
     let msg = loud("function sum(...xs) { return xs.length; } const g = sum; g(...[1, 2]);");
     assert!(msg.contains("using `sum` as a value"), "{msg}");
     // Arrow functions and function expressions can be called from anywhere.
-    assert!(loud("const f = (a = 1) => a;\nconsole.log(f());").contains("outside a `function` declaration"));
-    assert!(loud("const f = (...xs) => xs;\nconsole.log(f());").contains("outside a `function` declaration"));
+    assert!(
+        loud("const f = (a = 1) => a;\nconsole.log(f());")
+            .contains("outside a `function` declaration")
+    );
+    assert!(
+        loud("const f = (...xs) => xs;\nconsole.log(f());")
+            .contains("outside a `function` declaration")
+    );
 }
 
 // ── CRUSH-277 S1: classes lower to COSM ────────────────────────────────────
@@ -503,14 +622,16 @@ fn only_kind(source: &str) -> (crush_cast::Program, crush_cosm::KindDecl) {
 
 #[test]
 fn test_boa_class_emits_a_js_kind() {
-    let (program, kind) = only_kind(
-        "class Counter { constructor(x) { this.x = x; } inc() { return this.x; } }",
-    );
+    let (program, kind) =
+        only_kind("class Counter { constructor(x) { this.x = x; } inc() { return this.x; } }");
     assert_eq!(kind.name, "Counter");
     assert_eq!(kind.home_lang, "javascript");
     assert!(matches!(kind.storage, crush_cosm::Storage::OpenDict));
     assert!(matches!(kind.semantics, crush_cosm::Semantics::Reference));
-    assert!(matches!(kind.resolution, crush_cosm::Resolution::PrototypeChain));
+    assert!(matches!(
+        kind.resolution,
+        crush_cosm::Resolution::PrototypeChain
+    ));
     assert!(matches!(kind.receiver, crush_cosm::Receiver::DynamicThis));
     assert!(matches!(kind.equality, crush_cosm::Equality::Identity));
     assert!(
@@ -518,7 +639,11 @@ fn test_boa_class_emits_a_js_kind() {
         "construct: {:?}",
         kind.construct
     );
-    let inc = kind.members.iter().find(|m| m.name == "inc").expect("method member");
+    let inc = kind
+        .members
+        .iter()
+        .find(|m| m.name == "inc")
+        .expect("method member");
     assert!(
         matches!(&inc.member, crush_cosm::Member::Method { func, receiver: None } if func.as_str() == "Counter::inc"),
         "member: {:?}",
@@ -561,7 +686,9 @@ fn test_boa_exported_class_emits_kind_and_export() {
     assert_eq!(cosm.kinds[0].name, "Foo");
     let main = &program.functions["main"];
     assert!(
-        main.body.iter().any(|s| matches!(s, crush_cast::Statement::Export { name, .. } if name == "Foo")),
+        main.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::Export { name, .. } if name == "Foo")),
         "export statement missing: {:?}",
         main.body
     );
@@ -573,7 +700,9 @@ fn test_boa_named_class_expression_emits_a_kind() {
     assert_eq!(kind.name, "K");
     let main = &program.functions["main"];
     assert!(
-        main.body.iter().any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "K")),
+        main.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::VarDecl { name, .. } if name == "K")),
         "binding missing: {:?}",
         main.body
     );
@@ -588,9 +717,7 @@ fn test_boa_binding_named_class_expression_uses_the_binding_name() {
 
 #[test]
 fn test_boa_accessor_pair_merges_into_one_member() {
-    let (_, kind) = only_kind(
-        "class Box { get v() { return 1; } set v(x) { this.x = x; } }",
-    );
+    let (_, kind) = only_kind("class Box { get v() { return 1; } set v(x) { this.x = x; } }");
     let accessors: Vec<_> = kind.members.iter().filter(|m| m.name == "v").collect();
     assert_eq!(accessors.len(), 1, "get/set merge: {:?}", kind.members);
     match &accessors[0].member {
@@ -605,7 +732,11 @@ fn test_boa_accessor_pair_merges_into_one_member() {
 #[test]
 fn test_boa_static_method_is_a_static_member() {
     let (_, kind) = only_kind("class Util { static twice(x) { return x; } }");
-    let m = kind.members.iter().find(|m| m.name == "twice").expect("static member");
+    let m = kind
+        .members
+        .iter()
+        .find(|m| m.name == "twice")
+        .expect("static member");
     assert!(
         matches!(&m.member, crush_cosm::Member::Static { value: crush_cosm::StaticValue::Fn(f) } if f.as_str() == "Util::static::twice"),
         "member: {:?}",
@@ -624,24 +755,69 @@ fn test_boa_class_program_compiles() {
 
 #[test]
 fn test_boa_class_loud_edges() {
-    assert!(loud("console.log(class { m() { return 1; } });").contains("anonymous class expression"), "anonymous class expression");
-    assert!(loud("class A { #m() { return 1; } }").contains("private class method"), "private method");
-    assert!(loud("class A { static { } }").contains("static {"), "static block");
-    assert!(loud("class A extends B { }").contains("isn't declared in this module"), "derived without ctor, parent undeclared");
+    assert!(
+        loud("console.log(class { m() { return 1; } });").contains("anonymous class expression"),
+        "anonymous class expression"
+    );
+    assert!(
+        loud("class A { #m() { return 1; } }").contains("private class method"),
+        "private method"
+    );
+    assert!(
+        loud("class A { static { } }").contains("static {"),
+        "static block"
+    );
+    assert!(
+        loud("class A extends B { }").contains("isn't declared in this module"),
+        "derived without ctor, parent undeclared"
+    );
     // `super.m()` resolves from the parent up; these shapes stay loud.
-    assert!(loud("class A { m() { return super.m(); } }").contains("no ancestor"), "super without parent");
-    assert!(loud("class B { } class A extends B { m() { return super.m(); } }").contains("no ancestor"), "super of nothing");
-    assert!(loud("class B { x = 1; } class A extends B { m() { return super.x; } }").contains("`super.x` read"), "super.x read");
+    assert!(
+        loud("class A { m() { return super.m(); } }").contains("no ancestor"),
+        "super without parent"
+    );
+    assert!(
+        loud("class B { } class A extends B { m() { return super.m(); } }").contains("no ancestor"),
+        "super of nothing"
+    );
+    assert!(
+        loud("class B { x = 1; } class A extends B { m() { return super.x; } }")
+            .contains("`super.x` read"),
+        "super.x read"
+    );
     // `new` of a name that isn't a class declared in this module
     // (`new Map` / `new Set` themselves land with CRUSH-288).
-    assert!(loud("const s = new WeakMap();").contains("`new WeakMap`"), "host constructor");
-    assert!(loud("class A { } A();").contains("without `new`"), "class called bare");
-    assert!(loud("class A extends ns.Base { constructor() { } }").contains("anything but a name"), "expression superclass");
-    assert!(loud("class A { async m() { return 1; } }").contains("async method"), "async method");
-    assert!(loud("class A { [k]() { return 1; } }").contains("computed member name"), "computed name");
+    assert!(
+        loud("const s = new WeakMap();").contains("`new WeakMap`"),
+        "host constructor"
+    );
+    assert!(
+        loud("class A { } A();").contains("without `new`"),
+        "class called bare"
+    );
+    assert!(
+        loud("class A extends ns.Base { constructor() { } }").contains("anything but a name"),
+        "expression superclass"
+    );
+    assert!(
+        loud("class A { async m() { return 1; } }").contains("async method"),
+        "async method"
+    );
+    assert!(
+        loud("class A { [k]() { return 1; } }").contains("computed member name"),
+        "computed name"
+    );
     // `this` is bound only directly inside a method.
-    assert!(loud("class A { m() { function g() { return this; } return g(); } }").contains("`this` outside a class method"), "nested fn this");
-    assert!(loud("class A { m() { const g = () => this; return g(); } }").contains("`this` outside a class method"), "arrow this");
+    assert!(
+        loud("class A { m() { function g() { return this; } return g(); } }")
+            .contains("`this` outside a class method"),
+        "nested fn this"
+    );
+    assert!(
+        loud("class A { m() { const g = () => this; return g(); } }")
+            .contains("`this` outside a class method"),
+        "arrow this"
+    );
 }
 
 /// Compile a lowered JS program all the way to a loaded CVM1 program —
@@ -700,14 +876,10 @@ fn run_js_portable(source: &str) -> Result<String, String> {
 // program's own `try`/`catch`.
 #[test]
 fn test_boa_accessor_recursion_and_throw() {
-    let err = run_js_err(
-        "class C { get x() { return this.x; } } console.log(new C().x);",
-    );
+    let err = run_js_err("class C { get x() { return this.x; } } console.log(new C().x);");
     assert!(err.contains("call depth"), "recursive getter: {err}");
     // A getter that never returns burns the program's own step quota.
-    let err = run_js_err(
-        "class C { get x() { for (;;) { } } } console.log(new C().x);",
-    );
+    let err = run_js_err("class C { get x() { for (;;) { } } } console.log(new C().x);");
     assert!(err.contains("instruction quota"), "looping getter: {err}");
     let source = r#"
 class C { get x() { throw "boom"; } }
@@ -727,16 +899,18 @@ console.log("after");
 // quota, and a throwing getter is caught by the program's `try`.
 #[test]
 fn test_boa_accessor_recursion_and_throw_portable() {
-    let err = run_js_portable(
-        "class C { get x() { return this.x; } } console.log(new C().x);",
-    )
-    .unwrap_err();
-    assert!(err.contains("call depth"), "portable recursive getter: {err}");
-    let err = run_js_portable(
-        "class C { get x() { for (;;) { } } } console.log(new C().x);",
-    )
-    .unwrap_err();
-    assert!(err.contains("instruction quota"), "portable looping getter: {err}");
+    let err = run_js_portable("class C { get x() { return this.x; } } console.log(new C().x);")
+        .unwrap_err();
+    assert!(
+        err.contains("call depth"),
+        "portable recursive getter: {err}"
+    );
+    let err = run_js_portable("class C { get x() { for (;;) { } } } console.log(new C().x);")
+        .unwrap_err();
+    assert!(
+        err.contains("instruction quota"),
+        "portable looping getter: {err}"
+    );
     let source = r#"
 class C { get x() { throw "boom"; } }
 const c = new C();
@@ -957,8 +1131,7 @@ console.log(new P().get());
     assert_eq!(run_js(source), "42\n");
     // A planned builtin on a call-result receiver refuses at walk time.
     assert!(
-        loud("function f() { return [1]; } console.log(f().map((x) => x));")
-            .contains("zorro-20"),
+        loud("function f() { return [1]; } console.log(f().map((x) => x));").contains("zorro-20"),
         "HOF on call result stays a walk-time refusal"
     );
     // And a receiver-shaped builtin on a member receiver refuses at
@@ -1104,7 +1277,8 @@ console.log(h({ p: { q: null } }));
     assert_eq!(run_js(source), "7\nnull\n");
     // `h({ p: null })`: the nested pattern destructures null — a
     // run-time error in JS, and a loud one here, never a silent 7.
-    let err = run_js_err("function h({ p: { q = 7 } = {} }) { return q; } console.log(h({ p: null }));");
+    let err =
+        run_js_err("function h({ p: { q = 7 } = {} }) { return q; } console.log(h({ p: null }));");
     assert!(!err.is_empty(), "destructuring null must fail loudly");
 }
 
@@ -1116,10 +1290,17 @@ console.log(h({ p: { q: null } }));
 #[test]
 fn test_boa_destructuring_param_call_shapes() {
     let src = "function f({ a }) { return a; } console.log(f());";
-    assert!(loud(src).contains("CRUSH"), "missing argument: {}", loud(src));
+    assert!(
+        loud(src).contains("CRUSH"),
+        "missing argument: {}",
+        loud(src)
+    );
     // Destructuring null itself is a run-time error, as in JS.
     let err = run_js_err("function f({ a }) { return a; } console.log(f(null));");
-    assert!(!err.is_empty(), "destructuring null must fail loudly: {err}");
+    assert!(
+        !err.is_empty(),
+        "destructuring null must fail loudly: {err}"
+    );
     // An override whose destructured parameter has a different shape
     // (here: no parameter-level default) refuses.
     let src = "class Base { m({ a = 1 } = {}) { return a; } run() { return this.m({ a: 5 }); } } class Sub extends Base { m({ a }) { return a; } } console.log(new Sub().run());";
@@ -1141,7 +1322,11 @@ console.log(new Sub().run());
     // An unknown receiver refuses while a defaulted destructured
     // member of the name exists; a plain one runs.
     let src = "class Acc { bump({ by = 1 } = {}) { return by; } } const xs = [new Acc()]; console.log(xs[0].bump({}));";
-    assert!(loud(src).contains("hidden slots"), "unknown receiver: {}", loud(src));
+    assert!(
+        loud(src).contains("hidden slots"),
+        "unknown receiver: {}",
+        loud(src)
+    );
     let source = r#"
 class Acc { bump({ by }) { return by; } }
 const xs = [new Acc()];
@@ -1204,7 +1389,8 @@ fn test_boa_destructuring_declarations_loud() {
         "assignment"
     );
     assert!(
-        loud("for (const { a } of [[1]]) { console.log(a); }").contains("destructuring loop variable"),
+        loud("for (const { a } of [[1]]) { console.log(a); }")
+            .contains("destructuring loop variable"),
         "loop head"
     );
     // Rest elements stay loud in declarations too.
@@ -1292,11 +1478,23 @@ console.log(new Sub().get());
 #[test]
 fn test_boa_override_signature_mismatch_refused() {
     let src = "class Base { m(a, b) { return a; } run() { return this.m(5, 0); } } class Sub extends Base { m(a = 1) { return a; } } console.log(new Sub().run());";
-    assert!(loud(src).contains("overrides it with a different"), "plain->default: {}", loud(src));
+    assert!(
+        loud(src).contains("overrides it with a different"),
+        "plain->default: {}",
+        loud(src)
+    );
     let src = "class Base { m(a = 1) { return a; } run() { return this.m(); } } class Sub extends Base { m(a, b) { return a; } } console.log(new Sub().run());";
-    assert!(loud(src).contains("overrides it with a different"), "default->plain: {}", loud(src));
+    assert!(
+        loud(src).contains("overrides it with a different"),
+        "default->plain: {}",
+        loud(src)
+    );
     let src = "class Base { m(a) { return a; } run() { return this.m(5); } } class Sub extends Base { m(...xs) { return xs[0]; } } console.log(new Sub().run());";
-    assert!(loud(src).contains("overrides it with a different"), "plain->rest: {}", loud(src));
+    assert!(
+        loud(src).contains("overrides it with a different"),
+        "plain->rest: {}",
+        loud(src)
+    );
     // A matching override dispatches as written.
     let source = r#"
 class Base {
@@ -1311,7 +1509,11 @@ console.log(new Base().run());
     // The check walks grandchildren too: an override two levels down
     // with a different shape refuses; the same shape still runs.
     let src = "class Base { m(a = 1) { return a; } run() { return this.m(); } } class Mid extends Base { } class Sub extends Mid { m(a, b) { return a; } } console.log(new Sub().run());";
-    assert!(loud(src).contains("overrides it with a different"), "grandchild: {}", loud(src));
+    assert!(
+        loud(src).contains("overrides it with a different"),
+        "grandchild: {}",
+        loud(src)
+    );
     let source = r#"
 class Base {
   m(a = 1) { return a; }
@@ -1330,7 +1532,11 @@ console.log(new Sub().run());
 #[test]
 fn test_boa_unknown_receiver_defaulted_member_refused() {
     let src = "class Acc { bump(by = 1) { return by; } } const xs = [new Acc()]; console.log(xs[0].bump(5, 0));";
-    assert!(loud(src).contains("hidden slots"), "defaulted: {}", loud(src));
+    assert!(
+        loud(src).contains("hidden slots"),
+        "defaulted: {}",
+        loud(src)
+    );
     let src = "class Acc { sum(first, ...rest) { return first; } } const xs = [new Acc()]; console.log(xs[0].sum(1, 2));";
     assert!(loud(src).contains("hidden slots"), "rest: {}", loud(src));
     let source = r#"
@@ -1776,12 +1982,15 @@ fn test_boa_class_as_value_loads_kind() {
         .map(|(_, f)| f)
         .expect("main");
     assert!(
-        main.body.iter().any(|i| i.op == "load_kind" && i.args["kind"] == "Counter"),
+        main.body
+            .iter()
+            .any(|i| i.op == "load_kind" && i.args["kind"] == "Counter"),
         "load_kind Counter in main: {:?}",
         main.body
     );
     // The class-expression binding is the kind name itself: `new C()` works.
-    let source = "const C = class { get() { return 3; } };\nconst i = new C();\nconsole.log(i.get());";
+    let source =
+        "const C = class { get() { return 3; } };\nconst i = new C();\nconsole.log(i.get());";
     assert_eq!(run_js(source), "3\n");
 }
 
@@ -1795,7 +2004,9 @@ fn test_boa_classless_program_has_no_cosm() {
 // parameter takes an array.
 #[test]
 fn test_boa_parameter_abi() {
-    let program = test_lower("function f(a, b = a, ...rest) { return rest; }\nconsole.log(f(1), f(1, 2, 3, 4));\n");
+    let program = test_lower(
+        "function f(a, b = a, ...rest) { return rest; }\nconsole.log(f(1), f(1, 2, 3, 4));\n",
+    );
     let f = &program.functions["f"];
     let names: Vec<&str> = f.params.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(names.len(), 4, "{names:?}");
@@ -1809,13 +2020,16 @@ fn test_boa_parameter_abi() {
 // declaration"), so no ES module lowered through boa at all.
 #[test]
 fn test_boa_exported_function_is_hoisted_with_its_body() {
-    let program = test_lower("export function double(x) { return x * 2; }\nconsole.log(double(21));");
+    let program =
+        test_lower("export function double(x) { return x * 2; }\nconsole.log(double(21));");
     let f = program
         .functions
         .get("double")
         .expect("exported function must be hoisted like a bare declaration");
     assert!(
-        f.body.iter().any(|s| matches!(s, crush_cast::Statement::Return { .. })),
+        f.body
+            .iter()
+            .any(|s| matches!(s, crush_cast::Statement::Return { .. })),
         "exported function body must be lowered: {:?}",
         f.body
     );
@@ -1845,8 +2059,7 @@ console.log(new Counter().bump());
 "#;
     assert_eq!(run_js(source), "42\n", "exported class compiles and runs");
     assert!(
-        loud("export async function f() {}")
-            .contains("exporting a generator or async declaration"),
+        loud("export async function f() {}").contains("exporting a generator or async declaration"),
         "async export refusal names what is refused"
     );
 }
@@ -1861,13 +2074,17 @@ fn test_boa_exported_function_runs_end_to_end() {
         "export function double(x) { return x * 2; }\nconsole.log(double(21));",
     )
     .unwrap();
-    let casm = crush_frontend::compiler::Compiler::new().compile(cast).expect("CAST->CASM");
+    let casm = crush_frontend::compiler::Compiler::new()
+        .compile(cast)
+        .expect("CAST->CASM");
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).expect("CASM->CVM1");
     let quotas = crush_vm::Quotas {
         max_steps: 10_000_000,
         ..Default::default()
     };
-    let out = crush_vm::run_with_caps(&vm, &quotas, None).expect("run").output;
+    let out = crush_vm::run_with_caps(&vm, &quotas, None)
+        .expect("run")
+        .output;
     assert_eq!(out.trim(), "42");
 }
 
@@ -2058,17 +2275,14 @@ fn test_boa_optional_chaining_loud() {
     // A side-effecting prefix would be evaluated twice (the test
     // and the branch), so it refuses instead.
     assert!(
-        loud("function f() { return { b: 1 }; } console.log(f()?.b);")
-            .contains("side-effecting")
+        loud("function f() { return { b: 1 }; } console.log(f()?.b);").contains("side-effecting")
     );
     assert!(
         loud("const a = { b() { return { c: 1 }; } }; console.log(a?.b()?.c);")
             .contains("side-effecting")
     );
     // A private field in a chain.
-    assert!(
-        loud("class A { #x = 1; get(o) { return o?.#x; } }").contains("private")
-    );
+    assert!(loud("class A { #x = 1; get(o) { return o?.#x; } }").contains("private"));
 }
 
 // CRUSH-292: logical assignment (`&&=`, `||=`, `??=`) — the binary
@@ -2211,10 +2425,18 @@ console.log(a.m(...[1, 2]), a.sum([1, 2]));
 // signature to expand into), and `arguments` (CRUSH-zorro-18).
 #[test]
 fn test_boa_spread_argument_stays_loud() {
-    let msg = loud("function f(a, b = 2) { return a + b; }\nconst xs = [1, 2];\nconsole.log(f(...xs));");
-    assert!(msg.contains("a spread argument (`f(...args)`)"), "default parameter: {msg}");
-    let msg = loud("function f(...rest) { return rest; }\nconst xs = [1, 2];\nconsole.log(f(...xs));");
-    assert!(msg.contains("a spread argument (`f(...args)`)"), "rest parameter: {msg}");
+    let msg =
+        loud("function f(a, b = 2) { return a + b; }\nconst xs = [1, 2];\nconsole.log(f(...xs));");
+    assert!(
+        msg.contains("a spread argument (`f(...args)`)"),
+        "default parameter: {msg}"
+    );
+    let msg =
+        loud("function f(...rest) { return rest; }\nconst xs = [1, 2];\nconsole.log(f(...xs));");
+    assert!(
+        msg.contains("a spread argument (`f(...args)`)"),
+        "rest parameter: {msg}"
+    );
     let msg = loud(
         "function f(a, b) { return a + b; }\nfunction make() { return [1, 2]; }\nconsole.log(f(...make()));",
     );
@@ -2223,8 +2445,13 @@ fn test_boa_spread_argument_stays_loud() {
         "computed source: {msg}"
     );
     let msg = loud("const xs = [1, 2];\nconsole.log(...xs);");
-    assert!(msg.contains("a spread argument (`f(...args)`)"), "console.log: {msg}");
-    let msg = loud("function f(a) { return a; }\nfunction g() { return f(...arguments); }\nconsole.log(g(1));");
+    assert!(
+        msg.contains("a spread argument (`f(...args)`)"),
+        "console.log: {msg}"
+    );
+    let msg = loud(
+        "function f(a) { return a; }\nfunction g() { return f(...arguments); }\nconsole.log(g(1));",
+    );
     assert!(msg.contains("arguments"), "arguments: {msg}");
 }
 
@@ -2234,7 +2461,8 @@ fn test_boa_spread_argument_stays_loud() {
 // missing-argument rule.
 #[test]
 fn test_boa_spread_argument_short_array_is_loud() {
-    let err = run_js_err("function f(a, b) { return a + b; }\nconst xs = [1];\nconsole.log(f(...xs));");
+    let err =
+        run_js_err("function f(a, b) { return a + b; }\nconst xs = [1];\nconsole.log(f(...xs));");
     assert!(err.contains("array index out of range"), "{err}");
     let msg = loud("function f(a, b) { return a + b; }\nconsole.log(f(...[1]));");
     assert!(msg.contains("without its argument 2"), "{msg}");
@@ -2264,15 +2492,18 @@ console.log(value(...[20, 22]));
 
 #[test]
 fn test_boa_value_callee_spreads_refuse_mixed_and_multiple_spreads() {
-    let mixed = loud(
-        "function add(a, b) { return a + b; } const value = add; value(1, ...[2]);",
+    let mixed = loud("function add(a, b) { return a + b; } const value = add; value(1, ...[2]);");
+    assert!(
+        mixed.contains("mixed fixed and spread arguments to a value callee"),
+        "{mixed}"
     );
-    assert!(mixed.contains("mixed fixed and spread arguments to a value callee"), "{mixed}");
 
-    let multiple = loud(
-        "function add(a, b) { return a + b; } const value = add; value(...[1], ...[2]);",
+    let multiple =
+        loud("function add(a, b) { return a + b; } const value = add; value(...[1], ...[2]);");
+    assert!(
+        multiple.contains("mixed or multiple spread arguments to a value callee"),
+        "{multiple}"
     );
-    assert!(multiple.contains("mixed or multiple spread arguments to a value callee"), "{multiple}");
 }
 
 #[test]

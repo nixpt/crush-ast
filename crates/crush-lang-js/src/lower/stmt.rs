@@ -10,9 +10,9 @@ use std::ops::ControlFlow;
 
 use boa_ast::expression::access::{PropertyAccess, PropertyAccessField};
 use boa_ast::expression::{Expression, Identifier};
-use boa_ast::pattern::{ArrayPatternElement, ObjectPatternElement, Pattern};
 use boa_ast::function::FunctionDeclaration;
 use boa_ast::function::{FormalParameterList, FunctionBody};
+use boa_ast::pattern::{ArrayPatternElement, ObjectPatternElement, Pattern};
 use boa_ast::statement::LabelledItem;
 use boa_ast::statement::iteration::{ForLoopInitializer, IterableLoopInitializer};
 use boa_ast::visitor::{VisitWith, Visitor};
@@ -398,7 +398,10 @@ impl Lower<'_> {
             name: kind.to_string(),
             meta: self.meta(span),
         };
-        lowered_body.insert(0, self.var_decl_stmt("this".to_string(), this_value, false, span));
+        lowered_body.insert(
+            0,
+            self.var_decl_stmt("this".to_string(), this_value, false, span),
+        );
         Ok((lowered_params, lowered_body))
     }
 
@@ -816,10 +819,7 @@ impl Lower<'_> {
                     value: i as i64,
                     meta: m.clone(),
                 }),
-                right: Box::new(crate::lower_common::length_of(
-                    source.clone(),
-                    m.clone(),
-                )),
+                right: Box::new(crate::lower_common::length_of(source.clone(), m.clone())),
                 meta: m.clone(),
             },
             then_body: vec![CastStmt::ExprStmt {
@@ -938,7 +938,11 @@ impl Lower<'_> {
             let span = Some(f.name().span());
             if f.parameters().as_ref().iter().any(|p| p.is_rest_param()) {
                 let sig = &sigs[i];
-                if let Some(global) = lifted.iter().find(|(sym, _, _)| *sym == f.name().sym()).map(|(_, name, _)| name.clone()) {
+                if let Some(global) = lifted
+                    .iter()
+                    .find(|(sym, _, _)| *sym == f.name().sym())
+                    .map(|(_, name, _)| name.clone())
+                {
                     self.fn_sigs.insert(global, sig.clone());
                 }
             }
@@ -1160,7 +1164,8 @@ impl Lower<'_> {
         // a direct read would load the uninitialised binding. Go through
         // a hidden temporary the binding can't shadow.
         let mut prefix = Vec::new();
-        if v.init().is_some_and(|init| matches!(unparen(init), Expression::ClassExpression(_)))
+        if v.init()
+            .is_some_and(|init| matches!(unparen(init), Expression::ClassExpression(_)))
             && matches!(&value, CastExpr::Var { name: n, .. } if n == &name)
         {
             let temp = self.hidden(&format!("{name}__class"));
@@ -1288,7 +1293,10 @@ impl Lower<'_> {
 
     fn jump(&mut self, is_continue: bool, meta: Meta) -> anyhow::Result<Vec<CastStmt>> {
         if is_continue
-            && self.switch_loop_floors.last().is_some_and(|floor| self.loop_depth <= *floor)
+            && self
+                .switch_loop_floors
+                .last()
+                .is_some_and(|floor| self.loop_depth <= *floor)
         {
             return Err(self.unsupported("`continue` inside a `switch`", None));
         }
@@ -1302,7 +1310,11 @@ impl Lower<'_> {
         if is_continue && target.is_switch {
             return Err(self.unsupported("`continue` inside a `switch`", None));
         }
-        let action = if is_continue { target.continue_action } else { target.break_action };
+        let action = if is_continue {
+            target.continue_action
+        } else {
+            target.break_action
+        };
         if target.try_depth == self.try_depth && target.finally_depth == self.finally_stack.len() {
             return Ok(action);
         }
@@ -1315,20 +1327,40 @@ impl Lower<'_> {
             action,
         });
         Ok(vec![CastStmt::Throw {
-            value: CastExpr::StringLiteral { value: token, meta: meta.clone() },
+            value: CastExpr::StringLiteral {
+                value: token,
+                meta: meta.clone(),
+            },
             meta,
         }])
     }
 
-    fn completion_condition(&self, name: &str, signals: &[super::CompletionSignal], meta: &Meta) -> Option<CastExpr> {
-        signals.iter().map(|signal| CastExpr::BinaryOp {
-            operator: "==".to_string(),
-            left: Box::new(CastExpr::Var { name: name.to_string(), meta: meta.clone() }),
-            right: Box::new(CastExpr::StringLiteral { value: signal.token.clone(), meta: meta.clone() }),
-            meta: meta.clone(),
-        }).reduce(|left, right| CastExpr::BinaryOp {
-            operator: "||".to_string(), left: Box::new(left), right: Box::new(right), meta: meta.clone(),
-        })
+    fn completion_condition(
+        &self,
+        name: &str,
+        signals: &[super::CompletionSignal],
+        meta: &Meta,
+    ) -> Option<CastExpr> {
+        signals
+            .iter()
+            .map(|signal| CastExpr::BinaryOp {
+                operator: "==".to_string(),
+                left: Box::new(CastExpr::Var {
+                    name: name.to_string(),
+                    meta: meta.clone(),
+                }),
+                right: Box::new(CastExpr::StringLiteral {
+                    value: signal.token.clone(),
+                    meta: meta.clone(),
+                }),
+                meta: meta.clone(),
+            })
+            .reduce(|left, right| CastExpr::BinaryOp {
+                operator: "||".to_string(),
+                left: Box::new(left),
+                right: Box::new(right),
+                meta: meta.clone(),
+            })
     }
 
     fn dispatch_finally(
@@ -1340,7 +1372,11 @@ impl Lower<'_> {
         meta: &Meta,
     ) -> Vec<CastStmt> {
         let rethrow = CastStmt::Throw {
-            value: CastExpr::Var { name: error_var.to_string(), meta: meta.clone() }, meta: meta.clone(),
+            value: CastExpr::Var {
+                name: error_var.to_string(),
+                meta: meta.clone(),
+            },
+            meta: meta.clone(),
         };
         let mut handler = finalizer.to_vec();
         handler.push(rethrow.clone());
@@ -1354,8 +1390,14 @@ impl Lower<'_> {
             handler = vec![CastStmt::If {
                 condition: CastExpr::BinaryOp {
                     operator: "==".to_string(),
-                    left: Box::new(CastExpr::Var { name: error_var.to_string(), meta: meta.clone() }),
-                    right: Box::new(CastExpr::StringLiteral { value: signal.token.clone(), meta: meta.clone() }),
+                    left: Box::new(CastExpr::Var {
+                        name: error_var.to_string(),
+                        meta: meta.clone(),
+                    }),
+                    right: Box::new(CastExpr::StringLiteral {
+                        value: signal.token.clone(),
+                        meta: meta.clone(),
+                    }),
                     meta: meta.clone(),
                 },
                 then_body: action,
@@ -1380,7 +1422,11 @@ impl Lower<'_> {
         }
     }
 
-    fn loop_body_with_prefix(&mut self, body: &Statement, prefix: &[CastStmt]) -> anyhow::Result<Vec<CastStmt>> {
+    fn loop_body_with_prefix(
+        &mut self,
+        body: &Statement,
+        prefix: &[CastStmt],
+    ) -> anyhow::Result<Vec<CastStmt>> {
         let target = self.loop_target(prefix);
         self.jump_targets.push(target);
         self.loop_depth += 1;
@@ -1503,7 +1549,8 @@ impl Lower<'_> {
                     else_body: None,
                     meta: m.clone(),
                 };
-                let mut body = self.loop_body_with_prefix(dw.body(), std::slice::from_ref(&exit_check))?;
+                let mut body =
+                    self.loop_body_with_prefix(dw.body(), std::slice::from_ref(&exit_check))?;
                 body.push(exit_check);
                 vec![CastStmt::While {
                     condition: Box::new(CastExpr::BoolLiteral {
@@ -1592,9 +1639,16 @@ impl Lower<'_> {
                     Some(e) => {
                         let captured = self.hidden("__crush_return_");
                         let evaluated = self.expr(e)?;
-                        let mut out = vec![self.var_decl_stmt(captured.clone(), evaluated, false, span)];
+                        let mut out =
+                            vec![self.var_decl_stmt(captured.clone(), evaluated, false, span)];
                         out.extend(self.cleanup(0));
-                        out.push(CastStmt::Return { value: Some(CastExpr::Var { name: captured, meta: m.clone() }), meta: m });
+                        out.push(CastStmt::Return {
+                            value: Some(CastExpr::Var {
+                                name: captured,
+                                meta: m.clone(),
+                            }),
+                            meta: m,
+                        });
                         return Ok(out);
                     }
                     None => None,
@@ -1628,7 +1682,7 @@ impl Lower<'_> {
                     Some(c) => {
                         self.scopes.push_block();
                         let r = (|| {
-                                let var = match c.parameter() {
+                            let var = match c.parameter() {
                                 Some(Binding::Identifier(id)) => {
                                     let fresh = self.fresh_name(id.sym());
                                     self.scopes.declare_block(id.sym(), fresh.clone());
@@ -1658,20 +1712,32 @@ impl Lower<'_> {
                     .collect();
                 let mut user_handler = handler;
                 if t.catch().is_some()
-                    && let Some(condition) = self.completion_condition(&error_var, &local_signals, &m)
+                    && let Some(condition) =
+                        self.completion_condition(&error_var, &local_signals, &m)
                 {
-                    user_handler.insert(0, CastStmt::If {
-                        condition,
-                        then_body: vec![CastStmt::Throw {
-                            value: CastExpr::Var { name: error_var.clone(), meta: m.clone() },
+                    user_handler.insert(
+                        0,
+                        CastStmt::If {
+                            condition,
+                            then_body: vec![CastStmt::Throw {
+                                value: CastExpr::Var {
+                                    name: error_var.clone(),
+                                    meta: m.clone(),
+                                },
+                                meta: m.clone(),
+                            }],
+                            else_body: Some(vec![]),
                             meta: m.clone(),
-                        }],
-                        else_body: Some(vec![]),
-                        meta: m.clone(),
-                    });
+                        },
+                    );
                 }
                 let source_try = if t.catch().is_some() {
-                    vec![CastStmt::TryCatch { body, error_var, handler: user_handler, meta: m.clone() }]
+                    vec![CastStmt::TryCatch {
+                        body,
+                        error_var,
+                        handler: user_handler,
+                        meta: m.clone(),
+                    }]
                 } else {
                     body
                 };
@@ -1688,11 +1754,19 @@ impl Lower<'_> {
                         // No cleanup at this level: pass the private completion
                         // through the CAST handler unchanged to the loop boundary.
                         dispatch = vec![CastStmt::Throw {
-                            value: CastExpr::Var { name: marker.clone(), meta: m.clone() },
+                            value: CastExpr::Var {
+                                name: marker.clone(),
+                                meta: m.clone(),
+                            },
                             meta: m.clone(),
                         }];
                     }
-                    vec![CastStmt::TryCatch { body: source_try, error_var: marker, handler: dispatch, meta: m.clone() }]
+                    vec![CastStmt::TryCatch {
+                        body: source_try,
+                        error_var: marker,
+                        handler: dispatch,
+                        meta: m.clone(),
+                    }]
                 } else {
                     source_try
                 };

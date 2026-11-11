@@ -85,14 +85,8 @@ fn test_ffi_gateway_cap() {
         CAP_CALL "__crush_ffi__" 4
         HALT"#
     );
-    let prog = assemble(
-        &asm,
-        Some(&["__crush_ffi__"]),
-        None,
-    )
-    .unwrap();
+    let prog = assemble(&asm, Some(&["__crush_ffi__"]), None).unwrap();
 
     let result = crate::vm::run_with_caps(&prog, &Quotas::default(), Some(&host_caps)).unwrap();
     assert_eq!(result.stack, vec![Value::Int(42)]);
 }
-

@@ -41,7 +41,11 @@ fn steps_line_is_only_printed_when_asked_for() {
     let src = write_program(dir.path(), "data.crush", "fn main() { io.print(\"data\") }");
 
     let quiet = run_in(dir.path(), &["run", &src]);
-    assert!(quiet.status.success(), "stderr: {}", String::from_utf8_lossy(&quiet.stderr));
+    assert!(
+        quiet.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&quiet.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&quiet.stdout), "data\n");
     assert_eq!(
         String::from_utf8_lossy(&quiet.stderr),
@@ -50,7 +54,11 @@ fn steps_line_is_only_printed_when_asked_for() {
     );
 
     let stats = run_in(dir.path(), &["run", &src, "--stats"]);
-    assert!(stats.status.success(), "stderr: {}", String::from_utf8_lossy(&stats.stderr));
+    assert!(
+        stats.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&stats.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&stats.stdout), "data\n");
     let stderr = String::from_utf8_lossy(&stats.stderr);
     assert!(
@@ -65,7 +73,11 @@ fn steps_line_is_only_printed_when_asked_for() {
         .env("CRUSH_DEBUG", "1")
         .output()
         .unwrap();
-    assert!(debug.status.success(), "stderr: {}", String::from_utf8_lossy(&debug.stderr));
+    assert!(
+        debug.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&debug.stderr)
+    );
     assert!(
         String::from_utf8_lossy(&debug.stderr).contains("[steps="),
         "CRUSH_DEBUG=1 should bring the run summary back"
@@ -84,7 +96,11 @@ fn io_eprint_writes_to_stderr_and_leaves_stdout_alone() {
     );
 
     let out = run_in(dir.path(), &["run", &src]);
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "out\nout2\n",

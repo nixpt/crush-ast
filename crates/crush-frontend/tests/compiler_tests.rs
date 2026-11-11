@@ -496,7 +496,10 @@ fn imports_without_a_lowering_are_compile_errors() {
     ];
     for (import, expected) in cases {
         let err = Compiler::new()
-            .compile(create_program(vec![Statement::Import { import, meta: meta() }]))
+            .compile(create_program(vec![Statement::Import {
+                import,
+                meta: meta(),
+            }]))
             .expect_err("must be refused");
         assert!(err.to_string().contains(expected), "{err}");
     }
@@ -1403,9 +1406,7 @@ fn first_cap_call(ops: &[(String, serde_json::Value)]) -> Option<usize> {
 /// runtime ("expected array, got str") on every engine.
 #[test]
 fn bracket_slice_desugars_to_seq_slice_with_string_target() {
-    let ops = main_ops_with_args(
-        "fn main() { let s = \"héllo\"; let t = s[1:3]; print(t); }",
-    );
+    let ops = main_ops_with_args("fn main() { let s = \"héllo\"; let t = s[1:3]; print(t); }");
     let cap_idx = first_cap_call(&ops).expect("cap_call missing");
     assert_eq!(
         ops[cap_idx].1.get("name").and_then(|v| v.as_str()),
@@ -1424,9 +1425,8 @@ fn bracket_slice_desugars_to_seq_slice_with_string_target() {
 /// DoubleColon token, which used to fall into the "index access" path.
 #[test]
 fn bracket_slice_step_lands_in_the_step_slot() {
-    let ops = main_ops_with_args(
-        "fn main() { let xs = [10, 20, 30]; let t = xs[1::2]; print(t); }",
-    );
+    let ops =
+        main_ops_with_args("fn main() { let xs = [10, 20, 30]; let t = xs[1::2]; print(t); }");
     let cap_idx = first_cap_call(&ops).expect("cap_call missing");
     assert_eq!(
         ops[cap_idx].1.get("name").and_then(|v| v.as_str()),
@@ -1449,7 +1449,8 @@ fn bracket_slice_step_lands_in_the_step_slot() {
         }
     };
     assert!(
-        tail.iter().all(|(op, _)| op == "push_int" || op == "push_null"),
+        tail.iter()
+            .all(|(op, _)| op == "push_int" || op == "push_null"),
         "expected int/null pushes, got {ops:?}"
     );
     assert_eq!(int_at(&tail[2]), Some(1), "start slot must be 1: {ops:?}");
@@ -1469,10 +1470,7 @@ fn method_call_pushes_args_in_order_for_capability_cap_call() {
         Some("arr_slice"),
         "expected arr_slice cap_call, got {ops:?}"
     );
-    assert_eq!(
-        ops[cap_idx].1.get("argc").and_then(|v| v.as_u64()),
-        Some(3)
-    );
+    assert_eq!(ops[cap_idx].1.get("argc").and_then(|v| v.as_u64()), Some(3));
     // The two push_int args immediately before cap_call must be 1 then 3 (in order).
     let arg_vals: Vec<i64> = ops
         .iter()
@@ -1503,10 +1501,7 @@ fn arr_set_method_call_pushes_args_in_order() {
         ops[cap_idx].1.get("name").and_then(|v| v.as_str()),
         Some("arr_set")
     );
-    assert_eq!(
-        ops[cap_idx].1.get("argc").and_then(|v| v.as_u64()),
-        Some(3)
-    );
+    assert_eq!(ops[cap_idx].1.get("argc").and_then(|v| v.as_u64()), Some(3));
     let arg_vals: Vec<i64> = ops
         .iter()
         .take(cap_idx)

@@ -284,7 +284,10 @@ fn math_random_seed_is_deterministic_through_source_pipeline() {
 
     let first = run();
     let second = run();
-    assert_eq!(first, second, "same explicit seed must replay the same sequence");
+    assert_eq!(
+        first, second,
+        "same explicit seed must replay the same sequence"
+    );
 
     let mut lines = first.lines();
     let first_float: f64 = lines.next().unwrap().parse().expect("first random float");
@@ -306,8 +309,10 @@ fn quotas_stop_infinite_loops() {
         .build()
         .expect("build");
 
-    let mut quotas = crush_lang_sdk::Quotas::default();
-    quotas.max_steps = 5;
+    let quotas = crush_lang_sdk::Quotas {
+        max_steps: 5,
+        ..Default::default()
+    };
 
     let err = Runtime::with_quotas(quotas)
         .run(&program)
@@ -340,7 +345,7 @@ fn f() -> i32 {
     return 0
 }
 ";
-    let mut prog: Program = Parser::parse(source).expect("parse");
+    let prog: Program = Parser::parse(source).expect("parse");
 
     let mut index = CrushIndex::new();
     index.add_program("testmod", &prog);

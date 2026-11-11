@@ -7,12 +7,20 @@ use std::process::{Command, Output, Stdio};
 
 fn bin(name: &str) -> String {
     match name {
-        "crush-run" => option_env!("CARGO_BIN_EXE_crush-run").unwrap_or("crush-run").to_string(),
-        _ => option_env!("CARGO_BIN_EXE_crush-repl").unwrap_or("crush-repl").to_string(),
+        "crush-run" => option_env!("CARGO_BIN_EXE_crush-run")
+            .unwrap_or("crush-run")
+            .to_string(),
+        _ => option_env!("CARGO_BIN_EXE_crush-repl")
+            .unwrap_or("crush-repl")
+            .to_string(),
     }
 }
 fn text(o: &Output) -> String {
-    format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    )
 }
 
 /// Two small modules: `util.double` is called from `app.main`'s helper.
@@ -37,10 +45,18 @@ fn project() -> tempfile::TempDir {
 #[test]
 fn files_are_queryable() {
     let d = project();
-    let (a, b) = (d.path().join("src/util.crush"), d.path().join("src/app.crush"));
+    let (a, b) = (
+        d.path().join("src/util.crush"),
+        d.path().join("src/app.crush"),
+    );
     let o = Command::new(bin("crush-run"))
         .args(["run", d.path().join("query.crush").to_str().unwrap()])
-        .args(["--codebase", a.to_str().unwrap(), "--codebase", b.to_str().unwrap()])
+        .args([
+            "--codebase",
+            a.to_str().unwrap(),
+            "--codebase",
+            b.to_str().unwrap(),
+        ])
         .stdin(Stdio::null())
         .output()
         .unwrap();
@@ -68,11 +84,18 @@ fn a_directory_expands_to_its_crush_files() {
 fn without_the_flag_it_is_refused_naming_the_grant() {
     let d = project();
     let q = d.path().join("query.crush");
-    let o = Command::new(bin("crush-run")).args(["run", q.to_str().unwrap()]).stdin(Stdio::null()).output().unwrap();
+    let o = Command::new(bin("crush-run"))
+        .args(["run", q.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
     assert!(!o.status.success());
     assert!(text(&o).contains("--codebase FILE"), "{}", text(&o));
     // `caps` names the same grant.
-    let o = Command::new(bin("crush-run")).args(["caps", q.to_str().unwrap()]).output().unwrap();
+    let o = Command::new(bin("crush-run"))
+        .args(["caps", q.to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(text(&o).contains("--codebase FILE"), "{}", text(&o));
 }
 
@@ -81,14 +104,27 @@ fn bad_inputs_are_loud() {
     let d = project();
     let q = d.path().join("query.crush");
     let o = Command::new(bin("crush-run"))
-        .args(["run", q.to_str().unwrap(), "--codebase", "/nonexistent/x.crush"])
+        .args([
+            "run",
+            q.to_str().unwrap(),
+            "--codebase",
+            "/nonexistent/x.crush",
+        ])
         .stdin(Stdio::null())
         .output()
         .unwrap();
-    assert!(!o.status.success() && text(&o).contains("--codebase"), "{}", text(&o));
+    assert!(
+        !o.status.success() && text(&o).contains("--codebase"),
+        "{}",
+        text(&o)
+    );
     // Two files with the same module name.
     std::fs::create_dir(d.path().join("other")).unwrap();
-    std::fs::write(d.path().join("other/util.crush"), "fn triple(x) { return x * 3 }\n").unwrap();
+    std::fs::write(
+        d.path().join("other/util.crush"),
+        "fn triple(x) { return x * 3 }\n",
+    )
+    .unwrap();
     let o = Command::new(bin("crush-run"))
         .args(["run", q.to_str().unwrap()])
         .args(["--codebase", d.path().join("src").to_str().unwrap()])
@@ -96,7 +132,11 @@ fn bad_inputs_are_loud() {
         .stdin(Stdio::null())
         .output()
         .unwrap();
-    assert!(!o.status.success() && text(&o).contains("already taken"), "{}", text(&o));
+    assert!(
+        !o.status.success() && text(&o).contains("already taken"),
+        "{}",
+        text(&o)
+    );
 }
 
 #[test]

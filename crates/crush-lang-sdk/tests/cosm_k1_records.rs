@@ -12,7 +12,9 @@ fn compile(src: &str) -> crush_vm::Program {
 }
 
 fn on_scheduler(program: &crush_vm::Program) -> Result<String, String> {
-    crush_vm::run(program, &Quotas::default()).map(|r| r.output).map_err(|e| e.to_string())
+    crush_vm::run(program, &Quotas::default())
+        .map(|r| r.output)
+        .map_err(|e| e.to_string())
 }
 
 fn on_portable(program: &crush_vm::Program) -> Result<String, String> {
@@ -38,7 +40,10 @@ fn run_both(src: &str, want: &str) {
 /// Run `src` on both VMs; both must fail with an error containing `want`.
 fn fails_on_both(src: &str, want: &str) {
     let program = compile(src);
-    for (vm, got) in [("scheduler VM", on_scheduler(&program)), ("portable VM", on_portable(&program))] {
+    for (vm, got) in [
+        ("scheduler VM", on_scheduler(&program)),
+        ("portable VM", on_portable(&program)),
+    ] {
         let e = got.expect_err(vm);
         assert!(e.contains(want), "{vm}: want {want:?} in {e:?}");
     }
@@ -254,7 +259,10 @@ fn main() {
 #[test]
 fn c3_diamond_lookup_follows_the_mro() {
     // MRO(Bottom) = [Bottom, Left, Right, Base].
-    run_both(DIAMOND, "left\nright only\nhello from base\na Right\nnot a Right\n");
+    run_both(
+        DIAMOND,
+        "left\nright only\nhello from base\na Right\nnot a Right\n",
+    );
 }
 
 #[test]
@@ -432,7 +440,10 @@ fn main() {
 #[test]
 fn a_struct_pattern_naming_no_struct_is_a_compile_error() {
     let src = "fn main() {\n  match 1 {\n    Nope { x: a } => { print(a); }\n    _ => { print(0); }\n  }\n}\n";
-    let e = format!("{:#}", crush_lang_sdk::compile::compile_crush_source(src).expect_err("refused"));
+    let e = format!(
+        "{:#}",
+        crush_lang_sdk::compile::compile_crush_source(src).expect_err("refused")
+    );
     assert!(e.contains("no struct `Nope` is declared"), "{e}");
 }
 
