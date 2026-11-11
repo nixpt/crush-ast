@@ -4234,8 +4234,8 @@ fn heavy() {
         // The same door opens for every keyword-shaped field name.
         for word in ["if", "for", "in", "fn", "not", "use"] {
             let src = format!("let v = obj.{word}(1)");
-            let program = Parser::parse(&src)
-                .unwrap_or_else(|e| panic!("{src} should parse, got {e:?}"));
+            let program =
+                Parser::parse(&src).unwrap_or_else(|e| panic!("{src} should parse, got {e:?}"));
             let main = program.functions.get("main").unwrap();
             match &main.body[0] {
                 Statement::VarDecl { value, .. } => match value {
