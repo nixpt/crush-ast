@@ -1,11 +1,11 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU32, Ordering};
 #[cfg(any(
     feature = "polyglot-python",
     feature = "polyglot-javascript",
     feature = "polyglot-rust"
 ))]
 use crush_walker_core_no_tree_sitter::AdapterRegistry;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 static LABEL_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -86,7 +86,7 @@ pub fn compile_source(
         let registry = source_adapter_registry();
         let (_report, cast) = registry.walk_language_or_extension(source, selector)?;
         let casm = crush_frontend::compile_cast_owned(cast)?;
-        return casm_to_vm(&casm);
+        casm_to_vm(&casm)
     }
     #[cfg(not(any(
         feature = "polyglot-python",
@@ -209,7 +209,10 @@ fn compile_program_to_casm(
     mut program: crush_cast::Program,
     options: &CompileOptions,
 ) -> anyhow::Result<(casm::Program, Vec<String>)> {
-    let declared = program.manifest.as_ref().and_then(|m| m.capabilities.clone());
+    let declared = program
+        .manifest
+        .as_ref()
+        .and_then(|m| m.capabilities.clone());
     let (casm, warnings) = match options.polyglot {
         PolyglotMode::Exec => {
             let warnings = prepare_polyglot_blocks(&mut program)?;
@@ -273,16 +276,25 @@ pub fn compile_lowered_script(
     language_or_extension: &str,
     source: &str,
 ) -> anyhow::Result<crush_vm::Program> {
-    let selector = language_or_extension.trim().trim_start_matches('.').to_ascii_lowercase();
+    let selector = language_or_extension
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase();
     let lang = match selector.as_str() {
         "py" | "pyw" => "python",
         "mjs" | "cjs" => "javascript",
         other => match crush_frontend::lang_imports::canonical_lang(other) {
             Some(lang @ ("python" | "javascript")) => lang,
-            _ => anyhow::bail!("no lowered-script support for `{language_or_extension}` (python or javascript)"),
+            _ => anyhow::bail!(
+                "no lowered-script support for `{language_or_extension}` (python or javascript)"
+            ),
         },
     };
-    let (guest, interpreter) = if lang == "python" { ("Python", "CPython") } else { ("JavaScript", "Node") };
+    let (guest, interpreter) = if lang == "python" {
+        ("Python", "CPython")
+    } else {
+        ("JavaScript", "Node")
+    };
     let refuse = |why: String| {
         anyhow::anyhow!(
             "this {guest} script can't be lowered: {why}\n  it runs as Crush (its {guest} lowered \
@@ -292,8 +304,10 @@ pub fn compile_lowered_script(
     };
     let (mut main, helpers) = lower_block_function(lang, source, &[], &[], 1, "__crush_script__")
         .map_err(|e| refuse(format!("{e:#}")))?;
-    main.meta.insert("polyglot_block_line".to_string(), serde_json::json!(1));
-    main.meta.insert("polyglot_block_lang".to_string(), serde_json::json!(lang));
+    main.meta
+        .insert("polyglot_block_line".to_string(), serde_json::json!(1));
+    main.meta
+        .insert("polyglot_block_lang".to_string(), serde_json::json!(lang));
     let mut blocks = vec![main.clone()];
     blocks.extend(helpers.iter().map(|(_, f)| f.clone()));
     let mut functions: HashMap<String, crush_cast::Function> = helpers.into_iter().collect();
@@ -362,21 +376,30 @@ fn unknown_builtin(
         }
         fn walk(v: &serde_json::Value, needle: &serde_json::Value) -> bool {
             match v {
-                serde_json::Value::Object(m) => m
-                    .iter()
-                    .any(|(k, x)| ((k == "function" || k == "name") && names(x, needle)) || walk(x, needle)),
+                serde_json::Value::Object(m) => m.iter().any(|(k, x)| {
+                    ((k == "function" || k == "name") && names(x, needle)) || walk(x, needle)
+                }),
                 serde_json::Value::Array(xs) => xs.iter().any(|x| walk(x, needle)),
                 _ => false,
             }
         }
         walk(v, &needle)
     };
-    let block = blocks.iter().find(|f| serde_json::to_value(&f.body).is_ok_and(|b| mentions(&b)));
+    let block = blocks
+        .iter()
+        .find(|f| serde_json::to_value(&f.body).is_ok_and(|b| mentions(&b)));
     let (line, lang) = block
         .map(|f| {
             (
-                f.meta.get("polyglot_block_line").and_then(|l| l.as_u64()).unwrap_or(0),
-                f.meta.get("polyglot_block_lang").and_then(|l| l.as_str()).unwrap_or("python").to_string(),
+                f.meta
+                    .get("polyglot_block_line")
+                    .and_then(|l| l.as_u64())
+                    .unwrap_or(0),
+                f.meta
+                    .get("polyglot_block_lang")
+                    .and_then(|l| l.as_str())
+                    .unwrap_or("python")
+                    .to_string(),
             )
         })
         .unwrap_or((0, "python".to_string()));
@@ -387,7 +410,10 @@ fn unknown_builtin(
 /// ambient capabilities and the ones its entries cover. Checked on the
 /// bytecode, so the names are exactly the ones the VM will gate on
 /// (builtins lowered to capability calls, `polyglot.<lang>`, AI gates).
-pub fn check_declared_capabilities(casm: &casm::Program, declared: &[String]) -> anyhow::Result<()> {
+pub fn check_declared_capabilities(
+    casm: &casm::Program,
+    declared: &[String],
+) -> anyhow::Result<()> {
     let used = crate::effects::used_by(&casm_to_vm(casm)?)?;
     let undeclared = crate::effects::undeclared(&used, declared);
     if undeclared.is_empty() {
@@ -396,7 +422,11 @@ pub fn check_declared_capabilities(casm: &casm::Program, declared: &[String]) ->
     anyhow::bail!(
         "the program uses {} not declared in @capabilities: {}\n  \
          add {} to @capabilities, or stop using {}",
-        if undeclared.len() == 1 { "a capability" } else { "capabilities" },
+        if undeclared.len() == 1 {
+            "a capability"
+        } else {
+            "capabilities"
+        },
         undeclared.join(", "),
         if undeclared.len() == 1 { "it" } else { "them" },
         if undeclared.len() == 1 { "it" } else { "them" },
@@ -417,7 +447,11 @@ pub fn annotation_diagnostics(
     crush_frontend::check_program(program)
         .into_iter()
         .map(|d| {
-            let loc_file = if d.location.file.is_empty() { file } else { d.location.file.as_str() };
+            let loc_file = if d.location.file.is_empty() {
+                file
+            } else {
+                d.location.file.as_str()
+            };
             crate::theme::JsonDiagnostic {
                 code: d.code,
                 level: "warning",
@@ -447,7 +481,12 @@ pub fn print_annotation_diagnostics(diags: &[crate::theme::JsonDiagnostic], json
             (Some(f), None) => format!("{f}: "),
             _ => String::new(),
         };
-        eprintln!("{} [{}] {at}{}", crate::theme::paint_warning_badge("warning"), d.code, d.message);
+        eprintln!(
+            "{} [{}] {at}{}",
+            crate::theme::paint_warning_badge("warning"),
+            d.code,
+            d.message
+        );
         if let Some(h) = &d.hint {
             eprintln!("  hint: {h}");
         }
@@ -483,9 +522,7 @@ pub fn print_annotation_diagnostics(diags: &[crate::theme::JsonDiagnostic], json
 /// the caller to surface (crush-run prints them to stderr). Errors (a
 /// declared `->` output the block never binds, `->` on a language with no
 /// marshaling) are returned as `Err`.
-pub fn prepare_polyglot_blocks(
-    program: &mut crush_cast::Program,
-) -> anyhow::Result<Vec<String>> {
+pub fn prepare_polyglot_blocks(program: &mut crush_cast::Program) -> anyhow::Result<Vec<String>> {
     prepare_polyglot_blocks_with(program, PolyglotMode::Exec)
 }
 
@@ -522,7 +559,11 @@ fn prepare_blocks(
     for (name, func) in program.functions.iter_mut() {
         let mut known_locals: HashSet<String> =
             func.params.iter().map(|(name, _)| name.clone()).collect();
-        let mut uses = if name == "main" { Vec::new() } else { file_level.clone() };
+        let mut uses = if name == "main" {
+            Vec::new()
+        } else {
+            file_level.clone()
+        };
         prepare_stmts(&mut func.body, &mut known_locals, &mut uses, &mut pass)?;
     }
     let lowered = std::mem::take(&mut pass.lowered);
@@ -659,11 +700,7 @@ fn prepare_stmts(
                 outputs,
                 meta,
                 ..
-            } if lang == "python"
-                || lang == "javascript"
-                || lang == "js"
-                || lang == "node" =>
-            {
+            } if lang == "python" || lang == "javascript" || lang == "js" || lang == "node" => {
                 // The lexer captures the `{ ... }` body verbatim, including
                 // whatever leading indentation it happened to sit at inside
                 // `@python { ... }`. Guest `-c`/`-e` tolerates that on its own
@@ -768,7 +805,10 @@ fn prepare_stmts(
             // and inject the matching Crush locals as env vars, restoring the
             // documented pre-#245 behavior. Anything not referenced stays out.
             Statement::LangBlock {
-                lang, code, variables, ..
+                lang,
+                code,
+                variables,
+                ..
             } if lang == "bash" || lang == "sh" => {
                 let refs = bash_var_refs(code);
                 let inputs: Vec<String> = refs
@@ -790,9 +830,7 @@ fn prepare_stmts(
             Statement::While { body, .. } => {
                 prepare_stmts(body, known_locals, &mut uses.clone(), pass)?
             }
-            Statement::For {
-                variable, body, ..
-            } => {
+            Statement::For { variable, body, .. } => {
                 known_locals.insert(variable.clone());
                 prepare_stmts(body, known_locals, &mut uses.clone(), pass)?;
             }
@@ -879,7 +917,16 @@ fn lower_block(
     pass: &mut Pass<'_>,
 ) -> anyhow::Result<Vec<crush_cast::Statement>> {
     use crush_cast::{CastType, Expression, Statement};
-    let Statement::LangBlock { lang, code, outputs, imports, deps, meta, .. } = stmt else {
+    let Statement::LangBlock {
+        lang,
+        code,
+        outputs,
+        imports,
+        deps,
+        meta,
+        ..
+    } = stmt
+    else {
         unreachable!("lower_block takes a LangBlock");
     };
     let lang = crush_frontend::lang_imports::canonical_lang(lang).unwrap_or("python");
@@ -891,7 +938,10 @@ fn lower_block(
         )
     };
     if !deps.is_empty() {
-        return Err(refuse(format!("it asks for packages ({})", deps.join(", "))));
+        return Err(refuse(format!(
+            "it asks for packages ({})",
+            deps.join(", ")
+        )));
     }
     // `use @lang` imports reach the block as they would its subprocess.
     let code = match crush_frontend::lang_imports::import_header(lang, imports)
@@ -901,9 +951,13 @@ fn lower_block(
         None => code.clone(),
     };
 
-    let (reads, top_level_bound, bound_anywhere) = block_free_variables(lang, &code)
-        .map_err(|e| refuse(e.to_string()))?;
-    let inputs: Vec<String> = reads.iter().filter(|n| known_locals.contains(*n)).cloned().collect();
+    let (reads, top_level_bound, bound_anywhere) =
+        block_free_variables(lang, &code).map_err(|e| refuse(e.to_string()))?;
+    let inputs: Vec<String> = reads
+        .iter()
+        .filter(|n| known_locals.contains(*n))
+        .cloned()
+        .collect();
     // A name the block reads that is a Crush function and no variable: a real
     // interpreter can't see it (a `NameError`), so it must not quietly become
     // a call into Crush here.
@@ -915,20 +969,34 @@ fn lower_block(
             "it uses `{name}`, which is a Crush function; a polyglot block can't see Crush functions"
         )));
     }
-    let output_names =
-        resolve_outputs(lang, outputs, &top_level_bound, &bound_anywhere, known_locals, pass.warnings)?;
+    let output_names = resolve_outputs(
+        lang,
+        outputs,
+        &top_level_bound,
+        &bound_anywhere,
+        known_locals,
+        pass.warnings,
+    )?;
 
     let n = pass.lowered.len();
     let mut fname = format!("__crush_{lang}_block_{n}");
     while pass.crush_functions.iter().any(|f| f.starts_with(&fname)) {
         fname.push('_');
     }
-    let (mut function, helpers) =
-        lower_block_function(lang, &code, &inputs, &output_names, line, &format!("{fname}__"))
-            .map_err(|e| refuse(format!("{e:#}")))?;
+    let (mut function, helpers) = lower_block_function(
+        lang,
+        &code,
+        &inputs,
+        &output_names,
+        line,
+        &format!("{fname}__"),
+    )
+    .map_err(|e| refuse(format!("{e:#}")))?;
     let mark = |f: &mut crush_cast::Function| {
-        f.meta.insert("polyglot_block_line".to_string(), serde_json::json!(line));
-        f.meta.insert("polyglot_block_lang".to_string(), serde_json::json!(lang));
+        f.meta
+            .insert("polyglot_block_line".to_string(), serde_json::json!(line));
+        f.meta
+            .insert("polyglot_block_lang".to_string(), serde_json::json!(lang));
     };
     mark(&mut function);
     pass.crush_functions.insert(fname.clone());
@@ -939,7 +1007,10 @@ fn lower_block(
         pass.lowered.push((name, helper));
     }
 
-    let str_lit = |s: &str| Expression::StringLiteral { value: s.to_string(), meta: meta.clone() };
+    let str_lit = |s: &str| Expression::StringLiteral {
+        value: s.to_string(),
+        meta: meta.clone(),
+    };
     let marshal = |value: Expression, name: &str| Expression::CapabilityCall {
         name: "lang.marshal".to_string(),
         args: vec![value, str_lit(name)],
@@ -949,41 +1020,81 @@ fn lower_block(
         function: fname,
         args: inputs
             .iter()
-            .map(|name| marshal(Expression::Var { name: name.clone(), meta: meta.clone() }, name))
+            .map(|name| {
+                marshal(
+                    Expression::Var {
+                        name: name.clone(),
+                        meta: meta.clone(),
+                    },
+                    name,
+                )
+            })
             .collect(),
         meta: meta.clone(),
     };
     // The block prints what EXEC_LANG prints (#312): its output is held while
     // it runs and emitted trimmed when it returns; a throw out of it is fatal.
     let capture = |name: &str, args: Vec<Expression>| Statement::ExprStmt {
-        expr: Expression::CapabilityCall { name: name.to_string(), args, meta: meta.clone() },
+        expr: Expression::CapabilityCall {
+            name: name.to_string(),
+            args,
+            meta: meta.clone(),
+        },
         meta: meta.clone(),
     };
     let begin = capture(
         "lang.capture_begin",
-        vec![str_lit(lang), Expression::IntLiteral { value: line as i64, meta: meta.clone() }],
+        vec![
+            str_lit(lang),
+            Expression::IntLiteral {
+                value: line as i64,
+                meta: meta.clone(),
+            },
+        ],
     );
     let end = capture("lang.capture_end", Vec::new());
     if output_names.is_empty() {
-        return Ok(vec![begin, Statement::ExprStmt { expr: call, meta: meta.clone() }, end]);
+        return Ok(vec![
+            begin,
+            Statement::ExprStmt {
+                expr: call,
+                meta: meta.clone(),
+            },
+            end,
+        ]);
     }
     let result = format!("__crush_{lang}_block_{n}_out");
     let mut out = vec![
         begin,
-        Statement::VarDecl { name: result.clone(), value: call, type_hint: CastType::Any, meta: meta.clone() },
+        Statement::VarDecl {
+            name: result.clone(),
+            value: call,
+            type_hint: CastType::Any,
+            meta: meta.clone(),
+        },
         end,
     ];
     for (k, name) in output_names.iter().enumerate() {
         let value = marshal(
             Expression::Index {
-                target: Box::new(Expression::Var { name: result.clone(), meta: meta.clone() }),
-                index: Box::new(Expression::IntLiteral { value: k as i64, meta: meta.clone() }),
+                target: Box::new(Expression::Var {
+                    name: result.clone(),
+                    meta: meta.clone(),
+                }),
+                index: Box::new(Expression::IntLiteral {
+                    value: k as i64,
+                    meta: meta.clone(),
+                }),
                 meta: meta.clone(),
             },
             name,
         );
         out.push(if known_locals.contains(name) {
-            Statement::Assign { target: name.clone(), value, meta: meta.clone() }
+            Statement::Assign {
+                target: name.clone(),
+                value,
+                meta: meta.clone(),
+            }
         } else {
             Statement::VarDecl {
                 name: name.clone(),
@@ -1019,7 +1130,9 @@ fn block_free_variables(
         }
         _ => {
             let _ = code;
-            anyhow::bail!("this build has no {lang} walker (crush-lang-sdk's `polyglot-{lang}` feature)")
+            anyhow::bail!(
+                "this build has no {lang} walker (crush-lang-sdk's `polyglot-{lang}` feature)"
+            )
         }
     }
 }
@@ -1044,21 +1157,23 @@ fn lower_block_function(
         "javascript" => crush_lang_js::inline::lower_block_function(code, inputs, outputs, prefix)
             .map(|b| (b.function, b.helpers))
             .map_err(|e| {
-            // The walker's line is relative to the block's body; name the
-            // `.crush` line instead.
-            match e.downcast::<crush_lang_js::lower::Unsupported>() {
-                Ok(u) => match u.at {
-                    Some((l, _)) => anyhow::anyhow!(
-                        "{} is not supported by the JS walker yet (at line {})",
-                        u.construct,
-                        line + u64::from(l) - 1
-                    ),
-                    None => u.into(),
-                },
-                Err(e) => e,
-            }
-        }),
-        _ => anyhow::bail!("this build has no {lang} walker (crush-lang-sdk's `polyglot-{lang}` feature)"),
+                // The walker's line is relative to the block's body; name the
+                // `.crush` line instead.
+                match e.downcast::<crush_lang_js::lower::Unsupported>() {
+                    Ok(u) => match u.at {
+                        Some((l, _)) => anyhow::anyhow!(
+                            "{} is not supported by the JS walker yet (at line {})",
+                            u.construct,
+                            line + u64::from(l) - 1
+                        ),
+                        None => u.into(),
+                    },
+                    Err(e) => e,
+                }
+            }),
+        _ => anyhow::bail!(
+            "this build has no {lang} walker (crush-lang-sdk's `polyglot-{lang}` feature)"
+        ),
     }
 }
 
@@ -1233,7 +1348,10 @@ fn rewrite_javascript_marshaling(code: &str, inputs: &[String], outputs: &[Strin
 /// Strip the common leading whitespace shared by every non-blank line, so
 /// a block's original relative indentation is preserved but its absolute
 /// column no longer depends on how it happened to sit inside `{ ... }`.
-#[cfg_attr(not(any(feature = "polyglot-python", feature = "polyglot-javascript")), allow(dead_code))]
+#[cfg_attr(
+    not(any(feature = "polyglot-python", feature = "polyglot-javascript")),
+    allow(dead_code)
+)]
 fn dedent(code: &str) -> String {
     let lines: Vec<&str> = code.lines().collect();
     let common_indent = lines
@@ -1472,10 +1590,16 @@ pub fn casm_to_vm_named(
                     let fn_name = instr.args["function"].as_str().ok_or_else(|| {
                         anyhow::anyhow!("make_closure missing function at {fname}:{i}")
                     })?;
-                    let arity = instr.args.get("arity").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let arity = instr
+                        .args
+                        .get("arity")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     let ncap = instr.args.get("ncap").and_then(|v| v.as_u64()).unwrap_or(0);
                     if !local_funcs.contains(fn_name) {
-                        anyhow::bail!("make_closure over unknown function `{fn_name}` at {fname}:{i}");
+                        anyhow::bail!(
+                            "make_closure over unknown function `{fn_name}` at {fname}:{i}"
+                        );
                     }
                     format!("MAKE_CLOSURE {fn_name} {arity} {ncap}")
                 }
@@ -1492,7 +1616,11 @@ pub fn casm_to_vm_named(
                         anyhow::anyhow!("{} missing name at {fname}:{i}", instr.op)
                     })?;
                     let slot = get_slot(name, &mut slot_map, &mut next_slot);
-                    let op = if instr.op == "load_cell" { "CELL_GET" } else { "CELL_SET" };
+                    let op = if instr.op == "load_cell" {
+                        "CELL_GET"
+                    } else {
+                        "CELL_SET"
+                    };
                     format!("LOAD {slot}\n{op}")
                 }
                 "cap_call" => {
@@ -1561,16 +1689,20 @@ pub fn casm_to_vm_named(
                 // the latter, so don't lower to the divergent opcode.
                 "rot" => "ROLL 2".to_string(),
                 "pick" | "roll" => {
-                    let n = instr.args.get("n").and_then(|v| v.as_u64()).ok_or_else(|| {
-                        anyhow::anyhow!("{} missing n at {fname}:{i}", instr.op)
-                    })?;
+                    let n = instr
+                        .args
+                        .get("n")
+                        .and_then(|v| v.as_u64())
+                        .ok_or_else(|| anyhow::anyhow!("{} missing n at {fname}:{i}", instr.op))?;
                     format!("{} {n}", instr.op.to_uppercase())
                 }
                 "type_of" => "TYPEOF".to_string(),
                 "cast" => {
-                    let ty = instr.args.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
-                        anyhow::anyhow!("cast missing type at {fname}:{i}")
-                    })?;
+                    let ty = instr
+                        .args
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("cast missing type at {fname}:{i}"))?;
                     format!("CAST {ty:?}")
                 }
                 "math_pow" => "MATH_POW".to_string(),
@@ -1662,41 +1794,62 @@ pub fn casm_to_vm_named(
                 },
                 // COSM K1.4 (CRUSH-zorro-43): the generic member ops.
                 "get_member" | "set_member" | "has_member" | "del_member" => {
-                    let name = instr.args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-                        anyhow::anyhow!("{} missing name at {fname}:{i}", instr.op)
-                    })?;
+                    let name =
+                        instr
+                            .args
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("{} missing name at {fname}:{i}", instr.op)
+                            })?;
                     format!("{} {name:?}", instr.op.to_uppercase())
                 }
                 "call_member" => {
-                    let name = instr.args.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-                        anyhow::anyhow!("call_member missing name at {fname}:{i}")
-                    })?;
+                    let name =
+                        instr
+                            .args
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("call_member missing name at {fname}:{i}")
+                            })?;
                     let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
                     format!("CALL_MEMBER {name:?} {argc}")
                 }
                 "construct" => {
-                    let kind = instr.args.get("kind").and_then(|v| v.as_str()).ok_or_else(|| {
-                        anyhow::anyhow!("construct missing kind at {fname}:{i}")
-                    })?;
+                    let kind = instr
+                        .args
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("construct missing kind at {fname}:{i}"))?;
                     let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0);
                     construct_asm(program, kind, argc)
                 }
                 "get_slot" | "set_slot" => {
-                    let slot = instr.args.get("slot").and_then(|v| v.as_u64()).ok_or_else(|| {
-                        anyhow::anyhow!("{} missing slot at {fname}:{i}", instr.op)
-                    })?;
+                    let slot =
+                        instr
+                            .args
+                            .get("slot")
+                            .and_then(|v| v.as_u64())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("{} missing slot at {fname}:{i}", instr.op)
+                            })?;
                     format!("{} {slot}", instr.op.to_uppercase())
                 }
                 "is_kind" => {
-                    let kind = instr.args.get("kind").and_then(|v| v.as_str()).ok_or_else(|| {
-                        anyhow::anyhow!("is_kind missing kind at {fname}:{i}")
-                    })?;
+                    let kind = instr
+                        .args
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("is_kind missing kind at {fname}:{i}"))?;
                     format!("IS_KIND {kind:?}")
                 }
                 "load_kind" => {
-                    let kind = instr.args.get("kind").and_then(|v| v.as_str()).ok_or_else(|| {
-                        anyhow::anyhow!("load_kind missing kind at {fname}:{i}")
-                    })?;
+                    let kind = instr
+                        .args
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("load_kind missing kind at {fname}:{i}"))?;
                     format!("LOAD_KIND {kind:?}")
                 }
                 "copy" => "COPY".to_string(),
@@ -1841,7 +1994,10 @@ pub fn casm_to_vm_named(
     // the VMs need to make function values (bound methods) from members.
     if vm_program.kind_table().is_some() {
         for (name, entry) in vm_program.manifest.functions.iter_mut() {
-            entry.arity = program.functions.get(name).and_then(|f| u8::try_from(f.params.len()).ok());
+            entry.arity = program
+                .functions
+                .get(name)
+                .and_then(|f| u8::try_from(f.params.len()).ok());
         }
     }
     Ok((vm_program, local_names))
@@ -1851,7 +2007,9 @@ pub fn casm_to_vm_named(
 /// function — by the `POP` of that function's return value the VMs expect
 /// (`crush_vm::cosm_rt::initialises_by_call`).
 fn construct_asm(program: &casm::Program, kind: &str, argc: u64) -> String {
-    let calls = program.kind_table().is_some_and(|module| crush_vm::cosm_rt::initialises_by_call(module, kind));
+    let calls = program
+        .kind_table()
+        .is_some_and(|module| crush_vm::cosm_rt::initialises_by_call(module, kind));
     if calls {
         format!("CONSTRUCT {kind:?} {argc}\n    POP")
     } else {
@@ -1908,7 +2066,8 @@ mod tests {
         let src = "fn zeta(n) { return n + 1 }\n\
                    fn alpha(n) { return zeta(n) * 2 }\n\
                    fn main() { print(alpha(5)) }\n";
-        let text = crush_vm::disassemble(&casm_to_vm(&compile_crush_to_casm(src).unwrap()).unwrap());
+        let text =
+            crush_vm::disassemble(&casm_to_vm(&compile_crush_to_casm(src).unwrap()).unwrap());
         let order: Vec<&str> = text
             .lines()
             .filter_map(|l| l.strip_prefix(".func "))
@@ -1916,7 +2075,10 @@ mod tests {
             .collect();
         let mut sorted = order.clone();
         sorted.sort_unstable();
-        assert_eq!(order, sorted, "functions must be laid out in name order:\n{text}");
+        assert_eq!(
+            order, sorted,
+            "functions must be laid out in name order:\n{text}"
+        );
 
         // Two independent compilations agree byte for byte.
         let a = crush_vm::disassemble(&casm_to_vm(&compile_crush_to_casm(src).unwrap()).unwrap());
@@ -2009,11 +2171,8 @@ mod tests {
         "#;
         let casm = crush_frontend::compile_crush_source(source).expect("compile array loop");
         let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower array loop");
-        let mut vm = crush_vm::fastvm::FastVM::new(
-            lowered,
-            Vec::new(),
-            std::sync::Arc::new(TestHal),
-        );
+        let mut vm =
+            crush_vm::fastvm::FastVM::new(lowered, Vec::new(), std::sync::Arc::new(TestHal));
         assert_eq!(
             vm.run(10_000),
             crush_vm::fastvm::FastYield::Finished(Some(crush_vm::RuntimeValue::Int(2)))
@@ -2034,11 +2193,8 @@ mod tests {
         "#;
         let casm = crush_frontend::compile_crush_source(source).expect("compile arithmetic loop");
         let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower arithmetic loop");
-        let mut vm = crush_vm::fastvm::FastVM::new(
-            lowered,
-            Vec::new(),
-            std::sync::Arc::new(TestHal),
-        );
+        let mut vm =
+            crush_vm::fastvm::FastVM::new(lowered, Vec::new(), std::sync::Arc::new(TestHal));
         assert_eq!(
             vm.run(10_000),
             crush_vm::fastvm::FastYield::Finished(Some(crush_vm::RuntimeValue::Int(6)))
@@ -2153,7 +2309,8 @@ mod tests {
         let source = "fn main() {\n    @javascript { const x = 1; }\n    io.print(\"js ok\")\n}\n";
         let prog = compile_crush_source(source).expect("compile js polyglot block");
         let quotas = crush_vm::Quotas::default();
-        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run js polyglot block");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run js polyglot block");
         assert_eq!(result.output, "js ok\n");
     }
 
@@ -2194,7 +2351,9 @@ mod tests {
         let elapsed = start.elapsed();
         let msg = err.to_string();
         assert!(
-            msg.contains("wall-clock quota") && msg.contains("killed") && msg.contains("polyglot.bash"),
+            msg.contains("wall-clock quota")
+                && msg.contains("killed")
+                && msg.contains("polyglot.bash"),
             "error should name the capability and say it was killed, got: {msg}"
         );
         assert!(
@@ -2209,12 +2368,11 @@ mod tests {
     // explicit declaration syntax needed. Requires `python3` on PATH.
     #[test]
     fn test_python_polyglot_block_marshals_input_and_output() {
-        let source =
-            "fn main() {\n    let base = 5;\n    @python {\n        result = base * 2\n    }\n    print(result);\n}\n";
+        let source = "fn main() {\n    let base = 5;\n    @python {\n        result = base * 2\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile python polyglot block");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run python polyglot block");
         assert_eq!(result.output, "10\n");
     }
 
@@ -2225,8 +2383,8 @@ mod tests {
         let source = "fn main() {\n    let base = 5;\n    @python {\n        import math\n        result = math.pow(base, 3)\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile python polyglot block");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run python polyglot block");
         // JSON round-trip preserves float-ness (Python's json.dumps(125.0)
         // stays "125.0"), not just the numeric value.
         assert_eq!(result.output, "125.0\n");
@@ -2240,8 +2398,8 @@ mod tests {
         let source = "fn main() {\n    let base = 5;\n    @python {\n        print(\"debug\")\n        result = base + 1\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile python polyglot block");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run python polyglot block");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps()))
+            .expect("run python polyglot block");
         assert!(
             result.output.contains("debug"),
             "block's own print output should still appear, got: {}",
@@ -2261,8 +2419,7 @@ mod tests {
         let source = "fn main() {\n    let msg = \"hello\";\n    @python {\n        result = msg + \"!\"\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
         assert_eq!(result.output, "hello!\n");
     }
 
@@ -2272,8 +2429,7 @@ mod tests {
         let source = "fn main() {\n    let xs = [1, 2, 3];\n    @python {\n        result = xs[0] + xs[2]\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
         assert_eq!(result.output, "4\n");
     }
 
@@ -2283,8 +2439,7 @@ mod tests {
         let source = "fn main() {\n    let obj = {a: 10, b: 20};\n    @python {\n        result = obj[\"a\"] + obj[\"b\"]\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(source).expect("compile");
         let quotas = crush_vm::Quotas::default();
-        let result =
-            crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
+        let result = crush_vm::run_with_caps(&prog, &quotas, Some(&_poly_caps())).expect("run");
         assert_eq!(result.output, "30\n");
     }
 
@@ -2392,19 +2547,24 @@ mod tests {
     /// declared-caps check passes for anything this compiler produced.
     #[test]
     fn test_compiled_lang_block_declares_its_polyglot_gate() {
-        let prog = compile_crush_source("@py {\nx = 1\n}\n@javascript {\nlet y = 2\n}\n").expect("compile");
+        let prog = compile_crush_source("@py {\nx = 1\n}\n@javascript {\nlet y = 2\n}\n")
+            .expect("compile");
         let perms = &prog.manifest.permissions;
         assert!(perms.iter().any(|p| p == "polyglot.python"), "{perms:?}");
-        assert!(perms.iter().any(|p| p == "polyglot.javascript"), "{perms:?}");
+        assert!(
+            perms.iter().any(|p| p == "polyglot.javascript"),
+            "{perms:?}"
+        );
     }
 
     /// Run on the scheduler (`run_with_caps`) AND on `PortableVm`; both must
     /// print the same thing.
     fn run_both_engines(source: &str) -> String {
         let prog = compile_crush_source(source).expect("compile");
-        let sched = crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&_poly_caps()))
-            .expect("scheduler run")
-            .output;
+        let sched =
+            crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&_poly_caps()))
+                .expect("scheduler run")
+                .output;
         let mut vm = crush_vm::PortableVm::new(prog);
         vm.set_host_caps(_poly_caps());
         let portable = vm.run().expect("PortableVm run").output;
@@ -2452,7 +2612,10 @@ mod tests {
         let has_imports = program.functions["main"].body.iter().any(|s| {
             matches!(s, crush_cast::Statement::LangBlock { imports, .. } if !imports.is_empty())
         });
-        assert!(!has_imports, "a python import must not reach a javascript block");
+        assert!(
+            !has_imports,
+            "a python import must not reach a javascript block"
+        );
     }
 
     // The import goes on guest line 1, so guest line K is still .crush line
@@ -2464,8 +2627,9 @@ mod tests {
             "use @lang python \"math\"\nlet v = 1\n@python {\nx = math.pi + v\nboom()\n}\n",
         ] {
             let prog = compile_crush_source(src).expect("compile");
-            let err = crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&_poly_caps()))
-                .expect_err("boom() is undefined");
+            let err =
+                crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&_poly_caps()))
+                    .expect_err("boom() is undefined");
             let msg = err.to_string();
             // block on .crush line 2 or 3; `boom()` is guest line 3.
             assert!(msg.contains("line 3, in <module>"), "{msg}");
@@ -2483,7 +2647,13 @@ mod tests {
     #[test]
     fn test_use_lang_emits_no_exec_lang_of_its_own() {
         let prog = compile_crush_source("use @lang python \"math\"\nlet x = 1\n").expect("compile");
-        assert!(!prog.manifest.permissions.iter().any(|p| p.starts_with("polyglot.")));
+        assert!(
+            !prog
+                .manifest
+                .permissions
+                .iter()
+                .any(|p| p.starts_with("polyglot."))
+        );
     }
 
     // ── CRUSH-270: explicit `->` outputs ──────────────────────────────────
@@ -2508,7 +2678,8 @@ mod tests {
             eprintln!("python3 not found; skipping polyglot test");
             return;
         }
-        let src = "fn main() {\n    @python {\n        result = 5 * 8\n    }\n    print(result);\n}\n";
+        let src =
+            "fn main() {\n    @python {\n        result = 5 * 8\n    }\n    print(result);\n}\n";
         let prog = compile_crush_source(src).expect("compile");
         let out = crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&_poly_caps()))
             .expect("run");
@@ -2594,7 +2765,10 @@ mod tests {
     fn test_crush_270_declared_but_unbound_is_compile_error() {
         let src = "fn main() {\n    @python -> nope {\n        x = 1\n    }\n    print(nope);\n}\n";
         let err = compile_crush_source(src).expect_err("declared output `nope` is never bound");
-        assert!(err.to_string().contains("`nope`"), "error should name `nope`: {err}");
+        assert!(
+            err.to_string().contains("`nope`"),
+            "error should name `nope`: {err}"
+        );
     }
 
     // A conditionally-bound output that misses at run time is a loud error
@@ -2621,7 +2795,10 @@ mod tests {
     fn test_crush_270_arrow_on_bash_is_rejected() {
         let src = "fn main() {\n    @bash -> x {\n        echo hi\n    }\n}\n";
         let err = compile_crush_source(src).expect_err("bash has no value marshaling");
-        assert!(err.to_string().contains("@bash"), "error should name the language: {err}");
+        assert!(
+            err.to_string().contains("@bash"),
+            "error should name the language: {err}"
+        );
     }
 
     // #255: @bash blocks see the Crush variables they reference via
@@ -2629,14 +2806,8 @@ mod tests {
     #[test]
     fn test_bash_var_refs_scanner() {
         // Basic $name and ${name} forms
-        assert_eq!(
-            bash_var_refs("echo $name"),
-            vec!["name".to_string()]
-        );
-        assert_eq!(
-            bash_var_refs("echo ${name}"),
-            vec!["name".to_string()]
-        );
+        assert_eq!(bash_var_refs("echo $name"), vec!["name".to_string()]);
+        assert_eq!(bash_var_refs("echo ${name}"), vec!["name".to_string()]);
         // Dedupes, preserves first-seen order
         assert_eq!(
             bash_var_refs("echo $a $b ${a}"),

@@ -79,12 +79,17 @@ pub fn assemble(
     for (raw_line, raw) in source.lines().enumerate() {
         let lineno = raw_line + 1;
         // Before comment stripping: the JSON's strings may hold `;` or `#`.
-        if let Some(json) = raw.trim_start().strip_prefix(".cosm").filter(|r| r.starts_with(char::is_whitespace)) {
+        if let Some(json) = raw
+            .trim_start()
+            .strip_prefix(".cosm")
+            .filter(|r| r.starts_with(char::is_whitespace))
+        {
             if cosm.is_some() {
                 return Err(AssemblyError::new(lineno, "duplicate .cosm kind table"));
             }
-            let module = crush_cosm::CosmModule::from_json(json.trim())
-                .map_err(|e| AssemblyError::new(lineno, format!("malformed .cosm kind table: {e}")))?;
+            let module = crush_cosm::CosmModule::from_json(json.trim()).map_err(|e| {
+                AssemblyError::new(lineno, format!("malformed .cosm kind table: {e}"))
+            })?;
             cosm = Some(module);
             continue;
         }
@@ -94,21 +99,17 @@ pub fn assemble(
         }
 
         // Strip label prefixes.
-        loop {
-            if let Some(rest) = strip_label(&line) {
-                let colon = line.find(':').unwrap();
-                let label = line[..colon].to_string();
-                if labels.contains_key(&label) {
-                    return Err(AssemblyError::new(
-                        lineno,
-                        format!("duplicate label {label:?}"),
-                    ));
-                }
-                labels.insert(label, offset);
-                line = rest.trim().to_string();
-            } else {
-                break;
+        while let Some(rest) = strip_label(&line) {
+            let colon = line.find(':').unwrap();
+            let label = line[..colon].to_string();
+            if labels.contains_key(&label) {
+                return Err(AssemblyError::new(
+                    lineno,
+                    format!("duplicate label {label:?}"),
+                ));
             }
+            labels.insert(label, offset);
+            line = rest.trim().to_string();
         }
         if line.is_empty() {
             continue;
@@ -124,7 +125,10 @@ pub fn assemble(
                     for cap in &toks[1..] {
                         let cap = cap.trim_matches('"');
                         if cap.is_empty() || cap.chars().any(char::is_whitespace) {
-                            return Err(AssemblyError::new(lineno, format!("invalid capability name {cap:?}")));
+                            return Err(AssemblyError::new(
+                                lineno,
+                                format!("invalid capability name {cap:?}"),
+                            ));
                         }
                         if !header_caps.iter().any(|c| c == cap) {
                             header_caps.push(cap.to_string());
@@ -133,12 +137,16 @@ pub fn assemble(
                 }
                 ".func" => {
                     if toks.len() != 2 && toks.len() != 3 {
-                        return Err(AssemblyError::new(lineno, ".func needs a name (and optionally its arity)"));
+                        return Err(AssemblyError::new(
+                            lineno,
+                            ".func needs a name (and optionally its arity)",
+                        ));
                     }
                     if let Some(a) = toks.get(2) {
                         let n = parse_int(a, lineno)?;
-                        let n = u8::try_from(n)
-                            .map_err(|_| AssemblyError::new(lineno, format!("arity out of range: {n}")))?;
+                        let n = u8::try_from(n).map_err(|_| {
+                            AssemblyError::new(lineno, format!("arity out of range: {n}"))
+                        })?;
                         arities.insert(toks[1].clone(), n);
                     }
                     let fname = toks[1].clone();
@@ -287,7 +295,10 @@ pub fn assemble(
                         AssemblyError::new(p.line, format!("{what} out of range: {n}"))
                     })
                 };
-                let (arity, ncap) = (byte(&p.args[1], "arity")?, byte(&p.args[2], "captured count")?);
+                let (arity, ncap) = (
+                    byte(&p.args[1], "arity")?,
+                    byte(&p.args[2], "captured count")?,
+                );
                 let idx = intern(v.to_string(), &mut consts, &mut const_index);
                 code.extend_from_slice(&(idx as u16).to_be_bytes());
                 code.push(arity);
@@ -314,7 +325,13 @@ pub fn assemble(
         manifest.functions = functions
             .iter()
             .map(|(k, &v)| {
-                (k.clone(), crate::bytecode::FunctionEntry { entry: v, arity: arities.get(k).copied() })
+                (
+                    k.clone(),
+                    crate::bytecode::FunctionEntry {
+                        entry: v,
+                        arity: arities.get(k).copied(),
+                    },
+                )
             })
             .collect();
         manifest.entry = entry_name;
@@ -328,14 +345,19 @@ pub fn assemble(
 /// The disassembly's kind-table header: a readable summary as comments, then
 /// the `.cosm` directive that [`assemble`] reads back.
 fn disassemble_kind_table(module: &crush_cosm::CosmModule, lines: &mut Vec<String>) {
-    let plural = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let plural =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
     lines.push(format!(
         "; kind table (COSM): {}, {}",
         plural(module.kinds.len(), "Kind", "Kinds"),
         plural(module.interfaces.len(), "interface", "interfaces"),
     ));
     for k in &module.kinds {
-        let fields: Vec<&str> = k.declared_fields().iter().map(|f| f.name.as_str()).collect();
+        let fields: Vec<&str> = k
+            .declared_fields()
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
         let members: Vec<&str> = k.members.iter().map(|m| m.name.as_str()).collect();
         lines.push(format!(
             ";   kind {} ({}): fields [{}], members [{}]",
@@ -347,7 +369,12 @@ fn disassemble_kind_table(module: &crush_cosm::CosmModule, lines: &mut Vec<Strin
     }
     for i in &module.interfaces {
         let members: Vec<&str> = i.members.iter().map(|m| m.name.as_str()).collect();
-        lines.push(format!(";   interface {} ({}): [{}]", i.name, i.home_lang, members.join(", ")));
+        lines.push(format!(
+            ";   interface {} ({}): [{}]",
+            i.name,
+            i.home_lang,
+            members.join(", ")
+        ));
     }
     lines.push(format!(".cosm {}", module.to_json()));
 }
@@ -446,7 +473,9 @@ pub fn disassemble(program: &Program) -> String {
         (ENTER_TRY, "ENTER_TRY"),
         (EXIT_TRY, "EXIT_TRY"),
         (THROW, "THROW"),
-        (SPAWN, "SPAWN"), (YIELD, "YIELD"), (AWAIT, "AWAIT"),
+        (SPAWN, "SPAWN"),
+        (YIELD, "YIELD"),
+        (AWAIT, "AWAIT"),
         (STR_CONTAINS, "STR_CONTAINS"),
         (STR_SPLIT, "STR_SPLIT"),
         (STR_REPLACE, "STR_REPLACE"),

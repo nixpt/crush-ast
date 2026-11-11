@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crush_cast::{Expression, Function, Program, Statement};
-use std::collections::HashMap;
 use crush_walker_core::WalkerError;
+use std::collections::HashMap;
 use wasmparser::{Parser as WasmParser, Payload, TypeRef};
 
 pub fn walk_wasm(wasm_bytes: &[u8], filename: &str) -> Result<Program, WalkerError> {
@@ -173,7 +173,10 @@ mod tests {
         "#;
         let wasm_bytes = wat::parse_str(wat_src).unwrap();
         let err = walk_wasm(&wasm_bytes, "test.wasm").unwrap_err().to_string();
-        assert!(err.contains("not supported"), "expected a loud error, got: {err}");
+        assert!(
+            err.contains("not supported"),
+            "expected a loud error, got: {err}"
+        );
     }
 
     #[test]
@@ -192,11 +195,25 @@ use crush_walker_core::LanguageAdapter;
 
 pub struct WasmAdapter;
 impl LanguageAdapter for WasmAdapter {
-    fn language_name(&self) -> &'static str { "wasm" }
-    fn file_extensions(&self) -> &[&'static str] { &["wasm"] }
-    fn walk(&self, source: &str, _filename: &str) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
+    fn language_name(&self) -> &'static str {
+        "wasm"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &["wasm"]
+    }
+    fn walk(
+        &self,
+        source: &str,
+        _filename: &str,
+    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
         let program = crate::walk_wasm(source.as_bytes(), "input.wasm")
             .map_err(|e| anyhow::anyhow!("wasm@walk: {e:?}"))?;
-        Ok((crush_walker_core::FeatureReport { lang: "wasm".to_string(), ..Default::default() }, program))
+        Ok((
+            crush_walker_core::FeatureReport {
+                lang: "wasm".to_string(),
+                ..Default::default()
+            },
+            program,
+        ))
     }
 }

@@ -63,6 +63,8 @@ fn rebinding_to_a_non_lambda_drops_the_alias() {
     )
     .expect("compile");
     let program = crush_lang_sdk::compile::casm_to_vm(&casm).expect("lower");
-    let e = run(&program, &Quotas::default()).expect_err("must fail").to_string();
+    let e = run(&program, &Quotas::default())
+        .expect_err("must fail")
+        .to_string();
     assert!(e.contains("int is not callable"), "{e}");
 }

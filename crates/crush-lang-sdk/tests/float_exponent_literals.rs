@@ -81,9 +81,9 @@ fn portable_vm_prints_exponent_floats() {
 #[cfg(feature = "native-plugins")]
 mod fastvm {
     use super::*;
-    use crush_vm::fastvm::{lower_program, Capability, FastVM, FastYield, Hal};
-    use crush_vm::memory::Arena;
     use crush_vm::RuntimeValue;
+    use crush_vm::fastvm::{Capability, FastVM, FastYield, Hal, lower_program};
+    use crush_vm::memory::Arena;
 
     #[derive(Debug)]
     struct NoHal;

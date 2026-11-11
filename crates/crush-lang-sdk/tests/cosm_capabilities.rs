@@ -29,11 +29,16 @@ fn compile(src: &str) -> crush_vm::Program {
 fn members_and_kinds_are_not_capabilities() {
     let used = crush_vm::capabilities_used(&compile(POINT)).expect("decode");
     for name in ["norm2", "scaled", "shout", "Point"] {
-        assert!(!used.contains(name), "{name} reported as a capability: {used:?}");
+        assert!(
+            !used.contains(name),
+            "{name} reported as a capability: {used:?}"
+        );
     }
     // A capability used inside a method is still found.
     assert!(used.contains("io.print"), "{used:?}");
-    let missing = crush_lang_sdk::Runtime::new().missing_grants(&compile(POINT)).expect("preflight");
+    let missing = crush_lang_sdk::Runtime::new()
+        .missing_grants(&compile(POINT))
+        .expect("preflight");
     assert!(missing.is_empty(), "{missing:?}");
 }
 
@@ -57,7 +62,10 @@ fn crush_run_runs_a_method_call() {
     let dir = tempfile::tempdir().unwrap();
     let src = dir.path().join("point.crush");
     std::fs::write(&src, POINT).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_crush-run")).args(["run", src.to_str().unwrap()]).output().expect("run");
+    let out = Command::new(env!("CARGO_BIN_EXE_crush-run"))
+        .args(["run", src.to_str().unwrap()])
+        .output()
+        .expect("run");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");

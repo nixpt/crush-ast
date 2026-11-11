@@ -151,10 +151,7 @@ fn decl(name: &str, value: CastExpr) -> CastStmt {
 }
 
 fn stmt(expr: CastExpr) -> CastStmt {
-    CastStmt::ExprStmt {
-        expr,
-        meta: meta(),
-    }
+    CastStmt::ExprStmt { expr, meta: meta() }
 }
 
 fn assign(name: &str, value: CastExpr) -> CastStmt {
@@ -186,10 +183,7 @@ fn while_(condition: CastExpr, body: Vec<CastStmt>) -> CastStmt {
 }
 
 fn set_index(target: &str, index: CastExpr, value: CastExpr) -> CastStmt {
-    stmt(call(
-        "__crush_setindex__",
-        vec![var(target), index, value],
-    ))
+    stmt(call("__crush_setindex__", vec![var(target), index, value]))
 }
 
 fn push(target: &str, value: CastExpr) -> CastStmt {
@@ -345,10 +339,13 @@ pub(super) fn helpers(fns: &HostFns) -> Vec<(String, Function)> {
     let collect = |pick: &dyn Fn() -> CastExpr| {
         func(
             &["m"],
-            vec![decl("__out", CastExpr::ArrayLiteral {
-                elements: vec![],
-                meta: meta(),
-            })]
+            vec![decl(
+                "__out",
+                CastExpr::ArrayLiteral {
+                    elements: vec![],
+                    meta: meta(),
+                },
+            )]
             .into_iter()
             .chain(scan(
                 "m",
@@ -364,27 +361,25 @@ pub(super) fn helpers(fns: &HostFns) -> Vec<(String, Function)> {
     };
     let keys = collect(&|| pair_key());
     let values = collect(&|| pair_val());
-    let entries = collect(&|| {
-        CastExpr::ArrayLiteral {
-            elements: vec![pair_key(), pair_val()],
-            meta: meta(),
-        }
+    let entries = collect(&|| CastExpr::ArrayLiteral {
+        elements: vec![pair_key(), pair_val()],
+        meta: meta(),
     });
     let map_from = func(
         &["pairs"],
-        vec![decl("__m", CastExpr::ArrayLiteral {
-            elements: vec![],
-            meta: meta(),
-        })]
+        vec![decl(
+            "__m",
+            CastExpr::ArrayLiteral {
+                elements: vec![],
+                meta: meta(),
+            },
+        )]
         .into_iter()
         .chain(scan(
             "pairs",
             vec![
                 decl("__p", idx(var("pairs"), var("__i"))),
-                stmt(call(
-                    &fns.map_set,
-                    vec![var("__m"), pair_key(), pair_val()],
-                )),
+                stmt(call(&fns.map_set, vec![var("__m"), pair_key(), pair_val()])),
                 inc("__i"),
             ],
         ))
@@ -396,10 +391,7 @@ pub(super) fn helpers(fns: &HostFns) -> Vec<(String, Function)> {
         scan(
             "s",
             vec![
-                if_(
-                    eq(idx(var("s"), var("__i")), var("v")),
-                    vec![ret(var("s"))],
-                ),
+                if_(eq(idx(var("s"), var("__i")), var("v")), vec![ret(var("s"))]),
                 inc("__i"),
             ],
         )
@@ -425,10 +417,13 @@ pub(super) fn helpers(fns: &HostFns) -> Vec<(String, Function)> {
     );
     let set_from = func(
         &["a"],
-        vec![decl("__s", CastExpr::ArrayLiteral {
-            elements: vec![],
-            meta: meta(),
-        })]
+        vec![decl(
+            "__s",
+            CastExpr::ArrayLiteral {
+                elements: vec![],
+                meta: meta(),
+            },
+        )]
         .into_iter()
         .chain(scan(
             "a",
@@ -545,10 +540,7 @@ impl<'a> Lower<'a> {
                 })
             }
             _ => Err(self.unsupported(
-                format!(
-                    "`new {}` with more than one argument",
-                    kind.label()
-                ),
+                format!("`new {}` with more than one argument", kind.label()),
                 span,
             )),
         }
@@ -576,8 +568,7 @@ impl<'a> Lower<'a> {
             // `new Map().set(k, v).get(k)`: `set`/`add` return the
             // collection, so the proof flows through them.
             Expression::Call(c) => {
-                let Expression::PropertyAccess(PropertyAccess::Simple(s)) =
-                    unparen(c.function())
+                let Expression::PropertyAccess(PropertyAccess::Simple(s)) = unparen(c.function())
                 else {
                     return None;
                 };
@@ -633,12 +624,7 @@ impl<'a> Lower<'a> {
     /// Record one assignment to a class field: a host-kind proof,
     /// or a poison when the assigned value doesn't prove one (or
     /// proves a different one).
-    pub(super) fn record_field_host(
-        &mut self,
-        class: &str,
-        field: &str,
-        proof: Option<HostKind>,
-    ) {
+    pub(super) fn record_field_host(&mut self, class: &str, field: &str, proof: Option<HostKind>) {
         let key = (class.to_string(), field.to_string());
         match proof {
             Some(kind) => {
@@ -661,12 +647,7 @@ impl<'a> Lower<'a> {
     /// field's host kind; anything else poisons the proof. In a
     /// static, `this` is the class value, not an instance — its
     /// fields are a different namespace and stay untracked.
-    pub(super) fn note_field_assign(
-        &mut self,
-        field: &str,
-        op: AssignOp,
-        rhs: &Expression,
-    ) {
+    pub(super) fn note_field_assign(&mut self, field: &str, op: AssignOp, rhs: &Expression) {
         if self.in_static {
             return;
         }
@@ -712,20 +693,21 @@ impl<'a> Lower<'a> {
             _ => {
                 let known = matches!(
                     method,
-                    "get" | "set" | "has" | "add" | "delete" | "clear" | "keys" | "values"
+                    "get"
+                        | "set"
+                        | "has"
+                        | "add"
+                        | "delete"
+                        | "clear"
+                        | "keys"
+                        | "values"
                         | "entries"
                 );
                 return Err(self.unsupported(
                     if known {
-                        format!(
-                            "a {} has no method `.{method}()`",
-                            kind.label()
-                        )
+                        format!("a {} has no method `.{method}()`", kind.label())
                     } else {
-                        format!(
-                            "the method `.{method}()` on a {}",
-                            kind.label()
-                        )
+                        format!("the method `.{method}()` on a {}", kind.label())
                     },
                     span,
                 ));

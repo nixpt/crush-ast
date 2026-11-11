@@ -28,8 +28,8 @@
 pub mod codegen;
 pub mod codegen_c;
 pub mod compiler;
-mod method_support;
 pub mod loader;
+mod method_support;
 pub mod names;
 
 pub use compiler::AotCompiler;
@@ -54,7 +54,10 @@ pub use loader::Module;
 fn refuse_cosm(program: &casm::Program, backend: &'static str) -> Result<(), UnsupportedOps> {
     program
         .refuse_cosm(&format!("the {backend} AOT backend"))
-        .map_err(|msg| UnsupportedOps { backend, ops: vec![msg] })
+        .map_err(|msg| UnsupportedOps {
+            backend,
+            ops: vec![msg],
+        })
 }
 
 /// issue #161: AOT doesn't run green tasks. A program that `spawn`s is refused
@@ -65,7 +68,10 @@ fn refuse_cosm(program: &casm::Program, backend: &'static str) -> Result<(), Uns
 fn refuse_green_task(program: &casm::Program, backend: &'static str) -> Result<(), UnsupportedOps> {
     program
         .refuse_green_task(&format!("the {backend} AOT backend"))
-        .map_err(|msg| UnsupportedOps { backend, ops: vec![msg] })
+        .map_err(|msg| UnsupportedOps {
+            backend,
+            ops: vec![msg],
+        })
 }
 
 /// CRUSH-234: the ten `ai_*` opcodes name host capabilities (`ai_native.*`)
@@ -101,7 +107,11 @@ fn refuse_ai(program: &casm::Program, backend: &'static str) -> Result<(), Unsup
             }
         }
     }
-    if ops.is_empty() { Ok(()) } else { Err(UnsupportedOps { backend, ops }) }
+    if ops.is_empty() {
+        Ok(())
+    } else {
+        Err(UnsupportedOps { backend, ops })
+    }
 }
 
 /// Compile Crush source to native code, load it, and extract an i64 result.
@@ -112,7 +122,9 @@ pub fn eval_i64(source: &str) -> anyhow::Result<i64> {
     let so_path = compiler.compile_source(source, "eval")?;
     let module = Module::load(so_path)?;
     let result = module.call_main()?;
-    result.as_int().ok_or_else(|| anyhow::anyhow!("Expected i64, got {:?}", result))
+    result
+        .as_int()
+        .ok_or_else(|| anyhow::anyhow!("Expected i64, got {:?}", result))
 }
 
 /// Compile Crush source to native code, load it, and extract an f64 result.
@@ -134,5 +146,7 @@ pub fn eval_bool(source: &str) -> anyhow::Result<bool> {
     let so_path = compiler.compile_source(source, "eval")?;
     let module = Module::load(so_path)?;
     let result = module.call_main()?;
-    result.as_bool().ok_or_else(|| anyhow::anyhow!("Expected bool, got {:?}", result))
+    result
+        .as_bool()
+        .ok_or_else(|| anyhow::anyhow!("Expected bool, got {:?}", result))
 }

@@ -57,10 +57,14 @@ impl AotcCompiler {
         // COSM K1.3 (CRUSH-zorro-42): no Kinds here yet — refuse a kind table
         // with a Kind a plain map can't represent (`casm::cosm_unsupported_reason`)
         // before generating anything.
-        program.refuse_cosm("crush-aotc").map_err(anyhow::Error::msg)?;
+        program
+            .refuse_cosm("crush-aotc")
+            .map_err(anyhow::Error::msg)?;
         // issue #161: no green-task scheduler here — refuse `spawn`/`yield`/
         // `await` by name rather than silently skipping the task.
-        program.refuse_green_task("crush-aotc").map_err(anyhow::Error::msg)?;
+        program
+            .refuse_green_task("crush-aotc")
+            .map_err(anyhow::Error::msg)?;
         let mut out = String::with_capacity(8192);
 
         // Emit header
@@ -80,7 +84,8 @@ impl AotcCompiler {
             let params = if func.params.is_empty() {
                 "void".to_string()
             } else {
-                func.params.iter()
+                func.params
+                    .iter()
                     .map(|p| format!("CrushValue _p_{}", mangle_local(p)))
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -127,7 +132,8 @@ impl AotcCompiler {
         let params = if func.params.is_empty() {
             "void".to_string()
         } else {
-            func.params.iter()
+            func.params
+                .iter()
                 .map(|p| format!("CrushValue _p_{}", mangle_local(p)))
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -136,11 +142,19 @@ impl AotcCompiler {
 
         // Unbox parameters into locals with their inferred types
         for param in &func.params {
-            let inferred = tm.locals.get(param).cloned().unwrap_or(InferredType::Dynamic);
+            let inferred = tm
+                .locals
+                .get(param)
+                .cloned()
+                .unwrap_or(InferredType::Dynamic);
             let name = mangle_local(param);
             match inferred {
-                InferredType::Int => writeln!(out, "    int64_t {} = cv_as_int(_p_{});", name, name)?,
-                InferredType::Float => writeln!(out, "    double {} = cv_as_float(_p_{});", name, name)?,
+                InferredType::Int => {
+                    writeln!(out, "    int64_t {} = cv_as_int(_p_{});", name, name)?
+                }
+                InferredType::Float => {
+                    writeln!(out, "    double {} = cv_as_float(_p_{});", name, name)?
+                }
                 InferredType::Dynamic => writeln!(out, "    CrushValue {} = _p_{};", name, name)?,
             }
         }
@@ -151,11 +165,15 @@ impl AotcCompiler {
                 continue;
             }
             let cty = match inferred {
-                InferredType::Int   => "int64_t",
+                InferredType::Int => "int64_t",
                 InferredType::Float => "double",
                 InferredType::Dynamic => "CrushValue",
             };
-            let init = if unset_locals.contains(&local.as_str()) { "CV_UNSET" } else { "0" };
+            let init = if unset_locals.contains(&local.as_str()) {
+                "CV_UNSET"
+            } else {
+                "0"
+            };
             writeln!(out, "    {} {} = {};", cty, mangle_local(local), init)?;
         }
 
@@ -192,21 +210,38 @@ impl AotcCompiler {
             match instr.op.as_str() {
                 // ── Stack literals ──────────────────────────────────────
                 "push_int" => {
-                    let v = instr.args.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let v = instr
+                        .args
+                        .get("value")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Int);
                     writeln!(out, "    int64_t {} = {}LL;", t, v)?;
                     stack.push((t, ty));
                 }
                 "push_float" => {
-                    let v = instr.args.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let v = instr
+                        .args
+                        .get("value")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Float);
                     writeln!(out, "    double {} = {};", t, c_float_literal(v))?;
                     stack.push((t, ty));
                 }
                 "push_bool" => {
-                    let v = instr.args.get("value").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let v = instr
+                        .args
+                        .get("value")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
-                    writeln!(out, "    CrushValue {} = {};", t, if v { "CV_TRUE" } else { "CV_FALSE" })?;
+                    writeln!(
+                        out,
+                        "    CrushValue {} = {};",
+                        t,
+                        if v { "CV_TRUE" } else { "CV_FALSE" }
+                    )?;
                     stack.push((t, ty));
                 }
                 "push_null" => {
@@ -215,13 +250,24 @@ impl AotcCompiler {
                     stack.push((t, ty));
                 }
                 "push_str" => {
-                    let v = instr.args.get("value").and_then(|v| v.as_str()).unwrap_or("");
+                    let v = instr
+                        .args
+                        .get("value")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
                     // Strings are NaN-boxed references so cv_is_float/cv_is_string work.
-                    writeln!(out, "    CrushValue {} = cv_string(\"{}\");", t, c_escape(v))?;
+                    writeln!(
+                        out,
+                        "    CrushValue {} = cv_string(\"{}\");",
+                        t,
+                        c_escape(v)
+                    )?;
                     stack.push((t, ty));
                 }
-                "pop" => { stack.pop(); }
+                "pop" => {
+                    stack.pop();
+                }
                 "dup" => {
                     if let Some(top) = stack.last().cloned() {
                         stack.push(top);
@@ -239,8 +285,14 @@ impl AotcCompiler {
 
                 // ── Memory ──────────────────────────────────────────────
                 "store" => {
-                    let name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("_");
-                    let src = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let name = instr
+                        .args
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("_");
+                    let src = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
                     // CASM functions begin with stores that bind arguments to parameters.
                     // Arguments are already passed as C function parameters and unboxed into
                     // locals, so these initial stores are no-ops.
@@ -268,7 +320,7 @@ impl AotcCompiler {
                         _ => {
                             // Dynamic local; coerce src if it's a scalar
                             let rhs = match src.1 {
-                                InferredType::Int   => format!("cv_int({})", src.0),
+                                InferredType::Int => format!("cv_int({})", src.0),
                                 InferredType::Float => format!("cv_float({})", src.0),
                                 _ => src.0,
                             };
@@ -277,29 +329,48 @@ impl AotcCompiler {
                     }
                 }
                 "load" => {
-                    let name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("_");
+                    let name = instr
+                        .args
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("_");
                     let lname = mangle_local(name);
-                    let inferred = tm.locals.get(name).cloned().unwrap_or(InferredType::Dynamic);
+                    let inferred = tm
+                        .locals
+                        .get(name)
+                        .cloned()
+                        .unwrap_or(InferredType::Dynamic);
                     if to_check[i] {
-                        writeln!(out, "    if ({} == CV_UNSET) crush_uninit_load(\"{}\");", lname, c_escape(name))?;
+                        writeln!(
+                            out,
+                            "    if ({} == CV_UNSET) crush_uninit_load(\"{}\");",
+                            lname,
+                            c_escape(name)
+                        )?;
                     }
                     stack.push((lname, inferred));
                 }
 
                 // ── Arithmetic ──────────────────────────────────────────
                 "add" | "sub" | "mul" | "div" | "mod" => {
-                    let b = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
-                    let a = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let b = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let a = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
                     let op = instr.op.as_str();
                     let (t, ty, code) = scalar_arith(op, &a, &b, &mut tmp_count);
                     writeln!(out, "    {}", code)?;
                     stack.push((t, ty));
                 }
                 "neg" => {
-                    let a = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let a = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
                     let (t, ty) = new_tmp(&mut tmp_count, a.1.clone());
                     let code = match &a.1 {
-                        InferredType::Int   => format!("int64_t {} = -{};", t, a.0),
+                        InferredType::Int => format!("int64_t {} = -{};", t, a.0),
                         InferredType::Float => format!("double {} = -{};", t, a.0),
                         _ => format!("CrushValue {} = cv_neg({});", t, a.0),
                     };
@@ -309,8 +380,12 @@ impl AotcCompiler {
 
                 // ── Comparison ──────────────────────────────────────────
                 "eq" | "ne" | "lt" | "gt" | "le" | "ge" => {
-                    let b = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
-                    let a = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let b = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let a = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
                     let (cmp_macro, c_op) = match instr.op.as_str() {
                         "eq" => ("CV_CMP_EQ", "=="),
                         "ne" => ("CV_CMP_NE", "!="),
@@ -318,16 +393,19 @@ impl AotcCompiler {
                         "gt" => ("CV_CMP_GT", ">"),
                         "le" => ("CV_CMP_LE", "<="),
                         "ge" => ("CV_CMP_GE", ">="),
-                        _ => unreachable!()
+                        _ => unreachable!(),
                     };
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
                     let code = match (&a.1, &b.1) {
-                        (InferredType::Int, InferredType::Int) =>
-                            format!("CrushValue {} = ({} {} {}) ? CV_TRUE : CV_FALSE;", t, a.0, c_op, b.0),
-                        (InferredType::Float, InferredType::Float) =>
-                            format!("CrushValue {} = ({} {} {}) ? CV_TRUE : CV_FALSE;", t, a.0, c_op, b.0),
-                        _ =>
-                            format!("CrushValue {} = {}({}, {});", t, cmp_macro, a.0, b.0),
+                        (InferredType::Int, InferredType::Int) => format!(
+                            "CrushValue {} = ({} {} {}) ? CV_TRUE : CV_FALSE;",
+                            t, a.0, c_op, b.0
+                        ),
+                        (InferredType::Float, InferredType::Float) => format!(
+                            "CrushValue {} = ({} {} {}) ? CV_TRUE : CV_FALSE;",
+                            t, a.0, c_op, b.0
+                        ),
+                        _ => format!("CrushValue {} = {}({}, {});", t, cmp_macro, a.0, b.0),
                     };
                     writeln!(out, "    {}", code)?;
                     stack.push((t, ty));
@@ -335,73 +413,127 @@ impl AotcCompiler {
 
                 // ── Logical ─────────────────────────────────────────────
                 "and" => {
-                    let b = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
-                    let a = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let b = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let a = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
-                    writeln!(out, "    CrushValue {} = (cv_truthy({}) && cv_truthy({})) ? CV_TRUE : CV_FALSE;", t, a.0, b.0)?;
+                    writeln!(
+                        out,
+                        "    CrushValue {} = (cv_truthy({}) && cv_truthy({})) ? CV_TRUE : CV_FALSE;",
+                        t, a.0, b.0
+                    )?;
                     stack.push((t, ty));
                 }
                 "or" => {
-                    let b = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
-                    let a = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let b = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let a = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
-                    writeln!(out, "    CrushValue {} = (cv_truthy({}) || cv_truthy({})) ? CV_TRUE : CV_FALSE;", t, a.0, b.0)?;
+                    writeln!(
+                        out,
+                        "    CrushValue {} = (cv_truthy({}) || cv_truthy({})) ? CV_TRUE : CV_FALSE;",
+                        t, a.0, b.0
+                    )?;
                     stack.push((t, ty));
                 }
                 "not" => {
-                    let a = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let a = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
-                    writeln!(out, "    CrushValue {} = cv_truthy({}) ? CV_FALSE : CV_TRUE;", t, a.0)?;
+                    writeln!(
+                        out,
+                        "    CrushValue {} = cv_truthy({}) ? CV_FALSE : CV_TRUE;",
+                        t, a.0
+                    )?;
                     stack.push((t, ty));
                 }
 
                 // ── Control flow ────────────────────────────────────────
                 "jmp" => {
-                    let target = instr.args.get("target").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                    let lbl = labels.entry(target).or_insert_with(|| {
-                        let l = format!("_L{}", label_count);
-                        label_count += 1;
-                        l
-                    }).clone();
+                    let target = instr
+                        .args
+                        .get("target")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize;
+                    let lbl = labels
+                        .entry(target)
+                        .or_insert_with(|| {
+                            let l = format!("_L{}", label_count);
+                            label_count += 1;
+                            l
+                        })
+                        .clone();
                     writeln!(out, "    goto {};", lbl)?;
                 }
                 "jmp_if" => {
-                    let target = instr.args.get("target").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                    let cond = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
-                    let lbl = labels.entry(target).or_insert_with(|| {
-                        let l = format!("_L{}", label_count);
-                        label_count += 1;
-                        l
-                    }).clone();
+                    let target = instr
+                        .args
+                        .get("target")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize;
+                    let cond = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let lbl = labels
+                        .entry(target)
+                        .or_insert_with(|| {
+                            let l = format!("_L{}", label_count);
+                            label_count += 1;
+                            l
+                        })
+                        .clone();
                     writeln!(out, "    if (cv_truthy({})) goto {};", cond.0, lbl)?;
                 }
                 "jmp_if_not" => {
-                    let target = instr.args.get("target").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                    let cond = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
-                    let lbl = labels.entry(target).or_insert_with(|| {
-                        let l = format!("_L{}", label_count);
-                        label_count += 1;
-                        l
-                    }).clone();
+                    let target = instr
+                        .args
+                        .get("target")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize;
+                    let cond = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let lbl = labels
+                        .entry(target)
+                        .or_insert_with(|| {
+                            let l = format!("_L{}", label_count);
+                            label_count += 1;
+                            l
+                        })
+                        .clone();
                     let cond_expr = match cond.1 {
-                        InferredType::Int   => format!("{} == 0", cond.0),
+                        InferredType::Int => format!("{} == 0", cond.0),
                         InferredType::Float => format!("{} == 0.0", cond.0),
                         _ => format!("!cv_truthy({})", cond.0),
                     };
                     writeln!(out, "    if ({}) goto {};", cond_expr, lbl)?;
                 }
                 "ret" => {
-                    let val = stack.pop().unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
+                    let val = stack
+                        .pop()
+                        .unwrap_or(("CV_NULL".into(), InferredType::Dynamic));
                     let ret_expr = match val.1 {
-                        InferredType::Int   => format!("cv_int({})", val.0),
+                        InferredType::Int => format!("cv_int({})", val.0),
                         InferredType::Float => format!("cv_float({})", val.0),
                         _ => val.0,
                     };
                     writeln!(out, "    return {};", ret_expr)?;
                 }
                 "call" => {
-                    let func_name = instr.args.get("function").and_then(|v| v.as_str()).unwrap_or("");
-                    let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let func_name = instr
+                        .args
+                        .get("function")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let argc =
+                        instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                     // Pop args: the frontend pushes user-function call args right-to-left
                     // (first arg ends up on top of stack), so pop gives [first, second, ...]
                     // in the correct parameter order — no reverse needed.
@@ -409,28 +541,44 @@ impl AotcCompiler {
                     let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
                     // Box scalar args so every function receives a CrushValue regardless of
                     // the caller's inferred type. The callee unboxes to its own inferred types.
-                    let boxed_args: Vec<String> = args.iter().map(|(a, ty)| match ty {
-                        InferredType::Int   => format!("cv_int({})", a),
-                        InferredType::Float => format!("cv_float({})", a),
-                        _ => a.clone(),
-                    }).collect();
-                    writeln!(out, "    CrushValue {} = {}({});", t, mangle(func_name),
-                        boxed_args.join(", "))?;
+                    let boxed_args: Vec<String> = args
+                        .iter()
+                        .map(|(a, ty)| match ty {
+                            InferredType::Int => format!("cv_int({})", a),
+                            InferredType::Float => format!("cv_float({})", a),
+                            _ => a.clone(),
+                        })
+                        .collect();
+                    writeln!(
+                        out,
+                        "    CrushValue {} = {}({});",
+                        t,
+                        mangle(func_name),
+                        boxed_args.join(", ")
+                    )?;
                     stack.push((t, ty));
                 }
 
                 // ── Capability calls ────────────────────────────────────
                 "cap_call" => {
-                    let cap_name = instr.args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let argc = instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let cap_name = instr
+                        .args
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let argc =
+                        instr.args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                     let mut args: Vec<_> = (0..argc).filter_map(|_| stack.pop()).collect();
                     args.reverse();
                     // Box int/float args for capabilities
-                    let boxed_args: Vec<String> = args.iter().map(|(a, ty)| match ty {
-                        InferredType::Int   => format!("cv_int({})", a),
-                        InferredType::Float => format!("cv_float({})", a),
-                        _ => a.clone(),
-                    }).collect();
+                    let boxed_args: Vec<String> = args
+                        .iter()
+                        .map(|(a, ty)| match ty {
+                            InferredType::Int => format!("cv_int({})", a),
+                            InferredType::Float => format!("cv_float({})", a),
+                            _ => a.clone(),
+                        })
+                        .collect();
                     match cap_name {
                         "conv.chr" | "str.chr" => {
                             let arg = boxed_args.first().map(|s| s.as_str()).unwrap_or("CV_NULL");
@@ -471,15 +619,69 @@ impl AotcCompiler {
                             writeln!(out, "    CrushValue {} = cap_io_read_line();", t)?;
                             stack.push((t, ty));
                         }
-                        "math.sqrt"  => emit_math_cap(out, "cap_math_sqrt",  &boxed_args, &mut stack, &mut tmp_count)?,
-                        "math.pow"   => emit_math_cap(out, "cap_math_pow",   &boxed_args, &mut stack, &mut tmp_count)?,
-                        "math.abs"   => emit_math_cap(out, "cap_math_abs",   &boxed_args, &mut stack, &mut tmp_count)?,
-                        "math.floor" => emit_math_cap(out, "cap_math_floor", &boxed_args, &mut stack, &mut tmp_count)?,
-                        "math.ceil"  => emit_math_cap(out, "cap_math_ceil",  &boxed_args, &mut stack, &mut tmp_count)?,
-                        "math.round" => emit_math_cap(out, "cap_math_round", &boxed_args, &mut stack, &mut tmp_count)?,
-                        "math.min"   => emit_math_cap(out, "cap_math_min",   &boxed_args, &mut stack, &mut tmp_count)?,
-                        "math.max"   => emit_math_cap(out, "cap_math_max",   &boxed_args, &mut stack, &mut tmp_count)?,
-                        "math.pi"    => emit_math_cap(out, "cap_math_pi",    &boxed_args, &mut stack, &mut tmp_count)?,
+                        "math.sqrt" => emit_math_cap(
+                            out,
+                            "cap_math_sqrt",
+                            &boxed_args,
+                            &mut stack,
+                            &mut tmp_count,
+                        )?,
+                        "math.pow" => emit_math_cap(
+                            out,
+                            "cap_math_pow",
+                            &boxed_args,
+                            &mut stack,
+                            &mut tmp_count,
+                        )?,
+                        "math.abs" => emit_math_cap(
+                            out,
+                            "cap_math_abs",
+                            &boxed_args,
+                            &mut stack,
+                            &mut tmp_count,
+                        )?,
+                        "math.floor" => emit_math_cap(
+                            out,
+                            "cap_math_floor",
+                            &boxed_args,
+                            &mut stack,
+                            &mut tmp_count,
+                        )?,
+                        "math.ceil" => emit_math_cap(
+                            out,
+                            "cap_math_ceil",
+                            &boxed_args,
+                            &mut stack,
+                            &mut tmp_count,
+                        )?,
+                        "math.round" => emit_math_cap(
+                            out,
+                            "cap_math_round",
+                            &boxed_args,
+                            &mut stack,
+                            &mut tmp_count,
+                        )?,
+                        "math.min" => emit_math_cap(
+                            out,
+                            "cap_math_min",
+                            &boxed_args,
+                            &mut stack,
+                            &mut tmp_count,
+                        )?,
+                        "math.max" => emit_math_cap(
+                            out,
+                            "cap_math_max",
+                            &boxed_args,
+                            &mut stack,
+                            &mut tmp_count,
+                        )?,
+                        "math.pi" => emit_math_cap(
+                            out,
+                            "cap_math_pi",
+                            &boxed_args,
+                            &mut stack,
+                            &mut tmp_count,
+                        )?,
                         _ => {
                             // Unknown capability — emit comment + NULL result
                             writeln!(out, "    /* unimplemented cap: {} */", cap_name)?;
@@ -516,8 +718,8 @@ impl AotcCompiler {
                 }
                 // COSM member ops (K1.4, CRUSH-zorro-43) need Kinds, which
                 // run on the scheduler VM and the portable VM only.
-                "get_member" | "set_member" | "has_member" | "del_member" | "call_member" | "construct"
-                | "get_slot" | "set_slot" | "is_kind" | "copy" => {
+                "get_member" | "set_member" | "has_member" | "del_member" | "call_member"
+                | "construct" | "get_slot" | "set_slot" | "is_kind" | "copy" => {
                     anyhow::bail!(
                         "crush-aotc: `{}` (COSM objects, CRUSH-zorro-43) isn't supported by this backend",
                         instr.op
@@ -584,13 +786,24 @@ fn mangle_local(name: &str) -> String {
 }
 
 fn c_float_literal(v: f64) -> String {
-    if v.is_nan() { "nan(\"\")".to_string() }
-    else if v.is_infinite() { if v > 0.0 { "INFINITY".to_string() } else { "-INFINITY".to_string() } }
-    else { format!("{:.17e}", v) }
+    if v.is_nan() {
+        "nan(\"\")".to_string()
+    } else if v.is_infinite() {
+        if v > 0.0 {
+            "INFINITY".to_string()
+        } else {
+            "-INFINITY".to_string()
+        }
+    } else {
+        format!("{:.17e}", v)
+    }
 }
 
 fn c_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r")
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 fn scalar_arith(
@@ -601,32 +814,89 @@ fn scalar_arith(
 ) -> (String, InferredType, String) {
     let t = format!("_s{}", *count);
     *count += 1;
-    let c_op = match op { "add"=>"+", "sub"=>"-", "mul"=>"*", "div"=>"/", "mod"=>"%", _=>"+" };
+    let c_op = match op {
+        "add" => "+",
+        "sub" => "-",
+        "mul" => "*",
+        "div" => "/",
+        "mod" => "%",
+        _ => "+",
+    };
     match (&a.1, &b.1) {
         (InferredType::Int, InferredType::Int) => {
             let code = match op {
-                "add" => format!("int64_t {t}; if (__builtin_add_overflow({a}, {b}, &{t})) crush_arith_error(\"arithmetic overflow\");", t=t, a=a.0, b=b.0),
-                "sub" => format!("int64_t {t}; if (__builtin_sub_overflow({a}, {b}, &{t})) crush_arith_error(\"arithmetic overflow\");", t=t, a=a.0, b=b.0),
-                "mul" => format!("int64_t {t}; if (__builtin_mul_overflow({a}, {b}, &{t})) crush_arith_error(\"arithmetic overflow\");", t=t, a=a.0, b=b.0),
-                "div" => format!("int64_t {t}; if ({b} == 0) crush_div_zero(); {t} = {a} / {b};", t=t, a=a.0, b=b.0),
-                "mod" => format!("int64_t {t}; if ({b} == 0) crush_div_zero(); {t} = {a} % {b};", t=t, a=a.0, b=b.0),
+                "add" => format!(
+                    "int64_t {t}; if (__builtin_add_overflow({a}, {b}, &{t})) crush_arith_error(\"arithmetic overflow\");",
+                    t = t,
+                    a = a.0,
+                    b = b.0
+                ),
+                "sub" => format!(
+                    "int64_t {t}; if (__builtin_sub_overflow({a}, {b}, &{t})) crush_arith_error(\"arithmetic overflow\");",
+                    t = t,
+                    a = a.0,
+                    b = b.0
+                ),
+                "mul" => format!(
+                    "int64_t {t}; if (__builtin_mul_overflow({a}, {b}, &{t})) crush_arith_error(\"arithmetic overflow\");",
+                    t = t,
+                    a = a.0,
+                    b = b.0
+                ),
+                "div" => format!(
+                    "int64_t {t}; if ({b} == 0) crush_div_zero(); {t} = {a} / {b};",
+                    t = t,
+                    a = a.0,
+                    b = b.0
+                ),
+                "mod" => format!(
+                    "int64_t {t}; if ({b} == 0) crush_div_zero(); {t} = {a} % {b};",
+                    t = t,
+                    a = a.0,
+                    b = b.0
+                ),
                 _ => format!("int64_t {} = {} {} {};", t, a.0, c_op, b.0),
             };
             (t, InferredType::Int, code)
         }
         (InferredType::Float, InferredType::Float) => {
             let code = match op {
-                "div" => format!("double {t}; if ({b} == 0.0) crush_div_zero(); {t} = {a} / {b};", t=t, a=a.0, b=b.0),
-                "mod" => format!("double {t}; if ({b} == 0.0) crush_div_zero(); {t} = fmod({a}, {b});", t=t, a=a.0, b=b.0),
+                "div" => format!(
+                    "double {t}; if ({b} == 0.0) crush_div_zero(); {t} = {a} / {b};",
+                    t = t,
+                    a = a.0,
+                    b = b.0
+                ),
+                "mod" => format!(
+                    "double {t}; if ({b} == 0.0) crush_div_zero(); {t} = fmod({a}, {b});",
+                    t = t,
+                    a = a.0,
+                    b = b.0
+                ),
                 _ => format!("double {} = {} {} {};", t, a.0, c_op, b.0),
             };
             (t, InferredType::Float, code)
         }
         _ => {
-            let helper = match op { "add"=>"cv_add", "sub"=>"cv_sub", "mul"=>"cv_mul", "div"=>"cv_div", "mod"=>"cv_mod", _=>"cv_add" };
+            let helper = match op {
+                "add" => "cv_add",
+                "sub" => "cv_sub",
+                "mul" => "cv_mul",
+                "div" => "cv_div",
+                "mod" => "cv_mod",
+                _ => "cv_add",
+            };
             // coerce scalars to CrushValue if needed
-            let av = match a.1 { InferredType::Int => format!("cv_int({})", a.0), InferredType::Float => format!("cv_float({})", a.0), _ => a.0.clone() };
-            let bv = match b.1 { InferredType::Int => format!("cv_int({})", b.0), InferredType::Float => format!("cv_float({})", b.0), _ => b.0.clone() };
+            let av = match a.1 {
+                InferredType::Int => format!("cv_int({})", a.0),
+                InferredType::Float => format!("cv_float({})", a.0),
+                _ => a.0.clone(),
+            };
+            let bv = match b.1 {
+                InferredType::Int => format!("cv_int({})", b.0),
+                InferredType::Float => format!("cv_float({})", b.0),
+                _ => b.0.clone(),
+            };
             let code = format!("CrushValue {} = {}({}, {});", t, helper, av, bv);
             (t, InferredType::Dynamic, code)
         }
@@ -657,17 +927,22 @@ pub fn compile_to_so(c_source: &str, opts: &AotcOpts) -> anyhow::Result<std::pat
 
     let dir = tempfile::tempdir()?;
     let src_path = dir.path().join("crush_aotc.c");
-    let so_path  = dir.path().join("crush_aotc.so");
+    let so_path = dir.path().join("crush_aotc.so");
 
     std::fs::write(&src_path, c_source)?;
 
     let opt = format!("-O{}", opts.opt_level);
     let mut cmd = std::process::Command::new("cc");
-    cmd.arg("-shared").arg("-fPIC").arg(&opt)
-       .arg("-lm")
-       .arg("-o").arg(&so_path)
-       .arg(&src_path);
-    if opts.simd { cmd.arg("-mavx2"); }
+    cmd.arg("-shared")
+        .arg("-fPIC")
+        .arg(&opt)
+        .arg("-lm")
+        .arg("-o")
+        .arg(&so_path)
+        .arg(&src_path);
+    if opts.simd {
+        cmd.arg("-mavx2");
+    }
 
     let status = cmd.status()?;
     if !status.success() {
@@ -687,18 +962,34 @@ mod tests {
     fn function_names_mangle_to_distinct_c_identifiers() {
         assert_eq!(mangle("main"), "crush_main");
         assert_eq!(mangle("Point::norm2"), "cf_Point_u3a__u3a_norm2");
-        let names = ["a.b", "a__b", "a_b", "a-b", "a::b", "int", "main_", "Point::Shape::area"];
+        let names = [
+            "a.b",
+            "a__b",
+            "a_b",
+            "a-b",
+            "a::b",
+            "int",
+            "main_",
+            "Point::Shape::area",
+        ];
         let mangled: std::collections::HashSet<_> = names.iter().map(|n| mangle(n)).collect();
         assert_eq!(mangled.len(), names.len());
-        assert!(mangled.iter().all(|m| m.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')));
+        assert!(
+            mangled
+                .iter()
+                .all(|m| m.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        );
     }
 
     // CRUSH-251: function values must be refused, not dropped as unhandled ops.
     #[test]
     fn function_values_are_refused() {
-        let source = "fn apply(f, v) {\n  return f(v)\n}\nfn main() {\n  return apply(|x| x * 2, 21)\n}\n";
+        let source =
+            "fn apply(f, v) {\n  return f(v)\n}\nfn main() {\n  return apply(|x| x * 2, 21)\n}\n";
         let program = crush_frontend::compile_crush_source(source).expect("compile");
-        let e = AotcCompiler::new(AotcOpts::default()).compile(&program).expect_err("must refuse");
+        let e = AotcCompiler::new(AotcOpts::default())
+            .compile(&program)
+            .expect_err("must refuse");
         assert!(e.to_string().contains("function values, CRUSH-251"), "{e}");
     }
 
@@ -707,7 +998,8 @@ mod tests {
         let source = "fn add(a, b) { return a + b; }";
         let program = crush_frontend::compile_crush_source(source).expect("compile");
         let c = AotcCompiler::new(AotcOpts::default())
-            .compile(&program).expect("emit C");
+            .compile(&program)
+            .expect("emit C");
         println!("=== Generated C ===\n{}", c);
         assert!(c.contains("crush_main"));
         // Should have an add function
@@ -729,7 +1021,8 @@ mod tests {
         "#;
         let program = crush_frontend::compile_crush_source(source).expect("compile");
         let c = AotcCompiler::new(AotcOpts::default())
-            .compile(&program).expect("emit C");
+            .compile(&program)
+            .expect("emit C");
         println!("=== Generated C (loop_sum) ===\n{}", c);
         // Fast path: sum and i should be int64_t scalars
         assert!(c.contains("int64_t"));
@@ -739,7 +1032,9 @@ mod tests {
     fn test_emit_conv_caps() {
         let source = "fn main() { return conv.ord(conv.chr(233)); }";
         let program = crush_frontend::compile_crush_source(source).expect("compile");
-        let c = AotcCompiler::new(AotcOpts::default()).compile(&program).expect("emit C");
+        let c = AotcCompiler::new(AotcOpts::default())
+            .compile(&program)
+            .expect("emit C");
         assert!(c.contains("cap_conv_chr"));
         assert!(c.contains("cap_conv_ord"));
     }
@@ -755,7 +1050,8 @@ mod tests {
         "#;
         let program = crush_frontend::compile_crush_source(source).expect("compile");
         let c = AotcCompiler::new(AotcOpts::default())
-            .compile(&program).expect("emit C");
+            .compile(&program)
+            .expect("emit C");
         println!("=== Generated C (math) ===\n{}", c);
         assert!(c.contains("cap_math_sqrt"));
         assert!(c.contains("cap_math_pow"));
@@ -771,9 +1067,16 @@ mod tests {
         "#;
         let program = crush_frontend::compile_crush_source(source).expect("compile");
         let c = AotcCompiler::new(AotcOpts::default())
-            .compile(&program).expect("emit C");
-        assert!(c.contains("cap_io_read"), "generated C should call cap_io_read");
-        assert!(c.contains("CRUSH_INPUT_BUF_SIZE"), "generated runtime should define stdin storage");
+            .compile(&program)
+            .expect("emit C");
+        assert!(
+            c.contains("cap_io_read"),
+            "generated C should call cap_io_read"
+        );
+        assert!(
+            c.contains("CRUSH_INPUT_BUF_SIZE"),
+            "generated runtime should define stdin storage"
+        );
     }
 
     #[test]
@@ -786,8 +1089,12 @@ mod tests {
         "#;
         let program = crush_frontend::compile_crush_source(source).expect("compile");
         let c = AotcCompiler::new(AotcOpts::default())
-            .compile(&program).expect("emit C");
-        assert!(c.contains("cap_io_read_line()"), "generated C should call cap_io_read_line");
+            .compile(&program)
+            .expect("emit C");
+        assert!(
+            c.contains("cap_io_read_line()"),
+            "generated C should call cap_io_read_line"
+        );
     }
 
     #[test]
@@ -799,11 +1106,18 @@ mod tests {
         "#;
         let program = crush_frontend::compile_crush_source(source).expect("compile");
         let c = AotcCompiler::new(AotcOpts::default())
-            .compile(&program).expect("emit C");
+            .compile(&program)
+            .expect("emit C");
         // The runtime header must contain the single source of truth for the newline.
-        assert!(c.contains("crush_io_print_line"), "generated C runtime should contain crush_io_print_line helper");
+        assert!(
+            c.contains("crush_io_print_line"),
+            "generated C runtime should contain crush_io_print_line helper"
+        );
         // The generated main must call the io.print capability.
-        assert!(c.contains("cap_io_print"), "generated C should call cap_io_print");
+        assert!(
+            c.contains("cap_io_print"),
+            "generated C should call cap_io_print"
+        );
     }
 
     #[test]
@@ -818,10 +1132,17 @@ mod tests {
         "#;
         let program = crush_frontend::compile_crush_source(source).expect("compile");
         let c = AotcCompiler::new(AotcOpts::default())
-            .compile(&program).expect("emit C");
+            .compile(&program)
+            .expect("emit C");
         // Strings must be emitted with the proper NaN-boxed reference tag.
-        assert!(c.contains("cv_string(\"hello\")"), "generated C should tag string literals");
+        assert!(
+            c.contains("cv_string(\"hello\")"),
+            "generated C should tag string literals"
+        );
         // Equality must use the scheduler-matching helper.
-        assert!(c.contains("CV_CMP_EQ"), "generated C should use CV_CMP_EQ for equality");
+        assert!(
+            c.contains("CV_CMP_EQ"),
+            "generated C should use CV_CMP_EQ for equality"
+        );
     }
 }

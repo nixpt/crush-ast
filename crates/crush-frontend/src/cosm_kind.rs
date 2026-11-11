@@ -25,17 +25,24 @@ use std::collections::{BTreeSet, HashMap};
 use anyhow::{Result, bail};
 use crush_cast::{CastType, KindArg, KindValue};
 use crush_cosm::{
-    Conformance, Construct, CosmModule, CosmType, Equality, FieldDecl, FnRef, InterfaceDecl, InterfaceMember,
-    KindDecl, KindRef, Member, MemberDecl, Param, Receiver, Resolution, Satisfaction, Semantics, Span,
-    Storage, Strategy,
+    Conformance, Construct, CosmModule, CosmType, Equality, FieldDecl, FnRef, InterfaceDecl,
+    InterfaceMember, KindDecl, KindRef, Member, MemberDecl, Param, Receiver, Resolution,
+    Satisfaction, Semantics, Span, Storage, Strategy,
 };
 use serde_json::Value;
 
 use crate::cosm_lower::{Plan, TypePlan, span_of, span_prefix};
 
 /// Every key `@kind(…)` accepts, in the order the design doc lists them.
-pub const KIND_KEYS: &[&str] =
-    &["storage", "semantics", "parents", "resolution", "receiver", "construct", "equality"];
+pub const KIND_KEYS: &[&str] = &[
+    "storage",
+    "semantics",
+    "parents",
+    "resolution",
+    "receiver",
+    "construct",
+    "equality",
+];
 
 pub(crate) fn build_module(plan: &Plan) -> Result<CosmModule> {
     let mut errors = Vec::new();
@@ -56,13 +63,18 @@ pub(crate) fn build_module(plan: &Plan) -> Result<CosmModule> {
                         .params
                         .iter()
                         .skip(usize::from(m.has_self()))
-                        .map(|(n, t)| Param { name: n.clone(), ty: cosm_type(t) })
+                        .map(|(n, t)| Param {
+                            name: n.clone(),
+                            ty: cosm_type(t),
+                        })
                         .collect(),
                     returns: CosmType::Any,
-                    default: m
-                        .body
-                        .as_ref()
-                        .map(|_| FnRef::new(crate::cosm_lower::trait_default_fn_name(&trait_plan.name, &m.name))),
+                    default: m.body.as_ref().map(|_| {
+                        FnRef::new(crate::cosm_lower::trait_default_fn_name(
+                            &trait_plan.name,
+                            &m.name,
+                        ))
+                    }),
                 })
                 .collect(),
             satisfaction: Satisfaction::Nominal,
@@ -77,7 +89,11 @@ pub(crate) fn build_module(plan: &Plan) -> Result<CosmModule> {
     if errors.is_empty() {
         // Spans in diagnostics point at the most specific declaration.
         for d in crush_cosm::validate(&module) {
-            let at = d.span.as_ref().map(|s| format!("line {}, col {}: ", s.line, s.col)).unwrap_or_default();
+            let at = d
+                .span
+                .as_ref()
+                .map(|s| format!("line {}, col {}: ", s.line, s.col))
+                .unwrap_or_default();
             errors.push(format!("{at}{}: {} ({})", d.subject, d.message, d.code));
         }
     }
@@ -96,15 +112,26 @@ fn kind_decl(ty: &TypePlan) -> std::result::Result<KindDecl, Vec<String>> {
         .iter()
         .map(|(n, t)| FieldDecl::new(n.clone(), cosm_type(t)))
         .collect();
-    k.storage = Storage::Sealed { fields: fields.clone() };
+    k.storage = Storage::Sealed {
+        fields: fields.clone(),
+    };
 
     for m in &ty.inherent {
         let member = if m.has_self {
-            Member::Method { func: FnRef::new(m.function.clone()), receiver: None }
+            Member::Method {
+                func: FnRef::new(m.function.clone()),
+                receiver: None,
+            }
         } else {
-            Member::Static { value: crush_cosm::StaticValue::Fn(FnRef::new(m.function.clone())) }
+            Member::Static {
+                value: crush_cosm::StaticValue::Fn(FnRef::new(m.function.clone())),
+            }
         };
-        k.members.push(MemberDecl { name: m.name.clone(), span: span(&m.meta), member });
+        k.members.push(MemberDecl {
+            name: m.name.clone(),
+            span: span(&m.meta),
+            member,
+        });
     }
     for ti in &ty.trait_impls {
         let mut conf = Conformance::new(ti.trait_name.as_str(), Satisfaction::Nominal);
@@ -112,11 +139,20 @@ fn kind_decl(ty: &TypePlan) -> std::result::Result<KindDecl, Vec<String>> {
         for m in &ti.members {
             let member = |name: String| {
                 let member = if m.has_self {
-                    Member::Method { func: FnRef::new(m.function.clone()), receiver: None }
+                    Member::Method {
+                        func: FnRef::new(m.function.clone()),
+                        receiver: None,
+                    }
                 } else {
-                    Member::Static { value: crush_cosm::StaticValue::Fn(FnRef::new(m.function.clone())) }
+                    Member::Static {
+                        value: crush_cosm::StaticValue::Fn(FnRef::new(m.function.clone())),
+                    }
                 };
-                MemberDecl { name, span: span(&m.meta), member }
+                MemberDecl {
+                    name,
+                    span: span(&m.meta),
+                    member,
+                }
             };
             // `Shape::area` on the Kind; `area` in the conformance's impl table
             // (only the type's own implementations — defaults come from the
@@ -141,8 +177,13 @@ fn kind_decl(ty: &TypePlan) -> std::result::Result<KindDecl, Vec<String>> {
     for arg in &annotation.args {
         let at = span_prefix(&arg.meta);
         if let Some(first) = seen.get(arg.key.as_str()) {
-            let first = span_of(first).map(|(l, c)| format!("line {l}, col {c}")).unwrap_or_default();
-            errors.push(format!("{at}{what}: `{}` is given twice (first at {first})", arg.key));
+            let first = span_of(first)
+                .map(|(l, c)| format!("line {l}, col {c}"))
+                .unwrap_or_default();
+            errors.push(format!(
+                "{at}{what}: `{}` is given twice (first at {first})",
+                arg.key
+            ));
             continue;
         }
         seen.insert(&arg.key, &arg.meta);
@@ -153,26 +194,45 @@ fn kind_decl(ty: &TypePlan) -> std::result::Result<KindDecl, Vec<String>> {
                     let storage = Storage::from_name(&name).map_err(|e| e.to_string())?;
                     storage_name = Some(storage.strategy_name());
                     k.storage = match storage {
-                        Storage::Sealed { .. } => Storage::Sealed { fields: fields.clone() },
-                        Storage::OpenDictWithSlots { .. } => Storage::OpenDictWithSlots { slots: fields.clone() },
+                        Storage::Sealed { .. } => Storage::Sealed {
+                            fields: fields.clone(),
+                        },
+                        Storage::OpenDictWithSlots { .. } => Storage::OpenDictWithSlots {
+                            slots: fields.clone(),
+                        },
                         Storage::OpenDict => Storage::OpenDict,
                     };
                 }
-                "semantics" => k.semantics = Semantics::parse(&arg.value.to_string()).map_err(|e| e.to_string())?,
-                "resolution" => k.resolution = Resolution::parse(&bare_name(arg)?).map_err(|e| e.to_string())?,
-                "receiver" => k.receiver = Receiver::parse(&bare_name(arg)?).map_err(|e| e.to_string())?,
-                "equality" => k.equality = Equality::parse(&bare_name(arg)?).map_err(|e| e.to_string())?,
+                "semantics" => {
+                    k.semantics =
+                        Semantics::parse(&arg.value.to_string()).map_err(|e| e.to_string())?
+                }
+                "resolution" => {
+                    k.resolution = Resolution::parse(&bare_name(arg)?).map_err(|e| e.to_string())?
+                }
+                "receiver" => {
+                    k.receiver = Receiver::parse(&bare_name(arg)?).map_err(|e| e.to_string())?
+                }
+                "equality" => {
+                    k.equality = Equality::parse(&bare_name(arg)?).map_err(|e| e.to_string())?
+                }
                 "parents" => {
                     let items = match &arg.value {
                         KindValue::List { items } => items.clone(),
                         single @ KindValue::Name { .. } => vec![single.clone()],
-                        other => return Err(format!("`parents` takes a list of struct names, like `[Base, Mixin]`; got `{other}`")),
+                        other => {
+                            return Err(format!(
+                                "`parents` takes a list of struct names, like `[Base, Mixin]`; got `{other}`"
+                            ));
+                        }
                     };
                     k.parents = items
                         .iter()
                         .map(|v| match v {
                             KindValue::Name { name } => Ok(KindRef::new(name.clone())),
-                            other => Err(format!("`parents` takes struct names; `{other}` is not one")),
+                            other => Err(format!(
+                                "`parents` takes struct names; `{other}` is not one"
+                            )),
                         })
                         .collect::<std::result::Result<_, _>>()?;
                 }
@@ -194,10 +254,21 @@ fn kind_decl(ty: &TypePlan) -> std::result::Result<KindDecl, Vec<String>> {
     // ordinary `field` members, so they stay part of the Kind.
     if storage_name == Some("open_dict") {
         for f in &fields {
-            k.members.insert(0, MemberDecl { name: f.name.clone(), span: f.span.clone(), member: Member::Field });
+            k.members.insert(
+                0,
+                MemberDecl {
+                    name: f.name.clone(),
+                    span: f.span.clone(),
+                    member: Member::Field,
+                },
+            );
         }
     }
-    if errors.is_empty() { Ok(k) } else { Err(errors) }
+    if errors.is_empty() {
+        Ok(k)
+    } else {
+        Err(errors)
+    }
 }
 
 /// A `@kind` value that must be a bare strategy name (`c3`, not `c3(x)`).
@@ -212,7 +283,11 @@ fn bare_name(arg: &KindArg) -> std::result::Result<String, String> {
                 "equality" => Equality::NAMES,
                 _ => &[],
             };
-            Err(format!("`{}` takes one of: {}; got `{other}`", arg.key, valid.join(", ")))
+            Err(format!(
+                "`{}` takes one of: {}; got `{other}`",
+                arg.key,
+                valid.join(", ")
+            ))
         }
     }
 }
@@ -222,7 +297,8 @@ fn bare_name(arg: &KindArg) -> std::result::Result<String, String> {
 /// struct (`ctor(new)` → `P::new`) or a top-level function.
 fn construct(ty: &TypePlan, value: &KindValue) -> std::result::Result<Construct, String> {
     let names = crush_cosm::catalogue::CONSTRUCT_NAMES.join(", ");
-    let shapes = "`literal`, `ctor(f)`, `js_new(f)`, `py_new_init(init)` or `py_new_init(new, init)`";
+    let shapes =
+        "`literal`, `ctor(f)`, `js_new(f)`, `py_new_init(init)` or `py_new_init(new, init)`";
     let fn_ref = |v: &KindValue| -> std::result::Result<FnRef, String> {
         let KindValue::Name { name } = v else {
             return Err(format!("a constructor function is a name; got `{v}`"));
@@ -239,14 +315,24 @@ fn construct(ty: &TypePlan, value: &KindValue) -> std::result::Result<Construct,
         KindValue::Name { name } if name == "literal" => Ok(Construct::Literal),
         KindValue::Apply { name, args } => match (name.as_str(), args.as_slice()) {
             ("ctor", [f]) => Ok(Construct::Ctor { func: fn_ref(f)? }),
-            ("js_new", [f]) => Ok(Construct::JsNew { ctor_fn: fn_ref(f)? }),
-            ("py_new_init", [init]) => Ok(Construct::PyNewInit { new_fn: None, init_fn: Some(fn_ref(init)?) }),
-            ("py_new_init", [new, init]) => {
-                Ok(Construct::PyNewInit { new_fn: Some(fn_ref(new)?), init_fn: Some(fn_ref(init)?) })
-            }
-            _ => Err(format!("unknown construct strategy `{value}`; expected one of: {names} (written {shapes})")),
+            ("js_new", [f]) => Ok(Construct::JsNew {
+                ctor_fn: fn_ref(f)?,
+            }),
+            ("py_new_init", [init]) => Ok(Construct::PyNewInit {
+                new_fn: None,
+                init_fn: Some(fn_ref(init)?),
+            }),
+            ("py_new_init", [new, init]) => Ok(Construct::PyNewInit {
+                new_fn: Some(fn_ref(new)?),
+                init_fn: Some(fn_ref(init)?),
+            }),
+            _ => Err(format!(
+                "unknown construct strategy `{value}`; expected one of: {names} (written {shapes})"
+            )),
         },
-        _ => Err(format!("unknown construct strategy `{value}`; expected one of: {names} (written {shapes})")),
+        _ => Err(format!(
+            "unknown construct strategy `{value}`; expected one of: {names} (written {shapes})"
+        )),
     }
 }
 
@@ -257,7 +343,10 @@ fn span(meta: &HashMap<String, Value>) -> Option<Span> {
 /// `CastType` → its COSM twin (same JSON shape by design, see
 /// `crush_cosm::types`).
 fn cosm_type(t: &CastType) -> CosmType {
-    serde_json::to_value(t).ok().and_then(|v| serde_json::from_value(v).ok()).unwrap_or(CosmType::Any)
+    serde_json::to_value(t)
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or(CosmType::Any)
 }
 
 pub(crate) fn receiver_method_names(module: &CosmModule) -> BTreeSet<String> {

@@ -30,10 +30,34 @@ pub enum Expected {
 }
 
 const ALL_ENGINES: &[(&str, Expected)] = &[
-    ("methods_async", Expected::Loud { ticket: "CRUSH-xps-13", diagnostic: "Future/poll semantics" }),
-    ("methods_unproven_argument", Expected::Loud { ticket: "CRUSH-xps-13", diagnostic: "canonical typed arithmetic" }),
-    ("methods_char_pattern", Expected::Loud { ticket: "CRUSH-xps-13", diagnostic: "string pattern/replacement needs proven" }),
-    ("methods_written", Expected::Loud { ticket: "CRUSH-xps-13", diagnostic: "numeric method needs proven canonical" }),
+    (
+        "methods_async",
+        Expected::Loud {
+            ticket: "CRUSH-xps-13",
+            diagnostic: "Future/poll semantics",
+        },
+    ),
+    (
+        "methods_unproven_argument",
+        Expected::Loud {
+            ticket: "CRUSH-xps-13",
+            diagnostic: "canonical typed arithmetic",
+        },
+    ),
+    (
+        "methods_char_pattern",
+        Expected::Loud {
+            ticket: "CRUSH-xps-13",
+            diagnostic: "string pattern/replacement needs proven",
+        },
+    ),
+    (
+        "methods_written",
+        Expected::Loud {
+            ticket: "CRUSH-xps-13",
+            diagnostic: "numeric method needs proven canonical",
+        },
+    ),
     (
         "debug_mutated",
         Expected::Loud {
@@ -389,7 +413,13 @@ const AOT_ONLY: &[(&str, Expected)] = &[
 ];
 
 const C_ONLY: &[(&str, Expected)] = &[
-    ("methods_nul", Expected::Loud { ticket: "CRUSH-xps-13", diagnostic: "C method input contains NUL" }),
+    (
+        "methods_nul",
+        Expected::Loud {
+            ticket: "CRUSH-xps-13",
+            diagnostic: "C method input contains NUL",
+        },
+    ),
     (
         "debug_dynamic",
         Expected::Loud {

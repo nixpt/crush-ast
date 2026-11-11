@@ -71,7 +71,9 @@ pub fn py_repr(v: &crate::vm::Value) -> String {
         Value::Int(i) => i.to_string(),
         Value::Float(f) => py_float(*f),
         Value::Str(s) => py_str_repr(s),
-        Value::Array(a) | Value::Vector(a) => format!("[{}]", seq(&mut a.borrow().iter().map(py_repr))),
+        Value::Array(a) | Value::Vector(a) => {
+            format!("[{}]", seq(&mut a.borrow().iter().map(py_repr)))
+        }
         Value::List(l) => format!("[{}]", seq(&mut l.borrow().iter().map(py_repr))),
         Value::Tuple(t) if t.len() == 1 => format!("({},)", py_repr(&t[0])),
         Value::Tuple(t) => format!("({})", seq(&mut t.iter().map(py_repr))),
@@ -79,7 +81,10 @@ pub fn py_repr(v: &crate::vm::Value) -> String {
         Value::Set(s) => format!("{{{}}}", seq(&mut s.borrow().iter().map(py_repr))),
         Value::Map(m) => format!(
             "{{{}}}",
-            seq(&mut m.borrow().iter().map(|(k, v)| format!("{}: {}", py_str_repr(k), py_repr(v))))
+            seq(&mut m
+                .borrow()
+                .iter()
+                .map(|(k, v)| format!("{}: {}", py_str_repr(k), py_repr(v))))
         ),
         other => other.as_text(),
     }
@@ -96,7 +101,11 @@ pub fn py_float(f: f64) -> String {
     }
     let a = f.abs();
     if a == 0.0 || (1e-4..1e16).contains(&a) {
-        return if f.fract() == 0.0 { format!("{f:.1}") } else { format!("{f}") };
+        return if f.fract() == 0.0 {
+            format!("{f:.1}")
+        } else {
+            format!("{f}")
+        };
     }
     // Rust `{:e}` gives the shortest digits as `1.5e-7`; CPython writes `1.5e-07`.
     let e = format!("{f:e}");
@@ -108,7 +117,11 @@ pub fn py_float(f: f64) -> String {
 /// CPython `repr()` of a string: single quotes unless the text contains a
 /// single quote and no double quote.
 pub fn py_str_repr(s: &str) -> String {
-    let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let q = if s.contains('\'') && !s.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
     let mut out = String::with_capacity(s.len() + 2);
     out.push(q);
     for c in s.chars() {
@@ -121,7 +134,9 @@ pub fn py_str_repr(s: &str) -> String {
                 out.push('\\');
                 out.push(c);
             }
-            c if (c as u32) < 0x20 || c as u32 == 0x7f => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\x{:02x}", c as u32))
+            }
             c => out.push(c),
         }
     }
@@ -278,7 +293,10 @@ mod fastvm_print {
             args: Vec<RuntimeValue>,
             _hal: Arc<dyn Hal>,
         ) -> anyhow::Result<RuntimeValue> {
-            let parts: Vec<String> = args.iter().map(|v| runtime_value_to_text(v, arena)).collect();
+            let parts: Vec<String> = args
+                .iter()
+                .map(|v| runtime_value_to_text(v, arena))
+                .collect();
             let line = format_io_print_line(&parts);
             self.output.lock().unwrap().push_str(&line);
             Ok(RuntimeValue::Null)
@@ -293,7 +311,10 @@ mod tests {
     #[test]
     fn format_io_print_line_appends_single_newline() {
         assert_eq!(format_io_print_line(&["hello".to_string()]), "hello\n");
-        assert_eq!(format_io_print_line(&["a".to_string(), "b".to_string()]), "ab\n");
+        assert_eq!(
+            format_io_print_line(&["a".to_string(), "b".to_string()]),
+            "ab\n"
+        );
         assert_eq!(format_io_print_line(&[] as &[String]), "\n");
     }
 
@@ -301,24 +322,45 @@ mod tests {
     fn py_repr_matches_cpython() {
         use crate::vm::Value;
         let list = Value::new_array(vec![
-            Value::Str("a".into()), Value::Int(1), Value::Float(2.5), Value::Bool(true), Value::Null,
+            Value::Str("a".into()),
+            Value::Int(1),
+            Value::Float(2.5),
+            Value::Bool(true),
+            Value::Null,
             Value::new_array(vec![Value::Str("it's".into())]),
         ]);
         // python3 -c "print(['a', 1, 2.5, True, None, [\"it's\"]])"
-        assert_eq!(py_value_to_text(&list), "['a', 1, 2.5, True, None, [\"it's\"]]");
-        let d = Value::new_map(vec![("zeta".to_string(), Value::Int(1)), ("a b".to_string(), Value::Str("x\ny".into()))]);
+        assert_eq!(
+            py_value_to_text(&list),
+            "['a', 1, 2.5, True, None, [\"it's\"]]"
+        );
+        let d = Value::new_map(vec![
+            ("zeta".to_string(), Value::Int(1)),
+            ("a b".to_string(), Value::Str("x\ny".into())),
+        ]);
         assert_eq!(py_value_to_text(&d), "{'zeta': 1, 'a b': 'x\\ny'}");
         assert_eq!(py_value_to_text(&Value::Tuple(vec![Value::Int(1)])), "(1,)");
         assert_eq!(py_value_to_text(&Value::Str("raw".into())), "raw");
-        for (f, want) in [(6.0, "6.0"), (0.1 + 0.2, "0.30000000000000004"), (1e21, "1e+21"), (1.5e-7, "1.5e-07"),
-                          (1e16, "1e+16"), (123456789012345.0, "123456789012345.0"), (0.0001, "0.0001"), (-0.0, "-0.0")] {
+        for (f, want) in [
+            (6.0, "6.0"),
+            (0.1 + 0.2, "0.30000000000000004"),
+            (1e21, "1e+21"),
+            (1.5e-7, "1.5e-07"),
+            (1e16, "1e+16"),
+            (123456789012345.0, "123456789012345.0"),
+            (0.0001, "0.0001"),
+            (-0.0, "-0.0"),
+        ] {
             assert_eq!(py_float(f), want, "{f}");
         }
     }
 
     #[test]
     fn format_py_print_line_joins_with_space() {
-        assert_eq!(format_py_print_line(&["1".to_string(), "2".to_string(), "a".to_string()]), "1 2 a\n");
+        assert_eq!(
+            format_py_print_line(&["1".to_string(), "2".to_string(), "a".to_string()]),
+            "1 2 a\n"
+        );
         assert_eq!(format_py_print_line(&[] as &[String]), "\n");
     }
 
@@ -326,9 +368,15 @@ mod tests {
     fn runtime_value_to_text_matches_canonical_rendering() {
         let arena = crate::memory::Arena::new();
         assert_eq!(runtime_value_to_text(&RuntimeValue::Null, &arena), "null");
-        assert_eq!(runtime_value_to_text(&RuntimeValue::Bool(true), &arena), "true");
+        assert_eq!(
+            runtime_value_to_text(&RuntimeValue::Bool(true), &arena),
+            "true"
+        );
         assert_eq!(runtime_value_to_text(&RuntimeValue::Int(42), &arena), "42");
-        assert_eq!(runtime_value_to_text(&RuntimeValue::String("hi".to_string()), &arena), "hi");
+        assert_eq!(
+            runtime_value_to_text(&RuntimeValue::String("hi".to_string()), &arena),
+            "hi"
+        );
     }
 
     // CRUSH-294 / GitHub #267: heap values render their value, not `@N`.

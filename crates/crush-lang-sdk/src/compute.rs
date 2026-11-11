@@ -216,8 +216,10 @@ mod tests {
             .build()
             .expect("build");
 
-        let mut quotas = Quotas::default();
-        quotas.max_steps = 5;
+        let quotas = Quotas {
+            max_steps: 5,
+            ..Default::default()
+        };
 
         let job = CrushJob::from_blob(program.to_blob()).with_quotas(quotas);
         let outcome = CrushEngine::new().run(&job);

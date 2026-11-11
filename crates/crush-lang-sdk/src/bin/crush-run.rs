@@ -23,7 +23,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use crush_lang_sdk::theme::{JsonDiagnostic, JsonDiagnosticExt as _};
+use crush_lang_sdk::theme::JsonDiagnostic;
 use crush_lang_sdk::{HostCapsBuilder, MessageFormat, Runtime};
 use crush_vm::{Quotas, VmResult};
 
@@ -36,6 +36,9 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// `Commands` is built once at startup and read a handful of times; boxing a
+// variant to quiet the size lint would only churn the clap destructuring.
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Run a program: .crush, .cast.json/.cast/.castb, .casm/.casmb/.sno, .cvms or .cvm1/.cvm.
     Run(RunArgs),
@@ -204,14 +207,29 @@ fn main() {
     let cli = Cli::parse();
     crush_lang_sdk::theme::init_styling();
     match cli.command {
-        Commands::Caps { json, path: Some(path), lib_paths } => {
+        Commands::Caps {
+            json,
+            path: Some(path),
+            lib_paths,
+        } => {
             if let Err(e) = show_program_caps(&path, json, &lib_paths) {
-                eprint!("{}", crush_lang_sdk::theme::render_anyhow_error(&e, "compile"));
+                eprint!(
+                    "{}",
+                    crush_lang_sdk::theme::render_anyhow_error(&e, "compile")
+                );
                 std::process::exit(1);
             }
         }
-        Commands::Caps { json: false, path: None, .. } => list_caps(),
-        Commands::Caps { json: true, path: None, .. } => list_caps_json(),
+        Commands::Caps {
+            json: false,
+            path: None,
+            ..
+        } => list_caps(),
+        Commands::Caps {
+            json: true,
+            path: None,
+            ..
+        } => list_caps_json(),
         Commands::Run(args) => {
             if let Err(e) = run_file(&args) {
                 match args.message_format {
@@ -338,7 +356,11 @@ fn load_program(
             // Gated load (`cast_version` major), then the `.crush` pipeline.
             let mut cast = formats::load_cast(path, format)?;
             let declared = cast.manifest.as_ref().and_then(|m| m.capabilities.clone());
-            crush_frontend::import_system::resolve_imports(&mut cast, path, &import_options(lib_paths))?;
+            crush_frontend::import_system::resolve_imports(
+                &mut cast,
+                path,
+                &import_options(lib_paths),
+            )?;
             let program = crush_lang_sdk::compile::compile_cast_program(
                 cast,
                 &crush_lang_sdk::compile::CompileOptions::default(),
@@ -363,7 +385,10 @@ fn load_program(
             if polyglot {
                 permissions.extend(["polyglot.python", "polyglot.javascript", "polyglot.bash"]);
             }
-            Ok((crush_lang_sdk::assemble(&source, Some(&permissions), None)?, None))
+            Ok((
+                crush_lang_sdk::assemble(&source, Some(&permissions), None)?,
+                None,
+            ))
         }
         InputFormat::Cvm1 => {
             let program = crush_vm::Program::from_blob(&std::fs::read(path)?)?;
@@ -380,7 +405,11 @@ fn import_options(lib_paths: &[PathBuf]) -> crush_frontend::import_system::Impor
 
 /// `crush-run caps FILE`: what the program can use, grouped by what grants
 /// it, without running it.
-fn show_program_caps(path: &std::path::Path, json: bool, lib_paths: &[PathBuf]) -> anyhow::Result<()> {
+fn show_program_caps(
+    path: &std::path::Path,
+    json: bool,
+    lib_paths: &[PathBuf],
+) -> anyhow::Result<()> {
     let (program, declared) = load_program(path, &[], false, lib_paths, true)?;
     let used = crush_lang_sdk::effects::used_by(&program)?;
     let catalog = crush_lang_sdk::effects::catalog();
@@ -388,9 +417,17 @@ fn show_program_caps(path: &std::path::Path, json: bool, lib_paths: &[PathBuf]) 
         if crush_vm::capabilities().contains_key(cap) {
             return "portable";
         }
-        catalog.iter().find(|c| c.name == cap).map_or("not available in this host", |c| c.grant)
+        catalog
+            .iter()
+            .find(|c| c.name == cap)
+            .map_or("not available in this host", |c| c.grant)
     };
-    let ambient = |grant: &str| matches!(grant, "portable" | "always" | crush_lang_sdk::effects::STDLIB_GRANT);
+    let ambient = |grant: &str| {
+        matches!(
+            grant,
+            "portable" | "always" | crush_lang_sdk::effects::STDLIB_GRANT
+        )
+    };
     if json {
         let caps: Vec<_> = used
             .iter()
@@ -508,7 +545,9 @@ fn list_caps() {
     println!("  fs.cp SRC DST [RECURSIVE]  copy a file; a directory needs RECURSIVE=true");
     println!("  fs.mv SRC DST          move / rename");
     println!("  fs.touch PATH          create an empty file or update its mtime");
-    println!("  fs.find DIR [GLOB [TYPE]]  every entry below DIR, filtered by a name glob and/or TYPE=file|dir|symlink|other");
+    println!(
+        "  fs.find DIR [GLOB [TYPE]]  every entry below DIR, filtered by a name glob and/or TYPE=file|dir|symlink|other"
+    );
     println!("  text.head/tail PATH N  first / last N lines of a file");
     println!("  text.wc PATH           {{lines, words, chars}} of a file");
     println!("  text.cut PATH DELIM COL  1-based column of every line");
@@ -516,7 +555,9 @@ fn list_caps() {
     println!("  env.get NAME           read environment variable");
     println!("  env.all                map of every environment variable");
     println!("  env.home_dir           home directory (HOME / USERPROFILE), or null");
-    println!("  time.now               return Unix timestamp in SECONDS (exosphere's time.now was ms: use time.now_ms)");
+    println!(
+        "  time.now               return Unix timestamp in SECONDS (exosphere's time.now was ms: use time.now_ms)"
+    );
     println!("  time.now_ms / now_iso  current time (epoch MILLISECONDS / RFC 3339)");
     println!("  time.elapsed START_MS  milliseconds since START_MS");
     println!("  time.sleep MS          block for MS milliseconds (bounded by the wall-time quota)");
@@ -525,7 +566,9 @@ fn list_caps() {
     println!("  message_bus.publish TOPIC PAYLOAD");
     println!("  message_bus.subscribe TOPIC");
     println!("  message_bus.recv       blocking receive");
-    println!("Task capabilities (enable with --task; task.start spawns a host process, granting process/spawn):");
+    println!(
+        "Task capabilities (enable with --task; task.start spawns a host process, granting process/spawn):"
+    );
     println!("  task.start NAME COMMAND [ARGS...]");
     println!("  task.stop TASK_ID");
     println!("  task.list");
@@ -660,7 +703,11 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
 
     #[allow(unused_mut)]
     let mut builder = HostCapsBuilder::new()
-        .polyglot(if args.polyglot { &["python", "javascript", "bash"] } else { &[] })
+        .polyglot(if args.polyglot {
+            &["python", "javascript", "bash"]
+        } else {
+            &[]
+        })
         .fs(args.fs)
         .fs_root(args.fs_root.to_string_lossy())
         .env(args.env)
@@ -672,7 +719,8 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
         .crypto(args.crypto);
     if !args.codebase.is_empty() {
         builder = builder.codebase(
-            crush_lang_sdk::runtime::index_files(&args.codebase).map_err(|e| anyhow::anyhow!("--codebase: {e}"))?,
+            crush_lang_sdk::runtime::index_files(&args.codebase)
+                .map_err(|e| anyhow::anyhow!("--codebase: {e}"))?,
         );
     }
 
@@ -693,7 +741,9 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     }
     #[cfg(not(feature = "gpu"))]
     if args.gpu {
-        anyhow::bail!("--gpu requires the 'gpu' feature, which this build of crush-run was compiled without");
+        anyhow::bail!(
+            "--gpu requires the 'gpu' feature, which this build of crush-run was compiled without"
+        );
     }
 
     #[cfg(feature = "graphics")]
@@ -777,13 +827,17 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
             // CRUSH-369: annotation warnings (stale @wip, expired @temporary,
             // wildcard in an exhaustive match, @must-call-after): advisory,
             // stderr, in the same format as the other messages.
-            if format == InputFormat::Crush {
-                if let Ok(parsed) = crush_frontend::parse_file(&args.path, &import_options(&args.lib_paths)) {
-                    crush_lang_sdk::compile::print_annotation_diagnostics(
-                        &crush_lang_sdk::compile::annotation_diagnostics(&parsed, &args.path.display().to_string()),
-                        matches!(args.message_format, MessageFormat::Json),
-                    );
-                }
+            if format == InputFormat::Crush
+                && let Ok(parsed) =
+                    crush_frontend::parse_file(&args.path, &import_options(&args.lib_paths))
+            {
+                crush_lang_sdk::compile::print_annotation_diagnostics(
+                    &crush_lang_sdk::compile::annotation_diagnostics(
+                        &parsed,
+                        &args.path.display().to_string(),
+                    ),
+                    matches!(args.message_format, MessageFormat::Json),
+                );
             }
             // Compile warnings (CRUSH-270's polyglot implicit-output/clobber
             // warnings) go to stderr, never the program's stdout.

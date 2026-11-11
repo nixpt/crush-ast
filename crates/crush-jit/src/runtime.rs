@@ -30,7 +30,7 @@
 //! | 10100  | 4    | _pad3 |
 //! | 10104  | —    | total |
 
-use crate::value::{JitValue, TAG_NULL, TAG_FALSE};
+use crate::value::{JitValue, TAG_FALSE, TAG_NULL};
 use crush_vm::fastvm::similarity::calculate_similarity;
 use crush_vm::memory::{Arena, Object};
 use crush_vm::value::RuntimeValue;
@@ -275,7 +275,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 .unwrap_or_default();
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             let ptr = arena.alloc(Object::Str(s));
             ctx.push(JitValue::from_ref(ptr));
@@ -293,7 +296,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             items.reverse();
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             let ptr = arena.alloc(Object::Array(jit_vec_to_rtv(items)));
             ctx.push(JitValue::from_ref(ptr));
@@ -306,7 +312,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let count = arg as usize;
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             let mut map = std::collections::HashMap::new();
             for _ in 0..count {
@@ -328,42 +337,41 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let container = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_ref(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             let result = match container.to_ref() {
                 Some(ref_idx) => match arena.get(ref_idx) {
-                    Some(Object::Array(items)) => {
-                        match key.to_int() {
-                            Some(idx) => items.get(idx as usize)
-                                .map(rtv_to_jit)
-                                .unwrap_or(JitValue::null()),
-                            None => JitValue::null(),
-                        }
-                    }
-                    Some(Object::Map(map)) => {
-                        jit_val_to_string(key, arena)
-                            .and_then(|s| map.get(&s))
+                    Some(Object::Array(items)) => match key.to_int() {
+                        Some(idx) => items
+                            .get(idx as usize)
                             .map(rtv_to_jit)
-                            .unwrap_or(JitValue::null())
-                    }
-                    Some(Object::Str(s)) => {
-                        match key.to_int() {
-                            Some(idx) => {
-                                let char_idx = idx as usize;
-                                s.chars().nth(char_idx)
-                                    .map(|c| {
-                                        if let Some(a) = arena_mut(ctx.arena) {
-                                            let cp = a.alloc(Object::Str(c.to_string()));
-                                            JitValue::from_ref(cp)
-                                        } else {
-                                            JitValue::null()
-                                        }
-                                    })
-                                    .unwrap_or(JitValue::null())
-                            }
-                            None => JitValue::null(),
+                            .unwrap_or(JitValue::null()),
+                        None => JitValue::null(),
+                    },
+                    Some(Object::Map(map)) => jit_val_to_string(key, arena)
+                        .and_then(|s| map.get(&s))
+                        .map(rtv_to_jit)
+                        .unwrap_or(JitValue::null()),
+                    Some(Object::Str(s)) => match key.to_int() {
+                        Some(idx) => {
+                            let char_idx = idx as usize;
+                            s.chars()
+                                .nth(char_idx)
+                                .map(|c| {
+                                    if let Some(a) = arena_mut(ctx.arena) {
+                                        let cp = a.alloc(Object::Str(c.to_string()));
+                                        JitValue::from_ref(cp)
+                                    } else {
+                                        JitValue::null()
+                                    }
+                                })
+                                .unwrap_or(JitValue::null())
                         }
-                    }
+                        None => JitValue::null(),
+                    },
                     _ => JitValue::null(),
                 },
                 None => JitValue::null(),
@@ -378,7 +386,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let val = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_ref(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             let len = match val.to_ref() {
                 Some(ref_idx) => match arena.get(ref_idx) {
@@ -389,9 +400,15 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     Some(Object::Tuple(t)) => t.len(),
                     Some(Object::Vector(v)) => v.len(),
                     Some(Object::Set(s)) => s.len(),
-                    _ => { ctx.push(JitValue::null()); return; }
+                    _ => {
+                        ctx.push(JitValue::null());
+                        return;
+                    }
                 },
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             ctx.push(JitValue::int(len as i64));
         }
@@ -403,7 +420,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let val = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             let type_name = if val.is_null() {
                 "null"
@@ -438,7 +458,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
         OP_NEW_ARRAY => {
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             let ptr = arena.alloc(Object::Array(Vec::new()));
             ctx.push(JitValue::from_ref(ptr));
@@ -547,9 +570,15 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let target = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_ref(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
-            match (jit_val_to_string(pattern, &arena), jit_val_to_string(target, &arena)) {
+            match (
+                jit_val_to_string(pattern, &arena),
+                jit_val_to_string(target, &arena),
+            ) {
                 (Some(p), Some(s)) => ctx.push(JitValue::bool(s.contains(&p))),
                 _ => ctx.push(JitValue::null()),
             }
@@ -563,9 +592,15 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let target = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_ref(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
-            match (jit_val_to_string(pattern, &arena), jit_val_to_string(target, &arena)) {
+            match (
+                jit_val_to_string(pattern, &arena),
+                jit_val_to_string(target, &arena),
+            ) {
                 (Some(p), Some(s)) => ctx.push(JitValue::bool(s.starts_with(&p))),
                 _ => ctx.push(JitValue::null()),
             }
@@ -579,9 +614,15 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let target = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_ref(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
-            match (jit_val_to_string(pattern, &arena), jit_val_to_string(target, &arena)) {
+            match (
+                jit_val_to_string(pattern, &arena),
+                jit_val_to_string(target, &arena),
+            ) {
                 (Some(p), Some(s)) => ctx.push(JitValue::bool(s.ends_with(&p))),
                 _ => ctx.push(JitValue::null()),
             }
@@ -594,7 +635,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let val = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             match jit_val_to_string(val, arena) {
                 Some(s) => {
@@ -612,7 +656,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let val = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             match jit_val_to_string(val, arena) {
                 Some(s) => {
@@ -630,7 +677,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let val = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             match jit_val_to_string(val, arena) {
                 Some(s) => {
@@ -649,11 +699,18 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let target = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
-            match (jit_val_to_string(delim, arena), jit_val_to_string(target, arena)) {
+            match (
+                jit_val_to_string(delim, arena),
+                jit_val_to_string(target, arena),
+            ) {
                 (Some(d), Some(s)) => {
-                    let parts: Vec<RuntimeValue> = s.split(&d)
+                    let parts: Vec<RuntimeValue> = s
+                        .split(&d)
                         .map(|p| arena.alloc(Object::Str(p.to_string())))
                         .map(|idx| RuntimeValue::Ref(idx))
                         .collect();
@@ -673,7 +730,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let target = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             match (
                 jit_val_to_string(new_val, arena),
@@ -697,33 +757,34 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let arr_val = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             match (jit_val_to_string(delim, arena), arr_val.to_ref()) {
-                (Some(d), Some(arr_ref)) => {
-                    match arena.get(arr_ref) {
-                        Some(Object::Array(arr)) => {
-                            let mut strings = Vec::new();
-                            for val in arr {
-                                if let RuntimeValue::Ref(sp) = val {
-                                    if let Some(Object::Str(s)) = arena.get(*sp) {
-                                        strings.push(s.clone());
-                                    } else {
-                                        ctx.push(JitValue::null());
-                                        return;
-                                    }
+                (Some(d), Some(arr_ref)) => match arena.get(arr_ref) {
+                    Some(Object::Array(arr)) => {
+                        let mut strings = Vec::new();
+                        for val in arr {
+                            if let RuntimeValue::Ref(sp) = val {
+                                if let Some(Object::Str(s)) = arena.get(*sp) {
+                                    strings.push(s.clone());
                                 } else {
                                     ctx.push(JitValue::null());
                                     return;
                                 }
+                            } else {
+                                ctx.push(JitValue::null());
+                                return;
                             }
-                            let joined = strings.join(&d);
-                            let res = arena.alloc(Object::Str(joined));
-                            ctx.push(JitValue::from_ref(res));
                         }
-                        _ => ctx.push(JitValue::null()),
+                        let joined = strings.join(&d);
+                        let res = arena.alloc(Object::Str(joined));
+                        ctx.push(JitValue::from_ref(res));
                     }
-                }
+                    _ => ctx.push(JitValue::null()),
+                },
                 _ => ctx.push(JitValue::null()),
             }
         }
@@ -736,7 +797,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let val = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             let type_name = strings
                 .and_then(|ss| ss.get(type_idx))
@@ -800,9 +864,7 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                     let ptr = arena.alloc(Object::Str(s));
                     JitValue::from_ref(ptr)
                 }
-                "bool" => {
-                    JitValue::bool(!val.is_null() && val.0 != TAG_FALSE)
-                }
+                "bool" => JitValue::bool(!val.is_null() && val.0 != TAG_FALSE),
                 _ => JitValue::null(),
             };
             ctx.push(result);
@@ -820,7 +882,9 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
         }
         OP_NEW_LIST => {
             if let Some(arena) = arena_mut(ctx.arena) {
-                ctx.push(JitValue::from_ref(arena.alloc(Object::List(std::collections::LinkedList::new()))));
+                ctx.push(JitValue::from_ref(
+                    arena.alloc(Object::List(std::collections::LinkedList::new())),
+                ));
             } else {
                 ctx.push(JitValue::null());
             }
@@ -848,7 +912,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let start = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             match (start.to_int(), end.to_int()) {
                 (Some(s), Some(e)) => {
@@ -881,7 +948,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             // Get arena
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
 
             // Look up capability from context
@@ -889,15 +959,18 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 ctx.push(JitValue::null());
                 return;
             }
-            let caps: &Vec<std::sync::Arc<dyn crush_vm::fastvm::Capability>> =
-                unsafe { &*(ctx.capabilities as *const Vec<std::sync::Arc<dyn crush_vm::fastvm::Capability>>) };
+            let caps: &Vec<std::sync::Arc<dyn crush_vm::fastvm::Capability>> = unsafe {
+                &*(ctx.capabilities as *const Vec<std::sync::Arc<dyn crush_vm::fastvm::Capability>>)
+            };
 
             if let Some(cap) = caps.get(cap_idx) {
                 // Get hal (may be null — use a no-op hal)
                 let hal: std::sync::Arc<dyn crush_vm::fastvm::Hal> = if ctx.hal.is_null() {
                     std::sync::Arc::new(DummyHal)
                 } else {
-                    unsafe { (&*(ctx.hal as *const std::sync::Arc<dyn crush_vm::fastvm::Hal>)).clone() }
+                    unsafe {
+                        (&*(ctx.hal as *const std::sync::Arc<dyn crush_vm::fastvm::Hal>)).clone()
+                    }
                 };
 
                 match cap.call(arena, args_rtv, hal) {
@@ -985,7 +1058,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let target = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_ref(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             match target.to_ref() {
                 Some(ref_idx) => match arena.get(ref_idx) {
@@ -994,7 +1070,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                             .and_then(|ss| ss.get(field_name_idx))
                             .cloned()
                             .unwrap_or_default();
-                        let val = fields.get(&name).map(rtv_to_jit).unwrap_or(JitValue::null());
+                        let val = fields
+                            .get(&name)
+                            .map(rtv_to_jit)
+                            .unwrap_or(JitValue::null());
                         ctx.push(val);
                     }
                     _ => ctx.push(JitValue::null()),
@@ -1012,7 +1091,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let target = ctx.pop().unwrap_or(JitValue::null());
             if let Some(ref_idx) = target.to_ref() {
                 if let Some(arena) = arena_mut(ctx.arena) {
-                    if let Ok(Object::Object { fields, class_name, .. }) = arena.get_mut(ref_idx) {
+                    if let Ok(Object::Object {
+                        fields, class_name, ..
+                    }) = arena.get_mut(ref_idx)
+                    {
                         let name = strings
                             .and_then(|ss| ss.get(field_name_idx))
                             .cloned()
@@ -1039,7 +1121,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
         OP_NEW_OBJ => {
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             let ptr = arena.alloc(Object::Object {
                 lang: "crush".to_string(),
@@ -1056,7 +1141,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let name_idx = arg as usize;
             let arena = match arena_mut(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             let class_name = strings
                 .and_then(|ss| ss.get(name_idx))
@@ -1078,7 +1166,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let s1_val = ctx.pop().unwrap_or(JitValue::null());
             let arena = match arena_ref(ctx.arena) {
                 Some(a) => a,
-                None => { ctx.push(JitValue::null()); return; }
+                None => {
+                    ctx.push(JitValue::null());
+                    return;
+                }
             };
             let s1 = jit_val_to_string(s1_val, arena);
             let s2 = jit_val_to_string(s2_val, arena);
@@ -1162,7 +1253,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 // OP_ENTER_TRY from the CASM EnterTry's instr.arg). The CLIF
                 // emit_handler_dispatch compares against the same unit.
                 // debug_assert: PC must be non-negative (i64 → usize safe).
-                debug_assert!(handler_pc >= 0, "handler_pc must be non-negative (instruction index)");
+                debug_assert!(
+                    handler_pc >= 0,
+                    "handler_pc must be non-negative (instruction index)"
+                );
                 ctx.handler_pc = handler_pc as usize;
                 ctx.error = 2;
             } else {
@@ -1188,14 +1282,14 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             });
 
             let joined = match (a_val.to_ref(), b_val.to_ref()) {
-                (Some(ia), Some(ib)) => arena_ref(ctx.arena).and_then(|ar| {
-                    match (ar.get(ia), ar.get(ib)) {
+                (Some(ia), Some(ib)) => {
+                    arena_ref(ctx.arena).and_then(|ar| match (ar.get(ia), ar.get(ib)) {
                         (Some(Object::Array(x)), Some(Object::Array(y))) => {
                             Some(x.iter().chain(y.iter()).cloned().collect::<Vec<_>>())
                         }
                         _ => None,
-                    }
-                }),
+                    })
+                }
                 _ => None,
             };
 
@@ -1213,12 +1307,15 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 // String concatenation: get text for each operand.
                 let arena = match arena_mut(ctx.arena) {
                     Some(a) => a,
-                    None => { ctx.push(JitValue::null()); return; }
+                    None => {
+                        ctx.push(JitValue::null());
+                        return;
+                    }
                 };
-                let text_a = jit_val_to_string(a_val, arena)
-                    .unwrap_or_else(|| jit_value_to_text(a_val));
-                let text_b = jit_val_to_string(b_val, arena)
-                    .unwrap_or_else(|| jit_value_to_text(b_val));
+                let text_a =
+                    jit_val_to_string(a_val, arena).unwrap_or_else(|| jit_value_to_text(a_val));
+                let text_b =
+                    jit_val_to_string(b_val, arena).unwrap_or_else(|| jit_value_to_text(b_val));
                 let result = format!("{}{}", text_a, text_b);
                 let ptr = arena.alloc(Object::Str(result));
                 ctx.push(JitValue::from_ref(ptr));
@@ -1240,10 +1337,12 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 ctx.push(JitValue::null());
             } else {
                 // Float or mixed: promote both to f64.
-                let af = a_val.to_float()
+                let af = a_val
+                    .to_float()
                     .or_else(|| a_val.to_int().map(|i| i as f64))
                     .unwrap_or(0.0);
-                let bf = b_val.to_float()
+                let bf = b_val
+                    .to_float()
                     .or_else(|| b_val.to_int().map(|i| i as f64))
                     .unwrap_or(0.0);
                 ctx.push(JitValue::float(af + bf));
@@ -1282,10 +1381,10 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             // Both ints: int comparison.
             if let (Some(ai), Some(bi)) = (a_val.to_int(), b_val.to_int()) {
                 let result = match arg {
-                    0 => ai < bi,   // LT
-                    1 => ai <= bi,  // LE
-                    2 => ai > bi,   // GT
-                    _ => ai >= bi,  // GE
+                    0 => ai < bi,  // LT
+                    1 => ai <= bi, // LE
+                    2 => ai > bi,  // GT
+                    _ => ai >= bi, // GE
                 };
                 ctx.push(JitValue::bool(result));
                 return;
@@ -1296,10 +1395,12 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let b_numeric = b_val.to_int().is_some() || b_val.to_float().is_some();
 
             if a_numeric && b_numeric {
-                let af = a_val.to_float()
+                let af = a_val
+                    .to_float()
                     .or_else(|| a_val.to_int().map(|i| i as f64))
                     .unwrap_or(0.0);
-                let bf = b_val.to_float()
+                let bf = b_val
+                    .to_float()
                     .or_else(|| b_val.to_int().map(|i| i as f64))
                     .unwrap_or(0.0);
                 let result = match arg {
@@ -1547,13 +1648,19 @@ impl JitContext {
             arena: std::ptr::null_mut(),
             capabilities: std::ptr::null_mut(),
             hal: std::ptr::null_mut(),
-            call_stack: [JitCallFrame { return_block: 0, _reserved: 0 }; JIT_MAX_CALL_DEPTH],
+            call_stack: [JitCallFrame {
+                return_block: 0,
+                _reserved: 0,
+            }; JIT_MAX_CALL_DEPTH],
             call_stack_top: 0,
             helper_fn: jit_helper_noop as *mut c_void,
             strings_ptr: std::ptr::null(),
             handler_pc: 0,
             handler_stack_top: 0,
-            handler_stack: [JitHandlerFrame { handler_pc: 0, call_stack_top: 0 }; 16],
+            handler_stack: [JitHandlerFrame {
+                handler_pc: 0,
+                call_stack_top: 0,
+            }; 16],
             saved_pc: 0,
             host_request_tag: 0,
             _pad3: 0,

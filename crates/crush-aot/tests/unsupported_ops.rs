@@ -61,18 +61,39 @@ fn supported_programs_still_compile() {
 fn ai_ops_are_rejected_by_both_backends() {
     use casm::{Function, Instruction};
     for op in [
-        "ai_query", "ai_synthesize", "ai_agent_delegation", "ai_semantic_match",
-        "ai_learning_loop", "ai_context_aware", "ai_toolchain", "ai_tool_chain",
-        "ai_goal_declaration", "ai_goal_decl", "ai_progress_update", "ai_knowledge_sharing",
+        "ai_query",
+        "ai_synthesize",
+        "ai_agent_delegation",
+        "ai_semantic_match",
+        "ai_learning_loop",
+        "ai_context_aware",
+        "ai_toolchain",
+        "ai_tool_chain",
+        "ai_goal_declaration",
+        "ai_goal_decl",
+        "ai_progress_update",
+        "ai_knowledge_sharing",
     ] {
         let mut program = casm("fn main() { print(1) }");
         let main: &mut Function = program.functions.get_mut("main").unwrap();
-        main.body.insert(0, Instruction { op: op.into(), lang: None, meta: None, args: serde_json::json!({}) });
+        main.body.insert(
+            0,
+            Instruction {
+                op: op.into(),
+                lang: None,
+                meta: None,
+                args: serde_json::json!({}),
+            },
+        );
         for err in [
             crush_aot::codegen::gen_rust_source(&program).unwrap_err(),
             crush_aot::codegen_c::gen_c_source(&program).unwrap_err(),
         ] {
-            assert!(err.to_string().contains(&format!("`{op}` (fn main, instruction 0)")), "{op}: {err}");
+            assert!(
+                err.to_string()
+                    .contains(&format!("`{op}` (fn main, instruction 0)")),
+                "{op}: {err}"
+            );
             assert!(err.to_string().contains("ai_native"), "{err}");
         }
     }
@@ -80,9 +101,12 @@ fn ai_ops_are_rejected_by_both_backends() {
 
 #[test]
 fn ai_semantic_match_from_source_is_rejected() {
-    let program = casm("fn main() { let m = ai_semantic_match(\"hi\", \"greeting\", 0.5); print(m) }");
+    let program =
+        casm("fn main() { let m = ai_semantic_match(\"hi\", \"greeting\", 0.5); print(m) }");
     let err = crush_aot::codegen::gen_rust_source(&program).unwrap_err();
     assert!(err.to_string().contains("`ai_semantic_match`"), "{err}");
-    let err = crush_aot::AotCompiler::new().compile_casm(&program, "ai_refuse").unwrap_err();
+    let err = crush_aot::AotCompiler::new()
+        .compile_casm(&program, "ai_refuse")
+        .unwrap_err();
     assert!(err.to_string().contains("ai_semantic_match"), "{err}");
 }

@@ -24,7 +24,10 @@ fn spawn_creates_handle() {
     HALT";
     let r = run_src(src);
     let top = r.stack.last().expect("should have a value");
-    assert!(matches!(top, Value::Handle(_)), "expected Handle, got {top:?}");
+    assert!(
+        matches!(top, Value::Handle(_)),
+        "expected Handle, got {top:?}"
+    );
 }
 
 #[test]
@@ -67,7 +70,12 @@ fn spawn_with_args() {
     MUL
     HALT";
     let r = run_src(src);
-    assert_eq!(r.stack, vec![Value::Int(198)], "expected 99*2=198, got {:?}", r.stack);
+    assert_eq!(
+        r.stack,
+        vec![Value::Int(198)],
+        "expected 99*2=198, got {:?}",
+        r.stack
+    );
 }
 
 #[test]
@@ -85,7 +93,12 @@ fn spawn_with_multiple_args() {
     ADD
     HALT";
     let r = run_src(src);
-    assert_eq!(r.stack, vec![Value::Int(10)], "expected 3+7=10, got {:?}", r.stack);
+    assert_eq!(
+        r.stack,
+        vec![Value::Int(10)],
+        "expected 3+7=10, got {:?}",
+        r.stack
+    );
 }
 
 // ── #177 regressions: spawned-task output and exit semantics ──────────────────
@@ -135,7 +148,11 @@ fn spawned_output_streams_in_execution_order() {
         chunks.push(s.to_string())
     })
     .expect("vm run");
-    assert_eq!(chunks.concat(), "w1\nm1\nw2\nm2\n", "streamed chunks: {chunks:?}");
+    assert_eq!(
+        chunks.concat(),
+        "w1\nm1\nw2\nm2\n",
+        "streamed chunks: {chunks:?}"
+    );
     assert_eq!(r.output, chunks.concat());
 }
 
@@ -157,7 +174,10 @@ loop:
     YIELD
     JMP loop";
     let prog = assemble(src, Some(&["io.print"]), None).expect("assembly");
-    let quotas = Quotas { max_steps: 10_000, ..Quotas::default() };
+    let quotas = Quotas {
+        max_steps: 10_000,
+        ..Quotas::default()
+    };
     let r = run(&prog, &quotas).expect("main returning must end the program cleanly");
     assert_eq!(r.output, "main done\n");
 }
@@ -208,7 +228,9 @@ fn worker_output_is_kept_when_it_finishes_after_main_yields() {
 
 fn run_both(src: &str) -> String {
     let prog = assemble(src, Some(&["io.print"]), None).expect("assembly");
-    let native = run(&prog, &Quotas::default()).expect("scheduler run").output;
+    let native = run(&prog, &Quotas::default())
+        .expect("scheduler run")
+        .output;
     let mut pvm = crate::portable_vm::PortableVm::new(prog);
     let portable = pvm.run().expect("portable run").output;
     assert_eq!(portable, native, "portable VM and scheduler disagree");
@@ -329,9 +351,15 @@ loop:
 // that into a null result (`spawn w(21)` after #192 printed `null`, not `42`).
 #[test]
 fn engines_agree_spawn_of_unknown_function_is_an_error() {
-    let prog = assemble(".func main\n    PUSH_STR \"nope\"\n    SPAWN 0\n    RET", None, None)
-        .expect("assembly");
-    let native = run(&prog, &Quotas::default()).map(|r| r.output).map_err(|e| e.to_string());
+    let prog = assemble(
+        ".func main\n    PUSH_STR \"nope\"\n    SPAWN 0\n    RET",
+        None,
+        None,
+    )
+    .expect("assembly");
+    let native = run(&prog, &Quotas::default())
+        .map(|r| r.output)
+        .map_err(|e| e.to_string());
     let portable = crate::portable_vm::PortableVm::new(prog)
         .run()
         .map(|r| r.output)
@@ -378,4 +406,3 @@ loop:
     JMP loop";
     assert_eq!(run_both(src), "bye\n");
 }
-

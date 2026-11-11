@@ -139,30 +139,49 @@ fn kind_table_functions(module: &crush_cosm::CosmModule) -> Vec<String> {
     use crush_cosm::{Construct, HookImpl, Member, StaticValue};
     let mut out = Vec::new();
     let member = |m: &crush_cosm::MemberDecl, out: &mut Vec<String>| match &m.member {
-        Member::Method { func, .. } | Member::Static { value: StaticValue::Fn(func) } => out.push(func.to_string()),
+        Member::Method { func, .. }
+        | Member::Static {
+            value: StaticValue::Fn(func),
+        } => out.push(func.to_string()),
         Member::Accessor { get, set } => out.extend(get.iter().chain(set).map(|f| f.to_string())),
         _ => {}
     };
     for k in &module.kinds {
-        for m in k.members.iter().chain(k.conforms.iter().flat_map(|c| &c.members)) {
+        for m in k
+            .members
+            .iter()
+            .chain(k.conforms.iter().flat_map(|c| &c.members))
+        {
             member(m, &mut out);
         }
         match &k.construct {
             Construct::Literal => {}
             Construct::Ctor { func } => out.push(func.to_string()),
             Construct::JsNew { ctor_fn } => out.push(ctor_fn.to_string()),
-            Construct::PyNewInit { new_fn, init_fn } => out.extend(new_fn.iter().chain(init_fn).map(|f| f.to_string())),
+            Construct::PyNewInit { new_fn, init_fn } => {
+                out.extend(new_fn.iter().chain(init_fn).map(|f| f.to_string()))
+            }
         }
         let h = &k.hooks;
-        let hooks = [&h.missing, &h.set, &h.call, &h.iter, &h.eq, &h.hash, &h.cmp, &h.str, &h.repr, &h.clone];
-        let all = hooks.into_iter().flatten().chain(h.op.values()).chain(h.op_reflected.values());
+        let hooks = [
+            &h.missing, &h.set, &h.call, &h.iter, &h.eq, &h.hash, &h.cmp, &h.str, &h.repr, &h.clone,
+        ];
+        let all = hooks
+            .into_iter()
+            .flatten()
+            .chain(h.op.values())
+            .chain(h.op_reflected.values());
         out.extend(all.filter_map(|hook| match hook {
             HookImpl::Fn(f) => Some(f.to_string()),
             _ => None,
         }));
     }
     for i in &module.interfaces {
-        out.extend(i.members.iter().filter_map(|m| m.default.as_ref().map(|f| f.to_string())));
+        out.extend(
+            i.members
+                .iter()
+                .filter_map(|m| m.default.as_ref().map(|f| f.to_string())),
+        );
     }
     out
 }
@@ -259,9 +278,17 @@ mod tests {
         let mut p = KindDecl::crush("P");
         p.members.push(MemberDecl::method("shout", "P::shout"));
         let mut q = KindDecl::crush("Q");
-        q.construct = crush_cosm::Construct::Ctor { func: "Q::init".into() };
-        program.cosm = Some(CosmModule { kinds: vec![p, q], interfaces: Vec::new() });
-        let used: Vec<String> = capabilities_used(&program).expect("decode").into_iter().collect();
+        q.construct = crush_cosm::Construct::Ctor {
+            func: "Q::init".into(),
+        };
+        program.cosm = Some(CosmModule {
+            kinds: vec![p, q],
+            interfaces: Vec::new(),
+        });
+        let used: Vec<String> = capabilities_used(&program)
+            .expect("decode")
+            .into_iter()
+            .collect();
         assert_eq!(used, ["fs.cat", "io.print"]);
     }
 }

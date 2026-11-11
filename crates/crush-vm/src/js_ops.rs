@@ -38,7 +38,13 @@ fn owned_node(v: &Value, expand: usize) -> JsNode<'static> {
             JsNode::Array {
                 id: std::rc::Rc::as_ptr(a) as *const () as usize,
                 len: items.len(),
-                items: (expand > 0).then(|| items.iter().take(js_core::ITEMS).map(|x| owned_node(x, expand - 1)).collect()),
+                items: (expand > 0).then(|| {
+                    items
+                        .iter()
+                        .take(js_core::ITEMS)
+                        .map(|x| owned_node(x, expand - 1))
+                        .collect()
+                }),
             }
         }
         Value::Map(m) => {
@@ -46,7 +52,12 @@ fn owned_node(v: &Value, expand: usize) -> JsNode<'static> {
             JsNode::Object {
                 id: std::rc::Rc::as_ptr(m) as *const () as usize,
                 len: entries.len(),
-                entries: (expand > 0).then(|| entries.iter().map(|(k, x)| (k.clone(), owned_node(x, expand - 1))).collect()),
+                entries: (expand > 0).then(|| {
+                    entries
+                        .iter()
+                        .map(|(k, x)| (k.clone(), owned_node(x, expand - 1)))
+                        .collect()
+                }),
             }
         }
         other => JsNode::Other(other.type_name()),
@@ -70,10 +81,12 @@ pub fn add(a: &Value, b: &Value) -> Result<Value, VmError> {
     if let (Value::Str(x), Value::Str(y)) = (a, b) {
         return Ok(Value::Str(format!("{x}{y}")));
     }
-    js_core::add(&node(a, 0), &node(b, 0)).map(value).map_err(|e| match e.as_str() {
-        "arithmetic overflow" => VmError::ArithmeticOverflow,
-        _ => unsupported(e),
-    })
+    js_core::add(&node(a, 0), &node(b, 0))
+        .map(value)
+        .map_err(|e| match e.as_str() {
+            "arithmetic overflow" => VmError::ArithmeticOverflow,
+            _ => unsupported(e),
+        })
 }
 
 /// `js.truthy(v)`: JS truthiness.
@@ -83,7 +96,9 @@ pub fn truthy(v: &Value) -> Value {
 
 /// `js.loose_eq(a, b)`: JS `==`.
 pub fn loose_eq(a: &Value, b: &Value) -> Result<Value, VmError> {
-    js_core::loose_eq(&node(a, 0), &node(b, 0)).map(Value::Bool).map_err(unsupported)
+    js_core::loose_eq(&node(a, 0), &node(b, 0))
+        .map(Value::Bool)
+        .map_err(unsupported)
 }
 
 /// Identity comparison for JS object-like values. `Some` means at least one
@@ -106,7 +121,9 @@ pub fn strict_eq(a: &Value, b: &Value) -> Result<Value, VmError> {
     if let Some(equal) = identity_eq(a, b) {
         return Ok(Value::Bool(equal));
     }
-    js_core::strict_eq(&node(a, 0), &node(b, 0)).map(Value::Bool).map_err(unsupported)
+    js_core::strict_eq(&node(a, 0), &node(b, 0))
+        .map(Value::Bool)
+        .map_err(unsupported)
 }
 
 /// `js.format(args...)`: the line `console.log(args...)` prints.
@@ -129,7 +146,12 @@ mod tests {
         Value::Array(Rc::new(RefCell::new(items)))
     }
     fn obj(entries: Vec<(&str, Value)>) -> Value {
-        Value::Map(Rc::new(RefCell::new(entries.into_iter().map(|(k, v)| (k.to_string(), v)).collect())))
+        Value::Map(Rc::new(RefCell::new(
+            entries
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        )))
     }
     fn text(v: Value) -> String {
         match v {
@@ -155,7 +177,10 @@ mod tests {
         .into_iter()
         .map(|(a, b)| text(add(&a, &b).unwrap()))
         .collect();
-        assert_eq!(got.join("|"), "x6|6x|a1e+21|a0.30000000000000004|a0|anull|atrue|1.5|n1e-7");
+        assert_eq!(
+            got.join("|"),
+            "x6|6x|a1e+21|a0.30000000000000004|a0|anull|atrue|1.5|n1e-7"
+        );
     }
 
     #[test]
@@ -164,31 +189,62 @@ mod tests {
         // (11.2613677978515625 is an exact tie: JS takes the even digit; Rust's
         // shortest Display rounds it up to …563.)
         let tie: f64 = "11.2613677978515625".parse().unwrap();
-        let got: Vec<String> = [tie, 5e-324, 1.7976931348623157e308, 123e-20, 9007199254740994.0, 0.000001, 1e-7, 1e21, 123456789012345680000.0, -1.5e-7]
-            .iter().map(|f| js_core::number_text(*f)).collect();
-        assert_eq!(got.join(" "), "11.261367797851562 5e-324 1.7976931348623157e+308 1.23e-18 9007199254740994 0.000001 1e-7 1e+21 123456789012345680000 -1.5e-7");
+        let got: Vec<String> = [
+            tie,
+            5e-324,
+            1.7976931348623157e308,
+            123e-20,
+            9007199254740994.0,
+            0.000001,
+            1e-7,
+            1e21,
+            123456789012345680000.0,
+            -1.5e-7,
+        ]
+        .iter()
+        .map(|f| js_core::number_text(*f))
+        .collect();
+        assert_eq!(
+            got.join(" "),
+            "11.261367797851562 5e-324 1.7976931348623157e+308 1.23e-18 9007199254740994 0.000001 1e-7 1e+21 123456789012345680000 -1.5e-7"
+        );
     }
 
     #[test]
     fn add_of_ints_past_2_pow_53_prints_as_js_doubles() {
         // node -e "console.log('x' + 7774233818054199000)"
-        assert_eq!(text(add(&s("x"), &Value::Int(7_774_233_818_054_199_296)).unwrap()), "x7774233818054199000");
+        assert_eq!(
+            text(add(&s("x"), &Value::Int(7_774_233_818_054_199_296)).unwrap()),
+            "x7774233818054199000"
+        );
     }
 
     #[test]
     fn add_numbers_stays_numeric() {
         assert_eq!(add(&Value::Int(2), &Value::Int(3)).unwrap(), Value::Int(5));
-        assert_eq!(add(&Value::Int(2), &Value::Float(0.5)).unwrap(), Value::Float(2.5));
+        assert_eq!(
+            add(&Value::Int(2), &Value::Float(0.5)).unwrap(),
+            Value::Float(2.5)
+        );
         // node: true + 1 === 2, null + 1 === 1
-        assert_eq!(add(&Value::Bool(true), &Value::Int(1)).unwrap(), Value::Int(2));
+        assert_eq!(
+            add(&Value::Bool(true), &Value::Int(1)).unwrap(),
+            Value::Int(2)
+        );
         assert_eq!(add(&Value::Null, &Value::Int(1)).unwrap(), Value::Int(1));
-        assert!(matches!(add(&Value::Int(i64::MAX), &Value::Int(1)), Err(VmError::ArithmeticOverflow)));
+        assert!(matches!(
+            add(&Value::Int(i64::MAX), &Value::Int(1)),
+            Err(VmError::ArithmeticOverflow)
+        ));
     }
 
     #[test]
     fn add_with_an_object_is_loud() {
         let err = add(&s("a"), &arr(vec![])).unwrap_err().to_string();
-        assert!(err.contains("not supported") && err.contains("ToPrimitive"), "{err}");
+        assert!(
+            err.contains("not supported") && err.contains("ToPrimitive"),
+            "{err}"
+        );
         assert!(add(&obj(vec![]), &Value::Int(1)).is_err());
     }
 
@@ -196,25 +252,54 @@ mod tests {
     fn truthiness_matches_js() {
         // node -e "console.log([0, -0, NaN, '', null, false, 1, 'a', [], {}].map(Boolean).join())"
         let vals = [
-            Value::Int(0), Value::Float(-0.0), Value::Float(f64::NAN), s(""), Value::Null, Value::Bool(false),
-            Value::Int(1), s("a"), arr(vec![]), obj(vec![]),
+            Value::Int(0),
+            Value::Float(-0.0),
+            Value::Float(f64::NAN),
+            s(""),
+            Value::Null,
+            Value::Bool(false),
+            Value::Int(1),
+            s("a"),
+            arr(vec![]),
+            obj(vec![]),
         ];
         let got: Vec<String> = vals.iter().map(|v| truthy(v).to_string()).collect();
-        assert_eq!(got.join(","), "false,false,false,false,false,false,true,true,true,true");
+        assert_eq!(
+            got.join(","),
+            "false,false,false,false,false,false,true,true,true,true"
+        );
     }
 
     #[test]
     fn loose_equality_matches_js() {
         // node -e "console.log(['1'==1, 1=='1.0', ''==0, ' \t\n'==0, '0x1f'==31, '1e3'==1000, true==1, true=='1', false=='', null==0, null==null, NaN==NaN, 'Infinity'==1/0, '1_0'==10, '.5'==0.5, '5.'==5, '+5'==5, '0b101'==5, '-0x1'==-1, 'a'=='a', 2==2.0].join())"
         let cases = [
-            (s("1"), Value::Int(1)), (Value::Int(1), s("1.0")), (s(""), Value::Int(0)), (s(" \t\n"), Value::Int(0)),
-            (s("0x1f"), Value::Int(31)), (s("1e3"), Value::Int(1000)), (Value::Bool(true), Value::Int(1)),
-            (Value::Bool(true), s("1")), (Value::Bool(false), s("")), (Value::Null, Value::Int(0)), (Value::Null, Value::Null),
-            (Value::Float(f64::NAN), Value::Float(f64::NAN)), (s("Infinity"), Value::Float(f64::INFINITY)),
-            (s("1_0"), Value::Int(10)), (s(".5"), Value::Float(0.5)), (s("5."), Value::Int(5)), (s("+5"), Value::Int(5)),
-            (s("0b101"), Value::Int(5)), (s("-0x1"), Value::Int(-1)), (s("a"), s("a")), (Value::Int(2), Value::Float(2.0)),
+            (s("1"), Value::Int(1)),
+            (Value::Int(1), s("1.0")),
+            (s(""), Value::Int(0)),
+            (s(" \t\n"), Value::Int(0)),
+            (s("0x1f"), Value::Int(31)),
+            (s("1e3"), Value::Int(1000)),
+            (Value::Bool(true), Value::Int(1)),
+            (Value::Bool(true), s("1")),
+            (Value::Bool(false), s("")),
+            (Value::Null, Value::Int(0)),
+            (Value::Null, Value::Null),
+            (Value::Float(f64::NAN), Value::Float(f64::NAN)),
+            (s("Infinity"), Value::Float(f64::INFINITY)),
+            (s("1_0"), Value::Int(10)),
+            (s(".5"), Value::Float(0.5)),
+            (s("5."), Value::Int(5)),
+            (s("+5"), Value::Int(5)),
+            (s("0b101"), Value::Int(5)),
+            (s("-0x1"), Value::Int(-1)),
+            (s("a"), s("a")),
+            (Value::Int(2), Value::Float(2.0)),
         ];
-        let got: Vec<String> = cases.iter().map(|(a, b)| loose_eq(a, b).unwrap().to_string()).collect();
+        let got: Vec<String> = cases
+            .iter()
+            .map(|(a, b)| loose_eq(a, b).unwrap().to_string())
+            .collect();
         assert_eq!(
             got.join(","),
             "true,true,true,true,true,true,true,true,true,false,true,false,true,false,true,true,true,true,false,true,true"
@@ -225,22 +310,44 @@ mod tests {
     fn loose_equality_of_objects_is_identity_and_object_vs_primitive_is_loud() {
         let a = arr(vec![Value::Int(1)]);
         assert_eq!(loose_eq(&a, &a.clone()).unwrap(), Value::Bool(true));
-        assert_eq!(loose_eq(&a, &arr(vec![Value::Int(1)])).unwrap(), Value::Bool(false));
+        assert_eq!(
+            loose_eq(&a, &arr(vec![Value::Int(1)])).unwrap(),
+            Value::Bool(false)
+        );
         assert_eq!(loose_eq(&a, &Value::Null).unwrap(), Value::Bool(false));
-        assert!(loose_eq(&a, &Value::Int(1)).unwrap_err().to_string().contains("not supported"));
+        assert!(
+            loose_eq(&a, &Value::Int(1))
+                .unwrap_err()
+                .to_string()
+                .contains("not supported")
+        );
     }
 
     #[test]
     fn strict_equality_matches_js() {
         // node -e "console.log([1===1, 1===2, 1===1.0, '1'===1, 1==='1', 'a'==='a', 'a'==='b', true===1, true===true, false===0, null===null, null===0, null==='', NaN===NaN, '1'!=='1', 1!=='1'].join())"
         let cases = [
-            (Value::Int(1), Value::Int(1)), (Value::Int(1), Value::Int(2)), (Value::Int(1), Value::Float(1.0)),
-            (s("1"), Value::Int(1)), (Value::Int(1), s("1")), (s("a"), s("a")), (s("a"), s("b")),
-            (Value::Bool(true), Value::Int(1)), (Value::Bool(true), Value::Bool(true)), (Value::Bool(false), Value::Int(0)),
-            (Value::Null, Value::Null), (Value::Null, Value::Int(0)), (Value::Null, s("")),
-            (Value::Float(f64::NAN), Value::Float(f64::NAN)), (s("1"), s("1")), (Value::Int(1), s("1")),
+            (Value::Int(1), Value::Int(1)),
+            (Value::Int(1), Value::Int(2)),
+            (Value::Int(1), Value::Float(1.0)),
+            (s("1"), Value::Int(1)),
+            (Value::Int(1), s("1")),
+            (s("a"), s("a")),
+            (s("a"), s("b")),
+            (Value::Bool(true), Value::Int(1)),
+            (Value::Bool(true), Value::Bool(true)),
+            (Value::Bool(false), Value::Int(0)),
+            (Value::Null, Value::Null),
+            (Value::Null, Value::Int(0)),
+            (Value::Null, s("")),
+            (Value::Float(f64::NAN), Value::Float(f64::NAN)),
+            (s("1"), s("1")),
+            (Value::Int(1), s("1")),
         ];
-        let got: Vec<String> = cases.iter().map(|(a, b)| strict_eq(a, b).unwrap().to_string()).collect();
+        let got: Vec<String> = cases
+            .iter()
+            .map(|(a, b)| strict_eq(a, b).unwrap().to_string())
+            .collect();
         assert_eq!(
             got.join(","),
             "true,false,true,false,false,true,false,false,true,false,true,false,false,false,true,false"
@@ -263,7 +370,8 @@ mod tests {
         }));
         let record = crate::cosm_rt::new_record(table.get("A").unwrap());
         let another_record = crate::cosm_rt::new_record(table.get("A").unwrap());
-        let mut other_program = crate::assembler::assemble(".func main\n    HALT\n", None, None).unwrap();
+        let mut other_program =
+            crate::assembler::assemble(".func main\n    HALT\n", None, None).unwrap();
         other_program.cosm = Some(crush_cosm::CosmModule {
             kinds: vec![crush_cosm::KindDecl::crush("A")],
             interfaces: vec![],
@@ -271,25 +379,48 @@ mod tests {
         let other_table = crate::cosm_rt::KindTable::load(&other_program).unwrap();
         let other_kind = Value::Kind(other_table.get("A").unwrap().clone());
 
-        assert_eq!(strict_eq(&record, &record.clone()).unwrap(), Value::Bool(true));
-        assert_eq!(strict_eq(&record, &another_record).unwrap(), Value::Bool(false));
+        assert_eq!(
+            strict_eq(&record, &record.clone()).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            strict_eq(&record, &another_record).unwrap(),
+            Value::Bool(false)
+        );
         assert_eq!(strict_eq(&record, &kind).unwrap(), Value::Bool(false));
         assert_eq!(strict_eq(&record, &func).unwrap(), Value::Bool(false));
-        assert_eq!(strict_eq(&record, &Value::Null).unwrap(), Value::Bool(false));
-        assert_eq!(strict_eq(&record, &Value::Int(1)).unwrap(), Value::Bool(false));
+        assert_eq!(
+            strict_eq(&record, &Value::Null).unwrap(),
+            Value::Bool(false)
+        );
+        assert_eq!(
+            strict_eq(&record, &Value::Int(1)).unwrap(),
+            Value::Bool(false)
+        );
 
         assert_eq!(strict_eq(&kind, &kind.clone()).unwrap(), Value::Bool(true));
         assert_eq!(strict_eq(&kind, &other_kind).unwrap(), Value::Bool(false));
         assert_eq!(strict_eq(&kind, &record).unwrap(), Value::Bool(false));
         assert_eq!(strict_eq(&kind, &func).unwrap(), Value::Bool(false));
         assert_eq!(strict_eq(&kind, &Value::Null).unwrap(), Value::Bool(false));
-        assert_eq!(strict_eq(&kind, &Value::Int(1)).unwrap(), Value::Bool(false));
+        assert_eq!(
+            strict_eq(&kind, &Value::Int(1)).unwrap(),
+            Value::Bool(false)
+        );
     }
 
     #[test]
     fn strict_equality_of_functions_is_identity() {
-        let f = Value::Func(Rc::new(crate::vm::FuncValue { name: "f".into(), arity: 0, captured: vec![] }));
-        let other = Value::Func(Rc::new(crate::vm::FuncValue { name: "f".into(), arity: 0, captured: vec![] }));
+        let f = Value::Func(Rc::new(crate::vm::FuncValue {
+            name: "f".into(),
+            arity: 0,
+            captured: vec![],
+        }));
+        let other = Value::Func(Rc::new(crate::vm::FuncValue {
+            name: "f".into(),
+            arity: 0,
+            captured: vec![],
+        }));
         assert_eq!(strict_eq(&f, &f.clone()).unwrap(), Value::Bool(true));
         assert_eq!(strict_eq(&f, &other).unwrap(), Value::Bool(false));
         assert_eq!(strict_eq(&f, &arr(vec![])).unwrap(), Value::Bool(false));
@@ -301,10 +432,16 @@ mod tests {
     fn strict_equality_of_objects_is_identity() {
         let a = arr(vec![Value::Int(1)]);
         assert_eq!(strict_eq(&a, &a.clone()).unwrap(), Value::Bool(true));
-        assert_eq!(strict_eq(&a, &arr(vec![Value::Int(1)])).unwrap(), Value::Bool(false));
+        assert_eq!(
+            strict_eq(&a, &arr(vec![Value::Int(1)])).unwrap(),
+            Value::Bool(false)
+        );
         let o = obj(vec![("a", Value::Int(1))]);
         assert_eq!(strict_eq(&o, &o.clone()).unwrap(), Value::Bool(true));
-        assert_eq!(strict_eq(&o, &obj(vec![("a", Value::Int(1))])).unwrap(), Value::Bool(false));
+        assert_eq!(
+            strict_eq(&o, &obj(vec![("a", Value::Int(1))])).unwrap(),
+            Value::Bool(false)
+        );
         // Unlike `==`, an object against a primitive is `false`, not a
         // ToPrimitive error.
         assert_eq!(strict_eq(&a, &Value::Int(1)).unwrap(), Value::Bool(false));
@@ -326,7 +463,11 @@ mod tests {
                 arr(vec![]),
                 obj(vec![]),
                 Value::Float(-0.0),
-                arr(vec![Value::Float(-0.0), Value::Float(1.5), Value::Float(1e21)]),
+                arr(vec![
+                    Value::Float(-0.0),
+                    Value::Float(1.5),
+                    Value::Float(1e21)
+                ]),
             ]),
             "[ 1, 'a', true, null ] [ 6 ] { a: 1, b: 'two' } [] {} -0 [ -0, 1.5, 1e+21 ]"
         );
@@ -340,13 +481,23 @@ mod tests {
         // node -e "console.log([\"it's\", 'say \"hi\"', 'both \\' \"', 'all \\' \" \`', 'tab\\there', 'nl\\n', 'back\\\\slash', '\\x1b[0m', 'cafe'])"
         assert_eq!(
             log(vec![arr(vec![
-                s("it's"), s("say \"hi\""), s("both ' \""), s("all ' \" `"), s("tab\there"), s("nl\n"),
-                s("back\\slash"), s("\x1b[0m"), s("cafe"),
+                s("it's"),
+                s("say \"hi\""),
+                s("both ' \""),
+                s("all ' \" `"),
+                s("tab\there"),
+                s("nl\n"),
+                s("back\\slash"),
+                s("\x1b[0m"),
+                s("cafe"),
             ])]),
             "[\n  \"it's\",\n  'say \"hi\"',\n  `both ' \"`,\n  'all \\' \" `',\n  'tab\\there',\n  'nl\\n',\n  'back\\\\slash',\n  '\\x1B[0m',\n  'cafe'\n]"
         );
         // node -e "console.log(['café', 'ñ', '日本'])"
-        assert_eq!(log(vec![arr(vec![s("café"), s("ñ"), s("日本")])]), "[ 'café', 'ñ', '日本' ]");
+        assert_eq!(
+            log(vec![arr(vec![s("café"), s("ñ"), s("日本")])]),
+            "[ 'café', 'ñ', '日本' ]"
+        );
     }
 
     #[test]
@@ -354,7 +505,12 @@ mod tests {
         // node -e "console.log({b: 1, 2: 'x', 'my-key': 3, 1: 'y', _ok: 4, '': 5})"
         assert_eq!(
             log(vec![obj(vec![
-                ("b", Value::Int(1)), ("2", s("x")), ("my-key", Value::Int(3)), ("1", s("y")), ("_ok", Value::Int(4)), ("", Value::Int(5)),
+                ("b", Value::Int(1)),
+                ("2", s("x")),
+                ("my-key", Value::Int(3)),
+                ("1", s("y")),
+                ("_ok", Value::Int(4)),
+                ("", Value::Int(5)),
             ])]),
             "{ '1': 'y', '2': 'x', b: 1, 'my-key': 3, _ok: 4, '': 5 }"
         );
@@ -363,10 +519,19 @@ mod tests {
     #[test]
     fn format_depth_and_nesting_like_node() {
         // node -e "console.log({a: {b: {c: {d: 1}}}}, [[[[1]]]], [[[[]]]], {x: [1, {y: 2}]})"
-        let deep = obj(vec![("a", obj(vec![("b", obj(vec![("c", obj(vec![("d", Value::Int(1))]))]))]))]);
+        let deep = obj(vec![(
+            "a",
+            obj(vec![(
+                "b",
+                obj(vec![("c", obj(vec![("d", Value::Int(1))]))]),
+            )]),
+        )]);
         let deep_arr = arr(vec![arr(vec![arr(vec![arr(vec![Value::Int(1)])])])]);
         let deep_empty = arr(vec![arr(vec![arr(vec![arr(vec![])])])]);
-        let mixed = obj(vec![("x", arr(vec![Value::Int(1), obj(vec![("y", Value::Int(2))])]))]);
+        let mixed = obj(vec![(
+            "x",
+            arr(vec![Value::Int(1), obj(vec![("y", Value::Int(2))])]),
+        )]);
         assert_eq!(
             log(vec![deep, deep_arr, deep_empty, mixed]),
             "{ a: { b: { c: [Object] } } } [ [ [ [Array] ] ] ] [ [ [ [] ] ] ] { x: [ 1, { y: 2 } ] }"
@@ -383,7 +548,10 @@ mod tests {
         );
         // node -e "console.log({alpha: 'aaaaaaaaaaaaaaaa', beta: 'bbbbbbbbbbbbbbbbbbbb', gamma: 'cccccccccccccccccc', delta: 1})"
         let wide = obj(vec![
-            ("alpha", s("aaaaaaaaaaaaaaaa")), ("beta", s("bbbbbbbbbbbbbbbbbbbb")), ("gamma", s("cccccccccccccccccc")), ("delta", Value::Int(1)),
+            ("alpha", s("aaaaaaaaaaaaaaaa")),
+            ("beta", s("bbbbbbbbbbbbbbbbbbbb")),
+            ("gamma", s("cccccccccccccccccc")),
+            ("delta", Value::Int(1)),
         ]);
         assert_eq!(
             log(vec![wide]),
@@ -406,12 +574,20 @@ mod tests {
             arr(vec![big.clone(), Value::Int(-9_007_199_254_740_993)]),
             Value::Int(9_007_199_254_740_992),
         ]);
-        assert_eq!(line, "7774233818054199000 [ 7774233818054199000, -9007199254740992 ] 9007199254740992");
+        assert_eq!(
+            line,
+            "7774233818054199000 [ 7774233818054199000, -9007199254740992 ] 9007199254740992"
+        );
     }
 
     #[test]
     fn format_directives_and_cycles_are_loud() {
-        assert!(format(&[s("%d items"), Value::Int(3)]).unwrap_err().to_string().contains("format directives"));
+        assert!(
+            format(&[s("%d items"), Value::Int(3)])
+                .unwrap_err()
+                .to_string()
+                .contains("format directives")
+        );
         // A lone string is printed as is, `%` and all (node: `100%d`).
         assert_eq!(log(vec![s("100%d")]), "100%d");
         let a = arr(vec![]);
