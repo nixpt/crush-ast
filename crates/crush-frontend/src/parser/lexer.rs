@@ -145,6 +145,55 @@ pub enum Token {
 }
 
 impl Token {
+    /// Identifier-shaped spelling of a keyword token, if it has one —
+    /// `Some("match")` for `Token::Match`, `Some("if")` for `Token::If`, etc.
+    ///
+    /// Field access after `.` accepts these as field/capability names
+    /// (CRUSH-367): past a dot the word cannot start a statement or
+    /// expression, so `regex.match(...)`, `x.if`, `s.for` are unambiguous
+    /// and parse. Everywhere else the word stays a keyword — match
+    /// expressions, bare `match(...)`, statement starts — because this
+    /// helper is only consulted right after a `.`.
+    ///
+    /// Multilingual keyword spellings read back as their canonical English
+    /// form (the token doesn't record which spelling was written, e.g.
+    /// `函数` lexes straight to `Token::Fn`).
+    pub fn keyword_name(&self) -> Option<&'static str> {
+        match self {
+            Token::Let(_) => Some("let"),
+            Token::Mut(_) => Some("mut"),
+            Token::Fn(_) => Some("fn"),
+            Token::If(_) => Some("if"),
+            Token::Else(_) => Some("else"),
+            Token::While(_) => Some("while"),
+            Token::For(_) => Some("for"),
+            Token::In(_) => Some("in"),
+            Token::Return(_) => Some("return"),
+            Token::Try(_) => Some("try"),
+            Token::Catch(_) => Some("catch"),
+            Token::Throw(_) => Some("throw"),
+            Token::Break(_) => Some("break"),
+            Token::Continue(_) => Some("continue"),
+            Token::Struct(_) => Some("struct"),
+            Token::Use(_) => Some("use"),
+            Token::Capability(_) => Some("capability"),
+            Token::Async(_) => Some("async"),
+            Token::Await(_) => Some("await"),
+            Token::Spawn(_) => Some("spawn"),
+            Token::Yield(_) => Some("yield"),
+            Token::New(_) => Some("new"),
+            Token::Export(_) => Some("export"),
+            Token::Lang(_) => Some("lang"),
+            Token::Import(_) => Some("import"),
+            Token::Match(_) => Some("match"),
+            // Word forms of the logical operators are identifier-shaped too.
+            Token::And(_) => Some("and"),
+            Token::Or(_) => Some("or"),
+            Token::Not(_) => Some("not"),
+            _ => None,
+        }
+    }
+
     /// Human-readable description for error messages — e.g. `` `=` `` for
     /// `Assign`, `` `foo` `` for `Ident("foo", _)`, `"end of input"` for
     /// `EOF`. Every parser error site should use this (or `Display`, which
