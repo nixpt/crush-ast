@@ -149,7 +149,26 @@ impl FastVM {
             ) {
                 Ok(None) => {},
                 Ok(Some(yield_reason)) => return yield_reason,
-                Err(e) => return FastYield::Error(e),
+                Err(e) => {
+                    // CRUSH-369: a catchable fault raised with an active try
+                    // handler unwinds to that handler as a caught error
+                    // message — the same unwind a Throw does, so FastVM agrees
+                    // with the CVM1 engines on fault-catching. Other faults
+                    // stay fatal.
+                    if execution::is_catchable_fault(&e)
+                        && let Some((frame_index, target_pc)) =
+                            execution::handler_frame(&self.call_stack)
+                    {
+                        self.call_stack.truncate(frame_index + 1);
+                        let frame = self.call_stack.last_mut().expect("frame just matched");
+                        frame.handlers.pop();
+                        self.pc = target_pc;
+                        self.stack
+                            .push(RuntimeValue::String(execution::fault_message(&e)));
+                        continue;
+                    }
+                    return FastYield::Error(e);
+                }
             }
 
             self.instructions_since_gc += 1;
@@ -356,6 +375,45 @@ mod tests {
             symbols,
             entry_point: entry,
         }
+    }
+
+    #[test]
+    fn fault_inside_try_is_caught_as_the_error_message() {
+        // CRUSH-369: 1/0 inside try unwinds to the handler, pushing the
+        // fault's message as the caught value — the same catch the CVM1
+        // engines (scheduler, PortableVm) do. Quota and broken-state faults
+        // stay fatal; DivisionByZero/ArithmeticOverflow/TypeMismatch are the
+        // catchable program-level faults FastVM raises.
+        let program = make_simple_program(vec![
+            FastInstr::new(FastOp::EnterTry, 7, 0),
+            FastInstr::new(FastOp::PushInt, 1, 0),
+            FastInstr::new(FastOp::PushInt, 0, 0),
+            FastInstr::simple(FastOp::Div),
+            FastInstr::simple(FastOp::Halt),
+            FastInstr::simple(FastOp::Halt),
+            FastInstr::simple(FastOp::Halt),
+            FastInstr::simple(FastOp::Halt),
+        ]);
+        let mut vm = make_vm(program);
+        let r = vm.run(10_000);
+        assert_eq!(
+            r,
+            FastYield::Finished(Some(RuntimeValue::String("division by zero".to_string()))),
+            "the fault unwinds to the handler as the caught message"
+        );
+    }
+
+    #[test]
+    fn fault_without_try_stays_fatal() {
+        let program = make_simple_program(vec![
+            FastInstr::new(FastOp::PushInt, 1, 0),
+            FastInstr::new(FastOp::PushInt, 0, 0),
+            FastInstr::simple(FastOp::Div),
+            FastInstr::simple(FastOp::Halt),
+        ]);
+        let mut vm = make_vm(program);
+        let r = vm.run(10_000);
+        assert_eq!(r, FastYield::Error(FastError::DivisionByZero));
     }
 
     #[test]

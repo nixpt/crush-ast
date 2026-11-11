@@ -658,7 +658,32 @@ fn run_from(
             }
             streamed_err = shared_err_parts.len();
         }
-        let action = action?;
+        // CRUSH-369: a catchable fault raised with a try handler active in this
+        // thread becomes a caught `Value::Error` instead of aborting the run —
+        // the same unwind a `THROW` would do (shared with PortableVm).
+        let mut fault_caught_at: Option<usize> = None;
+        let action = match action {
+            Ok(action) => action,
+            Err(err) => {
+                let thread = &mut threads[current];
+                match crate::vm::raise_fault_to_handler(
+                    err,
+                    &mut thread.try_stack,
+                    &mut thread.call_stack,
+                    &mut thread.stack,
+                    &mut thread.captures,
+                ) {
+                    Ok(handler_ip) => {
+                        fault_caught_at = Some(handler_ip);
+                        StepAction::Jump
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+        };
+        if let Some(handler_ip) = fault_caught_at {
+            threads[current].ip = handler_ip;
+        }
         // HALT in a spawned task ends only that task (owner decision
         // 2026-10-15): it finishes like RET, its top-of-stack is its result
         // and its waiters wake. Only main's HALT ends the program.
