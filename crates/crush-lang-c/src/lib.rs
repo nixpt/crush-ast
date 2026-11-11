@@ -7,19 +7,18 @@ use tree_sitter::{Node, Tree};
 pub mod sdk;
 use crush_walker_core::{BaseWalker, Walker};
 
-
 pub struct CWalker {
     pub file_name: String,
 }
 
 impl Walker for CWalker {
     fn language(&self) -> tree_sitter::Language {
-        let is_cpp = self.file_name.ends_with(".cpp") ||
-                     self.file_name.ends_with(".cc") ||
-                     self.file_name.ends_with(".cxx") ||
-                     self.file_name.ends_with(".c++") ||
-                     self.file_name.ends_with(".hpp");
-        
+        let is_cpp = self.file_name.ends_with(".cpp")
+            || self.file_name.ends_with(".cc")
+            || self.file_name.ends_with(".cxx")
+            || self.file_name.ends_with(".c++")
+            || self.file_name.ends_with(".hpp");
+
         if is_cpp {
             tree_sitter_cpp::LANGUAGE.into()
         } else {
@@ -168,15 +167,21 @@ impl<'a> Visitor<'a> {
                 let expr_node = node.child(0).unwrap();
                 if expr_node.kind() == "assignment_expression" {
                     let left_node = expr_node.child_by_field_name("left").unwrap();
-                    let op_str = self.base.text(expr_node.child_by_field_name("operator").unwrap())?.to_string();
+                    let op_str = self
+                        .base
+                        .text(expr_node.child_by_field_name("operator").unwrap())?
+                        .to_string();
                     let right_node = expr_node.child_by_field_name("right").unwrap();
                     let right_expr = self.visit_expression(right_node)?;
-                    
+
                     if left_node.kind() == "field_expression" {
                         let target_node = left_node.child_by_field_name("argument").unwrap();
                         let target = self.visit_expression(target_node)?;
-                        let field = self.base.text(left_node.child_by_field_name("field").unwrap())?.to_string();
-                        
+                        let field = self
+                            .base
+                            .text(left_node.child_by_field_name("field").unwrap())?
+                            .to_string();
+
                         let value = match op_str.as_str() {
                             "=" => right_expr,
                             _ => Expression::BinaryOp {
@@ -188,9 +193,9 @@ impl<'a> Visitor<'a> {
                                 }),
                                 right: Box::new(right_expr),
                                 meta: meta.clone(),
-                            }
+                            },
                         };
-                        
+
                         return Ok(vec![Statement::SetField {
                             target,
                             field,
@@ -199,7 +204,7 @@ impl<'a> Visitor<'a> {
                         }]);
                     }
                 }
-                
+
                 let expr = self.visit_expression(expr_node)?;
 
                 // Special check for __crush_export__ call
@@ -253,7 +258,9 @@ impl<'a> Visitor<'a> {
                     // used to fall into the catch-all and be dropped, so every
                     // `else` body was silently skipped (CRUSH-201).
                     let alt_node = if alt_node.kind() == "else_clause" {
-                        alt_node.named_child(0).ok_or_else(|| anyhow::anyhow!("empty else clause"))?
+                        alt_node
+                            .named_child(0)
+                            .ok_or_else(|| anyhow::anyhow!("empty else clause"))?
                     } else {
                         alt_node
                     };
@@ -283,19 +290,22 @@ impl<'a> Visitor<'a> {
             }
             "for_statement" => {
                 let mut for_statements = Vec::new();
-                
+
                 // 1. Initializer
                 if let Some(init_node) = node.child_by_field_name("initializer") {
                     for_statements.extend(self.visit_statement(init_node)?);
                 }
-                
+
                 // 2. Condition
                 let condition = if let Some(cond_node) = node.child_by_field_name("condition") {
                     self.visit_expression(cond_node)?
                 } else {
-                    Expression::BoolLiteral { value: true, meta: meta.clone() }
+                    Expression::BoolLiteral {
+                        value: true,
+                        meta: meta.clone(),
+                    }
                 };
-                
+
                 // 3. Update — runs after the body and before every `continue`
                 // (appending it only to the body made `continue` skip it: an
                 // infinite loop).
@@ -310,23 +320,20 @@ impl<'a> Visitor<'a> {
 
                 // 4. Body
                 let body_node = node.child_by_field_name("body").unwrap();
-                let mut while_body = rewrite_continue(self.visit_block_or_statement(body_node)?, &update);
+                let mut while_body =
+                    rewrite_continue(self.visit_block_or_statement(body_node)?, &update);
                 while_body.extend(update);
-                
+
                 for_statements.push(Statement::While {
                     condition: Box::new(condition),
                     body: while_body,
                     meta,
                 });
-                
+
                 Ok(for_statements)
             }
-            "break_statement" => {
-                Ok(vec![Statement::Break { meta }])
-            }
-            "continue_statement" => {
-                Ok(vec![Statement::Continue { meta }])
-            }
+            "break_statement" => Ok(vec![Statement::Break { meta }]),
+            "continue_statement" => Ok(vec![Statement::Continue { meta }]),
             "do_statement" => {
                 // do { body } while (condition);
                 let body_node = node.child_by_field_name("body").unwrap();
@@ -349,7 +356,10 @@ impl<'a> Visitor<'a> {
                 let mut body = rewrite_continue(body, std::slice::from_ref(&exit_check));
                 body.push(exit_check);
                 Ok(vec![Statement::While {
-                    condition: Box::new(Expression::BoolLiteral { value: true, meta: meta.clone() }),
+                    condition: Box::new(Expression::BoolLiteral {
+                        value: true,
+                        meta: meta.clone(),
+                    }),
                     body,
                     meta,
                 }])
@@ -409,7 +419,7 @@ impl<'a> Visitor<'a> {
                             cases.push((None, case_body));
                         }
                         "{" | "}" => {} // skip braces
-                        _ => {} // ignore other nodes inside switch body
+                        _ => {}         // ignore other nodes inside switch body
                     }
                 }
 
@@ -490,16 +500,21 @@ impl<'a> Visitor<'a> {
                 }
                 Ok(result_stmts)
             }
-            "compound_statement" => {
-                self.visit_block(node)
-            }
+            "compound_statement" => self.visit_block(node),
             // Nothing to run: comments, `#include`, empty statements, and type
             // definitions (`struct P { ... };` — struct values are maps).
-            "comment" | "preproc_include" | ";" | "struct_specifier" | "type_definition" => Ok(vec![]),
+            "comment" | "preproc_include" | ";" | "struct_specifier" | "type_definition" => {
+                Ok(vec![])
+            }
             "ERROR" => anyhow::bail!(
                 "C parse error at line {}: `{}`",
                 node.start_position().row + 1,
-                self.base.text(node).unwrap_or("").chars().take(60).collect::<String>()
+                self.base
+                    .text(node)
+                    .unwrap_or("")
+                    .chars()
+                    .take(60)
+                    .collect::<String>()
             ),
             // CRUSH-201: unknown statements used to be dropped silently.
             other => anyhow::bail!(
@@ -539,7 +554,10 @@ impl<'a> Visitor<'a> {
             "field_expression" => {
                 let target_node = node.child_by_field_name("argument").unwrap();
                 let target = self.visit_expression(target_node)?;
-                let field = self.base.text(node.child_by_field_name("field").unwrap())?.to_string();
+                let field = self
+                    .base
+                    .text(node.child_by_field_name("field").unwrap())?
+                    .to_string();
                 Ok(Expression::GetField {
                     target: Box::new(target),
                     field,
@@ -569,7 +587,8 @@ impl<'a> Visitor<'a> {
                 let mut value = String::new();
                 for part in node.children(&mut node.walk()) {
                     if part.kind() == "string_literal" {
-                        value.push_str(&decode_c_escapes(&self.base.extract_string_literal(part)?)?);
+                        value
+                            .push_str(&decode_c_escapes(&self.base.extract_string_literal(part)?)?);
                     }
                 }
                 Ok(Expression::StringLiteral { value, meta })
@@ -579,8 +598,14 @@ impl<'a> Visitor<'a> {
                 let decoded = decode_c_escapes(&self.base.extract_string_literal(node)?)?;
                 let mut chars = decoded.chars();
                 match (chars.next(), chars.next()) {
-                    (Some(c), None) => Ok(Expression::IntLiteral { value: c as i64, meta }),
-                    _ => anyhow::bail!("multi-character char literal not supported: {}", self.base.text(node)?),
+                    (Some(c), None) => Ok(Expression::IntLiteral {
+                        value: c as i64,
+                        meta,
+                    }),
+                    _ => anyhow::bail!(
+                        "multi-character char literal not supported: {}",
+                        self.base.text(node)?
+                    ),
                 }
             }
             "initializer_list" => self.initializer_list(node),
@@ -593,22 +618,41 @@ impl<'a> Visitor<'a> {
                 let left = Box::new(self.visit_expression(node.child(0).unwrap())?);
                 let operator = self.base.text(node.child(1).unwrap())?.to_string();
                 let right = Box::new(self.visit_expression(node.child(2).unwrap())?);
-                let is_bool = matches!(operator.as_str(), "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||");
-                let expr = Expression::BinaryOp { operator, left, right, meta: meta.clone() };
+                let is_bool = matches!(
+                    operator.as_str(),
+                    "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||"
+                );
+                let expr = Expression::BinaryOp {
+                    operator,
+                    left,
+                    right,
+                    meta: meta.clone(),
+                };
                 // C comparisons and logic yield the ints 1 / 0, not booleans
                 // (`printf("%d", a < b)` prints 1).
-                Ok(if is_bool { bool_to_int(expr, &meta) } else { expr })
+                Ok(if is_bool {
+                    bool_to_int(expr, &meta)
+                } else {
+                    expr
+                })
             }
             "assignment_expression" => {
-                let left_node = self.base.unwrap_parens(node.child_by_field_name("left").unwrap());
+                let left_node = self
+                    .base
+                    .unwrap_parens(node.child_by_field_name("left").unwrap());
                 let right_node = node.child_by_field_name("right").unwrap();
                 let right_expr = self.visit_expression(right_node)?;
-                let op_owned = self.base.text(node.child_by_field_name("operator").unwrap())?.to_string();
+                let op_owned = self
+                    .base
+                    .text(node.child_by_field_name("operator").unwrap())?
+                    .to_string();
                 let op_str = op_owned.as_str();
                 // `a[i] = v` / `a[i] += v`
                 if left_node.kind() == "subscript_expression" {
-                    let target = self.visit_expression(left_node.child_by_field_name("argument").unwrap())?;
-                    let index = self.visit_expression(left_node.child_by_field_name("index").unwrap())?;
+                    let target =
+                        self.visit_expression(left_node.child_by_field_name("argument").unwrap())?;
+                    let index =
+                        self.visit_expression(left_node.child_by_field_name("index").unwrap())?;
                     let value = match op_str {
                         "=" => right_expr,
                         _ => Expression::BinaryOp {
@@ -636,28 +680,36 @@ impl<'a> Visitor<'a> {
                     );
                 }
                 let name = self.base.text(left_node)?.to_string();
-                
+
                 let value = match op_str {
                     "=" => right_expr,
                     _ => Expression::BinaryOp {
                         operator: op_str.trim_end_matches('=').to_string(),
-                        left: Box::new(Expression::Var { name: name.clone(), meta: meta.clone() }),
+                        left: Box::new(Expression::Var {
+                            name: name.clone(),
+                            meta: meta.clone(),
+                        }),
                         right: Box::new(right_expr),
                         meta: meta.clone(),
-                    }
+                    },
                 };
-                
+
                 Ok(Expression::Call {
                     function: "__crush_assign__".to_string(),
                     args: vec![
-                        Expression::Var { name, meta: meta.clone() },
+                        Expression::Var {
+                            name,
+                            meta: meta.clone(),
+                        },
                         value,
                     ],
                     meta,
                 })
             }
             "update_expression" => {
-                let arg_node = self.base.unwrap_parens(node.child_by_field_name("argument").unwrap());
+                let arg_node = self
+                    .base
+                    .unwrap_parens(node.child_by_field_name("argument").unwrap());
                 if arg_node.kind() != "identifier" {
                     anyhow::bail!(
                         "`++`/`--` on `{}` is not supported yet (line {})",
@@ -668,8 +720,12 @@ impl<'a> Visitor<'a> {
                 let name = self.base.text(arg_node)?.to_string();
                 let op = self.base.text(node.child(0).unwrap())?;
                 let is_prefix = op == "++" || op == "--";
-                let op_str = if is_prefix { op } else { self.base.text(node.child(1).unwrap())? };
-                
+                let op_str = if is_prefix {
+                    op
+                } else {
+                    self.base.text(node.child(1).unwrap())?
+                };
+
                 let fname = match (op_str, is_prefix) {
                     ("++", true) => "__crush_pre_inc__",
                     ("--", true) => "__crush_pre_dec__",
@@ -677,7 +733,7 @@ impl<'a> Visitor<'a> {
                     ("--", false) => "__crush_post_dec__",
                     _ => "__crush_post_inc__",
                 };
-                
+
                 Ok(Expression::Call {
                     function: fname.to_string(),
                     args: vec![Expression::Var {
@@ -739,7 +795,11 @@ impl<'a> Visitor<'a> {
                 let argument = self.visit_expression(node.child(1).unwrap())?;
                 Ok(Expression::Call {
                     // C parser treats both deref '*' and address-of '&' as pointer or unary expression.
-                    function: if operator == "*" { "__crush_deref__".to_string() } else { "__crush_addr_of__".to_string() },
+                    function: if operator == "*" {
+                        "__crush_deref__".to_string()
+                    } else {
+                        "__crush_addr_of__".to_string()
+                    },
                     args: vec![argument],
                     meta,
                 })
@@ -765,7 +825,8 @@ impl<'a> Visitor<'a> {
                 })
             }
             "subscript_expression" => {
-                let argument = self.visit_expression(node.child_by_field_name("argument").unwrap())?;
+                let argument =
+                    self.visit_expression(node.child_by_field_name("argument").unwrap())?;
                 let index = self.visit_expression(node.child_by_field_name("index").unwrap())?;
                 Ok(Expression::Call {
                     function: "__crush_subscript__".to_string(),
@@ -774,9 +835,12 @@ impl<'a> Visitor<'a> {
                 })
             }
             "conditional_expression" => {
-                let condition = self.visit_expression(node.child_by_field_name("condition").unwrap())?;
-                let consequence = self.visit_expression(node.child_by_field_name("consequence").unwrap())?;
-                let alternative = self.visit_expression(node.child_by_field_name("alternative").unwrap())?;
+                let condition =
+                    self.visit_expression(node.child_by_field_name("condition").unwrap())?;
+                let consequence =
+                    self.visit_expression(node.child_by_field_name("consequence").unwrap())?;
+                let alternative =
+                    self.visit_expression(node.child_by_field_name("alternative").unwrap())?;
                 Ok(Expression::Call {
                     // Ternary expression (a ? b : c) mapped to a conditional functional helper
                     function: "__crush_ternary__".to_string(),
@@ -792,7 +856,12 @@ impl<'a> Visitor<'a> {
             other => anyhow::bail!(
                 "C expression `{other}` is not supported yet (line {}): `{}`",
                 node.start_position().row + 1,
-                self.base.text(node).unwrap_or("").chars().take(60).collect::<String>()
+                self.base
+                    .text(node)
+                    .unwrap_or("")
+                    .chars()
+                    .take(60)
+                    .collect::<String>()
             ),
         }
     }
@@ -812,21 +881,44 @@ impl<'a> Visitor<'a> {
 
     /// Value of a declared-but-uninitialised variable: `int a[3]` → three
     /// zeros, `struct P p` → an empty map, scalars → null.
-    fn default_value(&mut self, decl: Node, declarator: Node, meta: &HashMap<String, serde_json::Value>) -> Result<Expression> {
+    fn default_value(
+        &mut self,
+        decl: Node,
+        declarator: Node,
+        meta: &HashMap<String, serde_json::Value>,
+    ) -> Result<Expression> {
         if declarator.kind() == "array_declarator" {
-            let size = declarator
-                .child_by_field_name("size")
-                .ok_or_else(|| anyhow::anyhow!("array without a size is not supported (line {})", declarator.start_position().row + 1))?;
+            let size = declarator.child_by_field_name("size").ok_or_else(|| {
+                anyhow::anyhow!(
+                    "array without a size is not supported (line {})",
+                    declarator.start_position().row + 1
+                )
+            })?;
             let n: usize = self.base.text(size)?.parse().map_err(|_| {
-                anyhow::anyhow!("array size must be an integer literal (line {})", size.start_position().row + 1)
+                anyhow::anyhow!(
+                    "array size must be an integer literal (line {})",
+                    size.start_position().row + 1
+                )
             })?;
             return Ok(Expression::ArrayLiteral {
-                elements: vec![Expression::IntLiteral { value: 0, meta: meta.clone() }; n],
+                elements: vec![
+                    Expression::IntLiteral {
+                        value: 0,
+                        meta: meta.clone()
+                    };
+                    n
+                ],
                 meta: meta.clone(),
             });
         }
-        if decl.child_by_field_name("type").is_some_and(|t| t.kind() == "struct_specifier") {
-            return Ok(Expression::ObjectLiteral { properties: vec![], meta: meta.clone() });
+        if decl
+            .child_by_field_name("type")
+            .is_some_and(|t| t.kind() == "struct_specifier")
+        {
+            return Ok(Expression::ObjectLiteral {
+                properties: vec![],
+                meta: meta.clone(),
+            });
         }
         Ok(Expression::NullLiteral { meta: meta.clone() })
     }
@@ -834,10 +926,19 @@ impl<'a> Visitor<'a> {
     /// `printf("fmt", args...)` → `io.write("..." + arg + ...)` (CRUSH-201).
     /// Supports `%d %i %u %ld %lld %s %c %%`; anything else (floats, widths,
     /// hex) is rejected rather than printed wrong.
-    fn lower_printf(&mut self, args_node: Node, meta: HashMap<String, serde_json::Value>) -> Result<Expression> {
-        let arg_nodes: Vec<Node> = args_node.named_children(&mut args_node.walk()).filter(|n| n.kind() != "comment").collect();
+    fn lower_printf(
+        &mut self,
+        args_node: Node,
+        meta: HashMap<String, serde_json::Value>,
+    ) -> Result<Expression> {
+        let arg_nodes: Vec<Node> = args_node
+            .named_children(&mut args_node.walk())
+            .filter(|n| n.kind() != "comment")
+            .collect();
         let line = args_node.start_position().row + 1;
-        let fmt_node = arg_nodes.first().ok_or_else(|| anyhow::anyhow!("printf without a format (line {line})"))?;
+        let fmt_node = arg_nodes
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("printf without a format (line {line})"))?;
         let fmt = match fmt_node.kind() {
             "string_literal" | "concatenated_string" => match self.visit_expression(*fmt_node)? {
                 Expression::StringLiteral { value, .. } => value,
@@ -863,35 +964,68 @@ impl<'a> Visitor<'a> {
                 }
             }
             let conv = match spec.as_str() {
-                "%" => { lit.push('%'); continue; }
+                "%" => {
+                    lit.push('%');
+                    continue;
+                }
                 "d" | "i" | "u" | "ld" | "lld" | "lu" | "llu" | "hd" => "int",
                 "s" => "str",
                 "c" => "char",
-                other => anyhow::bail!("printf conversion `%{other}` is not supported yet (line {line})"),
+                other => {
+                    anyhow::bail!("printf conversion `%{other}` is not supported yet (line {line})")
+                }
             };
-            let node = arg_nodes.get(next).ok_or_else(|| anyhow::anyhow!("printf: more conversions than arguments (line {line})"))?;
+            let node = arg_nodes.get(next).ok_or_else(|| {
+                anyhow::anyhow!("printf: more conversions than arguments (line {line})")
+            })?;
             next += 1;
             let value = self.visit_expression(*node)?;
             if !lit.is_empty() {
-                pieces.push(Expression::StringLiteral { value: std::mem::take(&mut lit), meta: meta.clone() });
+                pieces.push(Expression::StringLiteral {
+                    value: std::mem::take(&mut lit),
+                    meta: meta.clone(),
+                });
             }
             pieces.push(if conv == "char" {
-                Expression::CapabilityCall { name: "conv.chr".to_string(), args: vec![value], meta: meta.clone() }
+                Expression::CapabilityCall {
+                    name: "conv.chr".to_string(),
+                    args: vec![value],
+                    meta: meta.clone(),
+                }
             } else {
                 value
             });
         }
         if next != arg_nodes.len() {
-            anyhow::bail!("printf: {} argument(s) but {} conversion(s) (line {line})", arg_nodes.len() - 1, next - 1);
+            anyhow::bail!(
+                "printf: {} argument(s) but {} conversion(s) (line {line})",
+                arg_nodes.len() - 1,
+                next - 1
+            );
         }
         if !lit.is_empty() {
-            pieces.push(Expression::StringLiteral { value: lit, meta: meta.clone() });
+            pieces.push(Expression::StringLiteral {
+                value: lit,
+                meta: meta.clone(),
+            });
         }
-        let mut text = Expression::StringLiteral { value: String::new(), meta: meta.clone() };
+        let mut text = Expression::StringLiteral {
+            value: String::new(),
+            meta: meta.clone(),
+        };
         for p in pieces {
-            text = Expression::BinaryOp { operator: "+".to_string(), left: Box::new(text), right: Box::new(p), meta: meta.clone() };
+            text = Expression::BinaryOp {
+                operator: "+".to_string(),
+                left: Box::new(text),
+                right: Box::new(p),
+                meta: meta.clone(),
+            };
         }
-        Ok(Expression::CapabilityCall { name: "io.write".to_string(), args: vec![text], meta })
+        Ok(Expression::CapabilityCall {
+            name: "io.write".to_string(),
+            args: vec![text],
+            meta,
+        })
     }
 
     fn extract_name_from_declarator(&self, node: Node) -> Result<&str> {
@@ -905,15 +1039,20 @@ impl<'a> Visitor<'a> {
     }
 }
 
-
 /// `cond ? 1 : 0` — C truth values are ints.
 fn bool_to_int(cond: Expression, meta: &HashMap<String, serde_json::Value>) -> Expression {
     Expression::Call {
         function: "__crush_ternary__".to_string(),
         args: vec![
             cond,
-            Expression::IntLiteral { value: 1, meta: meta.clone() },
-            Expression::IntLiteral { value: 0, meta: meta.clone() },
+            Expression::IntLiteral {
+                value: 1,
+                meta: meta.clone(),
+            },
+            Expression::IntLiteral {
+                value: 0,
+                meta: meta.clone(),
+            },
         ],
         meta: meta.clone(),
     }
@@ -925,8 +1064,14 @@ fn c_not(x: Expression, meta: &HashMap<String, serde_json::Value>) -> Expression
         function: "__crush_ternary__".to_string(),
         args: vec![
             x,
-            Expression::IntLiteral { value: 0, meta: meta.clone() },
-            Expression::IntLiteral { value: 1, meta: meta.clone() },
+            Expression::IntLiteral {
+                value: 0,
+                meta: meta.clone(),
+            },
+            Expression::IntLiteral {
+                value: 1,
+                meta: meta.clone(),
+            },
         ],
         meta: meta.clone(),
     }
@@ -970,7 +1115,12 @@ fn rewrite_continue(stmts: Vec<Statement>, prefix: &[Statement]) -> Vec<Statemen
                 out.extend(prefix.iter().cloned());
                 out.push(Statement::Continue { meta });
             }
-            Statement::If { condition, then_body, else_body, meta } => out.push(Statement::If {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+                meta,
+            } => out.push(Statement::If {
                 condition,
                 then_body: rewrite_continue(then_body, prefix),
                 else_body: else_body.map(|e| rewrite_continue(e, prefix)),
@@ -989,7 +1139,9 @@ mod tests {
 
     fn parse_and_walk(source: &str) -> ast::Program {
         let mut parser = Parser::new();
-        parser.set_language(&tree_sitter_c::LANGUAGE.into()).unwrap();
+        parser
+            .set_language(&tree_sitter_c::LANGUAGE.into())
+            .unwrap();
         let tree = parser.parse(source, None).unwrap();
         let walker = CWalker {
             file_name: "test.c".to_string(),
@@ -1019,11 +1171,16 @@ mod tests {
         let program = parse_and_walk("void main() { while (x > 0) { x = x - 1; } }");
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 1);
-        if let Statement::While { condition, body, .. } = &main_func.body[0] {
+        if let Statement::While {
+            condition, body, ..
+        } = &main_func.body[0]
+        {
             // C comparisons are ints: `(x > 0) ? 1 : 0` (CRUSH-201).
             match &**condition {
                 Expression::Call { function, args, .. } if function == "__crush_ternary__" => {
-                    assert!(matches!(&args[0], Expression::BinaryOp { operator, .. } if operator == ">"));
+                    assert!(
+                        matches!(&args[0], Expression::BinaryOp { operator, .. } if operator == ">")
+                    );
                 }
                 other => panic!("Expected ternary-wrapped comparison, got {other:?}"),
             }
@@ -1035,17 +1192,21 @@ mod tests {
 
     #[test]
     fn test_for_loop_desugaring() {
-        let program = parse_and_walk("void main() { for (int i = 0; i < 10; i++) { printf(\"%d\", i); } }");
+        let program =
+            parse_and_walk("void main() { for (int i = 0; i < 10; i++) { printf(\"%d\", i); } }");
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 2);
-        
+
         if let Statement::VarDecl { name, .. } = &main_func.body[0] {
             assert_eq!(name, "i");
         } else {
             panic!("Expected VarDecl initializer");
         }
 
-        if let Statement::While { condition, body, .. } = &main_func.body[1] {
+        if let Statement::While {
+            condition, body, ..
+        } = &main_func.body[1]
+        {
             if let Expression::BinaryOp { operator, .. } = &**condition {
                 assert_eq!(operator, "<");
             }
@@ -1069,7 +1230,13 @@ mod tests {
         let program = parse_and_walk("void main() { obj.x = 10; }");
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.body.len(), 1);
-        if let Statement::SetField { target, field, value, .. } = &main_func.body[0] {
+        if let Statement::SetField {
+            target,
+            field,
+            value,
+            ..
+        } = &main_func.body[0]
+        {
             assert_eq!(field, "x");
             if let Expression::Var { name, .. } = target {
                 assert_eq!(name, "obj");
@@ -1106,34 +1273,70 @@ mod tests {
         assert_eq!(main_func.body.len(), 6);
 
         // 1. *ptr -> Call __crush_deref__
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[0] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[0]
+        {
             assert_eq!(function, "__crush_deref__");
-        } else { panic!("Expected __crush_deref__"); }
+        } else {
+            panic!("Expected __crush_deref__");
+        }
 
         // 2. &var -> Call __crush_addr_of__
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[1] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[1]
+        {
             assert_eq!(function, "__crush_addr_of__");
-        } else { panic!("Expected __crush_addr_of__"); }
+        } else {
+            panic!("Expected __crush_addr_of__");
+        }
 
         // 3. -num -> Call __crush_neg__
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[2] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[2]
+        {
             assert_eq!(function, "__crush_neg__");
-        } else { panic!("Expected __crush_neg__"); }
+        } else {
+            panic!("Expected __crush_neg__");
+        }
 
         // 4. !flag -> `flag ? 0 : 1` (C truth values are ints; CRUSH-201)
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[3] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[3]
+        {
             assert_eq!(function, "__crush_ternary__");
-        } else { panic!("Expected __crush_ternary__ for !flag"); }
+        } else {
+            panic!("Expected __crush_ternary__ for !flag");
+        }
 
         // 5. arr[5] -> Call __crush_subscript__
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[4] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[4]
+        {
             assert_eq!(function, "__crush_subscript__");
-        } else { panic!("Expected __crush_subscript__"); }
+        } else {
+            panic!("Expected __crush_subscript__");
+        }
 
         // 6. a ? b : c -> Call __crush_ternary__
-        if let Statement::ExprStmt { expr: Expression::Call { function, .. }, .. } = &main_func.body[5] {
+        if let Statement::ExprStmt {
+            expr: Expression::Call { function, .. },
+            ..
+        } = &main_func.body[5]
+        {
             assert_eq!(function, "__crush_ternary__");
-        } else { panic!("Expected __crush_ternary__"); }
+        } else {
+            panic!("Expected __crush_ternary__");
+        }
     }
 }
 
@@ -1143,22 +1346,45 @@ use crush_walker_core::LanguageAdapter;
 
 pub struct CAdapter;
 impl LanguageAdapter for CAdapter {
-    fn language_name(&self) -> &'static str { "c" }
-    fn file_extensions(&self) -> &[&'static str] { &["c", "h", "cpp", "cc", "cxx", "c++", "hpp"] }
-    fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
-        let ext = std::path::Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("c");
+    fn language_name(&self) -> &'static str {
+        "c"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &["c", "h", "cpp", "cc", "cxx", "c++", "hpp"]
+    }
+    fn walk(
+        &self,
+        source: &str,
+        filename: &str,
+    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
+        let ext = std::path::Path::new(filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("c");
         let is_cpp = matches!(ext, "cpp" | "cc" | "cxx" | "c++" | "hpp");
         let mut parser = tree_sitter::Parser::new();
         if is_cpp {
-            parser.set_language(&tree_sitter_cpp::LANGUAGE.into())
+            parser
+                .set_language(&tree_sitter_cpp::LANGUAGE.into())
                 .map_err(|e| anyhow::anyhow!("tree-sitter-cpp init: {e}"))?;
         } else {
-            parser.set_language(&tree_sitter_c::LANGUAGE.into())
+            parser
+                .set_language(&tree_sitter_c::LANGUAGE.into())
                 .map_err(|e| anyhow::anyhow!("tree-sitter-c init: {e}"))?;
         }
-        let tree = parser.parse(source, None).ok_or_else(|| anyhow::anyhow!("C/C++ parse failed"))?;
-        let walker = crate::CWalker { file_name: filename.to_string() };
+        let tree = parser
+            .parse(source, None)
+            .ok_or_else(|| anyhow::anyhow!("C/C++ parse failed"))?;
+        let walker = crate::CWalker {
+            file_name: filename.to_string(),
+        };
         let program = walker.walk(&tree, source.as_bytes())?;
-        Ok((crush_walker_core::FeatureReport { lang: "c".to_string(), ..Default::default() }, program))
+        Ok((
+            crush_walker_core::FeatureReport {
+                lang: "c".to_string(),
+                ..Default::default()
+            },
+            program,
+        ))
     }
 }

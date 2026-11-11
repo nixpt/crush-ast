@@ -32,14 +32,19 @@ fn compile(src: &str) -> crush_vm::Program {
 }
 
 fn on_scheduler(program: &crush_vm::Program) -> String {
-    crush_vm::run(program, &Quotas::default()).expect("scheduler").output
+    crush_vm::run(program, &Quotas::default())
+        .expect("scheduler")
+        .output
 }
 
 fn on_portable(program: &crush_vm::Program) -> String {
     let mut vm = PortableVm::new(program.clone());
     vm.set_input(InputSource::supplied(""));
     while !vm.is_halted() {
-        assert!(vm.step().expect("portable vm").is_none(), "unexpected pause");
+        assert!(
+            vm.step().expect("portable vm").is_none(),
+            "unexpected pause"
+        );
     }
     vm.take_output()
 }

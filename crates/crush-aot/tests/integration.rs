@@ -75,7 +75,10 @@ fn test_aot_io_read_codegen_compiles() {
 fn test_aot_arithmetic_add() {
     let compiler = AotCompiler::new();
     let so_path = compiler
-        .compile_source("fn main() { let x = 40; let y = 2; return x + y; }", "test_add")
+        .compile_source(
+            "fn main() { let x = 40; let y = 2; return x + y; }",
+            "test_add",
+        )
         .expect("compile_source failed");
 
     let module = Module::load(&so_path).expect("Module::load failed");
@@ -124,8 +127,13 @@ fn test_aot_arithmetic_div() {
 }
 
 fn run_main(source: &str, name: &str) -> RuntimeValue {
-    let so_path = AotCompiler::new().compile_source(source, name).expect("compile_source failed");
-    Module::load(&so_path).expect("Module::load failed").call_main().expect("call_main failed")
+    let so_path = AotCompiler::new()
+        .compile_source(source, name)
+        .expect("compile_source failed");
+    Module::load(&so_path)
+        .expect("Module::load failed")
+        .call_main()
+        .expect("call_main failed")
 }
 
 // CRUSH-214: `100 / 4` above is folded by the optimizer, so it never reached the `div`
@@ -133,9 +141,15 @@ fn run_main(source: &str, name: &str) -> RuntimeValue {
 #[test]
 fn test_aot_div_and_mod_of_runtime_values_compile() {
     let src = "fn n(x) { return x; } fn main() { let a = n(17); let b = n(5); return a / b * 100 + a % b; }";
-    assert_eq!(run_main(src, "test_div_mod_runtime"), RuntimeValue::Int(302));
+    assert_eq!(
+        run_main(src, "test_div_mod_runtime"),
+        RuntimeValue::Int(302)
+    );
     let src = "fn n(x) { return x; } fn main() { return n(-7) / n(2) * 10 + n(-7) % n(3); }";
-    assert_eq!(run_main(src, "test_div_mod_negative"), RuntimeValue::Int(-31));
+    assert_eq!(
+        run_main(src, "test_div_mod_negative"),
+        RuntimeValue::Int(-31)
+    );
 }
 
 // CRUSH-214: Crush function names that are Rust keywords or runtime helper names.
@@ -348,8 +362,7 @@ fn test_concurrent_compiles_of_same_source_on_cold_cache() {
     // Threads racing on one cold cache entry used to build straight into the
     // cache dir, where rustc's thin-LTO intermediates collide by crate name
     // and the loser fails to link.
-    let cache_dir = std::env::temp_dir()
-        .join(format!("crush-aot-race-{}", std::process::id()));
+    let cache_dir = std::env::temp_dir().join(format!("crush-aot-race-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache_dir);
 
     let source = "fn main() { return 4242; }";

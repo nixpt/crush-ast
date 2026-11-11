@@ -1,6 +1,6 @@
-use std::fs;
-use std::env;
 use crush_frontend::parser::cson::parse_cson;
+use std::env;
+use std::fs;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

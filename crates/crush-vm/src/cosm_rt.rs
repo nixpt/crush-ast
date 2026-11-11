@@ -53,8 +53,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crush_cosm::{
-    Const, Construct, CosmModule, Equality, FnRef, HookImpl, InterfaceDecl, KindDecl, KindRef, Member, Receiver,
-    Semantics, StaticValue, ValueMode,
+    Const, Construct, CosmModule, Equality, FnRef, HookImpl, InterfaceDecl, KindDecl, KindRef,
+    Member, Receiver, Semantics, StaticValue, ValueMode,
 };
 
 use crate::vm::{FuncValue, MapStore, Value, VmError};
@@ -122,15 +122,15 @@ impl Kind {
             }
             if let Some(m) = k.decl().member(name) {
                 match &m.member {
-                    Member::Static { value: StaticValue::Const(c) } => {
+                    Member::Static {
+                        value: StaticValue::Const(c),
+                    } => {
                         return Ok(Some(const_value(c)));
                     }
-                    Member::Static { value: StaticValue::Fn(f) } => {
-                        return Ok(Some(func_value(
-                            f,
-                            self.arity_of(f.as_str())?,
-                            Vec::new(),
-                        )));
+                    Member::Static {
+                        value: StaticValue::Fn(f),
+                    } => {
+                        return Ok(Some(func_value(f, self.arity_of(f.as_str())?, Vec::new())));
                     }
                     _ => {}
                 }
@@ -145,7 +145,10 @@ impl Kind {
     }
 
     fn is_value(&self) -> bool {
-        matches!(self.decl().semantics, Semantics::Value(ValueMode::Copy | ValueMode::Move))
+        matches!(
+            self.decl().semantics,
+            Semantics::Value(ValueMode::Copy | ValueMode::Move)
+        )
     }
 
     fn fields(&self) -> &[crush_cosm::FieldDecl] {
@@ -205,10 +208,18 @@ impl KindTable {
                 .filter_map(|(name, f)| f.arity.map(|a| (name.clone(), a)))
                 .collect(),
         );
-        let interfaces: Rc<HashMap<String, InterfaceDecl>> =
-            Rc::new(module.interfaces.iter().map(|i| (i.name.clone(), i.clone())).collect());
-        let decls: HashMap<&str, Rc<KindDecl>> =
-            module.kinds.iter().map(|k| (k.name.as_str(), Rc::new(k.clone()))).collect();
+        let interfaces: Rc<HashMap<String, InterfaceDecl>> = Rc::new(
+            module
+                .interfaces
+                .iter()
+                .map(|i| (i.name.clone(), i.clone()))
+                .collect(),
+        );
+        let decls: HashMap<&str, Rc<KindDecl>> = module
+            .kinds
+            .iter()
+            .map(|k| (k.name.as_str(), Rc::new(k.clone())))
+            .collect();
         let mut kinds = HashMap::new();
         for k in &module.kinds {
             let order = resolution_order(module, &k.name)?;
@@ -216,7 +227,10 @@ impl KindTable {
                 .iter()
                 .map(|r| {
                     decls.get(r.as_str()).cloned().ok_or_else(|| {
-                        VmError::Cosm(format!("`{}` inherits from `{r}`, which isn't declared", k.name))
+                        VmError::Cosm(format!(
+                            "`{}` inherits from `{r}`, which isn't declared",
+                            k.name
+                        ))
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -280,18 +294,27 @@ struct RecordState {
 impl RecordValue {
     /// A fresh instance: every slot unset, except fields with a default.
     pub fn new(kind: &Rc<Kind>) -> Self {
-        let mut state = RecordState { slots: vec![None; kind.fields().len()], ..Default::default() };
+        let mut state = RecordState {
+            slots: vec![None; kind.fields().len()],
+            ..Default::default()
+        };
         for (i, f) in kind.fields().iter().enumerate() {
             if let Some(c) = &f.default {
                 state.slots[i] = Some(const_value(c));
                 state.order.push(i);
             }
         }
-        Self { kind: kind.clone(), state: RefCell::new(state) }
+        Self {
+            kind: kind.clone(),
+            state: RefCell::new(state),
+        }
     }
 
     fn with_state(kind: &Rc<Kind>, state: RecordState) -> Self {
-        Self { kind: kind.clone(), state: RefCell::new(state) }
+        Self {
+            kind: kind.clone(),
+            state: RefCell::new(state),
+        }
     }
 
     /// The set fields in print order: declared fields in the order they were
@@ -344,7 +367,11 @@ impl RecordValue {
     }
 
     fn no_slot(&self, i: usize) -> VmError {
-        VmError::Cosm(format!("`{}` has {} slot(s); there is no slot {i}", self.kind.name(), self.kind.fields().len()))
+        VmError::Cosm(format!(
+            "`{}` has {} slot(s); there is no slot {i}",
+            self.kind.name(),
+            self.kind.fields().len()
+        ))
     }
 
     /// Write an instance field: a declared slot, or (open storage) an
@@ -355,7 +382,11 @@ impl RecordValue {
         }
         if !self.kind.decl().storage.is_open() {
             let fields: Vec<&str> = self.kind.fields().iter().map(|f| f.name.as_str()).collect();
-            return Err(VmError::Cosm(casm::sealed_field_error(self.kind.name(), name, &fields)));
+            return Err(VmError::Cosm(casm::sealed_field_error(
+                self.kind.name(),
+                name,
+                &fields,
+            )));
         }
         self.state.borrow_mut().extra.insert(name.to_string(), v);
         Ok(())
@@ -396,13 +427,20 @@ impl RecordValue {
     /// values, in any order.
     fn same_fields(&self, other: &[(String, Value)]) -> bool {
         let mine = self.fields();
-        mine.len() == other.len() && mine.iter().all(|(k, v)| other.iter().any(|(k2, v2)| k == k2 && v == v2))
+        mine.len() == other.len()
+            && mine
+                .iter()
+                .all(|(k, v)| other.iter().any(|(k2, v2)| k == k2 && v == v2))
     }
 }
 
 fn field_list(kind: &Kind) -> String {
     let names: Vec<&str> = kind.fields().iter().map(|f| f.name.as_str()).collect();
-    if names.is_empty() { "none".to_string() } else { names.join(", ") }
+    if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.join(", ")
+    }
 }
 
 fn const_value(c: &Const) -> Value {
@@ -422,14 +460,21 @@ pub fn record_eq(a: &Value, b: &Value) -> bool {
             if Rc::ptr_eq(x, y) {
                 return true;
             }
-            if x.kind.decl().equality == Equality::Identity || y.kind.decl().equality == Equality::Identity {
+            if x.kind.decl().equality == Equality::Identity
+                || y.kind.decl().equality == Equality::Identity
+            {
                 return false;
             }
             x.same_fields(&y.fields())
         }
         (Value::Record(r), Value::Map(m)) | (Value::Map(m), Value::Record(r)) => {
             r.kind.decl().equality == Equality::Structural
-                && r.same_fields(&m.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>())
+                && r.same_fields(
+                    &m.borrow()
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect::<Vec<_>>(),
+                )
         }
         _ => false,
     }
@@ -487,8 +532,15 @@ pub fn is_kind(v: &Value, kind: &str) -> bool {
 enum Found<'k> {
     /// A declared field that isn't set (a set one is read off the instance).
     UnsetField,
-    Method { func: &'k FnRef, receiver: Receiver },
-    Accessor { get: Option<&'k FnRef>, set: Option<&'k FnRef>, receiver: Receiver },
+    Method {
+        func: &'k FnRef,
+        receiver: Receiver,
+    },
+    Accessor {
+        get: Option<&'k FnRef>,
+        set: Option<&'k FnRef>,
+        receiver: Receiver,
+    },
     StaticConst(&'k Const),
     StaticFn(&'k FnRef),
 }
@@ -499,10 +551,17 @@ fn find_on_kind<'k>(kind: &'k Kind, name: &str) -> Result<Option<Found<'k>>, VmE
     for decl in &kind.mro {
         if let Some(m) = decl.member(name) {
             return Ok(Some(match &m.member {
-                Member::Method { func, receiver } => Found::Method { func, receiver: receiver.unwrap_or(decl.receiver) },
+                Member::Method { func, receiver } => Found::Method {
+                    func,
+                    receiver: receiver.unwrap_or(decl.receiver),
+                },
                 Member::Field => Found::UnsetField,
-                Member::Static { value: StaticValue::Const(c) } => Found::StaticConst(c),
-                Member::Static { value: StaticValue::Fn(f) } => Found::StaticFn(f),
+                Member::Static {
+                    value: StaticValue::Const(c),
+                } => Found::StaticConst(c),
+                Member::Static {
+                    value: StaticValue::Fn(f),
+                } => Found::StaticFn(f),
                 // CRUSH-277 S4: accessors run; they resolve like methods
                 // (the declaring Kind's receiver strategy binds them).
                 Member::Accessor { get, set } => Found::Accessor {
@@ -520,11 +579,16 @@ fn find_on_kind<'k>(kind: &'k Kind, name: &str) -> Result<Option<Found<'k>>, VmE
         for conf in &decl.conforms {
             if let Some(m) = conf.members.iter().find(|m| m.name == name) {
                 let found = match &m.member {
-                    Member::Method { func, receiver } => {
-                        Found::Method { func, receiver: receiver.unwrap_or(decl.receiver) }
-                    }
-                    Member::Static { value: StaticValue::Fn(f) } => Found::StaticFn(f),
-                    Member::Static { value: StaticValue::Const(c) } => Found::StaticConst(c),
+                    Member::Method { func, receiver } => Found::Method {
+                        func,
+                        receiver: receiver.unwrap_or(decl.receiver),
+                    },
+                    Member::Static {
+                        value: StaticValue::Fn(f),
+                    } => Found::StaticFn(f),
+                    Member::Static {
+                        value: StaticValue::Const(c),
+                    } => Found::StaticConst(c),
                     _ => continue,
                 };
                 hits.push((conf.interface.as_str(), found));
@@ -533,12 +597,17 @@ fn find_on_kind<'k>(kind: &'k Kind, name: &str) -> Result<Option<Found<'k>>, VmE
         if hits.is_empty() {
             // The interfaces' default methods.
             for conf in &decl.conforms {
-                let Some(iface) = kind.interfaces.get(conf.interface.as_str()) else { continue };
+                let Some(iface) = kind.interfaces.get(conf.interface.as_str()) else {
+                    continue;
+                };
                 if let Some(m) = iface.member(name)
                     && let Some(f) = &m.default
                 {
                     let found = match m.receiver {
-                        Some(_) => Found::Method { func: f, receiver: decl.receiver },
+                        Some(_) => Found::Method {
+                            func: f,
+                            receiver: decl.receiver,
+                        },
                         None => Found::StaticFn(f),
                     };
                     hits.push((conf.interface.as_str(), found));
@@ -564,15 +633,27 @@ fn find_on_kind<'k>(kind: &'k Kind, name: &str) -> Result<Option<Found<'k>>, VmE
 }
 
 fn func_value(name: &FnRef, arity: u8, captured: Vec<Value>) -> Value {
-    Value::Func(Rc::new(FuncValue { name: name.as_str().to_string(), arity, captured }))
+    Value::Func(Rc::new(FuncValue {
+        name: name.as_str().to_string(),
+        arity,
+        captured,
+    }))
 }
 
 /// A method used as a value: bound per its receiver.
-fn method_value(kind: &Rc<Kind>, recv: &Value, func: &FnRef, receiver: Receiver) -> Result<Value, VmError> {
+fn method_value(
+    kind: &Rc<Kind>,
+    recv: &Value,
+    func: &FnRef,
+    receiver: Receiver,
+) -> Result<Value, VmError> {
     let arity = kind.arity_of(func.as_str())?;
     let bound = |v: Value| -> Result<Value, VmError> {
         let arity = arity.checked_sub(1).ok_or_else(|| {
-            VmError::Cosm(format!("the method `{func}` of `{}` takes no receiver parameter", kind.name()))
+            VmError::Cosm(format!(
+                "the method `{func}` of `{}` takes no receiver parameter",
+                kind.name()
+            ))
         })?;
         Ok(func_value(func, arity, vec![v]))
     };
@@ -638,7 +719,12 @@ fn accessor_receiver(
     })
 }
 
-fn check_accessor_arity(kind: &Kind, func: &FnRef, params: usize, name: &str) -> Result<(), VmError> {
+fn check_accessor_arity(
+    kind: &Kind,
+    func: &FnRef,
+    params: usize,
+    name: &str,
+) -> Result<(), VmError> {
     let arity = kind.arity_of(func.as_str())? as usize;
     if arity != params {
         return Err(VmError::FuncArity {
@@ -696,7 +782,12 @@ pub fn get_member(target: &Value, name: &str, strict: bool) -> Result<MemberRead
             (r.kind.clone(), Some(target))
         }
         Value::Kind(k) => (k.clone(), None),
-        other => return Err(VmError::TypeError { expected: "record", got: other.type_name() }),
+        other => {
+            return Err(VmError::TypeError {
+                expected: "record",
+                got: other.type_name(),
+            });
+        }
     };
     // A class-level value: the chain walk stops at the first Kind
     // holding the name, whether by run-time write or by declaration
@@ -721,11 +812,15 @@ pub fn get_member(target: &Value, name: &str, strict: bool) -> Result<MemberRead
                     kind.name()
                 )));
             }
-            return Ok(MemberRead::Done(Value::Null));
+            Ok(MemberRead::Done(Value::Null))
         }
         Some(Found::UnsetField) => Ok(MemberRead::Done(Value::Null)),
         Some(Found::StaticConst(c)) => Ok(MemberRead::Done(const_value(c))),
-        Some(Found::StaticFn(f)) => Ok(MemberRead::Done(func_value(f, kind.arity_of(f.as_str())?, Vec::new()))),
+        Some(Found::StaticFn(f)) => Ok(MemberRead::Done(func_value(
+            f,
+            kind.arity_of(f.as_str())?,
+            Vec::new(),
+        ))),
         Some(Found::Method { func, receiver }) => Ok(MemberRead::Done(match recv {
             Some(recv) => method_value(&kind, recv, func, receiver)?,
             // Read off the Kind: a classmethod binds the class; any other
@@ -733,12 +828,21 @@ pub fn get_member(target: &Value, name: &str, strict: bool) -> Result<MemberRead
             None if receiver == Receiver::BoundCls => method_value(&kind, target, func, receiver)?,
             None => func_value(func, kind.arity_of(func.as_str())?, Vec::new()),
         })),
-        Some(Found::Accessor { get, receiver, .. }) => match get {
+        Some(Found::Accessor { get: None, .. }) => {
             // A write-only property reads as undefined.
-            None => Ok(MemberRead::Done(Value::Null)),
-            Some(g) => Ok(MemberRead::Call(getter_call(&kind, g, receiver, recv.as_deref(), name)?)),
-        },
-        None if strict => Err(VmError::Cosm(format!("`{}` has no member `{name}`", kind.name()))),
+            Ok(MemberRead::Done(Value::Null))
+        }
+        Some(Found::Accessor {
+            get: Some(g),
+            receiver,
+            ..
+        }) => Ok(MemberRead::Call(getter_call(
+            &kind, g, receiver, recv, name,
+        )?)),
+        None if strict => Err(VmError::Cosm(format!(
+            "`{}` has no member `{name}`",
+            kind.name()
+        ))),
         None => Ok(MemberRead::Done(Value::Null)),
     }
 }
@@ -759,7 +863,10 @@ pub fn set_member(target: &Value, name: &str, v: Value) -> Result<MemberWrite, V
         return Ok(MemberWrite::Done);
     }
     let Value::Record(r) = target else {
-        return Err(VmError::TypeError { expected: "record", got: target.type_name() });
+        return Err(VmError::TypeError {
+            expected: "record",
+            got: target.type_name(),
+        });
     };
     // An existing instance field wins over an inherited setter (JS
     // [[Set]]: an own data property is written directly).
@@ -767,7 +874,9 @@ pub fn set_member(target: &Value, name: &str, v: Value) -> Result<MemberWrite, V
         && let Some(Found::Accessor { set, receiver, .. }) = find_on_kind(&r.kind, name)?
     {
         return match set {
-            Some(s) => Ok(MemberWrite::Call(setter_call(&r.kind, s, receiver, target, name, v)?)),
+            Some(s) => Ok(MemberWrite::Call(setter_call(
+                &r.kind, s, receiver, target, name, v,
+            )?)),
             // A read-only property (JS strict mode throws the same way).
             None => Err(VmError::Cosm(format!(
                 "`{}.{name}` has no setter",
@@ -783,10 +892,10 @@ pub fn has_member(target: &Value, name: &str) -> Result<bool, VmError> {
     Ok(match target {
         Value::Record(r) => {
             r.has_field(name)
-                || matches!(find_on_kind(&r.kind, name)?, Some(f) if !matches!(f, Found::UnsetField)
+                || matches!(find_on_kind(&r.kind, name)?, Some(f) if !(matches!(f, Found::UnsetField)
                     // Statics aren't members of instances (JS `in`).
-                    && !(matches!(f, Found::StaticConst(_) | Found::StaticFn(_))
-                        && r.kind.decl().resolution == crush_cosm::Resolution::PrototypeChain))
+                    || (matches!(f, Found::StaticConst(_) | Found::StaticFn(_))
+                        && r.kind.decl().resolution == crush_cosm::Resolution::PrototypeChain)))
         }
         Value::Kind(k) => find_on_kind(k, name)?.is_some(),
         Value::Map(m) => m.borrow().contains_key(name),
@@ -802,7 +911,10 @@ pub fn del_member(target: &Value, name: &str) -> Result<(), VmError> {
             m.borrow_mut().shift_remove(name);
             Ok(())
         }
-        other => Err(VmError::TypeError { expected: "record", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "record",
+            got: other.type_name(),
+        }),
     }
 }
 
@@ -839,7 +951,10 @@ pub fn call_member(recv: &Value, name: &str, argc: usize) -> Result<MemberCall, 
     if instance && let Some(v) = recv_field(recv, name) {
         // A field holding a function value: call it.
         let f = crate::vm::callable(&v, argc)?;
-        return Ok(MemberCall::Call(Callee { func: f.name.clone(), leading: f.captured.clone() }));
+        return Ok(MemberCall::Call(Callee {
+            func: f.name.clone(),
+            leading: f.captured.clone(),
+        }));
     }
     let found = find_on_kind(&kind, name)?;
     let check = |func: &FnRef, leading: usize| -> Result<(), VmError> {
@@ -861,20 +976,25 @@ pub fn call_member(recv: &Value, name: &str, argc: usize) -> Result<MemberCall, 
                 // explicit receivers take it as an ordinary first argument.
                 _ if !instance => {
                     check(func, 0)?;
-                    return Ok(MemberCall::Call(Callee { func: func.as_str().to_string(), leading: Vec::new() }));
+                    return Ok(MemberCall::Call(Callee {
+                        func: func.as_str().to_string(),
+                        leading: Vec::new(),
+                    }));
                 }
                 Receiver::ExplicitValue => copy_value(recv),
-                Receiver::ExplicitRef | Receiver::ExplicitRefMut | Receiver::BoundSelf | Receiver::DynamicThis => {
-                    recv.clone()
-                }
+                Receiver::ExplicitRef
+                | Receiver::ExplicitRefMut
+                | Receiver::BoundSelf
+                | Receiver::DynamicThis => recv.clone(),
             };
             check(func, 1)?;
-            Ok(MemberCall::Call(Callee { func: func.as_str().to_string(), leading: vec![first] }))
+            Ok(MemberCall::Call(Callee {
+                func: func.as_str().to_string(),
+                leading: vec![first],
+            }))
         }
         Some(Found::StaticFn(f)) => {
-            if instance
-                && kind.decl().resolution == crush_cosm::Resolution::PrototypeChain
-            {
+            if instance && kind.decl().resolution == crush_cosm::Resolution::PrototypeChain {
                 // JS: `c.s()` where `s` is static is a TypeError — the
                 // static lives on the class (CRUSH-285 review #3).
                 return Err(VmError::Cosm(format!(
@@ -884,17 +1004,24 @@ pub fn call_member(recv: &Value, name: &str, argc: usize) -> Result<MemberCall, 
                 )));
             }
             check(f, 0)?;
-            Ok(MemberCall::Call(Callee { func: f.as_str().to_string(), leading: Vec::new() }))
+            Ok(MemberCall::Call(Callee {
+                func: f.as_str().to_string(),
+                leading: Vec::new(),
+            }))
         }
         Some(Found::Accessor { .. }) => Err(VmError::Cosm(format!(
             "`{}.{name}` is an accessor, not a method: read it, don't call it",
             kind.name()
         ))),
-        Some(Found::StaticConst(_)) | Some(Found::UnsetField) => {
-            Err(VmError::Cosm(format!("`{}.{name}` is not a method", kind.name())))
-        }
+        Some(Found::StaticConst(_)) | Some(Found::UnsetField) => Err(VmError::Cosm(format!(
+            "`{}.{name}` is not a method",
+            kind.name()
+        ))),
         None if name == "clone" && argc == 0 && instance => clone_call(&kind, recv),
-        None => Err(VmError::Cosm(format!("`{}` has no method `{name}`", kind.name()))),
+        None => Err(VmError::Cosm(format!(
+            "`{}` has no method `{name}`",
+            kind.name()
+        ))),
     }
 }
 
@@ -910,10 +1037,13 @@ fn recv_field(recv: &Value, name: &str) -> Option<Value> {
 fn clone_call(kind: &Rc<Kind>, recv: &Value) -> Result<MemberCall, VmError> {
     let hook = kind.mro.iter().find_map(|k| k.hooks.clone.as_ref());
     match hook {
-        Some(HookImpl::Fn(f)) => {
-            Ok(MemberCall::Call(Callee { func: f.as_str().to_string(), leading: vec![recv.clone()] }))
+        Some(HookImpl::Fn(f)) => Ok(MemberCall::Call(Callee {
+            func: f.as_str().to_string(),
+            leading: vec![recv.clone()],
+        })),
+        Some(HookImpl::Disabled) => {
+            Err(VmError::Cosm(format!("`{}` can't be cloned", kind.name())))
         }
-        Some(HookImpl::Disabled) => Err(VmError::Cosm(format!("`{}` can't be cloned", kind.name()))),
         Some(HookImpl::Derived) | None => Ok(MemberCall::Done(deep_clone(recv))),
     }
 }
@@ -928,7 +1058,10 @@ pub enum Construction {
     /// `POP` that follows `CONSTRUCT` for such a Kind
     /// ([`initialises_by_call`]). Without one (a factory) the call's return
     /// value is the instance.
-    Call { instance: Option<Value>, callee: Callee },
+    Call {
+        instance: Option<Value>,
+        callee: Callee,
+    },
 }
 
 /// `NEW_RECORD`: a fresh instance (field defaults applied), no constructor —
@@ -942,16 +1075,25 @@ pub fn new_record(kind: &Rc<Kind>) -> Value {
 /// follow. `false` for a Kind whose resolution order can't be computed (the
 /// VMs refuse that table at load).
 pub fn initialises_by_call(module: &CosmModule, kind: &str) -> bool {
-    matches!(casm::kind_constructor_in(module, kind), Some((_, casm::ConstructorUse::Initialiser)))
+    matches!(
+        casm::kind_constructor_in(module, kind),
+        Some((_, casm::ConstructorUse::Initialiser))
+    )
 }
 
 /// `CONSTRUCT kind argc` by the Kind's `construct` strategy. `args` are the
 /// arguments, first argument first. A `literal` Kind takes no arguments (the
 /// fields are written after) or one per declared field, in slot order.
 pub fn construct(kind: &Rc<Kind>, args: &[Value]) -> Result<Construction, VmError> {
-    if let Construct::PyNewInit { new_fn: Some(f), .. } = &kind.decl().construct {
+    if let Construct::PyNewInit {
+        new_fn: Some(f), ..
+    } = &kind.decl().construct
+    {
         // Refused when the program loads (the shared COSM rule).
-        return Err(VmError::Unsupported(format!("`{}`'s `__new__` (`{f}`)", kind.name())));
+        return Err(VmError::Unsupported(format!(
+            "`{}`'s `__new__` (`{f}`)",
+            kind.name()
+        )));
     }
     let mro: Vec<&KindDecl> = kind.mro.iter().map(|k| &**k).collect();
     let record = RecordValue::new(kind);
@@ -967,14 +1109,23 @@ pub fn construct(kind: &Rc<Kind>, args: &[Value]) -> Result<Construction, VmErro
                     got: args.len(),
                 });
             }
-            let callee = Callee { func: func.as_str().to_string(), leading: Vec::new() };
+            let callee = Callee {
+                func: func.as_str().to_string(),
+                leading: Vec::new(),
+            };
             if !initialiser {
-                return Ok(Construction::Call { instance: None, callee });
+                return Ok(Construction::Call {
+                    instance: None,
+                    callee,
+                });
             }
             let instance = Value::Record(Rc::new(record));
             Ok(Construction::Call {
                 instance: Some(instance.clone()),
-                callee: Callee { leading: vec![instance], ..callee },
+                callee: Callee {
+                    leading: vec![instance],
+                    ..callee
+                },
             })
         }
         None => {
@@ -989,7 +1140,10 @@ pub fn construct(kind: &Rc<Kind>, args: &[Value]) -> Result<Construction, VmErro
                         field_list(kind)
                     )
                 } else {
-                    format!("`{}` has no `__init__`, so it takes no arguments", kind.name())
+                    format!(
+                        "`{}` has no `__init__`, so it takes no arguments",
+                        kind.name()
+                    )
                 }));
             }
             for (i, v) in args.iter().enumerate() {
@@ -1005,7 +1159,14 @@ pub fn construct(kind: &Rc<Kind>, args: &[Value]) -> Result<Construction, VmErro
 pub fn is_text_cap(cap: &str) -> bool {
     matches!(
         cap,
-        "io.print" | "io.eprint" | "io.write" | "py.print" | "py.print_sep_end" | "str.concat" | "str.format" | "conv.to_str"
+        "io.print"
+            | "io.eprint"
+            | "io.write"
+            | "py.print"
+            | "py.print_sep_end"
+            | "str.concat"
+            | "str.format"
+            | "conv.to_str"
             | "js.format"
     )
 }
@@ -1040,7 +1201,11 @@ fn render_at(
         Value::Array(a) => render_seq(&a.borrow(), call, depth)?.map(Value::new_array),
         Value::Tuple(t) => render_seq(t, call, depth)?.map(Value::Tuple),
         Value::Map(m) => {
-            let items: Vec<(String, Value)> = m.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let items: Vec<(String, Value)> = m
+                .borrow()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
             let values: Vec<Value> = items.iter().map(|(_, v)| v.clone()).collect();
             render_seq(&values, call, depth)?
                 .map(|vs| Value::new_map(items.into_iter().map(|(k, _)| k).zip(vs)))
@@ -1082,7 +1247,10 @@ pub enum IndexAccess {
     Done(Value),
     /// Run this accessor call; the result is then `after` when set (a
     /// write leaves the record), else the call's return value (a read).
-    Call { call: AccessorCall, after: Option<Value> },
+    Call {
+        call: AccessorCall,
+        after: Option<Value>,
+    },
 }
 
 /// An [`is_index_cap`] call: the Record's fields, like `ARR_GET` / `ARR_SET`
@@ -1101,7 +1269,10 @@ pub fn index_cap(cap: &str, args: &[Value]) -> Result<IndexAccess, VmError> {
             let key = crate::map_ops::map_key_string(key)?;
             Ok(match set_member(rec, &key, v.clone())? {
                 MemberWrite::Done => IndexAccess::Done(rec.clone()),
-                MemberWrite::Call(call) => IndexAccess::Call { call, after: Some(rec.clone()) },
+                MemberWrite::Call(call) => IndexAccess::Call {
+                    call,
+                    after: Some(rec.clone()),
+                },
             })
         }
         // Define an own field, bypassing any setter (a JS class field
@@ -1124,7 +1295,10 @@ pub fn cap_args(cap: &str, args: Vec<Value>) -> Result<Vec<Value>, VmError> {
     if cap == "js.strict_eq" {
         return Ok(args);
     }
-    if !args.iter().any(|a| matches!(a, Value::Record(_) | Value::Kind(_))) {
+    if !args
+        .iter()
+        .any(|a| matches!(a, Value::Record(_) | Value::Kind(_)))
+    {
         return Ok(args);
     }
     args.into_iter()
@@ -1158,11 +1332,18 @@ pub fn index_get(r: &Rc<RecordValue>, key: &Value) -> Result<IndexAccess, VmErro
         return Ok(IndexAccess::Done(v));
     }
     match find_on_kind(&r.kind, &key)? {
-        Some(Found::Accessor { get: Some(g), receiver, .. }) => Ok(IndexAccess::Call {
+        Some(Found::Accessor {
+            get: Some(g),
+            receiver,
+            ..
+        }) => Ok(IndexAccess::Call {
             call: getter_call(&r.kind, g, receiver, Some(&Value::Record(r.clone())), &key)?,
             after: None,
         }),
-        _ => Err(VmError::TypeError { expected: "present map key", got: "absent key" }),
+        _ => Err(VmError::TypeError {
+            expected: "present map key",
+            got: "absent key",
+        }),
     }
 }
 

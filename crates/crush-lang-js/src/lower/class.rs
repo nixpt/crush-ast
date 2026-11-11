@@ -31,6 +31,7 @@
 //! `super.x` reads, and a derived class whose parent's constructor the
 //! walker hasn't lowered (imported classes — CRUSH-110).
 
+use boa_ast::declaration::{Declaration, ExportDeclaration};
 use boa_ast::expression::literal::LiteralKind;
 use boa_ast::expression::operator::unary::UnaryOp;
 use boa_ast::expression::{Expression, New};
@@ -38,7 +39,6 @@ use boa_ast::function::{
     ClassDeclaration, ClassElement, ClassElementName, ClassExpression, ClassMethodDefinition,
     FunctionExpression,
 };
-use boa_ast::declaration::{Declaration, ExportDeclaration};
 use boa_ast::property::{MethodDefinitionKind, PropertyName};
 use boa_ast::{Span, Spanned, Statement, StatementListItem};
 use boa_interner::Sym;
@@ -219,7 +219,6 @@ impl Lower<'_> {
                         }
                     }
                 }
-                _ => {}
             }
         }
     }
@@ -264,12 +263,7 @@ impl Lower<'_> {
             if c.name().map(|n| n.sym()) != Some(id.sym()) {
                 return;
             }
-            self.preregister_class(
-                Some(id.sym()),
-                c.super_ref(),
-                c.constructor(),
-                c.elements(),
-            );
+            self.preregister_class(Some(id.sym()), c.super_ref(), c.constructor(), c.elements());
         }
     }
 
@@ -413,8 +407,7 @@ impl Lower<'_> {
                     let defaulted = self.fn_sigs.iter().any(|(f, s)| {
                         (f.ends_with(&format!("::{}", call.method))
                             || f.ends_with(&format!("::static::{}", call.method)))
-                            && s.iter()
-                                .any(|p| *p != super::scope::Param::Plain)
+                            && s.iter().any(|p| *p != super::scope::Param::Plain)
                     });
                     if defaulted {
                         return Err(self.unsupported(
@@ -516,10 +509,7 @@ impl Lower<'_> {
         m: Meta,
     ) -> anyhow::Result<CastExpr> {
         let Some(home) = self.home_class.clone() else {
-            return Err(self.unsupported(
-                "a `super.m()` call outside a class method",
-                span,
-            ));
+            return Err(self.unsupported("a `super.m()` call outside a class method", span));
         };
         let mut cur = self.class_parents.get(&home).cloned();
         let mut seen = std::collections::HashSet::new();
@@ -543,7 +533,10 @@ impl Lower<'_> {
                         meta: m,
                     });
                 }
-                if self.functions.contains_key(&format!("{ancestor}::{method}")) {
+                if self
+                    .functions
+                    .contains_key(&format!("{ancestor}::{method}"))
+                {
                     return Err(self.unsupported(
                         format!(
                             "`super.{method}()` where `{method}` is an instance method of `{ancestor}`, called from a static method"
@@ -552,7 +545,10 @@ impl Lower<'_> {
                     ));
                 }
             } else {
-                if self.functions.contains_key(&format!("{ancestor}::{method}")) {
+                if self
+                    .functions
+                    .contains_key(&format!("{ancestor}::{method}"))
+                {
                     let func = format!("{ancestor}::{method}");
                     let adapted = match self.fn_sigs.get(&func).cloned() {
                         Some(sig) => {
@@ -592,9 +588,7 @@ impl Lower<'_> {
                 })
             {
                 return Err(self.unsupported(
-                    format!(
-                        "`super.{method}()` where `{method}` is an accessor of `{ancestor}`"
-                    ),
+                    format!("`super.{method}()` where `{method}` is an accessor of `{ancestor}`"),
                     span,
                 ));
             }
@@ -609,11 +603,7 @@ impl Lower<'_> {
     }
 
     /// A class field's name (computed names stay loud).
-    fn field_name(
-        &self,
-        name: &PropertyName,
-        span: Option<Span>,
-    ) -> anyhow::Result<String> {
+    fn field_name(&self, name: &PropertyName, span: Option<Span>) -> anyhow::Result<String> {
         match name {
             PropertyName::Literal(id) => Ok(self.name(id.sym())),
             _ => Err(self.unsupported("a computed member name (`[k]() {}`)", span)),
@@ -927,10 +917,8 @@ impl Lower<'_> {
             None => {
                 let parent = parents[0].as_str().to_string();
                 let parent_ctor = format!("{parent}::constructor");
-                let Some(parent_params) = self
-                    .functions
-                    .get(&parent_ctor)
-                    .map(|f| f.params.clone())
+                let Some(parent_params) =
+                    self.functions.get(&parent_ctor).map(|f| f.params.clone())
                 else {
                     return Err(self.unsupported(
                         format!(

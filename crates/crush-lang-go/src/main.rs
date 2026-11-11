@@ -11,7 +11,9 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     run_walker_binary(
-        crush_lang_go::GoWalker { file_name: cli.input.clone() },
+        crush_lang_go::GoWalker {
+            file_name: cli.input.clone(),
+        },
         "go",
         &[".go"],
         &cli.input,

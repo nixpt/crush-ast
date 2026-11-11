@@ -13,7 +13,11 @@ pub fn worker_count() -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .filter(|&n: &usize| n > 0)
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()).min(4))
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map_or(1, |n| n.get())
+                .min(4)
+        })
 }
 
 /// `items.iter().map(f).collect()`, with `f` run on [`worker_count`] threads.
@@ -23,7 +27,8 @@ pub fn worker_count() -> usize {
 /// re-raised here, with its original payload, once every item has run.
 pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
     let next = AtomicUsize::new(0);
-    let slots: Vec<Mutex<Option<std::thread::Result<R>>>> = items.iter().map(|_| Mutex::new(None)).collect();
+    let slots: Vec<Mutex<Option<std::thread::Result<R>>>> =
+        items.iter().map(|_| Mutex::new(None)).collect();
     std::thread::scope(|scope| {
         for _ in 0..worker_count().min(items.len()) {
             scope.spawn(|| {
@@ -38,9 +43,11 @@ pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec
     });
     slots
         .into_iter()
-        .map(|slot| match slot.into_inner().unwrap().expect("every item ran") {
-            Ok(r) => r,
-            Err(payload) => panic::resume_unwind(payload),
-        })
+        .map(
+            |slot| match slot.into_inner().unwrap().expect("every item ran") {
+                Ok(r) => r,
+                Err(payload) => panic::resume_unwind(payload),
+            },
+        )
         .collect()
 }

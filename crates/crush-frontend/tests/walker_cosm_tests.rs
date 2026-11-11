@@ -211,5 +211,8 @@ fn construct_of_an_undeclared_kind_is_a_compile_error() {
         Err(e) => format!("{e:#}"),
     };
     assert!(err.contains("Ghost"), "error names the kind: {err}");
-    assert!(err.contains("doesn't declare"), "error explains itself: {err}");
+    assert!(
+        err.contains("doesn't declare"),
+        "error explains itself: {err}"
+    );
 }

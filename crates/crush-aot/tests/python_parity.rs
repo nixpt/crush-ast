@@ -23,20 +23,30 @@ const CLOSURES: &str = "function values / closures are VM-only (CRUSH-251)";
 const EXCEPTIONS: &str = "try/finally has no AOT lowering (CRUSH-zorro-7)";
 
 /// Rust backend gaps that must stay loud (compile error), not wrong.
-const LOUD_ON_RUST: &[(&str, &str)] =
-    &[("21_lambda", CLOSURES), ("22_closures", CLOSURES), ("26_try_finally", EXCEPTIONS)];
+const LOUD_ON_RUST: &[(&str, &str)] = &[
+    ("21_lambda", CLOSURES),
+    ("22_closures", CLOSURES),
+    ("26_try_finally", EXCEPTIONS),
+];
 
 /// C backend gaps that must stay loud (compile error), not wrong.
 const LOUD_ON_C: &[(&str, &str)] = &[
-    ("06_strmeth", "str_split is not implemented in the C runtime"),
-    ("18_methods", "str_split is not implemented in the C runtime"),
+    (
+        "06_strmeth",
+        "str_split is not implemented in the C runtime",
+    ),
+    (
+        "18_methods",
+        "str_split is not implemented in the C runtime",
+    ),
     ("21_lambda", CLOSURES),
     ("22_closures", CLOSURES),
     ("26_try_finally", EXCEPTIONS),
 ];
 
 fn corpus() -> Vec<PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../crush-lang-python/tests/cpython_corpus");
+    let dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../crush-lang-python/tests/cpython_corpus");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .expect("corpus dir")
         .map(|e| e.unwrap().path())
@@ -55,9 +65,16 @@ enum Outcome {
 
 /// Program stdout without the type-tagged result line the runner prints last.
 fn run(so: &Path, expected: &str) -> Outcome {
-    let out = Command::new(env!("CARGO_BIN_EXE_crush-aot-runner")).arg(so).output().expect("spawn runner");
+    let out = Command::new(env!("CARGO_BIN_EXE_crush-aot-runner"))
+        .arg(so)
+        .output()
+        .expect("spawn runner");
     if !out.status.success() {
-        return Outcome::Loud(format!("exit {:?}: {}", out.status.code(), String::from_utf8_lossy(&out.stderr).trim()));
+        return Outcome::Loud(format!(
+            "exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
     }
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     let body = text.trim_end_matches('\n');
@@ -65,7 +82,11 @@ fn run(so: &Path, expected: &str) -> Outcome {
         Some(i) => format!("{}\n", &body[..i]),
         None => String::new(),
     };
-    if printed == expected { Outcome::Exact } else { Outcome::Wrong(printed) }
+    if printed == expected {
+        Outcome::Exact
+    } else {
+        Outcome::Wrong(printed)
+    }
 }
 
 fn compile_and_run(backend: &str, name: &str, source: &str, expected: &str) -> Outcome {
@@ -78,7 +99,11 @@ fn compile_and_run(backend: &str, name: &str, source: &str, expected: &str) -> O
         Err(e) => return Outcome::Loud(format!("compile: {e}")),
     };
     let aot = AotCompiler::new();
-    let built = if backend == "rust" { aot.compile_casm(&casm, &format!("pyp_{name}_r")) } else { aot.compile_c(&casm, &format!("pyp_{name}_c"), "gcc") };
+    let built = if backend == "rust" {
+        aot.compile_casm(&casm, &format!("pyp_{name}_r"))
+    } else {
+        aot.compile_c(&casm, &format!("pyp_{name}_c"), "gcc")
+    };
     match built {
         Ok(so) => run(&so, expected),
         Err(e) => Outcome::Loud(format!("aot: {e}")),
@@ -107,7 +132,12 @@ fn check(backend: &str, allowed_loud: &[(&str, &str)]) {
             Outcome::Wrong(got) => problems.push(format!("{name}: {backend} printed WRONG output:\n  cpython: {expected:?}\n  crush:   {got:?}")),
         }
     }
-    assert!(problems.is_empty(), "{} problem(s) on {backend}:\n{}", problems.len(), problems.join("\n"));
+    assert!(
+        problems.is_empty(),
+        "{} problem(s) on {backend}:\n{}",
+        problems.len(),
+        problems.join("\n")
+    );
 }
 
 #[test]
@@ -117,7 +147,12 @@ fn rust_backend_is_exact_or_loud() {
 
 #[test]
 fn c_backend_is_exact_or_loud() {
-    if Command::new("gcc").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
+    if Command::new("gcc")
+        .arg("--version")
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+    {
         eprintln!("gcc not found; skipping the C backend");
         return;
     }

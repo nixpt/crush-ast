@@ -84,7 +84,10 @@ impl CapsuleBundle {
             for i in 0..archive.len() {
                 let mut entry = archive.by_index(i)?;
                 let entry_name = entry.name();
-                if entry_name.ends_with(".casm") || entry_name.ends_with(".cvm") || entry_name.ends_with(".cvm1") {
+                if entry_name.ends_with(".casm")
+                    || entry_name.ends_with(".cvm")
+                    || entry_name.ends_with(".cvm1")
+                {
                     let mut data = Vec::new();
                     entry.read_to_end(&mut data)?;
                     payload = Some(data);

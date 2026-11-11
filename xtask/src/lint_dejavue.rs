@@ -29,7 +29,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use xtask::diag::{hinted_text, diag_line_from, wants_json, CODE_IO, CODE_LINT};
+use xtask::diag::{CODE_IO, CODE_LINT, diag_line_from, hinted_text, wants_json};
 
 // =====================================================================
 // Constants
@@ -205,7 +205,11 @@ pub fn time_to_unix_seconds(ts: &str) -> Option<i64> {
             None => "0",
         };
         let oh: i64 = oh_str.parse().ok()?;
-        let om: i64 = if om_str.is_empty() { 0 } else { om_str.parse().ok()? };
+        let om: i64 = if om_str.is_empty() {
+            0
+        } else {
+            om_str.parse().ok()?
+        };
         sign * (oh * 3600 + om * 60)
     } else {
         0
@@ -249,8 +253,7 @@ pub fn is_within_window(ts_before: &str, ts_after: &str, window_seconds: i64) ->
 
 /// Lint a JSONL timeline file.  Returns a sorted list of violations.
 pub fn lint(path: &Path) -> Result<Vec<Violation>, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let raw = fs::read_to_string(path).map_err(|e| format!("read {}: {}", path.display(), e))?;
     let mut entries: Vec<Event> = Vec::new();
     for line in raw.lines() {
         let line = line.trim();
@@ -283,9 +286,9 @@ pub fn lint(path: &Path) -> Result<Vec<Violation>, String> {
         if has_companion {
             continue;
         }
-        let present_outside_window = entries.iter().any(|other| {
-            other.event == candidate_suffix || other.event == candidate_prefix
-        });
+        let present_outside_window = entries
+            .iter()
+            .any(|other| other.event == candidate_suffix || other.event == candidate_prefix);
         let reason = if present_outside_window {
             format!(
                 "candidate `{}` (or `{}`) is present in the timeline but OUTSIDE the {}-second window. \
@@ -338,14 +341,19 @@ fn main() -> ExitCode {
                 let msg = "OK: timeline passes lint (no premature RESOLVED claims without supersession markers)";
                 eprint!("{}", diag_line_from(CODE_LINT, "note", msg, None, None));
             } else {
-                println!("OK: timeline passes lint (no premature RESOLVED claims without supersession markers)");
+                println!(
+                    "OK: timeline passes lint (no premature RESOLVED claims without supersession markers)"
+                );
             }
             ExitCode::SUCCESS
         }
         Ok(violations) => {
             if json_mode {
                 let summary = format!("FAIL: {} violation(s)", violations.len());
-                eprint!("{}", diag_line_from(CODE_LINT, "error", &summary, None, None));
+                eprint!(
+                    "{}",
+                    diag_line_from(CODE_LINT, "error", &summary, None, None)
+                );
                 for v in &violations {
                     let msg = format!(
                         "ts={} event={} candidate=\"{}\"",
@@ -409,7 +417,10 @@ mod tests {
 
     #[test]
     fn extract_field_handles_whitespace() {
-        assert_eq!(extract_field(r#"{ "ts" :  "v" }"#, "ts").as_deref(), Some("v"));
+        assert_eq!(
+            extract_field(r#"{ "ts" :  "v" }"#, "ts").as_deref(),
+            Some("v")
+        );
     }
 
     #[test]
