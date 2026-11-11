@@ -3960,16 +3960,19 @@ fn main() {
 "#;
         let program = Parser::parse(source).unwrap();
         let main = &program.functions["main"];
-        let call = main.body.iter().find_map(|stmt| match stmt {
-            Statement::ExprStmt { expr, .. } => match expr {
-                Expression::Call { function, args, .. } if function == "print" => {
-                    Some(args.first().unwrap().clone())
-                }
+        let call = main
+            .body
+            .iter()
+            .find_map(|stmt| match stmt {
+                Statement::ExprStmt { expr, .. } => match expr {
+                    Expression::Call { function, args, .. } if function == "print" => {
+                        Some(args.first().unwrap().clone())
+                    }
+                    _ => None,
+                },
                 _ => None,
-            },
-            _ => None,
-        })
-        .expect("print(h[k](41)) statement");
+            })
+            .expect("print(h[k](41)) statement");
         // The argument is a call on the subscript value, not a parse error.
         match &call {
             Expression::CallValue { callee, args, .. } => {
@@ -3989,9 +3992,7 @@ fn main() {
             ("(make_adder(7))(1)", "CallValue"),
             ("Point { x: 1 }.sum()", "MethodCall"),
         ] {
-            let source = format!(
-                "struct Point {{ x }}\nfn main() {{\n    let r = {snippet}\n}}\n"
-            );
+            let source = format!("struct Point {{ x }}\nfn main() {{\n    let r = {snippet}\n}}\n");
             let program = Parser::parse(&source).unwrap();
             let main = &program.functions["main"];
             let found = main.body.iter().find_map(|stmt| match stmt {
