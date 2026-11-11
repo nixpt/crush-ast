@@ -13,12 +13,19 @@ use crush_aot::AotCompiler;
 use crush_lang_sdk::{Quotas, Runtime};
 
 fn cc_available() -> bool {
-    Command::new("gcc").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("gcc")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn vm_stdout(source: &str) -> String {
     let program = crush_lang_sdk::compile::compile_crush_source(source).expect("frontend");
-    let quotas = Quotas { max_steps: 50_000_000, ..Quotas::default() };
+    let quotas = Quotas {
+        max_steps: 50_000_000,
+        ..Quotas::default()
+    };
     let result = Runtime::with_quotas(quotas).run(&program).expect("vm run");
     assert!(result.halted, "vm did not halt");
     result.output
@@ -31,7 +38,11 @@ fn aot_stdout(so: &Path) -> String {
         .stdin(Stdio::null())
         .output()
         .expect("spawn crush-aot-runner");
-    assert!(out.status.success(), "runner failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "runner failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let text = String::from_utf8(out.stdout).expect("utf-8");
     let body = text.trim_end_matches('\n');
     match body.rfind('\n') {
@@ -46,7 +57,11 @@ fn first_diff(a: &str, b: &str) -> String {
             return format!("line {}: vm `{x}` vs `{y}`", i + 1);
         }
     }
-    format!("line counts differ: vm {} vs {}", a.lines().count(), b.lines().count())
+    format!(
+        "line counts differ: vm {} vs {}",
+        a.lines().count(),
+        b.lines().count()
+    )
 }
 
 /// Every float is printed bare (`io.print(x)`) and concatenated (`"v=" + x`).
@@ -121,22 +136,44 @@ fn main() {
 fn float_text_is_identical_on_vm_rust_aot_and_c_aot() {
     let source = PROGRAM;
     let oracle = vm_stdout(source);
-    assert!(oracle.lines().count() > 6000, "oracle printed {} lines", oracle.lines().count());
+    assert!(
+        oracle.lines().count() > 6000,
+        "oracle printed {} lines",
+        oracle.lines().count()
+    );
     // The oracle really contains the rule's special cases.
-    for needle in ["NaN", "\ninf\n", "\n-inf\n", "\n-0.0\n", "100000000000000000000.0\n"] {
+    for needle in [
+        "NaN",
+        "\ninf\n",
+        "\n-inf\n",
+        "\n-0.0\n",
+        "100000000000000000000.0\n",
+    ] {
         assert!(oracle.contains(needle), "vm output lacks {needle:?}");
     }
 
     let program = crush_frontend::compile_crush_source(source).expect("frontend");
     let compiler = AotCompiler::new();
-    let so = compiler.compile_casm(&program, "float_text_rust").expect("rust backend");
+    let so = compiler
+        .compile_casm(&program, "float_text_rust")
+        .expect("rust backend");
     let rust = aot_stdout(&so);
-    assert!(rust == oracle, "rust AOT differs from the VM: {}", first_diff(&oracle, &rust));
+    assert!(
+        rust == oracle,
+        "rust AOT differs from the VM: {}",
+        first_diff(&oracle, &rust)
+    );
 
     if cc_available() {
-        let so = compiler.compile_c(&program, "float_text_c", "gcc").expect("c backend");
+        let so = compiler
+            .compile_c(&program, "float_text_c", "gcc")
+            .expect("c backend");
         let c = aot_stdout(&so);
-        assert!(c == oracle, "C AOT differs from the VM: {}", first_diff(&oracle, &c));
+        assert!(
+            c == oracle,
+            "C AOT differs from the VM: {}",
+            first_diff(&oracle, &c)
+        );
     } else {
         eprintln!("gcc not found; skipping the C backend");
     }

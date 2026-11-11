@@ -3,11 +3,11 @@ use crate::vm::Value;
 use std::process::Command;
 
 /// A capability to invoke the `cargo` command from within the Crush VM.
-/// 
+///
 /// It expects:
 /// 1. A string array of arguments (e.g. `["build", "--message-format=json"]`)
 /// 2. An optional working directory string.
-/// 
+///
 /// It returns a JSON string of the stdout output.
 pub struct CargoCap;
 
@@ -43,11 +43,11 @@ impl HostCap for CargoCap {
 
         let mut command = Command::new("cargo");
         command.args(&cmd_args);
-        
-        if let Some(dir) = cwd {
-            if !dir.is_empty() {
-                command.current_dir(dir);
-            }
+
+        if let Some(dir) = cwd
+            && !dir.is_empty()
+        {
+            command.current_dir(dir);
         }
 
         match command.output() {
@@ -55,12 +55,12 @@ impl HostCap for CargoCap {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                 let success = output.status.success();
-                
+
                 let mut map = crate::vm::MapStore::new();
                 map.insert("stdout".to_string(), Value::Str(stdout));
                 map.insert("stderr".to_string(), Value::Str(stderr));
                 map.insert("success".to_string(), Value::Bool(success));
-                
+
                 Ok(Some(Value::new_map(map)))
             }
             Err(e) => Err(format!("Failed to execute cargo: {}", e)),

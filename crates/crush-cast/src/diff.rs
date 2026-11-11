@@ -76,22 +76,24 @@ fn diff_values(left: &Value, right: &Value, path: &str, changes: &mut Vec<String
                 );
             }
 
-            for index in prefix_len + shared_mid..left_mid_end {
+            for (index, item) in left_items
+                .iter()
+                .enumerate()
+                .take(left_mid_end)
+                .skip(prefix_len + shared_mid)
+            {
                 let child_path = format!("{}[{}]", path, index);
-                changes.push(format!(
-                    "- {} at {}",
-                    describe_value(&left_items[index]),
-                    child_path
-                ));
+                changes.push(format!("- {} at {}", describe_value(item), child_path));
             }
 
-            for index in prefix_len + shared_mid..right_mid_end {
+            for (index, item) in right_items
+                .iter()
+                .enumerate()
+                .take(right_mid_end)
+                .skip(prefix_len + shared_mid)
+            {
                 let child_path = format!("{}[{}]", path, index);
-                changes.push(format!(
-                    "+ {} at {}",
-                    describe_value(&right_items[index]),
-                    child_path
-                ));
+                changes.push(format!("+ {} at {}", describe_value(item), child_path));
             }
 
             for offset in 0..suffix_len {
@@ -243,8 +245,8 @@ fn describe_value(value: &Value) -> String {
 fn typed_name(type_name: &str) -> String {
     match type_name {
         "VarDecl" | "Export" | "ExprStmt" | "If" | "While" | "For" | "Return" | "TryCatch"
-        | "Throw" | "FunctionDef" | "SetField" | "LangBlock" | "Import" | "StructDef" | "ImplBlock" | "TraitDef" | "Break"
-        | "Continue" | "DomMutate" | "DomEventListener" => {
+        | "Throw" | "FunctionDef" | "SetField" | "LangBlock" | "Import" | "StructDef"
+        | "ImplBlock" | "TraitDef" | "Break" | "Continue" | "DomMutate" | "DomEventListener" => {
             format!("Statement::{}", type_name)
         }
         _ => type_name.to_string(),

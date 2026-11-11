@@ -15,7 +15,9 @@
 
 use crush_cast::Program;
 use crush_walker_core::LowerCtx;
-use crush_walker_core::shell::{self, AndOr, Assign, Cmd, Dialect, List, Pipeline, Redir, RedirKind, Word};
+use crush_walker_core::shell::{
+    self, AndOr, Assign, Cmd, Dialect, List, Pipeline, Redir, RedirKind, Word,
+};
 use zshrs_parse::lexer::untokenize;
 use zshrs_parse::parser::*;
 
@@ -39,15 +41,27 @@ fn source_text(w: &str) -> String {
 }
 
 fn word(w: &str, line: usize) -> Word {
-    Word { raw: source_text(w), line }
+    Word {
+        raw: source_text(w),
+        line,
+    }
 }
 
 fn unsupported(what: &str, line: usize) -> Cmd {
-    Cmd::Unsupported { what: what.to_string(), line }
+    Cmd::Unsupported {
+        what: what.to_string(),
+        line,
+    }
 }
 
 fn single(cmd: Cmd) -> AndOr {
-    AndOr { first: Pipeline { negated: false, stages: vec![cmd] }, rest: vec![] }
+    AndOr {
+        first: Pipeline {
+            negated: false,
+            stages: vec![cmd],
+        },
+        rest: vec![],
+    }
 }
 
 fn list(p: &ZshProgram, outer_line: usize) -> List {
@@ -65,10 +79,16 @@ fn list(p: &ZshProgram, outer_line: usize) -> List {
 }
 
 fn sublist(s: &ZshSublist) -> AndOr {
-    let mut out = AndOr { first: pipe(&s.pipe, s.flags.not, s.flags.coproc), rest: vec![] };
+    let mut out = AndOr {
+        first: pipe(&s.pipe, s.flags.not, s.flags.coproc),
+        rest: vec![],
+    };
     let mut next = &s.next;
     while let Some((op, nxt)) = next {
-        out.rest.push((matches!(op, SublistOp::And), pipe(&nxt.pipe, nxt.flags.not, nxt.flags.coproc)));
+        out.rest.push((
+            matches!(op, SublistOp::And),
+            pipe(&nxt.pipe, nxt.flags.not, nxt.flags.coproc),
+        ));
         next = &nxt.next;
     }
     out
@@ -77,14 +97,20 @@ fn sublist(s: &ZshSublist) -> AndOr {
 fn pipe(p: &ZshPipe, negated: bool, coproc: bool) -> Pipeline {
     let line = p.lineno as usize;
     if coproc {
-        return Pipeline { negated, stages: vec![unsupported("`coproc`", line)] };
+        return Pipeline {
+            negated,
+            stages: vec![unsupported("`coproc`", line)],
+        };
     }
     let mut stages = Vec::new();
     let mut cur = Some(p);
     while let Some(stage) = cur {
         // `a |& b` merges stderr into the pipe; there is no stderr stream here.
         if stage.merge_stderr && stage.next.is_some() {
-            return Pipeline { negated, stages: vec![unsupported("`|&`", line)] };
+            return Pipeline {
+                negated,
+                stages: vec![unsupported("`|&`", line)],
+            };
         }
         stages.push(command(&stage.cmd, line));
         cur = stage.next.as_deref();
@@ -111,19 +137,26 @@ fn redir(r: &ZshRedir, line: usize) -> Result<Redir, Cmd> {
             return Err(unsupported(
                 "a redirection that duplicates a file descriptor (`2>&1`)",
                 line,
-            ))
+            ));
         }
         other => {
             return Err(unsupported(
                 &format!("`{other:?}` (only `<`, `>`, `>>` and here-documents)"),
                 line,
-            ))
+            ));
         }
     };
     // -1 is "no fd written", so the default for the kind applies.
-    let want = if matches!(kind, RedirKind::In | RedirKind::HereDoc) { 0 } else { 1 };
+    let want = if matches!(kind, RedirKind::In | RedirKind::HereDoc) {
+        0
+    } else {
+        1
+    };
     if r.fd != want && r.fd != -1 {
-        return Err(unsupported(&format!("a redirection of file descriptor {}", r.fd), line));
+        return Err(unsupported(
+            &format!("a redirection of file descriptor {}", r.fd),
+            line,
+        ));
     }
     if kind == RedirKind::HereDoc {
         let doc = r
@@ -131,7 +164,11 @@ fn redir(r: &ZshRedir, line: usize) -> Result<Redir, Cmd> {
             .as_ref()
             .ok_or_else(|| unsupported("a here-document with no body", line))?;
         let body = if r.rtype == RedirType::HeredocDash {
-            doc.content.lines().map(|l| l.trim_start_matches('\t')).collect::<Vec<_>>().join("\n")
+            doc.content
+                .lines()
+                .map(|l| l.trim_start_matches('\t'))
+                .collect::<Vec<_>>()
+                .join("\n")
         } else {
             doc.content.clone()
         };
@@ -143,7 +180,15 @@ fn redir(r: &ZshRedir, line: usize) -> Result<Redir, Cmd> {
             line,
         });
     }
-    Ok(Redir { kind, word: Word { raw: source_text(&r.name), line }, expand: false, line })
+    Ok(Redir {
+        kind,
+        word: Word {
+            raw: source_text(&r.name),
+            line,
+        },
+        expand: false,
+        line,
+    })
 }
 
 /// zshrs-parse's `[[ … ]]` tree → the shared shell IR's conditional expression.
@@ -165,7 +210,12 @@ fn cond(c: &ZshCond, line: usize) -> Result<shell::Cond, Cmd> {
                 "-e" => shell::Cond::Unary("-e", word(w, line)),
                 "-f" => shell::Cond::Unary("-f", word(w, line)),
                 "-d" => shell::Cond::Unary("-d", word(w, line)),
-                other => return Err(unsupported(&format!("`{other}` in `[[ … ]]` (file and shell-option tests)"), line)),
+                other => {
+                    return Err(unsupported(
+                        &format!("`{other}` in `[[ … ]]` (file and shell-option tests)"),
+                        line,
+                    ));
+                }
             }
         }
         ZshCond::Binary(l, op, r) => {
@@ -180,7 +230,12 @@ fn cond(c: &ZshCond, line: usize) -> Result<shell::Cond, Cmd> {
                 "-le" => "-le",
                 "-gt" => "-gt",
                 "-ge" => "-ge",
-                other => return Err(unsupported(&format!("`{other}` in `[[ … ]]` (regex and file tests)"), line)),
+                other => {
+                    return Err(unsupported(
+                        &format!("`{other}` in `[[ … ]]` (regex and file tests)"),
+                        line,
+                    ));
+                }
             };
             shell::Cond::Binary(op, word(l, line), word(r, line))
         }
@@ -205,7 +260,10 @@ fn command(c: &ZshCommand, line: usize) -> Cmd {
                 let (name, index) = match decoded.find('[') {
                     Some(i) if decoded.ends_with(']') && i < decoded.len() - 1 => (
                         decoded[..i].to_string(),
-                        Some(Word { raw: decoded[i + 1..decoded.len() - 1].to_string(), line }),
+                        Some(Word {
+                            raw: decoded[i + 1..decoded.len() - 1].to_string(),
+                            line,
+                        }),
                     ),
                     _ => (decoded, None),
                 };
@@ -213,16 +271,34 @@ fn command(c: &ZshCommand, line: usize) -> Cmd {
                     ZshAssignValue::Scalar(v) => (None, word(v, line)),
                     ZshAssignValue::Array(items) => (
                         Some(items.iter().map(|v| word(v, line)).collect()),
-                        Word { raw: String::new(), line },
+                        Word {
+                            raw: String::new(),
+                            line,
+                        },
                     ),
                 };
-                assigns.push(Assign { name, index, array, value, append: a.append, line });
+                assigns.push(Assign {
+                    name,
+                    index,
+                    array,
+                    value,
+                    append: a.append,
+                    line,
+                });
             }
-            let simple = Cmd::Simple { assigns, words: s.words.iter().map(|w| word(w, line)).collect(), line };
+            let simple = Cmd::Simple {
+                assigns,
+                words: s.words.iter().map(|w| word(w, line)).collect(),
+                line,
+            };
             if redirs.is_empty() {
                 simple
             } else {
-                Cmd::Redirected { inner: Box::new(simple), redirs, line }
+                Cmd::Redirected {
+                    inner: Box::new(simple),
+                    redirs,
+                    line,
+                }
             }
         }
         ZshCommand::Subsh(_) => unsupported("a subshell `( … )`", line),
@@ -233,13 +309,27 @@ fn command(c: &ZshCommand, line: usize) -> Cmd {
             }
             let body = list(&f.body, line);
             match &f.list {
-                ForList::Words(ws) => {
-                    Cmd::For { var: f.var.clone(), words: Some(ws.iter().map(|w| word(w, line)).collect()), body, line }
-                }
-                ForList::Positional => Cmd::For { var: f.var.clone(), words: None, body, line },
+                ForList::Words(ws) => Cmd::For {
+                    var: f.var.clone(),
+                    words: Some(ws.iter().map(|w| word(w, line)).collect()),
+                    body,
+                    line,
+                },
+                ForList::Positional => Cmd::For {
+                    var: f.var.clone(),
+                    words: None,
+                    body,
+                    line,
+                },
                 ForList::CStyle { init, cond, step } => {
                     let part = |s: &String| Some(untokenize(s)).filter(|t| !t.trim().is_empty());
-                    Cmd::ArithFor { init: part(init), cond: part(cond), step: part(step), body, line }
+                    Cmd::ArithFor {
+                        init: part(init),
+                        cond: part(cond),
+                        step: part(step),
+                        body,
+                        line,
+                    }
                 }
             }
         }
@@ -249,16 +339,27 @@ fn command(c: &ZshCommand, line: usize) -> Cmd {
                 if !matches!(arm.terminator, CaseTerm::Break) {
                     return unsupported("`;&` / `;|` in `case`", line);
                 }
-                arms.push((arm.patterns.iter().map(|p| word(p, line)).collect(), list(&arm.body, line)));
+                arms.push((
+                    arm.patterns.iter().map(|p| word(p, line)).collect(),
+                    list(&arm.body, line),
+                ));
             }
-            Cmd::Case { word: word(&c.word, line), arms, line }
+            Cmd::Case {
+                word: word(&c.word, line),
+                arms,
+                line,
+            }
         }
         ZshCommand::If(i) => {
             let mut branches = vec![(list(&i.cond, line), list(&i.then, line))];
             for (c, t) in &i.elif {
                 branches.push((list(c, line), list(t, line)));
             }
-            Cmd::If { branches, else_body: i.else_.as_ref().map(|e| list(e, line)), line }
+            Cmd::If {
+                branches,
+                else_body: i.else_.as_ref().map(|e| list(e, line)),
+                line,
+            }
         }
         ZshCommand::While(w) | ZshCommand::Until(w) => Cmd::Loop {
             cond: list(&w.cond, line),
@@ -272,7 +373,11 @@ fn command(c: &ZshCommand, line: usize) -> Cmd {
                 return unsupported("an anonymous function", line);
             }
             match f.names.as_slice() {
-                [name] => Cmd::FuncDef { name: name.clone(), body: list(&f.body, line), line },
+                [name] => Cmd::FuncDef {
+                    name: name.clone(),
+                    body: list(&f.body, line),
+                    line,
+                },
                 _ => unsupported("a function with several names", line),
             }
         }
@@ -281,7 +386,10 @@ fn command(c: &ZshCommand, line: usize) -> Cmd {
             Ok(cond) => Cmd::ExtendedTest { cond, line },
             Err(unsupported) => unsupported,
         },
-        ZshCommand::Arith(e) => Cmd::Arith { expr: untokenize(e), line },
+        ZshCommand::Arith(e) => Cmd::Arith {
+            expr: untokenize(e),
+            line,
+        },
         ZshCommand::Try(_) => unsupported("zsh `{ … } always { … }`", line),
         ZshCommand::Redirected(inner, rs) => {
             let mut redirs = Vec::new();
@@ -292,7 +400,11 @@ fn command(c: &ZshCommand, line: usize) -> Cmd {
                 }
             }
             let inner = command(inner, line);
-            Cmd::Redirected { inner: Box::new(inner), redirs, line }
+            Cmd::Redirected {
+                inner: Box::new(inner),
+                redirs,
+                line,
+            }
         }
     }
 }

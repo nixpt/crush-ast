@@ -30,9 +30,14 @@ fn return_new_returns_the_instance() {
 
 #[test]
 fn return_async_namespace_call_is_the_return_value() {
-    let program = crush_frontend::parse_source("fn t() {\n    return async.sleep(1)\n}\n").expect("parse");
+    let program =
+        crush_frontend::parse_source("fn t() {\n    return async.sleep(1)\n}\n").expect("parse");
     let body = &program.functions["t"].body;
-    assert_eq!(body.len(), 1, "the call must not be a separate statement: {body:?}");
+    assert_eq!(
+        body.len(),
+        1,
+        "the call must not be a separate statement: {body:?}"
+    );
     match &body[0] {
         crush_cast::Statement::Return { value, .. } => assert!(value.is_some(), "bare return"),
         other => panic!("expected a return, got {other:?}"),

@@ -95,8 +95,14 @@ mod twin_tests {
             let b = super::boa::free_variables(src).unwrap();
             let s = super::swc::free_variables(src).unwrap();
             assert_eq!(b.reads, s.reads, "reads differ for {src:?}");
-            assert_eq!(b.top_level_bound, s.top_level_bound, "outputs differ for {src:?}");
-            assert_eq!(b.bound_anywhere, s.bound_anywhere, "bound_anywhere differ for {src:?}");
+            assert_eq!(
+                b.top_level_bound, s.top_level_bound,
+                "outputs differ for {src:?}"
+            );
+            assert_eq!(
+                b.bound_anywhere, s.bound_anywhere,
+                "bound_anywhere differ for {src:?}"
+            );
         }
     }
 }

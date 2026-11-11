@@ -1,6 +1,9 @@
 //! CAST helpers shared by the swc and boa lowerings (parser-independent).
 
-#![cfg_attr(not(any(feature = "swc-backend", feature = "js-boa")), allow(dead_code))]
+#![cfg_attr(
+    not(any(feature = "swc-backend", feature = "js-boa")),
+    allow(dead_code)
+)]
 
 use std::collections::HashMap;
 
@@ -20,13 +23,23 @@ pub(crate) fn rewrite_continue(stmts: Vec<Statement>, prefix: &[Statement]) -> V
                 out.extend(prefix.iter().cloned());
                 out.push(Statement::Continue { meta });
             }
-            Statement::If { condition, then_body, else_body, meta } => out.push(Statement::If {
+            Statement::If {
+                condition,
+                then_body,
+                else_body,
+                meta,
+            } => out.push(Statement::If {
                 condition,
                 then_body: rewrite_continue(then_body, prefix),
                 else_body: else_body.map(|e| rewrite_continue(e, prefix)),
                 meta,
             }),
-            Statement::TryCatch { body, error_var, handler, meta } => out.push(Statement::TryCatch {
+            Statement::TryCatch {
+                body,
+                error_var,
+                handler,
+                meta,
+            } => out.push(Statement::TryCatch {
                 body: rewrite_continue(body, prefix),
                 error_var,
                 handler: rewrite_continue(handler, prefix),
@@ -56,13 +69,19 @@ pub(crate) fn for_in_guarded(
 ) -> Statement {
     let obj = format!("__forin_{id}");
     let ty = format!("__forin_ty_{id}");
-    let var = |name: &str| Expression::Var { name: name.to_string(), meta: sm.clone() };
+    let var = |name: &str| Expression::Var {
+        name: name.to_string(),
+        meta: sm.clone(),
+    };
     let is_sequence = ["array", "str", "string", "list", "vector", "tuple"]
         .iter()
         .map(|t| Expression::BinaryOp {
             operator: "==".to_string(),
             left: Box::new(var(&ty)),
-            right: Box::new(Expression::StringLiteral { value: t.to_string(), meta: sm.clone() }),
+            right: Box::new(Expression::StringLiteral {
+                value: t.to_string(),
+                meta: sm.clone(),
+            }),
             meta: sm.clone(),
         })
         .reduce(|a, b| Expression::BinaryOp {
@@ -73,12 +92,24 @@ pub(crate) fn for_in_guarded(
         })
         .expect("non-empty");
     Statement::If {
-        condition: Expression::BoolLiteral { value: true, meta: sm.clone() },
+        condition: Expression::BoolLiteral {
+            value: true,
+            meta: sm.clone(),
+        },
         then_body: vec![
-            Statement::VarDecl { name: obj.clone(), value: iterable, type_hint: CastType::Any, meta: sm.clone() },
+            Statement::VarDecl {
+                name: obj.clone(),
+                value: iterable,
+                type_hint: CastType::Any,
+                meta: sm.clone(),
+            },
             Statement::VarDecl {
                 name: ty.clone(),
-                value: Expression::CapabilityCall { name: "type_of".to_string(), args: vec![var(&obj)], meta: sm.clone() },
+                value: Expression::CapabilityCall {
+                    name: "type_of".to_string(),
+                    args: vec![var(&obj)],
+                    meta: sm.clone(),
+                },
                 type_hint: CastType::Any,
                 meta: sm.clone(),
             },
@@ -86,7 +117,9 @@ pub(crate) fn for_in_guarded(
                 condition: is_sequence,
                 then_body: vec![Statement::Throw {
                     value: Expression::StringLiteral {
-                        value: "`for-in` over an array/string is not supported by the JS walker yet".to_string(),
+                        value:
+                            "`for-in` over an array/string is not supported by the JS walker yet"
+                                .to_string(),
                         meta: sm.clone(),
                     },
                     meta: sm.clone(),
@@ -94,7 +127,12 @@ pub(crate) fn for_in_guarded(
                 else_body: None,
                 meta: sm.clone(),
             },
-            Statement::For { variable, iterable: Box::new(var(&obj)), body, meta: sm.clone() },
+            Statement::For {
+                variable,
+                iterable: Box::new(var(&obj)),
+                body,
+                meta: sm.clone(),
+            },
         ],
         else_body: None,
         meta: sm,
@@ -106,10 +144,17 @@ pub(crate) fn for_in_guarded(
 pub(crate) fn contains_loop_continue(stmts: &[Statement]) -> bool {
     stmts.iter().any(|s| match s {
         Statement::Continue { .. } => true,
-        Statement::If { then_body, else_body, .. } => {
-            contains_loop_continue(then_body) || else_body.as_deref().is_some_and(contains_loop_continue)
+        Statement::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            contains_loop_continue(then_body)
+                || else_body.as_deref().is_some_and(contains_loop_continue)
         }
-        Statement::TryCatch { body, handler, .. } => contains_loop_continue(body) || contains_loop_continue(handler),
+        Statement::TryCatch { body, handler, .. } => {
+            contains_loop_continue(body) || contains_loop_continue(handler)
+        }
         _ => false,
     })
 }
@@ -119,16 +164,39 @@ pub(crate) fn contains_loop_continue(stmts: &[Statement]) -> bool {
 /// usable as an array index and printed `2` even inside string
 /// concatenation) — JS has one number type, so that is safe. Division by
 /// zero is a loud error rather than Infinity.
-pub(crate) fn js_div(left: Expression, right: Expression, meta: HashMap<String, serde_json::Value>) -> Expression {
-    Expression::CapabilityCall { name: "js.div".to_string(), args: vec![left, right], meta }
+pub(crate) fn js_div(
+    left: Expression,
+    right: Expression,
+    meta: HashMap<String, serde_json::Value>,
+) -> Expression {
+    Expression::CapabilityCall {
+        name: "js.div".to_string(),
+        args: vec![left, right],
+        meta,
+    }
 }
 
 /// A call to a `js.*` capability: JS semantics implemented once in crush-vm
 /// (`js_core`) and mirrored by the AOT runtimes.
-pub(crate) fn js_cap(name: &str, args: Vec<Expression>, meta: HashMap<String, serde_json::Value>) -> Expression {
-    Expression::CapabilityCall { name: name.to_string(), args, meta }
+pub(crate) fn js_cap(
+    name: &str,
+    args: Vec<Expression>,
+    meta: HashMap<String, serde_json::Value>,
+) -> Expression {
+    Expression::CapabilityCall {
+        name: name.to_string(),
+        args,
+        meta,
+    }
 }
 
-pub(crate) fn length_of(target: Expression, meta: HashMap<String, serde_json::Value>) -> Expression {
-    Expression::Call { function: "len".to_string(), args: vec![target], meta }
+pub(crate) fn length_of(
+    target: Expression,
+    meta: HashMap<String, serde_json::Value>,
+) -> Expression {
+    Expression::Call {
+        function: "len".to_string(),
+        args: vec![target],
+        meta,
+    }
 }

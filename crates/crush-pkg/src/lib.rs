@@ -76,8 +76,8 @@ pub use runners::{CapsuleRunner, CrushRunner, ExecutionResult};
 pub mod builder;
 pub mod capcheck; // `crush-pkg check`: used vs declared capabilities (CRUSH-170).
 pub mod ecap; // Underpins [`site`] for static-site capsules.
-pub mod gitdep; // Git dependencies: cache + capsule.lock (CRUSH-351).
 pub mod flow; // Build-then-run composition + the Crush-buildable guard.
+pub mod gitdep; // Git dependencies: cache + capsule.lock (CRUSH-351).
 pub mod manifest;
 pub mod packer;
 pub mod runners; // [`CapsuleRunner`] triumvirate lives here.
@@ -99,5 +99,3 @@ pub mod site; // Static-site builder. Wraps [`ecap`].
 // and round-2 blocker #3 (orphaned modules) at once.
 mod bundle;
 mod merkle;
-
-

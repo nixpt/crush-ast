@@ -116,7 +116,10 @@ impl PolyglotError {
         let lang = request.lang;
         match self {
             PolyglotError::Failed(message) => {
-                let at = request.crush_line.map(|l| format!(" (line {l})")).unwrap_or_default();
+                let at = request
+                    .crush_line
+                    .map(|l| format!(" (line {l})"))
+                    .unwrap_or_default();
                 VmError::UnknownCap(format!("@{lang} block failed{at}: {message}"))
             }
             PolyglotError::Guest(stderr) => {
@@ -204,6 +207,10 @@ pub(crate) fn declared_outputs(
 ) -> Vec<String> {
     let count = spec.get("out_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     (0..count)
-        .filter_map(|i| spec.get(&format!("out_{i}")).and_then(|v| v.as_str()).map(str::to_string))
+        .filter_map(|i| {
+            spec.get(&format!("out_{i}"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
         .collect()
 }

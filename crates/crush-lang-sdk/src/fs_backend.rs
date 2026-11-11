@@ -120,7 +120,8 @@ impl FsBackend for DiskFs {
         std::fs::read_to_string(path)
     }
     fn write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        crate::host_caps::open_for_write(path, true).and_then(|mut file| io::Write::write_all(&mut file, data))
+        crate::host_caps::open_for_write(path, true)
+            .and_then(|mut file| io::Write::write_all(&mut file, data))
     }
     fn append(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         use std::io::{Seek, SeekFrom, Write};
@@ -148,7 +149,12 @@ impl FsBackend for DiskFs {
     }
     fn read_dir(&self, path: &Path) -> io::Result<Vec<io::Result<Entry>>> {
         Ok(std::fs::read_dir(path)?
-            .map(|e| e.map(|e| Entry { name: e.file_name(), kind: e.file_type().map(kind_of) }))
+            .map(|e| {
+                e.map(|e| Entry {
+                    name: e.file_name(),
+                    kind: e.file_type().map(kind_of),
+                })
+            })
             .collect())
     }
     /// Contents and permissions, as `std::fs::copy` copies them, but with the
@@ -217,11 +223,17 @@ enum Node {
 
 impl Node {
     fn file(bytes: Vec<u8>) -> Self {
-        Node::File { bytes, modified: now() }
+        Node::File {
+            bytes,
+            modified: now(),
+        }
     }
 
     fn dir() -> Self {
-        Node::Dir { children: Default::default(), modified: now() }
+        Node::Dir {
+            children: Default::default(),
+            modified: now(),
+        }
     }
 
     fn kind(&self) -> Kind {
@@ -287,7 +299,9 @@ fn names(path: &Path) -> io::Result<Vec<OsString>> {
 
 impl MemFs {
     pub fn new() -> Self {
-        Self { root: std::sync::Mutex::new(Node::dir()) }
+        Self {
+            root: std::sync::Mutex::new(Node::dir()),
+        }
     }
 
     fn with<T>(&self, f: impl FnOnce(&mut Node) -> io::Result<T>) -> io::Result<T> {
@@ -320,7 +334,10 @@ fn lookup_mut<'a>(mut node: &'a mut Node, names: &[OsString]) -> io::Result<&'a 
 
 /// The node that holds the last name, and that name. The root itself has no
 /// parent: it exists and is a directory.
-fn parent_mut<'a>(root: &'a mut Node, names: &'a [OsString]) -> io::Result<Option<(&'a mut Node, &'a OsString)>> {
+fn parent_mut<'a>(
+    root: &'a mut Node,
+    names: &'a [OsString],
+) -> io::Result<Option<(&'a mut Node, &'a OsString)>> {
     let Some((last, dirs)) = names.split_last() else {
         return Ok(None);
     };
@@ -331,7 +348,10 @@ fn parent_mut<'a>(root: &'a mut Node, names: &'a [OsString]) -> io::Result<Optio
 /// caller that adds, removes or renames an entry can bump both.
 fn dir_mut(
     parent: &mut Node,
-) -> io::Result<(&mut std::collections::BTreeMap<OsString, Node>, &mut std::time::SystemTime)> {
+) -> io::Result<(
+    &mut std::collections::BTreeMap<OsString, Node>,
+    &mut std::time::SystemTime,
+)> {
     match parent {
         Node::Dir { children, modified } => Ok((children, modified)),
         Node::File { .. } => Err(enotdir()),
@@ -375,8 +395,12 @@ impl FsBackend for MemFs {
             Node::File { bytes, .. } => Ok(bytes.clone()),
             Node::Dir { .. } => Err(eisdir()),
         })?;
-        String::from_utf8(bytes)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "stream did not contain valid UTF-8"))
+        String::from_utf8(bytes).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "stream did not contain valid UTF-8",
+            )
+        })
     }
     fn write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         let names = names(path)?;
@@ -464,13 +488,19 @@ impl FsBackend for MemFs {
         self.with(|root| {
             let mut node = root;
             for (i, n) in names.iter().enumerate() {
-                let Node::Dir { children, modified } = node else { unreachable!("only directories are descended into") };
+                let Node::Dir { children, modified } = node else {
+                    unreachable!("only directories are descended into")
+                };
                 let existed = children.contains_key(n);
                 let child = children.entry(n.clone()).or_insert_with(Node::dir);
                 if let Node::File { .. } = child {
                     // as std: the last name existing as a file is EEXIST;
                     // creating something under a file is ENOTDIR
-                    return Err(if i + 1 == names.len() { eexist() } else { enotdir() });
+                    return Err(if i + 1 == names.len() {
+                        eexist()
+                    } else {
+                        enotdir()
+                    });
                 }
                 if !existed {
                     *modified = now();
@@ -570,7 +600,12 @@ impl FsBackend for MemFs {
             Node::File { .. } => Err(enotdir()),
             Node::Dir { children, .. } => Ok(children
                 .iter()
-                .map(|(name, node)| Ok(Entry { name: name.clone(), kind: Ok(node.kind()) }))
+                .map(|(name, node)| {
+                    Ok(Entry {
+                        name: name.clone(),
+                        kind: Ok(node.kind()),
+                    })
+                })
                 .collect()),
         })
     }

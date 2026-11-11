@@ -18,8 +18,8 @@ use std::{
     io,
     net::TcpStream,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     task::Waker,
     thread,
@@ -60,7 +60,10 @@ impl Reactor {
 
     pub fn register(&self, source: Box<dyn Source>, waker: Waker) {
         let id = source.id();
-        self.inner.lock().unwrap().insert(id, Entry { source, waker });
+        self.inner
+            .lock()
+            .unwrap()
+            .insert(id, Entry { source, waker });
     }
 
     pub fn unregister(&self, id: SourceId) {
@@ -84,7 +87,9 @@ impl Reactor {
 }
 
 impl Default for Reactor {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub struct PollerHandle {
@@ -94,7 +99,10 @@ pub struct PollerHandle {
 
 impl PollerHandle {
     fn new(join: thread::JoinHandle<()>, stop: Arc<AtomicBool>) -> Self {
-        Self { join: Some(join), stop }
+        Self {
+            join: Some(join),
+            stop,
+        }
     }
 
     pub fn shutdown(mut self) {
@@ -173,9 +181,13 @@ mod tests {
         unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) }
     }
 
-    struct DummySource { id: SourceId }
+    struct DummySource {
+        id: SourceId,
+    }
     impl Source for DummySource {
-        fn id(&self) -> SourceId { self.id }
+        fn id(&self) -> SourceId {
+            self.id
+        }
         fn try_read(&mut self, _: &mut [u8]) -> io::Result<usize> {
             Err(io::Error::new(io::ErrorKind::WouldBlock, "noop"))
         }

@@ -50,20 +50,30 @@ fn casm_value_move() -> casm::Program {
 /// The reference answer: the scheduler VM.
 fn scheduler_answer() -> i64 {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm()).expect("casm_to_vm");
-    match crush_vm::run(&vm, &crush_vm::Quotas::default()).expect("scheduler").return_value {
+    match crush_vm::run(&vm, &crush_vm::Quotas::default())
+        .expect("scheduler")
+        .return_value
+    {
         Some(crush_vm::vm::Value::Int(n)) => n,
         other => panic!("unexpected scheduler result: {other:?}"),
     }
 }
 
 fn cc_available() -> bool {
-    std::process::Command::new("gcc").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    std::process::Command::new("gcc")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn assert_refused(err: &str, engine: &str) {
     let want = format!("COSM objects aren't supported on {engine} yet (CRUSH-zorro-43)");
     assert!(err.contains(&want), "want {want:?} in: {err}");
-    assert!(err.contains("`Point` declares semantics: value(move)"), "{err}");
+    assert!(
+        err.contains("`Point` declares semantics: value(move)"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -73,8 +83,13 @@ fn the_scheduler_vm_runs_the_lifted_methods() {
 
 #[test]
 fn aot_rust_runs_lifted_methods_like_the_scheduler_vm() {
-    let so = AotCompiler::new().compile_casm(&casm(), "cosm_k1_rust").expect("rust backend");
-    let got = Module::load(&so).expect("load").call_main().expect("call_main");
+    let so = AotCompiler::new()
+        .compile_casm(&casm(), "cosm_k1_rust")
+        .expect("rust backend");
+    let got = Module::load(&so)
+        .expect("load")
+        .call_main()
+        .expect("call_main");
     assert_eq!(got, RuntimeValue::Int(scheduler_answer()));
 }
 
@@ -84,8 +99,13 @@ fn aot_c_runs_lifted_methods_like_the_scheduler_vm() {
         eprintln!("gcc not available; skipping");
         return;
     }
-    let so = AotCompiler::new().compile_c(&casm(), "cosm_k1_c", "gcc").expect("c backend");
-    let got = Module::load(&so).expect("load").call_main().expect("call_main");
+    let so = AotCompiler::new()
+        .compile_c(&casm(), "cosm_k1_c", "gcc")
+        .expect("c backend");
+    let got = Module::load(&so)
+        .expect("load")
+        .call_main()
+        .expect("call_main");
     assert_eq!(got, RuntimeValue::Int(scheduler_answer()));
 }
 
@@ -117,7 +137,10 @@ fn jit_runs_lifted_methods_like_the_scheduler_vm() {
 #[test]
 fn the_scheduler_vm_runs_a_kind_maps_cant_represent() {
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm_value_move()).expect("casm_to_vm");
-    match crush_vm::run(&vm, &crush_vm::Quotas::default()).expect("runs").return_value {
+    match crush_vm::run(&vm, &crush_vm::Quotas::default())
+        .expect("runs")
+        .return_value
+    {
         Some(crush_vm::vm::Value::Int(n)) => assert_eq!(n, WANT),
         other => panic!("unexpected scheduler result: {other:?}"),
     }
@@ -125,7 +148,9 @@ fn the_scheduler_vm_runs_a_kind_maps_cant_represent() {
 
 #[test]
 fn aot_rust_refuses_a_kind_maps_cant_represent() {
-    let err = AotCompiler::new().compile_casm(&casm_value_move(), "cosm_k1_rust_vm").expect_err("refused");
+    let err = AotCompiler::new()
+        .compile_casm(&casm_value_move(), "cosm_k1_rust_vm")
+        .expect_err("refused");
     assert_refused(&format!("{err:#}"), "the Rust AOT backend");
     // Generation itself refuses, before rustc is involved.
     let err = crush_aot::codegen::gen_rust_source(&casm_value_move()).expect_err("refused");
@@ -138,7 +163,9 @@ fn aot_c_refuses_a_kind_maps_cant_represent() {
     assert_eq!(err.backend, "C");
     assert_refused(&err.to_string(), "the C AOT backend");
     if cc_available() {
-        let err = AotCompiler::new().compile_c(&casm_value_move(), "cosm_k1_c_vm", "gcc").expect_err("refused");
+        let err = AotCompiler::new()
+            .compile_c(&casm_value_move(), "cosm_k1_c_vm", "gcc")
+            .expect_err("refused");
         assert_refused(&format!("{err:#}"), "the C AOT backend");
     }
 }
@@ -182,7 +209,10 @@ fn undeclared_write_casm() -> casm::Program {
 
 /// Run an AOT module in a separate process (a runtime error exits it).
 fn run_so(so: &std::path::Path) -> std::process::Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_crush-aot-runner")).arg(so).output().expect("spawn runner")
+    std::process::Command::new(env!("CARGO_BIN_EXE_crush-aot-runner"))
+        .arg(so)
+        .output()
+        .expect("spawn runner")
 }
 
 fn assert_aot_refuses_at_run_time(out: std::process::Output) {
@@ -197,16 +227,25 @@ fn assert_aot_refuses_at_run_time(out: std::process::Output) {
 fn undeclared_write() {
     // The scheduler VM and the portable VM.
     let vm = crush_lang_sdk::compile::casm_to_vm(&undeclared_write_casm()).expect("casm_to_vm");
-    let err = crush_vm::run(&vm, &crush_vm::Quotas::default()).expect_err("refused").to_string();
+    let err = crush_vm::run(&vm, &crush_vm::Quotas::default())
+        .expect_err("refused")
+        .to_string();
     assert!(err.contains(SEALED), "{err}");
-    let err = crush_vm::PortableVm::new(vm).run().expect_err("refused").to_string();
+    let err = crush_vm::PortableVm::new(vm)
+        .run()
+        .expect_err("refused")
+        .to_string();
     assert!(err.contains(SEALED), "{err}");
 
     // AOT Rust and C: the struct map refuses the write at run time.
-    let so = AotCompiler::new().compile_casm(&undeclared_write_casm(), "cosm_undeclared_rust").expect("rust backend");
+    let so = AotCompiler::new()
+        .compile_casm(&undeclared_write_casm(), "cosm_undeclared_rust")
+        .expect("rust backend");
     assert_aot_refuses_at_run_time(run_so(&so));
     if cc_available() {
-        let so = AotCompiler::new().compile_c(&undeclared_write_casm(), "cosm_undeclared_c", "gcc").expect("c backend");
+        let so = AotCompiler::new()
+            .compile_c(&undeclared_write_casm(), "cosm_undeclared_c", "gcc")
+            .expect("c backend");
         assert_aot_refuses_at_run_time(run_so(&so));
     }
 

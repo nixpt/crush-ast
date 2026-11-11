@@ -25,7 +25,9 @@ mod tests {
 
     #[test]
     fn distinct_names_stay_distinct() {
-        let names = ["café", "cafè", "caf_", "caf__", "π", "_", "__", "a_u3c0_", "aπ", "main", "fn_main"];
+        let names = [
+            "café", "cafè", "caf_", "caf__", "π", "_", "__", "a_u3c0_", "aπ", "main", "fn_main",
+        ];
         let mangled: std::collections::HashSet<_> = names.iter().map(|n| mangle(n)).collect();
         assert_eq!(mangled.len(), names.len(), "{:?}", names.map(mangle));
     }

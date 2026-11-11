@@ -48,7 +48,9 @@ fn test_rust_frontend_pipeline_run() {
 // one had them: silently wrong). It is refused until destructuring exists.
 #[test]
 fn destructuring_closure_parameters_fail_loudly() {
-    let err = crush_lang_rust::rust_to_cast("fn main() { let f = |(a, b): (i32, i32)| a + b; println!(\"{}\", f((1, 2))); }")
-        .expect_err("must not lower");
+    let err = crush_lang_rust::rust_to_cast(
+        "fn main() { let f = |(a, b): (i32, i32)| a + b; println!(\"{}\", f((1, 2))); }",
+    )
+    .expect_err("must not lower");
     assert!(format!("{err:#}").contains("destructuring"), "{err:#}");
 }

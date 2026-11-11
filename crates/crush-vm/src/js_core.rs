@@ -28,9 +28,17 @@ pub enum JsNode<'a> {
     Str(Cow<'a, str>),
     /// `id` is the array's identity. `items` holds at most [`ITEMS`] elements
     /// and is `None` when the converter didn't expand this level.
-    Array { id: usize, len: usize, items: Option<Vec<JsNode<'a>>> },
+    Array {
+        id: usize,
+        len: usize,
+        items: Option<Vec<JsNode<'a>>>,
+    },
     /// A plain object; `entries` in insertion order, `None` when not expanded.
-    Object { id: usize, len: usize, entries: Option<Vec<(String, JsNode<'a>)>> },
+    Object {
+        id: usize,
+        len: usize,
+        entries: Option<Vec<(String, JsNode<'a>)>>,
+    },
     /// A crush value with no JavaScript meaning (its type name).
     Other(&'static str),
 }
@@ -50,7 +58,9 @@ const MAX_STRING_LENGTH: usize = 10_000;
 const MIN_LINE_LENGTH: usize = 16;
 
 fn not_primitive(what: &str) -> String {
-    format!("{what} with an array or object operand is not supported by the JS runtime yet (needs ToPrimitive)")
+    format!(
+        "{what} with an array or object operand is not supported by the JS runtime yet (needs ToPrimitive)"
+    )
 }
 
 fn other_type(t: &str) -> String {
@@ -75,9 +85,15 @@ pub fn number_text(f: f64) -> String {
     // 11.2613677978515625, where JS prints `…562`), while its fixed-precision
     // `{:.Ne}` rounds the exact value half-to-even.
     let shortest = format!("{:e}", f.abs());
-    let k = shortest.split_once('e').map_or(1, |(m, _)| m.chars().filter(char::is_ascii_digit).count());
+    let k = shortest
+        .split_once('e')
+        .map_or(1, |(m, _)| m.chars().filter(char::is_ascii_digit).count());
     let exact = format!("{:.*e}", k - 1, f.abs());
-    let chosen = if exact.parse::<f64>() == Ok(f.abs()) { exact } else { shortest };
+    let chosen = if exact.parse::<f64>() == Ok(f.abs()) {
+        exact
+    } else {
+        shortest
+    };
     let (mant, exp) = chosen.split_once('e').unwrap_or((&chosen, "0"));
     let digits: String = mant.chars().filter(char::is_ascii_digit).collect();
     let digits = digits.trim_end_matches('0');
@@ -94,8 +110,17 @@ pub fn number_text(f: f64) -> String {
         format!("0.{}{digits}", "0".repeat((-n) as usize))
     } else {
         let e = n - 1;
-        let rest = if k > 1 { format!(".{}", &digits[1..]) } else { String::new() };
-        format!("{}{rest}e{}{}", &digits[..1], if e < 0 { '-' } else { '+' }, e.abs())
+        let rest = if k > 1 {
+            format!(".{}", &digits[1..])
+        } else {
+            String::new()
+        };
+        format!(
+            "{}{rest}e{}{}",
+            &digits[..1],
+            if e < 0 { '-' } else { '+' },
+            e.abs()
+        )
     };
     format!("{sign}{body}")
 }
@@ -103,7 +128,11 @@ pub fn number_text(f: f64) -> String {
 /// An int as JS prints it. JS numbers are doubles, so past 2^53 the text is
 /// the nearest double's (`7774233818054199000`, not `…199296`).
 pub fn int_text(i: i64) -> String {
-    if i.unsigned_abs() <= 1 << 53 { i.to_string() } else { number_text(i as f64) }
+    if i.unsigned_abs() <= 1 << 53 {
+        i.to_string()
+    } else {
+        number_text(i as f64)
+    }
 }
 
 /// JS `ToString` of a primitive.
@@ -120,10 +149,17 @@ pub fn to_text<'b>(v: &'b JsNode, what: &str) -> Result<Cow<'b, str>, String> {
 }
 
 fn is_js_space(c: char) -> bool {
-    matches!(c,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}'
-        | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}'
-        | '\u{3000}' | '\u{feff}')
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
 }
 
 /// JS `ToNumber` of a string (`StringToNumber`): surrounding whitespace is
@@ -134,7 +170,14 @@ pub fn string_to_number(s: &str) -> Result<f64, String> {
     if t.is_empty() {
         return Ok(0.0);
     }
-    for (prefix, radix) in [("0x", 16), ("0X", 16), ("0o", 8), ("0O", 8), ("0b", 2), ("0B", 2)] {
+    for (prefix, radix) in [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ] {
         if let Some(digits) = t.strip_prefix(prefix) {
             if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
                 return Ok(f64::NAN);
@@ -142,7 +185,10 @@ pub fn string_to_number(s: &str) -> Result<f64, String> {
             return match u128::from_str_radix(digits, radix) {
                 // `as` rounds to the nearest double, like JS.
                 Ok(n) => Ok(n as f64),
-                Err(_) => Err(format!("converting the {}-digit literal {prefix}… to a number is not supported yet", digits.len())),
+                Err(_) => Err(format!(
+                    "converting the {}-digit literal {prefix}… to a number is not supported yet",
+                    digits.len()
+                )),
             };
         }
     }
@@ -211,7 +257,10 @@ pub fn add(a: &JsNode, b: &JsNode) -> Result<JsNode<'static>, String> {
         _ => None,
     };
     if let (Some(x), Some(y)) = (int(a), int(b)) {
-        return x.checked_add(y).map(JsNode::Int).ok_or_else(|| "arithmetic overflow".to_string());
+        return x
+            .checked_add(y)
+            .map(JsNode::Int)
+            .ok_or_else(|| "arithmetic overflow".to_string());
     }
     Ok(JsNode::Float(primitive_number(a)? + primitive_number(b)?))
 }
@@ -224,7 +273,9 @@ fn primitive_number(v: &JsNode) -> Result<f64, String> {
         JsNode::Int(i) => *i as f64,
         JsNode::Float(f) => *f,
         JsNode::Str(s) => string_to_number(s)?,
-        JsNode::Array { .. } | JsNode::Object { .. } => return Err(not_primitive("JS number conversion")),
+        JsNode::Array { .. } | JsNode::Object { .. } => {
+            return Err(not_primitive("JS number conversion"));
+        }
         JsNode::Other(t) => return Err(other_type(t)),
     })
 }
@@ -255,7 +306,8 @@ pub fn loose_eq(a: &JsNode, b: &JsNode) -> Result<bool, String> {
         (Null, Null) => true,
         (Null, _) | (_, Null) => false,
         (Other(t), _) | (_, Other(t)) => return Err(other_type(t)),
-        (Array { id: x, .. }, Array { id: y, .. }) | (Object { id: x, .. }, Object { id: y, .. }) => x == y,
+        (Array { id: x, .. }, Array { id: y, .. })
+        | (Object { id: x, .. }, Object { id: y, .. }) => x == y,
         (Array { .. }, Object { .. }) | (Object { .. }, Array { .. }) => false,
         (Array { .. } | Object { .. }, _) | (_, Array { .. } | Object { .. }) => {
             return Err(not_primitive("JS `==`"));
@@ -280,7 +332,8 @@ pub fn strict_eq(a: &JsNode, b: &JsNode) -> Result<bool, String> {
         (Other(t), _) | (_, Other(t)) => return Err(other_type(t)),
         (Null, Null) => true,
         (Null, _) | (_, Null) => false,
-        (Array { id: x, .. }, Array { id: y, .. }) | (Object { id: x, .. }, Object { id: y, .. }) => x == y,
+        (Array { id: x, .. }, Array { id: y, .. })
+        | (Object { id: x, .. }, Object { id: y, .. }) => x == y,
         // A container against anything else (including the other container
         // kind) is a different type (or a different object): never equal.
         (Array { .. } | Object { .. }, _) | (_, Array { .. } | Object { .. }) => false,
@@ -304,7 +357,9 @@ pub fn format(args: &[JsNode]) -> Result<String, String> {
             return Ok(first.to_string());
         }
         let b = first.as_bytes();
-        if b.windows(2).any(|w| w[0] == b'%' && b"sjdOoifc%".contains(&w[1])) {
+        if b.windows(2)
+            .any(|w| w[0] == b'%' && b"sjdOoifc%".contains(&w[1]))
+        {
             return Err("console.log format directives (`%s`, `%d`, `%o`, `%%`, …) are not supported by the JS runtime yet".to_string());
         }
     }
@@ -323,7 +378,11 @@ pub fn format(args: &[JsNode]) -> Result<String, String> {
 
 /// node's `util.inspect(value)` with the default options.
 pub fn inspect(v: &JsNode) -> Result<String, String> {
-    let mut ctx = Ctx { indentation: 0, current_depth: 0, seen: Vec::new() };
+    let mut ctx = Ctx {
+        indentation: 0,
+        current_depth: 0,
+        seen: Vec::new(),
+    };
     format_value(&mut ctx, v, 0)
 }
 
@@ -346,10 +405,15 @@ fn format_value(ctx: &mut Ctx, v: &JsNode, recurse: usize) -> Result<String, Str
         JsNode::Float(f) if *f == 0.0 && f.is_sign_negative() => Ok("-0".to_string()),
         JsNode::Float(f) => Ok(number_text(*f)),
         JsNode::Str(s) => format_string(ctx, s),
-        JsNode::Other(t) => Err(format!("console.log of a crush {t} value is not supported by the JS runtime")),
+        JsNode::Other(t) => Err(format!(
+            "console.log of a crush {t} value is not supported by the JS runtime"
+        )),
         JsNode::Array { id, len, items } => {
             if ctx.seen.contains(id) {
-                return Err("console.log of a circular structure is not supported by the JS runtime yet".to_string());
+                return Err(
+                    "console.log of a circular structure is not supported by the JS runtime yet"
+                        .to_string(),
+                );
             }
             if *len == 0 {
                 return Ok("[]".to_string());
@@ -357,7 +421,9 @@ fn format_value(ctx: &mut Ctx, v: &JsNode, recurse: usize) -> Result<String, Str
             if recurse > DEPTH {
                 return Ok("[Array]".to_string());
             }
-            let items = items.as_ref().ok_or("internal error: array not expanded for console.log")?;
+            let items = items
+                .as_ref()
+                .ok_or("internal error: array not expanded for console.log")?;
             let recurse = recurse + 1;
             ctx.seen.push(*id);
             ctx.current_depth = recurse;
@@ -378,7 +444,10 @@ fn format_value(ctx: &mut Ctx, v: &JsNode, recurse: usize) -> Result<String, Str
         }
         JsNode::Object { id, len, entries } => {
             if ctx.seen.contains(id) {
-                return Err("console.log of a circular structure is not supported by the JS runtime yet".to_string());
+                return Err(
+                    "console.log of a circular structure is not supported by the JS runtime yet"
+                        .to_string(),
+                );
             }
             if *len == 0 {
                 return Ok("{}".to_string());
@@ -386,7 +455,9 @@ fn format_value(ctx: &mut Ctx, v: &JsNode, recurse: usize) -> Result<String, Str
             if recurse > DEPTH {
                 return Ok("[Object]".to_string());
             }
-            let entries = entries.as_ref().ok_or("internal error: object not expanded for console.log")?;
+            let entries = entries
+                .as_ref()
+                .ok_or("internal error: object not expanded for console.log")?;
             let recurse = recurse + 1;
             ctx.seen.push(*id);
             ctx.current_depth = recurse;
@@ -407,13 +478,17 @@ fn format_value(ctx: &mut Ctx, v: &JsNode, recurse: usize) -> Result<String, Str
 /// order, then the rest in insertion order.
 fn property_order<'b, 'a>(entries: &'b [(String, JsNode<'a>)]) -> Vec<&'b (String, JsNode<'a>)> {
     let index = |k: &str| -> Option<u64> {
-        let canonical = k == "0" || (!k.is_empty() && !k.starts_with('0') && k.bytes().all(|c| c.is_ascii_digit()));
+        let canonical = k == "0"
+            || (!k.is_empty() && !k.starts_with('0') && k.bytes().all(|c| c.is_ascii_digit()));
         if !canonical || k.len() > 10 {
             return None;
         }
         k.parse::<u64>().ok().filter(|n| *n < u32::MAX as u64)
     };
-    let mut indexed: Vec<(u64, &(String, JsNode))> = entries.iter().filter_map(|e| index(&e.0).map(|n| (n, e))).collect();
+    let mut indexed: Vec<(u64, &(String, JsNode))> = entries
+        .iter()
+        .filter_map(|e| index(&e.0).map(|n| (n, e)))
+        .collect();
     indexed.sort_by_key(|(n, _)| *n);
     let mut out: Vec<&(String, JsNode)> = indexed.into_iter().map(|(_, e)| e).collect();
     out.extend(entries.iter().filter(|e| index(&e.0).is_none()));
@@ -422,7 +497,9 @@ fn property_order<'b, 'a>(entries: &'b [(String, JsNode<'a>)]) -> Vec<&'b (Strin
 
 fn key_text(key: &str) -> String {
     let mut chars = key.chars();
-    let identifier = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+    let identifier = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
     if !identifier {
         str_escape(key)
@@ -510,7 +587,12 @@ fn reduce_to_single_string(
         }
     }
     let indentation = format!("\n{}", " ".repeat(ctx.indentation));
-    Ok(format!("{}{indentation}  {}{indentation}{}", braces.0, output.join(&format!(",{indentation}  ")), braces.1))
+    Ok(format!(
+        "{}{indentation}  {}{indentation}{}",
+        braces.0,
+        output.join(&format!(",{indentation}  ")),
+        braces.1
+    ))
 }
 
 fn is_below_break_length(output: &[String], start: usize) -> bool {
@@ -538,10 +620,17 @@ fn display_width(s: &str) -> Result<usize, String> {
         width += match c as u32 {
             0..=31 => 0,
             32..=126 => 1,
-            0xa0..=0x24f | 0x370..=0x3ff | 0x400..=0x482 | 0x48a..=0x52f | 0x2010..=0x2027 | 0x20a0..=0x20bf => 1,
-            _ => return Err(format!(
-                "console.log of an array of more than 6 entries containing {c:?} is not supported by the JS runtime yet (node measures its display width with ICU)"
-            )),
+            0xa0..=0x24f
+            | 0x370..=0x3ff
+            | 0x400..=0x482
+            | 0x48a..=0x52f
+            | 0x2010..=0x2027
+            | 0x20a0..=0x20bf => 1,
+            _ => {
+                return Err(format!(
+                    "console.log of an array of more than 6 entries containing {c:?} is not supported by the JS runtime yet (node measures its display width with ICU)"
+                ));
+            }
         };
     }
     Ok(width)
@@ -549,15 +638,27 @@ fn display_width(s: &str) -> Result<usize, String> {
 
 fn pad(s: &str, width: usize, start: bool) -> String {
     let fill = " ".repeat(width.saturating_sub(js_len(s)));
-    if start { fill + s } else { s.to_string() + &fill }
+    if start {
+        fill + s
+    } else {
+        s.to_string() + &fill
+    }
 }
 
 /// node's `groupArrayElements`: arrays of more than six short entries are
 /// laid out in aligned columns.
-fn group_array_elements(ctx: &Ctx, output: Vec<String>, items: &[JsNode]) -> Result<Vec<String>, String> {
+fn group_array_elements(
+    ctx: &Ctx,
+    output: Vec<String>,
+    items: &[JsNode],
+) -> Result<Vec<String>, String> {
     let mut total_length = 0;
     let mut max_length = 0;
-    let output_length = if output.len() > MAX_ARRAY_LENGTH { output.len() - 1 } else { output.len() };
+    let output_length = if output.len() > MAX_ARRAY_LENGTH {
+        output.len() - 1
+    } else {
+        output.len()
+    };
     let separator_space = 2;
     let mut data_len = Vec::with_capacity(output_length);
     for o in output.iter().take(output_length) {
@@ -573,10 +674,12 @@ fn group_array_elements(ctx: &Ctx, output: Vec<String>, items: &[JsNode]) -> Res
         let approx_char_heights = 2.5;
         let average_bias = (actual_max as f64 - total_length as f64 / output.len() as f64).sqrt();
         let biased_max = (actual_max as f64 - 3.0 - average_bias).max(1.0);
-        let columns = ((approx_char_heights * biased_max * output_length as f64).sqrt() / biased_max + 0.5).floor()
-            .min(((BREAK_LENGTH - ctx.indentation) / actual_max) as f64)
-            .min((COMPACT * 4) as f64)
-            .min(15.0);
+        let columns =
+            ((approx_char_heights * biased_max * output_length as f64).sqrt() / biased_max + 0.5)
+                .floor()
+                .min(((BREAK_LENGTH - ctx.indentation) / actual_max) as f64)
+                .min((COMPACT * 4) as f64)
+                .min(15.0);
         if columns <= 1.0 {
             return Ok(output);
         }
@@ -591,7 +694,10 @@ fn group_array_elements(ctx: &Ctx, output: Vec<String>, items: &[JsNode]) -> Res
             }
             max_line_length.push(line + separator_space);
         }
-        let numbers = items.iter().take(output.len()).all(|v| matches!(v, JsNode::Int(_) | JsNode::Float(_)));
+        let numbers = items
+            .iter()
+            .take(output.len())
+            .all(|v| matches!(v, JsNode::Int(_) | JsNode::Float(_)));
         let mut tmp = Vec::new();
         let mut i = 0;
         while i < output_length {
@@ -604,7 +710,8 @@ fn group_array_elements(ctx: &Ctx, output: Vec<String>, items: &[JsNode]) -> Res
                 j += 1;
             }
             if numbers {
-                let padding = max_line_length[j - i] + js_len(&output[j]) - data_len[j] - separator_space;
+                let padding =
+                    max_line_length[j - i] + js_len(&output[j]) - data_len[j] - separator_space;
                 line.push_str(&pad(&output[j], padding, true));
             } else {
                 line.push_str(&output[j]);

@@ -1,7 +1,7 @@
 //! Helper operations for FastVM execution.
 
-use crate::memory::{Arena, Object};
 use super::types::{FastError, FastFrame};
+use crate::memory::{Arena, Object};
 use crate::value::RuntimeValue;
 
 /// Check if a value is truthy

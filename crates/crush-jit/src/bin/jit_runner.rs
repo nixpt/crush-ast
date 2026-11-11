@@ -79,7 +79,9 @@ fn main() {
 fn print_value(v: &RuntimeValue, arena: &Arena) {
     match v {
         RuntimeValue::Int(i) => println!("int:{}", i),
-        RuntimeValue::Float(f) => println!("float:{}", crush_vm::float_text::crush_float_to_text(*f)),
+        RuntimeValue::Float(f) => {
+            println!("float:{}", crush_vm::float_text::crush_float_to_text(*f))
+        }
         RuntimeValue::Bool(b) => println!("bool:{}", b),
         RuntimeValue::Null => println!("null:null"),
         RuntimeValue::String(s) => println!("str:{}", s),

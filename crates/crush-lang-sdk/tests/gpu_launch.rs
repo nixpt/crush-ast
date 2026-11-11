@@ -13,7 +13,10 @@ const VEC_ADD: &str = include_str!("../../../examples/gpu/vec_add.crush");
 #[test]
 fn kernel_is_left_out_of_the_host_program() {
     let casm = compile_crush_to_casm(VEC_ADD).expect("compile to CASM");
-    assert!(casm.functions.contains_key("vec_add"), "the kernel is in the CASM");
+    assert!(
+        casm.functions.contains_key("vec_add"),
+        "the kernel is in the CASM"
+    );
     // Before CRUSH-zorro-3 the `ptx_*` ops in the kernel made this bail with
     // "Unsupported CVM1 opcode".
     let program = compile_crush_source(VEC_ADD).expect("host program compiles to CVM1");
@@ -34,9 +37,21 @@ fn vec_add_runs_on_the_gpu() {
     }
     let program = compile_crush_source(VEC_ADD).unwrap();
     let casm = Arc::new(compile_crush_to_casm(VEC_ADD).unwrap());
-    let caps = HostCapsBuilder::new().stdlib(true).gpu(true).gpu_program(casm).build();
-    let result = Runtime::new().with_host_caps(caps).run(&program).expect("run");
+    let caps = HostCapsBuilder::new()
+        .stdlib(true)
+        .gpu(true)
+        .gpu_program(casm)
+        .build();
+    let result = Runtime::new()
+        .with_host_caps(caps)
+        .run(&program)
+        .expect("run");
     // out[1] = 1 + 2, out[999] = 999 + 1998, and 0 mismatches over all 1000.
     let lines: Vec<&str> = result.output.lines().collect();
-    assert_eq!(lines, ["3.0", "2997.0", "0"], "output was:\n{}", result.output);
+    assert_eq!(
+        lines,
+        ["3.0", "2997.0", "0"],
+        "output was:\n{}",
+        result.output
+    );
 }

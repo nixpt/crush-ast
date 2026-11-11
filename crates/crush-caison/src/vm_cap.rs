@@ -1,9 +1,9 @@
-use std::rc::Rc;
-use std::cell::RefCell;
-use crush_vm::host::{HostCap, HostCapSpec};
-use crush_vm::vm::Value;
 use caison::parser::CaisonParser;
 use caison::{CaisonNode, CaisonValue};
+use crush_vm::host::{HostCap, HostCapSpec};
+use crush_vm::vm::Value;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Capability name for CAISON parsing.
 pub const CAP_NAME: &str = "caison.parse";
@@ -26,7 +26,9 @@ impl CaisonParseCap {
 
     /// The same handler registered as the deprecated `cson.parse`.
     pub fn deprecated_alias() -> Self {
-        Self { name: DEPRECATED_CAP_NAME }
+        Self {
+            name: DEPRECATED_CAP_NAME,
+        }
     }
 }
 
@@ -64,9 +66,7 @@ fn node_to_value(node: CaisonNode) -> Value {
         CaisonValue::Number(n) => Value::Float(n),
         CaisonValue::Boolean(b) => Value::Bool(b),
         CaisonValue::Null => Value::Null,
-        CaisonValue::Synthesize(s) => {
-            Value::Str(format!("<< SYNTHESIZE: {} >>", s))
-        },
+        CaisonValue::Synthesize(s) => Value::Str(format!("<< SYNTHESIZE: {} >>", s)),
         CaisonValue::Array(arr) => {
             let vec: Vec<Value> = arr.into_iter().map(node_to_value).collect();
             Value::Array(Rc::new(RefCell::new(vec)))
@@ -83,7 +83,9 @@ mod tests {
     use super::*;
 
     fn parse(cap: &CaisonParseCap, src: &str) -> Value {
-        cap.call(vec![Value::Str(src.to_string())]).unwrap().unwrap()
+        cap.call(vec![Value::Str(src.to_string())])
+            .unwrap()
+            .unwrap()
     }
 
     #[test]
@@ -96,8 +98,11 @@ mod tests {
         // HashMap iteration order is unstable, so compare sorted entries.
         let entries = |v: Value| match v {
             Value::Map(m) => {
-                let mut e: Vec<String> =
-                    m.borrow().iter().map(|(k, v)| format!("{k}={v:?}")).collect();
+                let mut e: Vec<String> = m
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v:?}"))
+                    .collect();
                 e.sort();
                 e
             }
@@ -110,7 +115,9 @@ mod tests {
 
     #[test]
     fn non_string_argument_errors_with_the_registered_name() {
-        let e = CaisonParseCap::deprecated_alias().call(vec![Value::Null]).unwrap_err();
+        let e = CaisonParseCap::deprecated_alias()
+            .call(vec![Value::Null])
+            .unwrap_err();
         assert!(e.starts_with("cson.parse"), "{e}");
     }
 }

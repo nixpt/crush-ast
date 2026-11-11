@@ -44,7 +44,11 @@ pub enum ParseError {
     /// variants — flat `(name, line, col)` rather than a `SourceLocation`
     /// struct — so destructuring patterns stay consistent.
     #[error("Unknown annotation: @{name} at line {line}, column {col}")]
-    UnknownAnnotation { name: String, line: usize, col: usize },
+    UnknownAnnotation {
+        name: String,
+        line: usize,
+        col: usize,
+    },
 }
 
 /// Source location information
@@ -112,7 +116,7 @@ pub enum Token {
     Not(SourceLocation),         // !
     Assign(SourceLocation),      // =
     Pipe(SourceLocation),        // |>
-    Bar(SourceLocation),       // |   (lambda parameters)
+    Bar(SourceLocation),         // |   (lambda parameters)
     Arrow(SourceLocation),       // ->
     FatArrow(SourceLocation),    // =>  (match arm separator)
     DoubleColon(SourceLocation), // ::
@@ -136,7 +140,7 @@ pub enum Token {
     Newline(SourceLocation),
     EOF(SourceLocation),
     Comment(String, SourceLocation),
-    AtIdent(String, SourceLocation),  // @mcp, @cap, @lang, etc
+    AtIdent(String, SourceLocation), // @mcp, @cap, @lang, etc
     /// Raw body of `@python { ... }`, `@javascript { ... }`, etc, plus the
     /// optional `@lang[dep1, dep2]` dependency list (CRUSH-20) — empty if
     /// the block had no bracketed annotation — and the optional `-> name` /
@@ -351,13 +355,13 @@ impl Lexer {
         let start_col = self.col;
 
         // Check for hex (0x) or binary (0b) prefix
-        if self.peek() == Some('0') {
-            if let Some(next) = self.peek_ahead(1) {
-                if next == 'x' || next == 'X' {
-                    return self.read_radix_number(16, start_line, start_col);
-                } else if next == 'b' || next == 'B' {
-                    return self.read_radix_number(2, start_line, start_col);
-                }
+        if self.peek() == Some('0')
+            && let Some(next) = self.peek_ahead(1)
+        {
+            if next == 'x' || next == 'X' {
+                return self.read_radix_number(16, start_line, start_col);
+            } else if next == 'b' || next == 'B' {
+                return self.read_radix_number(2, start_line, start_col);
             }
         }
 
@@ -649,15 +653,31 @@ impl Lexer {
         // must be parsed by the normal token stream, not consumed as a LangBody.
         const IMPORT_KEYWORDS: &[&str] = &[
             // import / capability keywords
-            "mcp", "cap", "lang", "git", "http", "file",
+            "mcp",
+            "cap",
+            "lang",
+            "git",
+            "http",
+            "file",
             // AI-native annotation keywords (Step 2 — manifest + function annotations)
-            "module", "invariant", "exhaustive-match-sites",
-            "errors", "reads", "writes", "does-not-write",
-            "covers", "relies-on", "complexity",
+            "module",
+            "invariant",
+            "exhaustive-match-sites",
+            "errors",
+            "reads",
+            "writes",
+            "does-not-write",
+            "covers",
+            "relies-on",
+            "complexity",
             // Phase 2a additions
-            "wip", "temporary", "decision",
+            "wip",
+            "temporary",
+            "decision",
             // Phase 2b additions — mutation surface
-            "invalidates", "must-call-before", "must-call-after",
+            "invalidates",
+            "must-call-before",
+            "must-call-after",
             // COSM K1.2 — `@kind(…)` on a struct
             "kind",
         ];
@@ -845,11 +865,7 @@ impl Lexer {
                 break;
             }
         }
-        if name.is_empty() {
-            None
-        } else {
-            Some(name)
-        }
+        if name.is_empty() { None } else { Some(name) }
     }
 
     /// Read a `[dep1, dep2, ...]` bracketed dependency list starting at the
@@ -934,7 +950,10 @@ impl Lexer {
     /// list — use a single contiguous constraint.
     fn is_dep_spec_char(ch: char) -> bool {
         ch.is_alphanumeric()
-            || matches!(ch, '_' | '-' | '.' | ':' | '@' | '/' | '^' | '~' | '*' | '=' | '<' | '>')
+            || matches!(
+                ch,
+                '_' | '-' | '.' | ':' | '@' | '/' | '^' | '~' | '*' | '=' | '<' | '>'
+            )
     }
 
     /// Read the raw body of a polyglot block starting at depth 1 (caller
@@ -1526,8 +1545,7 @@ mod tests {
     /// in order, comma-separated.
     #[test]
     fn test_lex_lang_block_with_multiple_mixed_deps() {
-        let mut lexer =
-            Lexer::new("@python[pypi:numpy@1.26, scipy, openssl@^1.1] { pass }");
+        let mut lexer = Lexer::new("@python[pypi:numpy@1.26, scipy, openssl@^1.1] { pass }");
         assert_eq!(
             lexer.next_token().unwrap(),
             Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })

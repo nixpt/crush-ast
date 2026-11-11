@@ -125,7 +125,10 @@ fn test_stack() {}
     let p = parse(src).expect("should parse");
     let func = p.functions.get("test_stack").expect("function present");
     let ann = func.annotations.as_ref().expect("annotations attached");
-    assert_eq!(ann.covers, vec!["VmError::StackUnderflow", "VmError::DivByZero"]);
+    assert_eq!(
+        ann.covers,
+        vec!["VmError::StackUnderflow", "VmError::DivByZero"]
+    );
 }
 
 #[test]
@@ -242,7 +245,10 @@ fn main() {}
     assert_eq!(d.chose, "semantic_switch");
     assert_eq!(d.over, vec!["regex matching", "LLM zero-shot prompt"]);
     assert_eq!(d.because, "embeddings cover common intents");
-    assert_eq!(d.revisit_if, vec!["user intents become too highly contextual"]);
+    assert_eq!(
+        d.revisit_if,
+        vec!["user intents become too highly contextual"]
+    );
 }
 
 #[test]
@@ -350,12 +356,19 @@ fn route(intent) {
 "#;
     let p = parse(src).expect("should parse");
     let func = p.functions.get("route").expect("function present");
-    let switch_stmt = func.body.iter().find(|s| {
-        matches!(s, Statement::AI(AIStatement::SemanticSwitch { .. }))
-    });
-    assert!(switch_stmt.is_some(), "expected a SemanticSwitch AI statement in function body");
+    let switch_stmt = func
+        .body
+        .iter()
+        .find(|s| matches!(s, Statement::AI(AIStatement::SemanticSwitch { .. })));
+    assert!(
+        switch_stmt.is_some(),
+        "expected a SemanticSwitch AI statement in function body"
+    );
 
-    if let Some(Statement::AI(AIStatement::SemanticSwitch { cases, fallback, .. })) = switch_stmt {
+    if let Some(Statement::AI(AIStatement::SemanticSwitch {
+        cases, fallback, ..
+    })) = switch_stmt
+    {
         assert_eq!(cases.len(), 2, "expected 2 cases");
         assert_eq!(cases[0].0, "refund");
         assert_eq!(cases[1].0, "cancel");
@@ -409,21 +422,36 @@ fn escalate_issue(details) {
 "#;
     let p = parse(src).expect("ai_agent_ops example should parse cleanly");
     assert_eq!(p.decisions.len(), 1);
-    assert_eq!(p.decisions[0].revisit_if, vec!["user intents become too highly contextual for basic embeddings"]);
+    assert_eq!(
+        p.decisions[0].revisit_if,
+        vec!["user intents become too highly contextual for basic embeddings"]
+    );
 
-    let func = p.functions.get("process_user_intent").expect("function present");
-    let has_switch = func.body.iter().any(|s| {
-        matches!(s, Statement::AI(AIStatement::SemanticSwitch { .. }))
-    });
-    assert!(has_switch, "expected semantic_switch in process_user_intent body");
+    let func = p
+        .functions
+        .get("process_user_intent")
+        .expect("function present");
+    let has_switch = func
+        .body
+        .iter()
+        .any(|s| matches!(s, Statement::AI(AIStatement::SemanticSwitch { .. })));
+    assert!(
+        has_switch,
+        "expected semantic_switch in process_user_intent body"
+    );
 }
 
 // ─── CRUSH-243: declared capabilities ──────────────────────────────────
 
 #[test]
 fn parse_capabilities_annotation_into_the_manifest() {
-    let p = parse("@capabilities [fs.cat, \"fs.read:/var/log\", time]\nfn main() {}\n").expect("parse");
-    let caps = p.manifest.expect("manifest").capabilities.expect("declared");
+    let p =
+        parse("@capabilities [fs.cat, \"fs.read:/var/log\", time]\nfn main() {}\n").expect("parse");
+    let caps = p
+        .manifest
+        .expect("manifest")
+        .capabilities
+        .expect("declared");
     assert_eq!(caps, ["fs.cat", "fs.read:/var/log", "time"]);
 }
 
@@ -442,5 +470,8 @@ fn parse_capabilities_inside_module_block_on_one_line() {
         .expect("parse");
     let m = p.manifest.expect("manifest");
     assert_eq!(m.purpose, "tool");
-    assert_eq!(m.capabilities, Some(vec!["fs.cat".to_string(), "env.get".to_string()]));
+    assert_eq!(
+        m.capabilities,
+        Some(vec!["fs.cat".to_string(), "env.get".to_string()])
+    );
 }

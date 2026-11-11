@@ -179,7 +179,10 @@ impl Transcript {
         let mut h = Sha256::new();
         h.update(DOMAIN);
         h.update(program_hash(program));
-        Self { head: h.finalize().into(), events: 0 }
+        Self {
+            head: h.finalize().into(),
+            events: 0,
+        }
     }
 
     fn chain(&mut self, event: &[u8]) {
@@ -223,7 +226,11 @@ impl Transcript {
 
     /// The current `h_n` and `n`.
     pub fn digest(&self) -> TranscriptDigest {
-        TranscriptDigest { version: TRANSCRIPT_VERSION, digest: self.head, events: self.events }
+        TranscriptDigest {
+            version: TRANSCRIPT_VERSION,
+            digest: self.head,
+            events: self.events,
+        }
     }
 }
 
@@ -243,7 +250,10 @@ pub(crate) fn record_exec_lang(
     args.push(Value::Str(lang.to_string()));
     args.push(Value::Str(code.to_string()));
     for (name, val) in env {
-        args.push(Value::Tuple(vec![Value::Str(name.clone()), Value::Str(val.clone())]));
+        args.push(Value::Tuple(vec![
+            Value::Str(name.clone()),
+            Value::Str(val.clone()),
+        ]));
     }
     match outcome {
         Ok((visible, value)) => {
@@ -302,7 +312,12 @@ struct Encoder {
 impl Encoder {
     /// Run `body` for the shared container at `ptr`, or write the cycle marker
     /// when it is already being encoded further up.
-    fn shared(&mut self, ptr: *const (), out: &mut Vec<u8>, body: impl FnOnce(&mut Self, &mut Vec<u8>)) {
+    fn shared(
+        &mut self,
+        ptr: *const (),
+        out: &mut Vec<u8>,
+        body: impl FnOnce(&mut Self, &mut Vec<u8>),
+    ) {
         if self.path.contains(&ptr) {
             out.push(0xFE);
             return;
@@ -312,7 +327,13 @@ impl Encoder {
         self.path.pop();
     }
 
-    fn seq<'a>(&mut self, tag: u8, items: impl ExactSizeIterator<Item = &'a Value>, out: &mut Vec<u8>, depth: usize) {
+    fn seq<'a>(
+        &mut self,
+        tag: u8,
+        items: impl ExactSizeIterator<Item = &'a Value>,
+        out: &mut Vec<u8>,
+        depth: usize,
+    ) {
         out.push(tag);
         out.extend_from_slice(&(items.len() as u32).to_be_bytes());
         for item in items {
@@ -352,16 +373,16 @@ impl Encoder {
                 out.push(0x04);
                 put_str(out, s);
             }
-            Value::Array(a) => {
-                self.shared(std::rc::Rc::as_ptr(a).cast(), out, |e, out| e.seq(0x05, a.borrow().iter(), out, depth))
-            }
+            Value::Array(a) => self.shared(std::rc::Rc::as_ptr(a).cast(), out, |e, out| {
+                e.seq(0x05, a.borrow().iter(), out, depth)
+            }),
             Value::Tuple(t) => self.seq(0x06, t.iter(), out, depth),
-            Value::List(l) => {
-                self.shared(std::rc::Rc::as_ptr(l).cast(), out, |e, out| e.seq(0x07, l.borrow().iter(), out, depth))
-            }
-            Value::Vector(a) => {
-                self.shared(std::rc::Rc::as_ptr(a).cast(), out, |e, out| e.seq(0x08, a.borrow().iter(), out, depth))
-            }
+            Value::List(l) => self.shared(std::rc::Rc::as_ptr(l).cast(), out, |e, out| {
+                e.seq(0x07, l.borrow().iter(), out, depth)
+            }),
+            Value::Vector(a) => self.shared(std::rc::Rc::as_ptr(a).cast(), out, |e, out| {
+                e.seq(0x08, a.borrow().iter(), out, depth)
+            }),
             Value::Set(s) => self.shared(std::rc::Rc::as_ptr(s).cast(), out, |e, out| {
                 let items = s.borrow();
                 let mut encoded: Vec<Vec<u8>> = items
@@ -418,7 +439,11 @@ impl Encoder {
                 out.push(0x11);
                 put_str(out, r.kind.name());
                 let fields = r.fields();
-                e.entries(fields.iter().map(|(k, v)| (k.as_str(), v)).collect(), out, depth);
+                e.entries(
+                    fields.iter().map(|(k, v)| (k.as_str(), v)).collect(),
+                    out,
+                    depth,
+                );
             }),
             Value::Kind(k) => {
                 out.push(0x12);
@@ -500,7 +525,11 @@ mod tests {
     struct Answer(i64);
     impl HostCap for Answer {
         fn spec(&self) -> HostCapSpec {
-            HostCapSpec { name: "test.answer".to_string(), argc: Some(1), returns: true }
+            HostCapSpec {
+                name: "test.answer".to_string(),
+                argc: Some(1),
+                returns: true,
+            }
         }
         fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
             Ok(Some(Value::Int(self.0)))
@@ -534,7 +563,8 @@ mod tests {
     const ARITH_SUB: &str = "PUSH 2\nPUSH 3\nSUB\nPUSH 4\nMUL\nHALT";
     const WITH_CAP: &str = "PUSH 7\nCAP_CALL \"test.answer\" 1\nPUSH 1\nADD\nHALT";
     const WITHOUT_CAP: &str = "PUSH 7\nPUSH 42\nPUSH 1\nADD\nHALT";
-    const MAP_PROG: &str = "NEW_OBJ\nPUSH 1\nSET_FIELD \"a\"\nPUSH 2\nSET_FIELD \"b\"\nCAP_CALL \"io.print\" 1\nHALT";
+    const MAP_PROG: &str =
+        "NEW_OBJ\nPUSH 1\nSET_FIELD \"a\"\nPUSH 2\nSET_FIELD \"b\"\nCAP_CALL \"io.print\" 1\nHALT";
 
     #[test]
     fn identical_runs_give_identical_digests_on_both_engines() {
@@ -564,7 +594,10 @@ mod tests {
         let a = sched(WITH_CAP, &["test.answer"], Some(&caps(42)));
         let b = sched(WITH_CAP, &["test.answer"], Some(&caps(43)));
         assert_ne!(a, b);
-        assert_eq!(a.events, b.events, "same instructions, only the result differs");
+        assert_eq!(
+            a.events, b.events,
+            "same instructions, only the result differs"
+        );
         let c = portable(WITH_CAP, &["test.answer"], Some(caps(42)));
         let d = portable(WITH_CAP, &["test.answer"], Some(caps(43)));
         assert_ne!(c, d);
@@ -588,7 +621,8 @@ mod tests {
     fn a_failed_cap_call_is_recorded_with_its_error() {
         // Declared but not provided by the host: the call fails.
         let p = assemble(WITH_CAP, Some(&["test.answer"]), Some("t")).unwrap();
-        let (r, d) = run_scheduled_with_transcript(&p, &Quotas::default(), Some(&HostCaps::new()), None);
+        let (r, d) =
+            run_scheduled_with_transcript(&p, &Quotas::default(), Some(&HostCaps::new()), None);
         assert!(r.is_err());
         assert_eq!(d.events, 3, "PUSH, CAP_CALL, the cap's error");
     }
@@ -632,7 +666,11 @@ mod tests {
     #[test]
     fn known_answer_for_the_empty_chain() {
         // A verifier recomputing h_0 for an empty program by hand.
-        let p = Program { code: vec![], consts: vec![], ..assemble("HALT", None, None).unwrap() };
+        let p = Program {
+            code: vec![],
+            consts: vec![],
+            ..assemble("HALT", None, None).unwrap()
+        };
         let mut ph = Sha256::new();
         ph.update(0u32.to_be_bytes());
         ph.update(0u32.to_be_bytes());
@@ -659,7 +697,11 @@ mod tests {
         struct Nested;
         impl HostCap for Nested {
             fn spec(&self) -> HostCapSpec {
-                HostCapSpec { name: "test.nested".to_string(), argc: Some(0), returns: true }
+                HostCapSpec {
+                    name: "test.nested".to_string(),
+                    argc: Some(0),
+                    returns: true,
+                }
             }
             fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
                 let p = assemble(ARITH, None, Some("n")).unwrap();
@@ -669,7 +711,11 @@ mod tests {
         }
         let mut h = HostCaps::new();
         h.register(Box::new(Nested));
-        let d = sched("CAP_CALL \"test.nested\" 0\nHALT", &["test.nested"], Some(&h));
+        let d = sched(
+            "CAP_CALL \"test.nested\" 0\nHALT",
+            &["test.nested"],
+            Some(&h),
+        );
         assert_eq!(d.events, 3, "CAP_CALL, its cap event, HALT");
     }
 }
@@ -689,7 +735,10 @@ mod engine_tests {
         let p = assemble(PMAP, Some(&["parallel_map"]), Some("main")).unwrap();
         let (r, a) = run_scheduled_with_transcript(&p, &Quotas::default(), None, None);
         let r = r.unwrap();
-        assert_eq!(format!("{:?}", r.stack.last()), "Some(Array(RefCell { value: [Int(2), Int(4)] }))");
+        assert_eq!(
+            format!("{:?}", r.stack.last()),
+            "Some(Array(RefCell { value: [Int(2), Int(4)] }))"
+        );
         let (_, b) = run_scheduled_with_transcript(&p, &Quotas::default(), None, None);
         assert_eq!(a, b);
         // 6 main-thread instructions + the parallel_map cap event; none of
@@ -698,7 +747,11 @@ mod engine_tests {
         let mut vm = PortableVm::new(p);
         vm.run().unwrap();
         assert_eq!(vm.transcript_digest().events, 7);
-        assert_eq!(vm.transcript_digest(), a, "no task switching here, so the engines agree");
+        assert_eq!(
+            vm.transcript_digest(),
+            a,
+            "no task switching here, so the engines agree"
+        );
     }
 
     /// SPAWN/AWAIT are recorded as the instruction stream they produce, in
@@ -711,7 +764,10 @@ mod engine_tests {
         let p = assemble(src, None, Some("main")).unwrap();
         let (r, a) = run_scheduled_with_transcript(&p, &Quotas::default(), None, None);
         assert_eq!(r.unwrap().stack.last(), Some(&crate::vm::Value::Int(198)));
-        assert_eq!(a, run_scheduled_with_transcript(&p, &Quotas::default(), None, None).1);
+        assert_eq!(
+            a,
+            run_scheduled_with_transcript(&p, &Quotas::default(), None, None).1
+        );
         // main: PUSH, PUSH_STR, SPAWN, AWAIT, HALT; task: PUSH, MUL, RET.
         assert_eq!(a.events, 8);
         let mut vm = PortableVm::new(p);
@@ -721,7 +777,10 @@ mod engine_tests {
 
     fn exec_lang_program() -> crate::bytecode::Program {
         let spec = serde_json::json!({"lang": "python", "code": "print('hi')", "var_count": 0});
-        let src = format!("EXEC_LANG \"{}\"\nHALT", spec.to_string().replace('"', "\\\""));
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('"', "\\\"")
+        );
         assemble(&src, Some(&["polyglot.python"]), Some("t")).unwrap()
     }
 
@@ -738,8 +797,15 @@ mod engine_tests {
         let mut deferred = PortableVm::new(exec_lang_program());
         deferred.set_host_caps(granted());
         deferred.set_lang_deferred(true);
-        assert!(matches!(deferred.step().unwrap(), Some(VmYield::HostCall { .. })));
-        assert_eq!(deferred.transcript_digest().events, 0, "the yielded EXEC_LANG is un-recorded");
+        assert!(matches!(
+            deferred.step().unwrap(),
+            Some(VmYield::HostCall { .. })
+        ));
+        assert_eq!(
+            deferred.transcript_digest().events,
+            0,
+            "the yielded EXEC_LANG is un-recorded"
+        );
         deferred.provide_lang_result(Ok("hi\n".to_string()));
         deferred.run().unwrap();
 
@@ -756,6 +822,10 @@ mod engine_tests {
         other.set_host_caps(granted());
         other.set_lang_executor(Box::new(|_, _, _| Ok("bye\n".to_string())));
         other.run().unwrap();
-        assert_ne!(other.transcript_digest(), direct.transcript_digest(), "a different block result");
+        assert_ne!(
+            other.transcript_digest(),
+            direct.transcript_digest(),
+            "a different block result"
+        );
     }
 }

@@ -27,9 +27,9 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use cudarc::driver::{CudaDevice, CudaSlice, DevicePtr, LaunchAsync, LaunchConfig};
 use crush_vm::host::{HostCap, HostCapSpec};
 use crush_vm::vm::Value;
+use cudarc::driver::{CudaDevice, CudaSlice, DevicePtr, LaunchAsync, LaunchConfig};
 
 const BLOCK: u32 = 256;
 
@@ -116,7 +116,11 @@ impl HostCap for GpuLaunchCap {
         };
         let threads = match threads {
             Value::Int(n) if *n > 0 && *n <= u32::MAX as i64 => *n as u32,
-            other => return Err(format!("thread count must be a positive int, got {other:?}")),
+            other => {
+                return Err(format!(
+                    "thread count must be a positive int, got {other:?}"
+                ));
+            }
         };
 
         let dev = self.device()?;
@@ -136,13 +140,18 @@ impl HostCap for GpuLaunchCap {
                     .map(|v| match v {
                         Value::Float(f) => Ok(*f as f32),
                         Value::Int(n) => Ok(*n as f32),
-                        other => Err(format!("argument {}: buffer elements must be numbers, got {other:?}", i + 3)),
+                        other => Err(format!(
+                            "argument {}: buffer elements must be numbers, got {other:?}",
+                            i + 3
+                        )),
                     })
                     .collect::<Result<_, _>>()?;
                 // A zero-length device allocation is an error in CUDA; give an empty
                 // array one (unused) element.
                 let upload = if host.is_empty() { vec![0.0] } else { host };
-                let buf = dev.htod_sync_copy(&upload).map_err(|e| format!("upload: {e}"))?;
+                let buf = dev
+                    .htod_sync_copy(&upload)
+                    .map_err(|e| format!("upload: {e}"))?;
                 params.push(*buf.device_ptr());
                 buffers.push((i, buf));
             } else {
@@ -163,17 +172,23 @@ impl HostCap for GpuLaunchCap {
             block_dim: (BLOCK, 1, 1),
             shared_mem_bytes: 0,
         };
-        let mut ptrs: Vec<*mut std::ffi::c_void> =
-            params.iter_mut().map(|p| p as *mut u64 as *mut std::ffi::c_void).collect();
+        let mut ptrs: Vec<*mut std::ffi::c_void> = params
+            .iter_mut()
+            .map(|p| p as *mut u64 as *mut std::ffi::c_void)
+            .collect();
         // SAFETY: `ptrs` points at one u64 per kernel parameter, matching the
         // `.param .u64` ABI crush-ptx emits; every pointer parameter is a live
         // allocation in `buffers` for the duration of the launch.
-        unsafe { func.launch(cfg, &mut ptrs[..]) }.map_err(|e| format!("launch `{kernel}`: {e}"))?;
-        dev.synchronize().map_err(|e| format!("`{kernel}` failed on the device: {e}"))?;
+        unsafe { func.launch(cfg, &mut ptrs[..]) }
+            .map_err(|e| format!("launch `{kernel}`: {e}"))?;
+        dev.synchronize()
+            .map_err(|e| format!("`{kernel}` failed on the device: {e}"))?;
 
         for (i, buf) in &buffers {
             let len = array_items(&kargs[*i]).map_or(0, |v| v.len());
-            let data = dev.dtoh_sync_copy(buf).map_err(|e| format!("download: {e}"))?;
+            let data = dev
+                .dtoh_sync_copy(buf)
+                .map_err(|e| format!("download: {e}"))?;
             write_back(&kargs[*i], &data[..len]);
         }
         Ok(None)

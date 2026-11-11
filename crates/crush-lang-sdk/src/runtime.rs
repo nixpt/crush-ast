@@ -165,7 +165,10 @@ impl Runtime {
     /// `host_caps` brings its own.
     pub fn with_host_caps(mut self, mut host_caps: HostCaps) -> Self {
         if host_caps.polyglot_executor().is_none()
-            && let Some(executor) = self.host_caps.as_mut().and_then(HostCaps::take_polyglot_executor)
+            && let Some(executor) = self
+                .host_caps
+                .as_mut()
+                .and_then(HostCaps::take_polyglot_executor)
         {
             host_caps.set_polyglot_executor(executor);
         }
@@ -179,7 +182,9 @@ impl Runtime {
     /// `polyglot.<lang>` grant in the host caps, and one without it is
     /// refused before `executor` is called.
     pub fn with_polyglot_executor(mut self, executor: Arc<dyn crush_vm::PolyglotExecutor>) -> Self {
-        self.host_caps.get_or_insert_with(HostCaps::new).set_polyglot_executor(executor);
+        self.host_caps
+            .get_or_insert_with(HostCaps::new)
+            .set_polyglot_executor(executor);
         self
     }
 
@@ -265,10 +270,7 @@ impl Runtime {
     ///     .with_codebase(&[("scheduler", ".func main\nHALT")])
     ///     .unwrap();
     /// ```
-    pub fn with_codebase(
-        self,
-        sources: &[(&str, &str)],
-    ) -> Result<Self, RuntimeError> {
+    pub fn with_codebase(self, sources: &[(&str, &str)]) -> Result<Self, RuntimeError> {
         self.with_codebase_at(sources, Utc::now().date_naive())
     }
 
@@ -390,12 +392,16 @@ impl Runtime {
     /// a VM built-in and not registered, or excluded by
     /// [`Quotas::allowed_caps`]. Call it before [`run`](Self::run) to refuse
     /// agent-written code up front instead of mid-run (CRUSH-243).
-    pub fn missing_grants(&self, program: &Program) -> anyhow::Result<Vec<crate::effects::MissingGrant>> {
+    pub fn missing_grants(
+        &self,
+        program: &Program,
+    ) -> anyhow::Result<Vec<crate::effects::MissingGrant>> {
         let mut missing = crate::effects::missing_grants(program, self.host_caps.as_ref())?;
         if self.quotas.allowed_caps.is_some() {
             for capability in crate::effects::used_by(program)? {
                 let known = missing.iter().any(|m| m.capability == capability);
-                if !known && !crush_vm::capabilities().contains_key(capability.as_str())
+                if !known
+                    && !crush_vm::capabilities().contains_key(capability.as_str())
                     && !self.quotas.cap_allowed(&capability)
                 {
                     missing.push(crate::effects::MissingGrant {
@@ -420,7 +426,11 @@ impl Runtime {
     /// [`run`](Self::run), handing each piece of output to `sink` as soon as the
     /// program prints it. A CLI writes it straight to stdout, so long-running
     /// scripts show progress and nothing printed before an error is lost.
-    pub fn run_streaming(&self, program: &Program, sink: &mut dyn FnMut(&str)) -> Result<VmResult, RuntimeError> {
+    pub fn run_streaming(
+        &self,
+        program: &Program,
+        sink: &mut dyn FnMut(&str),
+    ) -> Result<VmResult, RuntimeError> {
         Ok(crush_vm::vm::run_with_caps_streaming(
             program,
             &self.quotas,
@@ -519,8 +529,10 @@ mod tests {
             HALT
         "#;
 
-        let mut quotas = Quotas::default();
-        quotas.max_steps = 10;
+        let quotas = Quotas {
+            max_steps: 10,
+            ..Default::default()
+        };
 
         let err = Runtime::with_quotas(quotas)
             .run_casm(source, &[], Some("infinite-loop"))
@@ -598,9 +610,7 @@ fn navigate(url) {
         // Both time.now and codebase.modules must be present.
         // We verify by running probes for both — neither should say "not declared".
         for cap in ["time.now", "codebase.modules"] {
-            let casm = format!(
-                ".func main\nCAP_CALL \"{cap}\" 0\nHALT\n"
-            );
+            let casm = format!(".func main\nCAP_CALL \"{cap}\" 0\nHALT\n");
             let result = rt.run_casm(&casm, &[cap], Some("probe"));
             if let Err(e) = result {
                 assert!(
@@ -618,8 +628,7 @@ fn navigate(url) {
         // silently swaps `_at` for `_at` + `Utc::now()` would fail this test
         // ("the boundary maths is reproducible across reboots" is the whole
         // point — see the `with_codebase_at` doc comment).
-        let pin = NaiveDate::from_ymd_opt(2026, 6, 20)
-            .expect("hard-coded test date is valid");
+        let pin = NaiveDate::from_ymd_opt(2026, 6, 20).expect("hard-coded test date is valid");
         let crush_src = "@module { purpose: \"pinned-today test\" }\nfn f() { }";
         let rt = Runtime::new()
             .with_codebase_at(&[("pinned", crush_src)], pin)
@@ -676,8 +685,7 @@ fn navigate(url) {
         //       this test breaks.
         use crush_index::dejavue::parse_timeline_str;
 
-        let pin = NaiveDate::from_ymd_opt(2026, 6, 20)
-            .expect("hard-coded test date is valid");
+        let pin = NaiveDate::from_ymd_opt(2026, 6, 20).expect("hard-coded test date is valid");
         // Reverse chronological order in the corpus so ts-ascending
         // (not insertion order) is the only thing that puts `earlier`
         // before `later` in the cap output.
@@ -721,14 +729,8 @@ fn navigate(url) {
         // ts-ascending in the output — corpus inserted LATER first
         // (insertion index 0 = 2026-05); ts-ascending re-sort must
         // surface EARLIER first.
-        let earlier_pos = result
-            .output
-            .find("earlier")
-            .expect("earlier present");
-        let later_pos = result
-            .output
-            .find("later")
-            .expect("later present");
+        let earlier_pos = result.output.find("earlier").expect("earlier present");
+        let later_pos = result.output.find("later").expect("later present");
         assert!(
             earlier_pos < later_pos,
             "annotation_history must be ts-ascending; earlier at {earlier_pos}, later at {later_pos}:\n{}",
