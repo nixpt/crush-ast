@@ -15,12 +15,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Cases whose Crush version is known not to match bash yet, and why.
-const KNOWN_GAPS: &[(&str, &str)] = &[
-    (
-        "t11_missing_file",
-        "a failing capability call can't be caught by try/catch (CRUSH-219)",
-    ),
-];
+const KNOWN_GAPS: &[(&str, &str)] = &[(
+    "t11_missing_file",
+    "a failing capability call can't be caught by try/catch (CRUSH-219)",
+)];
 
 const ARGS: [&str; 2] = ["one", "two words"];
 
@@ -64,7 +62,10 @@ fn run_in_fixture(case: &str, mut cmd: Command) -> (String, Option<i32>) {
         .stderr(Stdio::piped())
         .output()
         .expect("spawn");
-    (String::from_utf8_lossy(&out.stdout).into_owned(), out.status.code())
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        out.status.code(),
+    )
 }
 
 #[test]
@@ -94,7 +95,15 @@ fn crush_scripts_do_what_the_bash_scripts_do() {
             .args(ARGS);
         let mut crush = Command::new(env!("CARGO_BIN_EXE_crush-run"));
         crush
-            .args(["run", "--fs", "--fs-root", ".", "--process", "--env", "--time"])
+            .args([
+                "run",
+                "--fs",
+                "--fs-root",
+                ".",
+                "--process",
+                "--env",
+                "--time",
+            ])
             .arg(dir().join("cases").join(format!("{case}.crush")))
             .args(ARGS);
         let expected = run_in_fixture(case, bash);
@@ -111,11 +120,16 @@ fn crush_scripts_do_what_the_bash_scripts_do() {
     let known: BTreeSet<String> = KNOWN_GAPS.iter().map(|(c, _)| c.to_string()).collect();
     let mut failures: Vec<String> = Vec::new();
     for case in differ.difference(&known) {
-        let detail = report.iter().find(|r| r.starts_with(&format!("{case}:"))).unwrap();
+        let detail = report
+            .iter()
+            .find(|r| r.starts_with(&format!("{case}:")))
+            .unwrap();
         failures.push(format!("differs from bash: {detail}"));
     }
     for case in known.difference(&differ) {
-        failures.push(format!("{case} now matches bash; remove it from KNOWN_GAPS"));
+        failures.push(format!(
+            "{case} now matches bash; remove it from KNOWN_GAPS"
+        ));
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

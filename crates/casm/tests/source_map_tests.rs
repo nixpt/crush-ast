@@ -51,7 +51,12 @@ fn source_location_for_function_pc_resolves_correctly() {
     assert!(info.source_location_for_function_pc("main", 2).is_none());
     assert!(info.source_location_for_function_pc("helper", 2).is_none());
     // Unknown function falls back to flat lookup
-    assert_eq!(info.source_location_for_function_pc("unknown", 0).unwrap().line, 1);
+    assert_eq!(
+        info.source_location_for_function_pc("unknown", 0)
+            .unwrap()
+            .line,
+        1
+    );
 }
 
 #[test]

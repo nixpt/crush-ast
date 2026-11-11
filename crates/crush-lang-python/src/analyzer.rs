@@ -303,19 +303,20 @@ fn collect_bindings(stmts: &[py_ast::Stmt], frame: &mut Frame) {
             }
             py_ast::Stmt::Import(py_ast::StmtImport { names, .. }) => {
                 for alias in names {
-                    let bound_name = alias
-                        .asname
-                        .as_ref()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| {
-                            alias
-                                .name
-                                .to_string()
-                                .split('.')
-                                .next()
-                                .unwrap_or_default()
-                                .to_string()
-                        });
+                    let bound_name =
+                        alias
+                            .asname
+                            .as_ref()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| {
+                                alias
+                                    .name
+                                    .as_str()
+                                    .split('.')
+                                    .next()
+                                    .unwrap_or_default()
+                                    .to_string()
+                            });
                     frame.bound.insert(bound_name);
                 }
             }
@@ -367,10 +368,8 @@ fn collect_bindings(stmts: &[py_ast::Stmt], frame: &mut Frame) {
                 }
             }
             py_ast::Stmt::Expr(py_ast::StmtExpr { value, .. }) => collect_walrus(value, frame),
-            py_ast::Stmt::Return(py_ast::StmtReturn { value, .. }) => {
-                if let Some(v) = value {
-                    collect_walrus(v, frame);
-                }
+            py_ast::Stmt::Return(py_ast::StmtReturn { value: Some(v), .. }) => {
+                collect_walrus(v, frame)
             }
             py_ast::Stmt::Assert(py_ast::StmtAssert { test, msg, .. }) => {
                 collect_walrus(test, frame);
@@ -425,9 +424,7 @@ fn bind_pattern(pattern: &py_ast::Pattern, frame: &mut Frame) {
                 bind_pattern(p, frame);
             }
         }
-        py_ast::Pattern::MatchMapping(py_ast::PatternMatchMapping {
-            patterns, rest, ..
-        }) => {
+        py_ast::Pattern::MatchMapping(py_ast::PatternMatchMapping { patterns, rest, .. }) => {
             for p in patterns {
                 bind_pattern(p, frame);
             }
@@ -476,9 +473,15 @@ fn collect_walrus(expr: &py_ast::Expr, frame: &mut Frame) {
         py_ast::Expr::Lambda(py_ast::ExprLambda { args, .. }) => {
             collect_walrus_args_defaults(args, frame);
         }
-        py_ast::Expr::ListComp(py_ast::ExprListComp { elt, generators, .. })
-        | py_ast::Expr::SetComp(py_ast::ExprSetComp { elt, generators, .. })
-        | py_ast::Expr::GeneratorExp(py_ast::ExprGeneratorExp { elt, generators, .. }) => {
+        py_ast::Expr::ListComp(py_ast::ExprListComp {
+            elt, generators, ..
+        })
+        | py_ast::Expr::SetComp(py_ast::ExprSetComp {
+            elt, generators, ..
+        })
+        | py_ast::Expr::GeneratorExp(py_ast::ExprGeneratorExp {
+            elt, generators, ..
+        }) => {
             collect_walrus(elt, frame);
             collect_walrus_generators(generators, frame);
         }
@@ -525,11 +528,7 @@ fn collect_walrus(expr: &py_ast::Expr, frame: &mut Frame) {
         | py_ast::Expr::Starred(py_ast::ExprStarred { value, .. }) => {
             collect_walrus(value, frame);
         }
-        py_ast::Expr::Yield(py_ast::ExprYield { value, .. }) => {
-            if let Some(v) = value {
-                collect_walrus(v, frame);
-            }
-        }
+        py_ast::Expr::Yield(py_ast::ExprYield { value: Some(v), .. }) => collect_walrus(v, frame),
         py_ast::Expr::Compare(py_ast::ExprCompare {
             left, comparators, ..
         }) => {
@@ -648,10 +647,8 @@ fn collect_reads(
                 read_expr(target, frame, suppress, seen, dedup);
                 read_expr(value, frame, suppress, seen, dedup);
             }
-            py_ast::Stmt::AnnAssign(py_ast::StmtAnnAssign { value, .. }) => {
-                if let Some(v) = value {
-                    read_expr(v, frame, suppress, seen, dedup);
-                }
+            py_ast::Stmt::AnnAssign(py_ast::StmtAnnAssign { value: Some(v), .. }) => {
+                read_expr(v, frame, suppress, seen, dedup)
             }
             py_ast::Stmt::TypeAlias(py_ast::StmtTypeAlias { value, .. }) => {
                 read_expr(value, frame, suppress, seen, dedup);
@@ -659,10 +656,8 @@ fn collect_reads(
             py_ast::Stmt::Expr(py_ast::StmtExpr { value, .. }) => {
                 read_expr(value, frame, suppress, seen, dedup);
             }
-            py_ast::Stmt::Return(py_ast::StmtReturn { value, .. }) => {
-                if let Some(v) = value {
-                    read_expr(v, frame, suppress, seen, dedup);
-                }
+            py_ast::Stmt::Return(py_ast::StmtReturn { value: Some(v), .. }) => {
+                read_expr(v, frame, suppress, seen, dedup)
             }
             py_ast::Stmt::If(py_ast::StmtIf {
                 test, body, orelse, ..
@@ -893,10 +888,8 @@ fn read_expr(
         py_ast::Expr::Await(py_ast::ExprAwait { value, .. }) => {
             read_expr(value, frame, suppress, seen, dedup);
         }
-        py_ast::Expr::Yield(py_ast::ExprYield { value, .. }) => {
-            if let Some(v) = value {
-                read_expr(v, frame, suppress, seen, dedup);
-            }
+        py_ast::Expr::Yield(py_ast::ExprYield { value: Some(v), .. }) => {
+            read_expr(v, frame, suppress, seen, dedup)
         }
         py_ast::Expr::YieldFrom(py_ast::ExprYieldFrom { value, .. }) => {
             read_expr(value, frame, suppress, seen, dedup);
@@ -960,8 +953,12 @@ fn read_expr(
                 read_expr(f, frame, suppress, seen, dedup);
             }
         }
-        py_ast::Expr::ListComp(py_ast::ExprListComp { elt, generators, .. })
-        | py_ast::Expr::SetComp(py_ast::ExprSetComp { elt, generators, .. })
+        py_ast::Expr::ListComp(py_ast::ExprListComp {
+            elt, generators, ..
+        })
+        | py_ast::Expr::SetComp(py_ast::ExprSetComp {
+            elt, generators, ..
+        })
         | py_ast::Expr::GeneratorExp(py_ast::ExprGeneratorExp {
             elt, generators, ..
         }) => {
@@ -973,15 +970,7 @@ fn read_expr(
             generators,
             ..
         }) => {
-            read_comprehension(
-                value,
-                Some(key),
-                generators,
-                frame,
-                suppress,
-                seen,
-                dedup,
-            );
+            read_comprehension(value, Some(key), generators, frame, suppress, seen, dedup);
         }
         // Constant: no reads.
         _ => {}
@@ -1047,9 +1036,7 @@ fn read_pattern(
                 read_pattern(p, frame, suppress, seen, dedup);
             }
         }
-        py_ast::Pattern::MatchMapping(py_ast::PatternMatchMapping {
-            keys, patterns, ..
-        }) => {
+        py_ast::Pattern::MatchMapping(py_ast::PatternMatchMapping { keys, patterns, .. }) => {
             for k in keys {
                 read_expr(k, frame, suppress, seen, dedup);
             }
@@ -1189,17 +1176,18 @@ fn analyze_stmt(stmt: &py_ast::Stmt, dangerous: &mut Vec<String>, unsupported: &
     match stmt {
         py_ast::Stmt::Import(py_ast::StmtImport { names, .. }) => {
             for alias in names {
-                if is_dangerous_import(&alias.name.to_string()) {
+                if is_dangerous_import(alias.name.as_ref()) {
                     dangerous.push(alias.name.to_string());
                 }
             }
         }
-        py_ast::Stmt::ImportFrom(py_ast::StmtImportFrom { module, .. }) => {
-            if let Some(module) = module {
-                let mod_name = module.to_string();
-                if is_dangerous_import(&mod_name) {
-                    dangerous.push(mod_name);
-                }
+        py_ast::Stmt::ImportFrom(py_ast::StmtImportFrom {
+            module: Some(module),
+            ..
+        }) => {
+            let mod_name = module.to_string();
+            if is_dangerous_import(&mod_name) {
+                dangerous.push(mod_name);
             }
         }
         py_ast::Stmt::ClassDef { .. } => unsupported.push("class definitions".to_string()),
@@ -1257,7 +1245,11 @@ mod free_var_tests {
         // would misfire on both; the real parser must not.
         let src = "# uses base and result nowhere real\nx = \"base result\"\n";
         let fv = free_variables(src).expect("parse");
-        assert!(fv.reads.is_empty(), "reads should be empty, got {:?}", fv.reads);
+        assert!(
+            fv.reads.is_empty(),
+            "reads should be empty, got {:?}",
+            fv.reads
+        );
         assert_eq!(fv.top_level_bound, vec!["x".to_string()]);
     }
 
@@ -1266,7 +1258,10 @@ mod free_var_tests {
         let src = "y = 1\nresult = y * 2\n";
         let fv = free_variables(src).expect("parse");
         assert!(fv.reads.is_empty(), "y is bound locally, not a free read");
-        assert_eq!(fv.top_level_bound, vec!["y".to_string(), "result".to_string()]);
+        assert_eq!(
+            fv.top_level_bound,
+            vec!["y".to_string(), "result".to_string()]
+        );
     }
 
     #[test]
@@ -1304,7 +1299,8 @@ mod free_var_tests {
         // The exact repro: `n` is read only inside the comprehension, so it
         // must be detected as a read; `i` is the comprehension target and
         // must not.
-        let src = "import math\nnums = [math.factorial(i) for i in range(1, n + 1)]\nresult = nums\n";
+        let src =
+            "import math\nnums = [math.factorial(i) for i in range(1, n + 1)]\nresult = nums\n";
         let fv = free_variables(src).expect("parse");
         // `math` is bound by the block's own `import`, so it is not a free
         // read; `range` is a builtin (filtered later by the caller); `n` is
@@ -1348,7 +1344,13 @@ mod free_var_tests {
         let fv = free_variables(src).expect("parse");
         assert_eq!(
             fv.reads,
-            vec!["xs".to_string(), "range".to_string(), "n".to_string(), "pred".to_string(), "m".to_string()]
+            vec![
+                "xs".to_string(),
+                "range".to_string(),
+                "n".to_string(),
+                "pred".to_string(),
+                "m".to_string()
+            ]
         );
         assert!(!fv.reads.contains(&"x".to_string()));
         assert!(!fv.reads.contains(&"j".to_string()));
@@ -1391,12 +1393,18 @@ mod free_var_tests {
         // `global n` makes the nested read resolve to the module scope.
         let src = "def outer():\n    n = 1\n    def inner():\n        global n\n        return n\nresult = outer()\n";
         let fv = free_variables(src).expect("parse");
-        assert!(fv.reads.contains(&"n".to_string()), "global n should be a read");
+        assert!(
+            fv.reads.contains(&"n".to_string()),
+            "global n should be a read"
+        );
 
         // `nonlocal n` resolves to the enclosing function's local, not the module.
         let src = "def outer():\n    n = 1\n    def inner():\n        nonlocal n\n        return n\nresult = outer()\n";
         let fv = free_variables(src).expect("parse");
-        assert!(!fv.reads.contains(&"n".to_string()), "nonlocal n should not be a read");
+        assert!(
+            !fv.reads.contains(&"n".to_string()),
+            "nonlocal n should not be a read"
+        );
     }
 
     // ── try / except / assert / raise / match / del / with / walrus / f-string
@@ -1453,7 +1461,10 @@ mod free_var_tests {
         let src = "[y := i for i in range(n)]\nresult = y\n";
         let fv = free_variables(src).expect("parse");
         assert_eq!(fv.reads, vec!["range".to_string(), "n".to_string()]);
-        assert!(!fv.reads.contains(&"y".to_string()), "y is walrus-bound, not a read");
+        assert!(
+            !fv.reads.contains(&"y".to_string()),
+            "y is walrus-bound, not a read"
+        );
     }
 
     #[test]
@@ -1475,7 +1486,10 @@ mod free_var_tests {
         let fv = free_variables(src).expect("parse");
         assert!(fv.top_level_bound.is_empty());
         assert!(fv.bound_anywhere.contains("x"));
-        assert!(fv.bound_anywhere.contains("flag") == false, "flag is only read");
+        assert!(
+            fv.bound_anywhere.contains("flag") == false,
+            "flag is only read"
+        );
     }
 
     #[test]

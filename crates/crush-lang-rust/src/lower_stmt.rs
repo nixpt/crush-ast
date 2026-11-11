@@ -9,7 +9,8 @@ use syn::{Stmt, spanned::Spanned};
 use crate::lower_expr::{format_args_to_expr, lower_expr, pat_to_ident};
 
 pub fn lower_stmt(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
-    lower_stmt_inner(stmt, ctx).map_err(|error| crate::diagnostics::at("statement", stmt.span(), error))
+    lower_stmt_inner(stmt, ctx)
+        .map_err(|error| crate::diagnostics::at("statement", stmt.span(), error))
 }
 
 fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement> {
@@ -35,7 +36,11 @@ fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement
         Stmt::Item(item) => match item {
             syn::Item::Fn(item_fn) => {
                 if item_fn.sig.asyncness.is_some() {
-                    return Err(crate::lower_expr::unsupported_at(item_fn.sig.span(), "async function", "Future/poll semantics are required before treating its declared output as a ready method value (CRUSH-xps-13)"));
+                    return Err(crate::lower_expr::unsupported_at(
+                        item_fn.sig.span(),
+                        "async function",
+                        "Future/poll semantics are required before treating its declared output as a ready method value (CRUSH-xps-13)",
+                    ));
                 }
                 let mut meta = meta;
                 let (numeric_params, numeric_return) = crate::numeric::signature(&item_fn.sig);
@@ -62,7 +67,11 @@ fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement
                     .collect();
                 // CRUSH-197: a function with a return type returns its tail
                 // expression (`fn f(n: i64) -> i64 { n + 1 }`).
-                let tail = if matches!(item_fn.sig.output, syn::ReturnType::Default) { Tail::Discard } else { Tail::Return };
+                let tail = if matches!(item_fn.sig.output, syn::ReturnType::Default) {
+                    Tail::Discard
+                } else {
+                    Tail::Return
+                };
                 let body = lower_block(&item_fn.block.stmts, ctx, tail)?;
                 Ok(Statement::FunctionDef {
                     name,
@@ -100,10 +109,10 @@ fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement
                             Some(elses)
                         }
                         syn::Expr::If(nested_if) => {
-                            let nested = lower_stmt(&syn::Stmt::Expr(
-                                syn::Expr::If(nested_if.clone()),
-                                None,
-                            ), ctx)?;
+                            let nested = lower_stmt(
+                                &syn::Stmt::Expr(syn::Expr::If(nested_if.clone()), None),
+                                ctx,
+                            )?;
                             Some(vec![nested])
                         }
                         _ => {
@@ -146,20 +155,24 @@ fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement
                     meta,
                 })
             }
-            syn::Expr::Break(_) => {
-                Ok(Statement::Break { meta })
-            }
+            syn::Expr::Break(_) => Ok(Statement::Break { meta }),
             syn::Expr::Continue(_) => Ok(Statement::Continue { meta }),
             // `loop { ... }` = `while true { ... }` (break/continue work as usual).
             syn::Expr::Loop(e_loop) => Ok(Statement::While {
-                condition: Box::new(Expression::BoolLiteral { value: true, meta: meta.clone() }),
+                condition: Box::new(Expression::BoolLiteral {
+                    value: true,
+                    meta: meta.clone(),
+                }),
                 body: lower_block(&e_loop.body.stmts, ctx, Tail::Discard)?,
                 meta,
             }),
             syn::Expr::Block(eb) => {
                 let body = lower_block(&eb.block.stmts, ctx, Tail::Discard)?;
                 Ok(Statement::If {
-                    condition: Expression::BoolLiteral { value: true, meta: meta.clone() },
+                    condition: Expression::BoolLiteral {
+                        value: true,
+                        meta: meta.clone(),
+                    },
                     then_body: body,
                     else_body: None,
                     meta,
@@ -188,7 +201,7 @@ fn lower_stmt_inner(stmt: &Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Statement
                         },
                         meta: ctx.meta_at(0),
                     })
-                },
+                }
                 _ => anyhow::bail!("macro invocation not supported: {}!", mac_name),
             }
         }
@@ -207,7 +220,11 @@ pub enum Tail {
 }
 
 /// Lower a block's statements; the final expression without `;` is handled per `tail`.
-pub fn lower_block(stmts: &[Stmt], ctx: &LowerCtx<'_>, tail: Tail) -> anyhow::Result<Vec<Statement>> {
+pub fn lower_block(
+    stmts: &[Stmt],
+    ctx: &LowerCtx<'_>,
+    tail: Tail,
+) -> anyhow::Result<Vec<Statement>> {
     let mut out = Vec::new();
     for (i, s) in stmts.iter().enumerate() {
         let last = i + 1 == stmts.len();
@@ -215,7 +232,10 @@ pub fn lower_block(stmts: &[Stmt], ctx: &LowerCtx<'_>, tail: Tail) -> anyhow::Re
             (Stmt::Expr(e, None), true, Tail::Return) => out.extend(lower_tail_return(e, ctx)?),
             (Stmt::Expr(e, None), true, Tail::Value) if !is_statement_like(e) => {
                 let meta = ctx.meta_at(0);
-                out.push(Statement::ExprStmt { expr: lower_expr(e, ctx)?, meta });
+                out.push(Statement::ExprStmt {
+                    expr: lower_expr(e, ctx)?,
+                    meta,
+                });
             }
             _ => out.push(lower_stmt(s, ctx)?),
         }
@@ -226,14 +246,24 @@ pub fn lower_block(stmts: &[Stmt], ctx: &LowerCtx<'_>, tail: Tail) -> anyhow::Re
 fn is_statement_like(e: &syn::Expr) -> bool {
     matches!(
         e,
-        syn::Expr::If(_) | syn::Expr::While(_) | syn::Expr::ForLoop(_) | syn::Expr::Loop(_)
-            | syn::Expr::Return(_) | syn::Expr::Break(_) | syn::Expr::Continue(_)
-            | syn::Expr::Block(_) | syn::Expr::Macro(_) | syn::Expr::Assign(_)
+        syn::Expr::If(_)
+            | syn::Expr::While(_)
+            | syn::Expr::ForLoop(_)
+            | syn::Expr::Loop(_)
+            | syn::Expr::Return(_)
+            | syn::Expr::Break(_)
+            | syn::Expr::Continue(_)
+            | syn::Expr::Block(_)
+            | syn::Expr::Macro(_)
+            | syn::Expr::Assign(_)
     )
 }
 
 /// A tail expression in a function with a return type: branches return their own tails.
-pub(crate) fn lower_tail_return(e: &syn::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<Statement>> {
+pub(crate) fn lower_tail_return(
+    e: &syn::Expr,
+    ctx: &LowerCtx<'_>,
+) -> anyhow::Result<Vec<Statement>> {
     let meta = ctx.meta_at(0);
     Ok(match e {
         syn::Expr::If(e_if) => {
@@ -242,14 +272,27 @@ pub(crate) fn lower_tail_return(e: &syn::Expr, ctx: &LowerCtx<'_>) -> anyhow::Re
                 Some((_, else_expr)) => Some(lower_tail_return(else_expr, ctx)?),
                 None => None,
             };
-            vec![Statement::If { condition: lower_expr(&e_if.cond, ctx)?, then_body, else_body, meta }]
+            vec![Statement::If {
+                condition: lower_expr(&e_if.cond, ctx)?,
+                then_body,
+                else_body,
+                meta,
+            }]
         }
         syn::Expr::Block(eb) => lower_block(&eb.block.stmts, ctx, Tail::Return)?,
         syn::Expr::Paren(p) => lower_tail_return(&p.expr, ctx)?,
-        syn::Expr::While(_) | syn::Expr::ForLoop(_) | syn::Expr::Loop(_) | syn::Expr::Return(_)
-        | syn::Expr::Break(_) | syn::Expr::Continue(_) | syn::Expr::Assign(_) => {
+        syn::Expr::While(_)
+        | syn::Expr::ForLoop(_)
+        | syn::Expr::Loop(_)
+        | syn::Expr::Return(_)
+        | syn::Expr::Break(_)
+        | syn::Expr::Continue(_)
+        | syn::Expr::Assign(_) => {
             vec![lower_stmt(&Stmt::Expr(e.clone(), None), ctx)?]
         }
-        _ => vec![Statement::Return { value: Some(lower_expr(e, ctx)?), meta }],
+        _ => vec![Statement::Return {
+            value: Some(lower_expr(e, ctx)?),
+            meta,
+        }],
     })
 }

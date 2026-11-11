@@ -22,8 +22,8 @@ pub fn parse_cli_args(args: &[&str]) -> (Option<String>, HashMap<String, String>
     let mut i = 0;
     while i < args.len() {
         let arg = args[i];
-        if arg.starts_with("--") {
-            let flag = arg[2..].to_string();
+        if let Some(flag) = arg.strip_prefix("--") {
+            let flag = flag.to_string();
             if i + 1 < args.len() && !args[i + 1].starts_with('-') {
                 flags.insert(flag, args[i + 1].to_string());
                 i += 1;

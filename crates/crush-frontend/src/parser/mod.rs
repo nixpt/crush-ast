@@ -3,10 +3,11 @@
 //! Recursive descent parser that converts tokens into AST.
 //! Uses Pratt parsing for expressions.
 
-mod lexer;
 pub mod cson;
+mod lexer;
 pub use lexer::{Lexer, ParseError, SourceLocation, Token};
 
+use crush_cast::ai as cast_ai;
 use crush_cast::manifest::{
     DecisionNode, ErrorLikelihood, FunctionAnnotations, Invariant, ModuleManifest, TemporaryNode,
     WeightedError, WipNode,
@@ -14,7 +15,6 @@ use crush_cast::manifest::{
 use crush_cast::*;
 use crush_cast::{ExternalResourceType, ImportStatement};
 use std::collections::HashMap;
-use crush_cast::ai as cast_ai;
 
 /// A bound separator in `[a:b:c]` slice syntax. `::` (an omitted bound) lexes
 /// as the Rust path separator token, `[1::2]` vs `[1:2]`.
@@ -125,13 +125,19 @@ impl Parser {
                 self.skip_newlines();
                 self.parse_expression()?
             } else {
-                Expression::Var { name: field.clone(), meta: self.make_meta() }
+                Expression::Var {
+                    name: field.clone(),
+                    meta: self.make_meta(),
+                }
             };
             if !declared.contains(&field) {
                 self.errors.push(ParseError::UnexpectedToken {
                     line,
                     col,
-                    msg: format!("struct {name} has no field `{field}` (fields: {})", declared.join(", ")),
+                    msg: format!(
+                        "struct {name} has no field `{field}` (fields: {})",
+                        declared.join(", ")
+                    ),
                 });
             } else if properties.iter().any(|(k, _)| k == &field) {
                 self.errors.push(ParseError::UnexpectedToken {
@@ -150,14 +156,21 @@ impl Parser {
             }
         }
         self.expect(Token::RBrace(SourceLocation { line: 0, col: 0 }))?;
-        let missing: Vec<&String> = declared.iter().filter(|f| !properties.iter().any(|(k, _)| k == *f)).collect();
+        let missing: Vec<&String> = declared
+            .iter()
+            .filter(|f| !properties.iter().any(|(k, _)| k == *f))
+            .collect();
         if !missing.is_empty() {
             self.errors.push(ParseError::UnexpectedToken {
                 line,
                 col,
                 msg: format!(
                     "missing field(s) {} in {name} {{ ... }}",
-                    missing.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ")
+                    missing
+                        .iter()
+                        .map(|f| format!("`{f}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
             });
         }
@@ -461,8 +474,10 @@ impl Parser {
             // @-annotation tokens at top level
             if let Token::AtIdent(id, _) = self.peek().clone() {
                 // Skip if followed by LangBody — that's a polyglot block, handled below
-                let next_is_lang_body =
-                    matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _, _, _)));
+                let next_is_lang_body = matches!(
+                    self.tokens.get(self.pos + 1),
+                    Some(Token::LangBody(_, _, _, _))
+                );
                 if !next_is_lang_body {
                     match id.as_str() {
                         "module" => {
@@ -491,12 +506,14 @@ impl Parser {
                             // nothing beyond the ambient capabilities.
                             self.advance();
                             let items = self.parse_at_items();
-                            pending_capabilities.get_or_insert_with(Vec::new).extend(items);
+                            pending_capabilities
+                                .get_or_insert_with(Vec::new)
+                                .extend(items);
                             continue;
                         }
                         "errors" | "reads" | "writes" | "does-not-write" | "covers"
-                        | "relies-on" | "complexity"
-                        | "invalidates" | "must-call-before" | "must-call-after" => {
+                        | "relies-on" | "complexity" | "invalidates" | "must-call-before"
+                        | "must-call-after" => {
                             self.advance();
                             let ann = pending_fn_annotations.get_or_insert_with(Default::default);
                             self.parse_fn_annotation_body(&id, ann);
@@ -536,14 +553,14 @@ impl Parser {
                                         continue;
                                     }
                                     match self.parse_struct_def() {
-                                        Ok(Statement::StructDef { name, fields, meta, .. }) => {
-                                            statements.push(Statement::StructDef {
-                                                name,
-                                                fields,
-                                                kind: Some(kind),
-                                                meta,
-                                            })
-                                        }
+                                        Ok(Statement::StructDef {
+                                            name, fields, meta, ..
+                                        }) => statements.push(Statement::StructDef {
+                                            name,
+                                            fields,
+                                            kind: Some(kind),
+                                            meta,
+                                        }),
                                         Ok(other) => statements.push(other),
                                         Err(_) => self.synchronize(),
                                     }
@@ -608,25 +625,24 @@ impl Parser {
             }
 
             // async fn — consume 'async' and delegate to parse_function
-            if self.pos + 1 < self.tokens.len() {
-                if matches!(self.peek(), Token::Async(_))
-                    && matches!(&self.tokens[self.pos + 1], Token::Fn(_))
-                {
-                    self.advance(); // consume 'async'
-                    match self.parse_function(true) {
-                        Ok((name, mut func)) => {
-                            if let Some(ann) = pending_fn_annotations.take() {
-                                func.annotations = Some(ann);
-                            }
-                            functions.insert(name, func);
+            if self.pos + 1 < self.tokens.len()
+                && matches!(self.peek(), Token::Async(_))
+                && matches!(&self.tokens[self.pos + 1], Token::Fn(_))
+            {
+                self.advance(); // consume 'async'
+                match self.parse_function(true) {
+                    Ok((name, mut func)) => {
+                        if let Some(ann) = pending_fn_annotations.take() {
+                            func.annotations = Some(ann);
                         }
-                        Err(_) => {
-                            pending_fn_annotations = None;
-                            self.synchronize();
-                        }
+                        functions.insert(name, func);
                     }
-                    continue;
+                    Err(_) => {
+                        pending_fn_annotations = None;
+                        self.synchronize();
+                    }
                 }
+                continue;
             }
 
             // pub async fn — consume 'pub' 'async' and delegate to parse_function
@@ -665,10 +681,7 @@ impl Parser {
                     Token::Ident(s, _) => s == "pub",
                     _ => false,
                 };
-                let next_is_fn = match &self.tokens[self.pos + 1] {
-                    Token::Fn(_) => true,
-                    _ => false,
-                };
+                let next_is_fn = matches!(&self.tokens[self.pos + 1], Token::Fn(_));
                 ident_is_pub && next_is_fn
             } else {
                 false
@@ -693,7 +706,11 @@ impl Parser {
             // COSM K1.2: `impl …` / `trait …` (top level only).
             if self.at_impl_or_trait() {
                 let is_impl = matches!(self.peek(), Token::Ident(kw, _) if kw == "impl");
-                let parsed = if is_impl { self.parse_impl_block() } else { self.parse_trait_def() };
+                let parsed = if is_impl {
+                    self.parse_impl_block()
+                } else {
+                    self.parse_trait_def()
+                };
                 match parsed {
                     Ok(stmt) => statements.push(stmt),
                     Err(_) => self.synchronize(),
@@ -1021,7 +1038,11 @@ impl Parser {
 
         if self.at_impl_or_trait() {
             let (line, col) = self.get_location(self.peek());
-            let kw = if matches!(self.peek(), Token::Ident(kw, _) if kw == "impl") { "impl" } else { "trait" };
+            let kw = if matches!(self.peek(), Token::Ident(kw, _) if kw == "impl") {
+                "impl"
+            } else {
+                "trait"
+            };
             self.errors.push(ParseError::UnexpectedToken {
                 line,
                 col,
@@ -1069,7 +1090,10 @@ impl Parser {
             Token::Import(_) | Token::Use(_) => self.parse_import_statement(),
             Token::Export(_) => self.parse_export_statement(),
             Token::AtIdent(_, _)
-                if matches!(self.tokens.get(self.pos + 1), Some(Token::LangBody(_, _, _, _))) =>
+                if matches!(
+                    self.tokens.get(self.pos + 1),
+                    Some(Token::LangBody(_, _, _, _))
+                ) =>
             {
                 self.parse_lang_block()
             }
@@ -1382,7 +1406,12 @@ impl Parser {
             None => format!("impl {type_name}"),
         };
         let methods = self.parse_method_list(&what, false)?;
-        Ok(Statement::ImplBlock { type_name, trait_name, methods, meta })
+        Ok(Statement::ImplBlock {
+            type_name,
+            trait_name,
+            methods,
+            meta,
+        })
     }
 
     /// `trait T { fn m(self) -> R; fn d(self) { … } }`.
@@ -1391,7 +1420,11 @@ impl Parser {
         self.advance(); // `trait`
         let name = self.expect_ident("a trait name after `trait`")?;
         let methods = self.parse_method_list(&format!("trait {name}"), true)?;
-        Ok(Statement::TraitDef { name, methods, meta })
+        Ok(Statement::TraitDef {
+            name,
+            methods,
+            meta,
+        })
     }
 
     fn expect_ident(&mut self, expected: &str) -> Result<String, ()> {
@@ -1451,7 +1484,12 @@ impl Parser {
 
     /// `fn name(params) [-> T] { body }`, or — in a trait — the signature
     /// `fn name(params) [-> T];` (ended by `;` or a newline).
-    fn parse_method(&mut self, what: &str, signatures_ok: bool, is_async: bool) -> Result<MethodDef, ()> {
+    fn parse_method(
+        &mut self,
+        what: &str,
+        signatures_ok: bool,
+        is_async: bool,
+    ) -> Result<MethodDef, ()> {
         let meta = self.make_meta();
         self.advance(); // `fn`
         // `new` is a keyword (`new P()`), but `fn new` is the constructor
@@ -1475,9 +1513,23 @@ impl Parser {
         let params: Vec<(String, CastType)> =
             params.into_iter().map(|p| (p.name, p.type_hint)).collect();
         if !matches!(self.peek(), Token::LBrace(_)) {
-            if signatures_ok && matches!(self.peek(), Token::Semicolon(_) | Token::Newline(_) | Token::Comment(_, _) | Token::RBrace(_)) {
+            if signatures_ok
+                && matches!(
+                    self.peek(),
+                    Token::Semicolon(_)
+                        | Token::Newline(_)
+                        | Token::Comment(_, _)
+                        | Token::RBrace(_)
+                )
+            {
                 self.maybe_semicolon();
-                return Ok(MethodDef { name, params, body: None, is_async, meta });
+                return Ok(MethodDef {
+                    name,
+                    params,
+                    body: None,
+                    is_async,
+                    meta,
+                });
             }
             let (line, col) = self.get_location(self.peek());
             self.errors.push(ParseError::Expected {
@@ -1496,13 +1548,22 @@ impl Parser {
         self.skip_newlines();
         let body = self.parse_block()?;
         self.expect(Token::RBrace(SourceLocation { line: 0, col: 0 }))?;
-        Ok(MethodDef { name, params, body: Some(body), is_async, meta })
+        Ok(MethodDef {
+            name,
+            params,
+            body: Some(body),
+            is_async,
+            meta,
+        })
     }
 
     /// `@kind(key: value, …)` — the `@kind` token is already consumed. Values
     /// are kept as written (`sealed`, `value(copy)`, `[Base, Mixin]`); the
     /// catalogue check happens when the program is lowered to COSM.
-    fn parse_kind_annotation(&mut self, meta: HashMap<String, serde_json::Value>) -> Result<KindAnnotation, ()> {
+    fn parse_kind_annotation(
+        &mut self,
+        meta: HashMap<String, serde_json::Value>,
+    ) -> Result<KindAnnotation, ()> {
         self.expect(Token::LParen(SourceLocation { line: 0, col: 0 }))?;
         let mut args = Vec::new();
         loop {
@@ -1517,7 +1578,11 @@ impl Parser {
             self.expect(Token::Colon(SourceLocation { line: 0, col: 0 }))?;
             self.skip_newlines();
             let value = self.parse_kind_value()?;
-            args.push(KindArg { key, value, meta: arg_meta });
+            args.push(KindArg {
+                key,
+                value,
+                meta: arg_meta,
+            });
             self.skip_newlines();
             match self.peek() {
                 Token::Comma(_) => {
@@ -1593,7 +1658,8 @@ impl Parser {
             let items = list(self, |t| matches!(t, Token::RBracket(_)))?;
             return Ok(KindValue::List { items });
         }
-        let name = self.parse_kind_word("a `@kind` value (e.g. `sealed`, `value(copy)`, `[Base]`)")?;
+        let name =
+            self.parse_kind_word("a `@kind` value (e.g. `sealed`, `value(copy)`, `[Base]`)")?;
         if matches!(self.peek(), Token::LParen(_)) {
             self.advance();
             let args = list(self, |t| matches!(t, Token::RParen(_)))?;
@@ -1875,7 +1941,7 @@ impl Parser {
                 // arrays on both VMs, mirrored by the AOT backends. (The
                 // earlier `arr_slice` desugar here only ever worked on arrays:
                 // slicing a string errored with "expected array, got str".)
-                if slice_colon(&self.peek()) {
+                if slice_colon(self.peek()) {
                     // xs[:…] — no start. Which separator was consumed decides
                     // what follows: `::` (empty stop slot) → optional step;
                     // `:` → optional stop, then an optional second separator
@@ -1892,7 +1958,7 @@ impl Parser {
                     } else if !matches!(self.peek(), Token::RBracket(_)) {
                         // xs[:stop] or xs[:stop:step]
                         stop_expr = Some(self.parse_expression()?);
-                        if slice_colon(&self.peek()) {
+                        if slice_colon(self.peek()) {
                             self.advance();
                             if !matches!(self.peek(), Token::RBracket(_)) {
                                 step_expr = Some(self.parse_expression()?);
@@ -1901,16 +1967,23 @@ impl Parser {
                     }
                     self.expect(Token::RBracket(SourceLocation { line: 0, col: 0 }))?;
 
-                    let null = || Expression::NullLiteral { meta: self.make_meta() };
+                    let null = || Expression::NullLiteral {
+                        meta: self.make_meta(),
+                    };
                     Expression::CapabilityCall {
                         name: "seq.slice".to_string(),
-                        args: vec![left, null(), stop_expr.unwrap_or_else(null), step_expr.unwrap_or_else(null)],
+                        args: vec![
+                            left,
+                            null(),
+                            stop_expr.unwrap_or_else(null),
+                            step_expr.unwrap_or_else(null),
+                        ],
                         meta: self.make_meta(),
                     }
                 } else {
                     // Parse the start expression
                     let index = self.parse_expression()?;
-                    if slice_colon(&self.peek()) {
+                    if slice_colon(self.peek()) {
                         // xs[start:…] — `::` (empty stop slot) → optional
                         // step; `:` → optional stop, then optional step via
                         // a second separator (`[a:stop:step]`, `[a:stop::step]`).
@@ -1926,7 +1999,7 @@ impl Parser {
                         } else if !matches!(self.peek(), Token::RBracket(_)) {
                             // xs[start:stop] or xs[start:stop:step]
                             stop_expr = Some(self.parse_expression()?);
-                            if slice_colon(&self.peek()) {
+                            if slice_colon(self.peek()) {
                                 self.advance();
                                 if !matches!(self.peek(), Token::RBracket(_)) {
                                     step_expr = Some(self.parse_expression()?);
@@ -1935,10 +2008,17 @@ impl Parser {
                         }
                         self.expect(Token::RBracket(SourceLocation { line: 0, col: 0 }))?;
 
-                        let null = || Expression::NullLiteral { meta: self.make_meta() };
+                        let null = || Expression::NullLiteral {
+                            meta: self.make_meta(),
+                        };
                         Expression::CapabilityCall {
                             name: "seq.slice".to_string(),
-                            args: vec![left, index, stop_expr.unwrap_or_else(null), step_expr.unwrap_or_else(null)],
+                            args: vec![
+                                left,
+                                index,
+                                stop_expr.unwrap_or_else(null),
+                                step_expr.unwrap_or_else(null),
+                            ],
                             meta: self.make_meta(),
                         }
                     } else {
@@ -2135,7 +2215,9 @@ impl Parser {
                 let segment = |t: &Token| matches!(t, Token::Ident(_, _) | Token::New(_));
                 if matches!(self.peek(), Token::DoubleColon(_)) && segment(self.peek_ahead(1)) {
                     let mut path = n;
-                    while matches!(self.peek(), Token::DoubleColon(_)) && segment(self.peek_ahead(1)) {
+                    while matches!(self.peek(), Token::DoubleColon(_))
+                        && segment(self.peek_ahead(1))
+                    {
                         self.advance();
                         path.push_str("::");
                         match self.peek() {
@@ -2144,7 +2226,10 @@ impl Parser {
                         }
                         self.advance();
                     }
-                    return Ok(Expression::Var { name: path, meta: ident_meta });
+                    return Ok(Expression::Var {
+                        name: path,
+                        meta: ident_meta,
+                    });
                 }
                 Ok(Expression::Var {
                     name: n,
@@ -2402,11 +2487,14 @@ impl Parser {
         // Accept either `=>` (FatArrow) or `->` (Arrow) as the match arm separator.
         // FatArrow is preferred; Arrow is kept for backward compat with existing fixtures.
         match self.peek() {
-            Token::FatArrow(_) | Token::Arrow(_) => { self.advance(); }
+            Token::FatArrow(_) | Token::Arrow(_) => {
+                self.advance();
+            }
             _ => {
                 let (line, col) = self.get_location(self.peek());
                 self.errors.push(ParseError::Expected {
-                    line, col,
+                    line,
+                    col,
                     expected: "=> or ->".to_string(),
                     found: self.peek().describe(),
                 });
@@ -2513,7 +2601,10 @@ impl Parser {
                         if matches!(self.peek(), Token::RParen(_)) {
                             self.advance(); // consume )
                         }
-                        Ok(Pattern::Struct { name: n, fields: Vec::new() })
+                        Ok(Pattern::Struct {
+                            name: n,
+                            fields: Vec::new(),
+                        })
                     } else {
                         Ok(Pattern::Identifier { name: n })
                     }
@@ -3051,20 +3142,23 @@ impl Parser {
                 | "capabilities" => {
                     let items = self.parse_at_list();
                     match key.as_str() {
-                        "capabilities" => {
-                            manifest.capabilities.get_or_insert_with(Vec::new).extend(items)
-                        }
+                        "capabilities" => manifest
+                            .capabilities
+                            .get_or_insert_with(Vec::new)
+                            .extend(items),
                         "exports" => manifest.exports = items,
                         "related" => manifest.related = items,
-                        "invariants" => manifest.invariants.extend(items.into_iter().map(|n| {
-                            Invariant {
-                                name: n,
-                                description: String::new(),
-                                applies_to: Vec::new(),
-                                consequence: None,
-                                check_source: None,
-                            }
-                        })),
+                        "invariants" => {
+                            manifest
+                                .invariants
+                                .extend(items.into_iter().map(|n| Invariant {
+                                    name: n,
+                                    description: String::new(),
+                                    applies_to: Vec::new(),
+                                    consequence: None,
+                                    check_source: None,
+                                }))
+                        }
                         "exhaustive_types" => manifest.exhaustive_types = items,
                         _ => {} // changelog as string list is a no-op (needs richer type)
                     }
@@ -3247,11 +3341,7 @@ impl Parser {
         } else {
             // Single bare item
             let s = self.parse_at_qualified_ident();
-            if s.is_empty() {
-                Vec::new()
-            } else {
-                vec![s]
-            }
+            if s.is_empty() { Vec::new() } else { vec![s] }
         }
     }
 
@@ -3357,7 +3447,7 @@ impl Parser {
                     // If the token after `-` is a word (ident or keyword), treat
                     // this as a kebab-case hyphen.  Keywords are valid word-parts
                     // in annotation value paths (e.g. `revisit-if`).
-                    let next_is_word = self.tokens.get(self.pos + 1).map_or(false, |t| {
+                    let next_is_word = self.tokens.get(self.pos + 1).is_some_and(|t| {
                         matches!(t, Token::Ident(_, _)) || Self::kw_text(t).is_some()
                     });
                     if next_is_word {
@@ -3509,7 +3599,10 @@ impl Parser {
                 "rare" => ErrorLikelihood::Rare,
                 _ => ErrorLikelihood::Possible, // default
             };
-            items.push(WeightedError { variant, likelihood });
+            items.push(WeightedError {
+                variant,
+                likelihood,
+            });
             self.skip_newlines();
             if matches!(self.peek(), Token::Comma(_)) {
                 self.advance();
@@ -3553,9 +3646,10 @@ impl Parser {
                 break;
             }
             // Look past the Minus: is the next token a word?
-            let next_is_word = self.tokens.get(self.pos + 1).map_or(false, |t| {
-                matches!(t, Token::Ident(_, _)) || Self::kw_text(t).is_some()
-            });
+            let next_is_word = self
+                .tokens
+                .get(self.pos + 1)
+                .is_some_and(|t| matches!(t, Token::Ident(_, _)) || Self::kw_text(t).is_some());
             if !next_is_word {
                 break;
             }
@@ -4003,7 +4097,11 @@ fn main() {
         let program = Parser::parse(source).unwrap();
         let manifest = program.manifest.expect("manifest should be set");
         assert!(manifest.exhaustive_types.contains(&"Value".to_string()));
-        assert!(manifest.exhaustive_types.contains(&"StepAction".to_string()));
+        assert!(
+            manifest
+                .exhaustive_types
+                .contains(&"StepAction".to_string())
+        );
     }
 
     #[test]
@@ -4020,9 +4118,18 @@ fn execute_one() {
 }
 "#;
         let program = Parser::parse(source).unwrap();
-        let func = program.functions.get("execute_one").expect("function should exist");
-        let ann = func.annotations.as_ref().expect("annotations should be set");
-        assert_eq!(ann.errors, vec!["VmError::StackUnderflow", "VmError::StepQuota"]);
+        let func = program
+            .functions
+            .get("execute_one")
+            .expect("function should exist");
+        let ann = func
+            .annotations
+            .as_ref()
+            .expect("annotations should be set");
+        assert_eq!(
+            ann.errors,
+            vec!["VmError::StackUnderflow", "VmError::StepQuota"]
+        );
         assert_eq!(ann.reads, vec!["thread.ip", "thread.stack"]);
         assert_eq!(ann.writes, vec!["thread.ip", "thread.out_parts"]);
         assert_eq!(ann.does_not_write, vec!["program"]);
@@ -4043,7 +4150,10 @@ fn second() {
 "#;
         let program = Parser::parse(source).unwrap();
         let first = program.functions.get("first").expect("first should exist");
-        let second = program.functions.get("second").expect("second should exist");
+        let second = program
+            .functions
+            .get("second")
+            .expect("second should exist");
         assert!(first.annotations.is_some());
         assert!(second.annotations.is_none());
     }
@@ -4058,7 +4168,10 @@ fn heavy() {
 "#;
         let program = Parser::parse(source).unwrap();
         let func = program.functions.get("heavy").expect("heavy should exist");
-        let ann = func.annotations.as_ref().expect("annotations should be set");
+        let ann = func
+            .annotations
+            .as_ref()
+            .expect("annotations should be set");
         assert_eq!(ann.complexity, Some(75));
     }
     #[test]
@@ -4070,12 +4183,26 @@ fn heavy() {
         match stmt {
             Statement::VarDecl { value, .. } => match value {
                 Expression::Range { start, end, .. } => {
-                    assert!(matches!(start.as_ref(), Expression::IntLiteral { value: 1, .. }));
+                    assert!(matches!(
+                        start.as_ref(),
+                        Expression::IntLiteral { value: 1, .. }
+                    ));
                     match end.as_ref() {
-                        Expression::BinaryOp { operator, left, right, .. } => {
+                        Expression::BinaryOp {
+                            operator,
+                            left,
+                            right,
+                            ..
+                        } => {
                             assert_eq!(operator, "+");
-                            assert!(matches!(left.as_ref(), Expression::IntLiteral { value: 5, .. }));
-                            assert!(matches!(right.as_ref(), Expression::IntLiteral { value: 1, .. }));
+                            assert!(matches!(
+                                left.as_ref(),
+                                Expression::IntLiteral { value: 5, .. }
+                            ));
+                            assert!(matches!(
+                                right.as_ref(),
+                                Expression::IntLiteral { value: 1, .. }
+                            ));
                         }
                         other => panic!("expected BinaryOp end, got {other:?}"),
                     }
@@ -4095,9 +4222,14 @@ fn heavy() {
         match stmt {
             Statement::VarDecl { value, .. } => match value {
                 Expression::Range { end, .. } => match end.as_ref() {
-                    Expression::BinaryOp { operator, right, .. } => {
+                    Expression::BinaryOp {
+                        operator, right, ..
+                    } => {
                         assert_eq!(operator, "+");
-                        assert!(matches!(right.as_ref(), Expression::IntLiteral { value: 1, .. }));
+                        assert!(matches!(
+                            right.as_ref(),
+                            Expression::IntLiteral { value: 1, .. }
+                        ));
                     }
                     other => panic!("expected BinaryOp end, got {other:?}"),
                 },
@@ -4116,8 +4248,14 @@ fn heavy() {
         match stmt {
             Statement::VarDecl { value, .. } => match value {
                 Expression::Range { start, end, .. } => {
-                    assert!(matches!(start.as_ref(), Expression::IntLiteral { value: 1, .. }));
-                    assert!(matches!(end.as_ref(), Expression::IntLiteral { value: 5, .. }));
+                    assert!(matches!(
+                        start.as_ref(),
+                        Expression::IntLiteral { value: 1, .. }
+                    ));
+                    assert!(matches!(
+                        end.as_ref(),
+                        Expression::IntLiteral { value: 5, .. }
+                    ));
                 }
                 other => panic!("expected Range, got {other:?}"),
             },

@@ -125,8 +125,7 @@ fn main() -> anyhow::Result<()> {
                 .map(|s| s.as_str())
                 .partition(|c| c.starts_with("debug."));
             let visibility = debug_visibility(&debug_caps)?;
-            let permissions: Option<&[&str]> =
-                if caps.is_empty() { None } else { Some(&caps) };
+            let permissions: Option<&[&str]> = if caps.is_empty() { None } else { Some(&caps) };
             let mut program = crush_vm::assemble(&source, permissions, Some(&args.target))
                 .map_err(|e| anyhow::anyhow!("assemble failed: {}", e))?;
             let source_map = std::mem::take(&mut program.source_map);

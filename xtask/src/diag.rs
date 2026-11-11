@@ -18,7 +18,7 @@
 // binaries import through this module rather than from
 // `crush_diagnostics` directly so a future rename / split of the
 // canonical crate is a single-file change.
-pub use crush_diagnostics::{diag_line, diag_line_from, wants_json, DiagRecord};
+pub use crush_diagnostics::{DiagRecord, diag_line, diag_line_from, wants_json};
 
 /// Audit wire code — emitted by the `cargo xtask audit` subcommand.
 pub const CODE_AUDIT: &str = "E-AUDIT";
@@ -312,7 +312,10 @@ mod tests {
         let ctrl = "\u{0001}".repeat(HINT_MAX_BYTES);
         let out = hinted_text(&ctrl);
         let encoded = serde_json::to_string(&out).expect("encodable");
-        assert!(encoded.len() <= HINT_MAX_BYTES, "cap must hold on ctrl chars");
+        assert!(
+            encoded.len() <= HINT_MAX_BYTES,
+            "cap must hold on ctrl chars"
+        );
         let _: serde_json::Value = serde_json::from_str(&encoded)
             .expect("no half-encoded \\uNNNN escape may appear in output");
     }

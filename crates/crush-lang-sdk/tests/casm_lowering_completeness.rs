@@ -6,7 +6,7 @@
 //! (`probe` is an exhaustive `match` with no wildcard) and, once `probe` is
 //! extended, fails the coverage test until the new op is lowered or listed.
 
-use casm::{Function, Instruction, Manifest, OpCode, Program};
+use casm::{Function, Instruction, OpCode, Program};
 use crush_lang_sdk::compile::casm_to_vm;
 use crush_vm::Quotas;
 use crush_vm::vm::Value;
@@ -360,8 +360,14 @@ fn all_opcodes() -> Vec<OpCode> {
         OpCode::SetMember(String::new()),
         OpCode::HasMember(String::new()),
         OpCode::DelMember(String::new()),
-        OpCode::CallMember { name: String::new(), argc: 0 },
-        OpCode::Construct { kind: String::new(), argc: 0 },
+        OpCode::CallMember {
+            name: String::new(),
+            argc: 0,
+        },
+        OpCode::Construct {
+            kind: String::new(),
+            argc: 0,
+        },
         OpCode::GetSlot(0),
         OpCode::SetSlot(0),
         OpCode::IsKind(String::new()),
@@ -573,7 +579,8 @@ fn declined_ai_ops_are_refused_by_every_engine() {
             "{name} (CVM1): {msg}"
         );
         // FastVM rejects unknown opcodes at lowering time.
-        let err = crush_vm::fastvm::lower_program(&program_of(vec![instr, op("ret")])).expect_err(name);
+        let err =
+            crush_vm::fastvm::lower_program(&program_of(vec![instr, op("ret")])).expect_err(name);
         assert!(err.to_string().contains(name), "{name} (FastVM): {err}");
     }
 }
@@ -631,7 +638,10 @@ fn type_of_and_cast_compute() {
 
 #[test]
 fn math_ops_compute() {
-    assert_eq!(run_top(vec![push_i(2), push_i(10), op("math_pow")]), float(1024.0));
+    assert_eq!(
+        run_top(vec![push_i(2), push_i(10), op("math_pow")]),
+        float(1024.0)
+    );
     let un = |name: &str, v: f64| run_top(vec![push_f(v), op(name)]);
     assert_eq!(un("math_sqrt", 9.0), float(3.0));
     assert_eq!(un("math_abs", -3.5), float(3.5));
@@ -670,10 +680,7 @@ fn array_ops_compute() {
     // arr_pop: array -> array, value
     let mut p = two_elems();
     p.push(op("arr_pop"));
-    assert_eq!(
-        run_stack(p),
-        vec![Value::new_array(vec![int(10)]), int(20)]
-    );
+    assert_eq!(run_stack(p), vec![Value::new_array(vec![int(10)]), int(20)]);
 }
 
 #[test]
@@ -690,7 +697,10 @@ fn collection_constructors_and_pushes_compute() {
     let items = || vec![int(1), int(2)];
     assert_eq!(build("new_tuple", "tuple_push"), Value::new_tuple(items()));
     assert_eq!(build("new_list", "list_push"), Value::new_list(items()));
-    assert_eq!(build("new_vector", "vector_push"), Value::new_vector(items()));
+    assert_eq!(
+        build("new_vector", "vector_push"),
+        Value::new_vector(items())
+    );
     assert_eq!(build("new_set", "set_push"), Value::new_set(items()));
 }
 

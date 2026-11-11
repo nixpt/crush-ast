@@ -7,12 +7,14 @@
 //! `unsupported: <construct> at line N` (CRUSH-202).
 
 use brush_parser::ast::{
-    self, AndOr as BAndOr, AndOrList, CaseItemPostAction, Command, CommandPrefixOrSuffixItem, CompoundCommand,
-    CompoundList, SeparatorOperator, SourceLocation,
+    self, AndOr as BAndOr, AndOrList, CaseItemPostAction, Command, CommandPrefixOrSuffixItem,
+    CompoundCommand, CompoundList, SeparatorOperator, SourceLocation,
 };
 use crush_cast::Program;
 use crush_walker_core::LowerCtx;
-use crush_walker_core::shell::{self, AndOr, Assign, Cmd, Dialect, List, Pipeline, Redir, RedirKind, Word};
+use crush_walker_core::shell::{
+    self, AndOr, Assign, Cmd, Dialect, List, Pipeline, Redir, RedirKind, Word,
+};
 
 /// Lower a brush-parser Program to a CAST Program.
 pub fn lower_program(program: ast::Program, _ctx: &LowerCtx) -> anyhow::Result<Program> {
@@ -28,11 +30,17 @@ fn line_of<T: SourceLocation>(node: &T) -> usize {
 }
 
 fn word(w: &ast::Word) -> Word {
-    Word { raw: w.value.clone(), line: line_of(w) }
+    Word {
+        raw: w.value.clone(),
+        line: line_of(w),
+    }
 }
 
 fn unsupported(what: &str, line: usize) -> Cmd {
-    Cmd::Unsupported { what: what.to_string(), line }
+    Cmd::Unsupported {
+        what: what.to_string(),
+        line,
+    }
 }
 
 fn list(cl: &CompoundList) -> List {
@@ -71,9 +79,15 @@ fn and_or(a: &AndOrList) -> AndOr {
 fn pipeline(p: &ast::Pipeline) -> Pipeline {
     let line = line_of(p);
     if p.timed.is_some() {
-        return Pipeline { negated: p.bang, stages: vec![unsupported("`time`", line)] };
+        return Pipeline {
+            negated: p.bang,
+            stages: vec![unsupported("`time`", line)],
+        };
     }
-    Pipeline { negated: p.bang, stages: p.seq.iter().map(|c| command(c, line)).collect() }
+    Pipeline {
+        negated: p.bang,
+        stages: p.seq.iter().map(|c| command(c, line)).collect(),
+    }
 }
 
 /// One redirection (`<`, `>`, `>>`, `<<`) as the shared shell IR wants it.
@@ -82,7 +96,10 @@ fn redir(r: &ast::IoRedirect, line: usize) -> Result<Redir, Cmd> {
     let fd_ok = |fd: &Option<ast::IoFd>, want: i32| match fd {
         None => Ok(()),
         Some(n) if *n == want => Ok(()),
-        Some(n) => Err(unsupported(&format!("a redirection of file descriptor {n}"), line)),
+        Some(n) => Err(unsupported(
+            &format!("a redirection of file descriptor {n}"),
+            line,
+        )),
     };
     match r {
         R::File(fd, kind, target) => {
@@ -94,25 +111,38 @@ fn redir(r: &ast::IoRedirect, line: usize) -> Result<Redir, Cmd> {
                     return Err(unsupported(
                         "a redirection that duplicates a file descriptor (`2>&1`)",
                         line,
-                    ))
+                    ));
                 }
                 other => {
                     return Err(unsupported(
                         &format!("`{other}` (only `<`, `>`, `>>` and here-documents)"),
                         line,
-                    ))
+                    ));
                 }
             };
             fd_ok(fd, want)?;
             match target {
-                T::Filename(w) => Ok(Redir { kind: rkind, word: word(w), expand: false, line }),
-                _ => Err(unsupported("a redirection onto a file descriptor or process substitution", line)),
+                T::Filename(w) => Ok(Redir {
+                    kind: rkind,
+                    word: word(w),
+                    expand: false,
+                    line,
+                }),
+                _ => Err(unsupported(
+                    "a redirection onto a file descriptor or process substitution",
+                    line,
+                )),
             }
         }
         R::HereDocument(fd, doc) => {
             fd_ok(fd, 0)?;
             let body = if doc.remove_tabs {
-                doc.doc.value.lines().map(|l| l.trim_start_matches('\t')).collect::<Vec<_>>().join("\n")
+                doc.doc
+                    .value
+                    .lines()
+                    .map(|l| l.trim_start_matches('\t'))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             } else {
                 doc.doc.value.clone()
             };
@@ -144,7 +174,11 @@ fn command(c: &Command, line: usize) -> Cmd {
                             Err(c) => return c,
                         }
                     }
-                    Cmd::Redirected { inner: Box::new(inner), redirs: out, line }
+                    Cmd::Redirected {
+                        inner: Box::new(inner),
+                        redirs: out,
+                        line,
+                    }
                 }
             }
         }
@@ -155,11 +189,18 @@ fn command(c: &Command, line: usize) -> Cmd {
             let body = match &fd.body.0 {
                 CompoundCommand::BraceGroup(g) => list(&g.list),
                 other => vec![AndOr {
-                    first: Pipeline { negated: false, stages: vec![compound(other, line)] },
+                    first: Pipeline {
+                        negated: false,
+                        stages: vec![compound(other, line)],
+                    },
                     rest: vec![],
                 }],
             };
-            Cmd::FuncDef { name: fd.fname.value.clone(), body, line }
+            Cmd::FuncDef {
+                name: fd.fname.value.clone(),
+                body,
+                line,
+            }
         }
         Command::ExtendedTest(t, _) => match cond(&t.expr, line) {
             Ok(cond) => Cmd::ExtendedTest { cond, line },
@@ -184,7 +225,12 @@ fn cond(e: &ast::ExtendedTestExpr, line: usize) -> Result<shell::Cond, Cmd> {
             UP::FileExists => shell::Cond::Unary("-e", word(w)),
             UP::FileExistsAndIsDir => shell::Cond::Unary("-d", word(w)),
             UP::FileExistsAndIsRegularFile => shell::Cond::Unary("-f", word(w)),
-            other => return Err(unsupported(&format!("`{other}` in `[[ … ]]` (file and shell-option tests)"), line)),
+            other => {
+                return Err(unsupported(
+                    &format!("`{other}` in `[[ … ]]` (file and shell-option tests)"),
+                    line,
+                ));
+            }
         },
         X::BinaryTest(p, l, r) => {
             let op = match p {
@@ -198,7 +244,12 @@ fn cond(e: &ast::ExtendedTestExpr, line: usize) -> Result<shell::Cond, Cmd> {
                 BP::ArithmeticLessThanOrEqualTo => "-le",
                 BP::ArithmeticGreaterThan => "-gt",
                 BP::ArithmeticGreaterThanOrEqualTo => "-ge",
-                other => return Err(unsupported(&format!("`{other}` in `[[ … ]]` (regex and file tests)"), line)),
+                other => {
+                    return Err(unsupported(
+                        &format!("`{other}` in `[[ … ]]` (regex and file tests)"),
+                        line,
+                    ));
+                }
             };
             shell::Cond::Binary(op, word(l), word(r))
         }
@@ -206,7 +257,12 @@ fn cond(e: &ast::ExtendedTestExpr, line: usize) -> Result<shell::Cond, Cmd> {
 }
 
 fn simple(sc: &ast::SimpleCommand, line: usize) -> Cmd {
-    let line = sc.word_or_name.as_ref().map(line_of).filter(|l| *l > 0).unwrap_or(line);
+    let line = sc
+        .word_or_name
+        .as_ref()
+        .map(line_of)
+        .filter(|l| *l > 0)
+        .unwrap_or(line);
     let mut assigns = Vec::new();
     let mut words = Vec::new();
     let mut redirs = Vec::new();
@@ -221,7 +277,9 @@ fn simple(sc: &ast::SimpleCommand, line: usize) -> Cmd {
                 Ok(r) => redirs.push(r),
                 Err(c) => return c,
             },
-            CommandPrefixOrSuffixItem::ProcessSubstitution(..) => return unsupported("process substitution", line),
+            CommandPrefixOrSuffixItem::ProcessSubstitution(..) => {
+                return unsupported("process substitution", line);
+            }
         }
     }
     if let Some(w) = &sc.word_or_name {
@@ -230,19 +288,30 @@ fn simple(sc: &ast::SimpleCommand, line: usize) -> Cmd {
     for item in sc.suffix.iter().flat_map(|s| s.0.iter()) {
         match item {
             // `local x=1`, `export x=1`: the builtin parses `name=value` itself.
-            CommandPrefixOrSuffixItem::AssignmentWord(_, w) | CommandPrefixOrSuffixItem::Word(w) => words.push(word(w)),
+            CommandPrefixOrSuffixItem::AssignmentWord(_, w)
+            | CommandPrefixOrSuffixItem::Word(w) => words.push(word(w)),
             CommandPrefixOrSuffixItem::IoRedirect(r) => match redir(r, line) {
                 Ok(r) => redirs.push(r),
                 Err(c) => return c,
             },
-            CommandPrefixOrSuffixItem::ProcessSubstitution(..) => return unsupported("process substitution", line),
+            CommandPrefixOrSuffixItem::ProcessSubstitution(..) => {
+                return unsupported("process substitution", line);
+            }
         }
     }
-    let simple = Cmd::Simple { assigns, words, line };
+    let simple = Cmd::Simple {
+        assigns,
+        words,
+        line,
+    };
     if redirs.is_empty() {
         simple
     } else {
-        Cmd::Redirected { inner: Box::new(simple), redirs, line }
+        Cmd::Redirected {
+            inner: Box::new(simple),
+            redirs,
+            line,
+        }
     }
 }
 
@@ -250,20 +319,39 @@ fn assignment(a: &ast::Assignment) -> Result<Assign, Cmd> {
     let line = line_of(a);
     let (name, index) = match &a.name {
         ast::AssignmentName::VariableName(n) => (n.clone(), None),
-        ast::AssignmentName::ArrayElementName(n, sub) => (n.clone(), Some(Word { raw: sub.clone(), line })),
+        ast::AssignmentName::ArrayElementName(n, sub) => (
+            n.clone(),
+            Some(Word {
+                raw: sub.clone(),
+                line,
+            }),
+        ),
     };
     match &a.value {
-        ast::AssignmentValue::Scalar(w) => Ok(Assign { name, index, array: None, value: word(w), append: a.append, line }),
+        ast::AssignmentValue::Scalar(w) => Ok(Assign {
+            name,
+            index,
+            array: None,
+            value: word(w),
+            append: a.append,
+            line,
+        }),
         ast::AssignmentValue::Array(items) => {
             if let Some((i, _)) = items.iter().find(|(i, _)| i.is_some()) {
                 let at = i.as_ref().map(|w| w.value.clone()).unwrap_or_default();
-                return Err(unsupported(&format!("an indexed array literal `{name}=([{at}]=…)`"), line));
+                return Err(unsupported(
+                    &format!("an indexed array literal `{name}=([{at}]=…)`"),
+                    line,
+                ));
             }
             Ok(Assign {
                 name,
                 index,
                 array: Some(items.iter().map(|(_, w)| word(w)).collect()),
-                value: Word { raw: String::new(), line },
+                value: Word {
+                    raw: String::new(),
+                    line,
+                },
                 append: a.append,
                 line,
             })
@@ -277,7 +365,10 @@ fn compound(cc: &CompoundCommand, line: usize) -> Cmd {
         l => l,
     };
     match cc {
-        CompoundCommand::Arithmetic(a) => Cmd::Arith { expr: a.expr.value.clone(), line },
+        CompoundCommand::Arithmetic(a) => Cmd::Arith {
+            expr: a.expr.value.clone(),
+            line,
+        },
         CompoundCommand::ArithmeticForClause(f) => Cmd::ArithFor {
             init: f.initializer.as_ref().map(|e| e.value.clone()),
             cond: f.condition.as_ref().map(|e| e.value.clone()),
@@ -302,7 +393,11 @@ fn compound(cc: &CompoundCommand, line: usize) -> Cmd {
                 let body = item.cmd.as_ref().map(list).unwrap_or_default();
                 arms.push((item.patterns.iter().map(word).collect(), body));
             }
-            Cmd::Case { word: word(&c.value), arms, line }
+            Cmd::Case {
+                word: word(&c.value),
+                arms,
+                line,
+            }
         }
         CompoundCommand::IfClause(i) => {
             let mut branches = vec![(list(&i.condition), list(&i.then))];
@@ -313,10 +408,24 @@ fn compound(cc: &CompoundCommand, line: usize) -> Cmd {
                     None => else_body = Some(list(&e.body)),
                 }
             }
-            Cmd::If { branches, else_body, line }
+            Cmd::If {
+                branches,
+                else_body,
+                line,
+            }
         }
-        CompoundCommand::WhileClause(w) => Cmd::Loop { cond: list(&w.0), body: list(&w.1.list), until: false, line },
-        CompoundCommand::UntilClause(w) => Cmd::Loop { cond: list(&w.0), body: list(&w.1.list), until: true, line },
+        CompoundCommand::WhileClause(w) => Cmd::Loop {
+            cond: list(&w.0),
+            body: list(&w.1.list),
+            until: false,
+            line,
+        },
+        CompoundCommand::UntilClause(w) => Cmd::Loop {
+            cond: list(&w.0),
+            body: list(&w.1.list),
+            until: true,
+            line,
+        },
         CompoundCommand::Coprocess(_) => unsupported("`coproc`", line),
     }
 }

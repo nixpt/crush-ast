@@ -8,19 +8,36 @@ use crush_lang_sdk::{Quotas, Runtime};
 use crush_vm::RuntimeValue;
 
 fn cc_available() -> bool {
-    Command::new("gcc").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("gcc")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn run(so: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_crush-aot-runner")).arg(so).output().expect("spawn crush-aot-runner")
+    Command::new(env!("CARGO_BIN_EXE_crush-aot-runner"))
+        .arg(so)
+        .output()
+        .expect("spawn crush-aot-runner")
 }
 
 /// `(backend, built .so)` for each backend available here.
 fn build_both(program: &casm::Program, name: &str) -> Vec<(&'static str, PathBuf)> {
     let compiler = AotCompiler::new();
-    let mut out = vec![("rust", compiler.compile_casm(program, &format!("{name}_rust")).expect("rust backend"))];
+    let mut out = vec![(
+        "rust",
+        compiler
+            .compile_casm(program, &format!("{name}_rust"))
+            .expect("rust backend"),
+    )];
     if cc_available() {
-        out.push(("c", compiler.compile_c(program, &format!("{name}_c"), "gcc").expect("c backend")));
+        out.push((
+            "c",
+            compiler
+                .compile_c(program, &format!("{name}_c"), "gcc")
+                .expect("c backend"),
+        ));
     }
     out
 }
@@ -37,17 +54,28 @@ fn long_string_result_is_returned_whole() {
         r#"fn main() { let s = ""; let i = 0; while i < 100 { s = s + "0123456789"; i = i + 1; } return s; }"#,
     );
     for (backend, so) in build_both(&program, "long_result") {
-        let result = Module::load(&so).expect("load").call_main().expect("call_main");
-        assert_eq!(result, RuntimeValue::String("0123456789".repeat(100)), "{backend}");
+        let result = Module::load(&so)
+            .expect("load")
+            .call_main()
+            .expect("call_main");
+        assert_eq!(
+            result,
+            RuntimeValue::String("0123456789".repeat(100)),
+            "{backend}"
+        );
     }
 }
 
 // `[] + []` passed a NULL data pointer to memcpy on the C backend.
 #[test]
 fn concatenating_empty_arrays() {
-    let program = compile("fn main() { let e = [] + []; let f = e + [7]; return len(e) * 10 + f[0]; }");
+    let program =
+        compile("fn main() { let e = [] + []; let f = e + [7]; return len(e) * 10 + f[0]; }");
     for (backend, so) in build_both(&program, "empty_concat") {
-        let result = Module::load(&so).expect("load").call_main().expect("call_main");
+        let result = Module::load(&so)
+            .expect("load")
+            .call_main()
+            .expect("call_main");
         assert_eq!(result, RuntimeValue::Int(7), "{backend}");
     }
 }
@@ -64,7 +92,10 @@ fn int_min_divided_by_minus_one_is_an_overflow_error() {
             let out = run(&so);
             let stderr = String::from_utf8_lossy(&out.stderr);
             assert_eq!(out.status.code(), Some(1), "{backend} {op}: {stderr}");
-            assert!(stderr.contains("arithmetic overflow"), "{backend} {op}: {stderr}");
+            assert!(
+                stderr.contains("arithmetic overflow"),
+                "{backend} {op}: {stderr}"
+            );
         }
     }
 }
@@ -97,9 +128,15 @@ fn names_differing_only_in_non_ascii_characters_stay_distinct() {
         "fn f1(x) { return x + 1; } fn f2(x) { return x + 20; } fn f3() { return 300; } fn f4(x) { return x * 1000; } \
          fn main() { return f1(0) + f2(0) + f3() + f4(4); }",
     );
-    rename_functions(&mut program, &[("f1", "café"), ("f2", "cafè"), ("f3", "π"), ("f4", "_")]);
+    rename_functions(
+        &mut program,
+        &[("f1", "café"), ("f2", "cafè"), ("f3", "π"), ("f4", "_")],
+    );
     for (backend, so) in build_both(&program, "unicode_names") {
-        let result = Module::load(&so).expect("load").call_main().expect("call_main");
+        let result = Module::load(&so)
+            .expect("load")
+            .call_main()
+            .expect("call_main");
         assert_eq!(result, RuntimeValue::Int(4321), "{backend}");
     }
 }
@@ -108,9 +145,15 @@ fn names_differing_only_in_non_ascii_characters_stay_distinct() {
 /// syntax emits `mat_mul`; hand-written CASM does). C only: the Rust backend has no
 /// `mat_mul`.
 fn mat_mul_program(a: &str, b: &str, read: &str) -> casm::Program {
-    let mut program = compile(&format!("fn main() {{ let a = {a}; let b = {b}; let r = a + b; return {read}; }}"));
+    let mut program = compile(&format!(
+        "fn main() {{ let a = {a}; let b = {b}; let r = a + b; return {read}; }}"
+    ));
     let main = program.functions.get_mut("main").unwrap();
-    let add = main.body.iter_mut().find(|i| i.op == "add").expect("add instruction");
+    let add = main
+        .body
+        .iter_mut()
+        .find(|i| i.op == "add")
+        .expect("add instruction");
     add.op = "mat_mul".to_string();
     program
 }
@@ -124,8 +167,13 @@ fn c_mat_mul_multiplies_and_rejects_mismatched_shapes() {
     let compiler = AotCompiler::new();
 
     let ok = mat_mul_program("[[1, 2], [3, 4]]", "[[5, 6], [7, 8]]", "r[1][1]");
-    let so = compiler.compile_c(&ok, "mat_mul_ok", "gcc").expect("c backend");
-    assert_eq!(Module::load(&so).unwrap().call_main().unwrap(), RuntimeValue::Float(50.0));
+    let so = compiler
+        .compile_c(&ok, "mat_mul_ok", "gcc")
+        .expect("c backend");
+    assert_eq!(
+        Module::load(&so).unwrap().call_main().unwrap(),
+        RuntimeValue::Float(50.0)
+    );
 
     // Used to read past the end of `b`'s rows (and through a NULL data pointer for the
     // empty one): a segfault or heap garbage.
@@ -134,11 +182,16 @@ fn c_mat_mul_multiplies_and_rejects_mismatched_shapes() {
         ("mat_mul_short_b", "[[1, 2, 3]]", "[[1], [2]]"),
         ("mat_mul_ragged_a", "[[1, 2], [3]]", "[[1], [2]]"),
     ] {
-        let so = compiler.compile_c(&mat_mul_program(a, b, "len(r)"), name, "gcc").expect("c backend");
+        let so = compiler
+            .compile_c(&mat_mul_program(a, b, "len(r)"), name, "gcc")
+            .expect("c backend");
         let out = run(&so);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(1), "{name}: {stderr}");
-        assert!(stderr.contains("mat_mul: shape mismatch"), "{name}: {stderr}");
+        assert!(
+            stderr.contains("mat_mul: shape mismatch"),
+            "{name}: {stderr}"
+        );
     }
 }
 
@@ -157,10 +210,10 @@ fn run_vm_print(source: &str) -> i64 {
     let result = Runtime::with_quotas(quotas).run(&program).expect("vm run");
     assert!(result.halted, "program did not halt:\n{}", result.output);
     let first = result.output.lines().next().unwrap_or("");
-    first
-        .trim()
-        .parse::<i64>()
-        .expect(&format!("VM: expected Int output from `{source}`, got `{}`", result.output))
+    first.trim().parse::<i64>().expect(&format!(
+        "VM: expected Int output from `{source}`, got `{}`",
+        result.output
+    ))
 }
 
 /// Run `source` on every AOT backend (it must `print` the answer) and return
@@ -181,9 +234,7 @@ fn run_aot_print(source: &str) -> Vec<i64> {
                 .expect("{backend}: no stdout from `{source}`")
                 .trim()
                 .parse::<i64>()
-                .expect(&format!(
-                    "{backend}: expected Int output from `{source}`",
-                )),
+                .expect(&format!("{backend}: expected Int output from `{source}`",)),
         );
     }
     outs
@@ -246,12 +297,24 @@ fn run_on_every_engine(program: &casm::Program, name: &str) -> Vec<(&'static str
     let mut out = Vec::new();
     let vm_prog = crush_lang_sdk::compile::casm_to_vm(program).expect("casm_to_vm");
     let stack_top = |r: Result<crush_vm::VmResult, crush_vm::VmError>| match r {
-        Ok(res) => Ok(format!("{:?}", res.return_value.as_ref().or(res.stack.last()))),
+        Ok(res) => Ok(format!(
+            "{:?}",
+            res.return_value.as_ref().or(res.stack.last())
+        )),
         Err(e) => Err(e.to_string()),
     };
-    out.push(("scheduler vm", stack_top(crush_vm::run(&vm_prog, &Quotas::default()))));
-    out.push(("portable vm", stack_top(crush_vm::PortableVm::new(vm_prog.clone()).run())));
-    out.push(("fastvm", fast(crush_vm::run_fastvm(program).map_err(|e| format!("{e:?}")))));
+    out.push((
+        "scheduler vm",
+        stack_top(crush_vm::run(&vm_prog, &Quotas::default())),
+    ));
+    out.push((
+        "portable vm",
+        stack_top(crush_vm::PortableVm::new(vm_prog.clone()).run()),
+    ));
+    out.push((
+        "fastvm",
+        fast(crush_vm::run_fastvm(program).map_err(|e| format!("{e:?}"))),
+    ));
     let jit = crush_vm::fastvm::lower_program(program)
         .map_err(|e| format!("lower_program: {e}"))
         .and_then(|lowered| {
@@ -270,9 +333,20 @@ fn run_on_every_engine(program: &casm::Program, name: &str) -> Vec<(&'static str
         let r = if o.status.success() {
             Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
         } else {
-            Err(format!("exit {:?}: {}", o.status.code(), String::from_utf8_lossy(&o.stderr).trim()))
+            Err(format!(
+                "exit {:?}: {}",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            ))
         };
-        out.push((if backend == "rust" { "aot rust" } else { "aot c" }, r));
+        out.push((
+            if backend == "rust" {
+                "aot rust"
+            } else {
+                "aot c"
+            },
+            r,
+        ));
     }
     out
 }
@@ -300,12 +374,23 @@ const STILL_SILENT: &[(&str, &str)] = &[];
 
 fn assert_loud_everywhere(program: &casm::Program, name: &str) {
     let outcomes = run_on_every_engine(program, name);
-    let report: Vec<String> = outcomes.iter().map(|(e, o)| format!("  {e:<13} {o:?}")).collect();
-    assert!(outcomes.len() >= 5, "{name}: too few engines ran:\n{}", report.join("\n"));
+    let report: Vec<String> = outcomes
+        .iter()
+        .map(|(e, o)| format!("  {e:<13} {o:?}"))
+        .collect();
+    assert!(
+        outcomes.len() >= 5,
+        "{name}: too few engines ran:\n{}",
+        report.join("\n")
+    );
     for (engine, o) in &outcomes {
         let loud = matches!(o, Err(e) if e.contains(UNINIT));
         match STILL_SILENT.iter().find(|(e, _)| e == engine) {
-            None => assert!(loud, "{name}: {engine} must fail with `{UNINIT}`:\n{}", report.join("\n")),
+            None => assert!(
+                loud,
+                "{name}: {engine} must fail with `{UNINIT}`:\n{}",
+                report.join("\n")
+            ),
             Some((_, ticket)) => assert!(
                 !loud && matches!(o, Ok(v) if v == "Null"),
                 "{name}: {engine} no longer reads null ({ticket}) — remove it from STILL_SILENT:\n{}",
@@ -317,7 +402,10 @@ fn assert_loud_everywhere(program: &casm::Program, name: &str) {
 
 fn assert_value_everywhere(program: &casm::Program, name: &str, vm: &str, aot: &str) {
     let outcomes = run_on_every_engine(program, name);
-    let report: Vec<String> = outcomes.iter().map(|(e, o)| format!("  {e:<13} {o:?}")).collect();
+    let report: Vec<String> = outcomes
+        .iter()
+        .map(|(e, o)| format!("  {e:<13} {o:?}"))
+        .collect();
     for (engine, o) in &outcomes {
         let want = if engine.starts_with("aot") { aot } else { vm };
         assert!(
@@ -343,7 +431,11 @@ fn unassigned_local_read_in_main_fails_everywhere() {
 #[test]
 fn unassigned_local_read_on_the_untaken_path_fails_everywhere() {
     // `x` is assigned only when `c` is true; `f(false)` reads it unassigned.
-    let src = |arg: &str| format!("fn f(c) {{ let x = 0; if c {{ x = 7; }} return x; }} fn main() {{ return f({arg}); }}");
+    let src = |arg: &str| {
+        format!(
+            "fn f(c) {{ let x = 0; if c {{ x = 7; }} return x; }} fn main() {{ return f({arg}); }}"
+        )
+    };
     let program = unassign_first_store(compile(&src("false")), "f", "x");
     assert_loud_everywhere(&program, "z54_cond_untaken");
     // ... and the same function reads it fine when the assigning path ran.
@@ -357,7 +449,9 @@ fn a_loop_that_assigns_before_reading_still_works() {
     // iteration: never unassigned at a read, though no store dominates the
     // loop header.
     let program = unassign_first_store(
-        compile("fn main() { let y = 0; let i = 0; let s = 0; while i < 4 { y = i * 2; s = s + y; i = i + 1; } return s; }"),
+        compile(
+            "fn main() { let y = 0; let i = 0; let s = 0; while i < 4 { y = i * 2; s = s + y; i = i + 1; } return s; }",
+        ),
         "main",
         "y",
     );
@@ -371,7 +465,9 @@ fn a_function_local_read_before_its_let_fails_everywhere() {
     // `x` is read before the only store left to it, in a callee. (`n(0)`,
     // not `0`, so the frontend can't fold the read away.)
     let program = unassign_first_store(
-        compile("fn n(v) { return v; } fn f(v) { let x = n(0); let r = x + v; x = 5; return r + x; } fn main() { return f(1); }"),
+        compile(
+            "fn n(v) { return v; } fn f(v) { let x = n(0); let r = x + v; x = 5; return r + x; } fn main() { return f(1); }",
+        ),
         "f",
         "x",
     );
@@ -383,7 +479,9 @@ fn a_reused_frame_does_not_leak_the_previous_calls_local() {
     // The first `g(true)` assigns `x` in the callee's frame; the second call
     // reuses that frame (same depth) and must not read the old 7.
     let program = unassign_first_store(
-        compile("fn g(c) { let x = 0; if c { x = 7; } return x; } fn main() { let a = g(true); let b = g(false); return a + b; }"),
+        compile(
+            "fn g(c) { let x = 0; if c { x = 7; } return x; } fn main() { let a = g(true); let b = g(false); return a + b; }",
+        ),
         "g",
         "x",
     );
@@ -442,7 +540,11 @@ fn program_stdout(so: &Path) -> String {
 
 /// `source` must print exactly `expected` on the VM and on every AOT backend.
 fn expect_print_everywhere_str(source: &str, expected: &str) {
-    assert_eq!(vm_output(source), expected, "VM printed wrong for {source:?}");
+    assert_eq!(
+        vm_output(source),
+        expected,
+        "VM printed wrong for {source:?}"
+    );
     for (backend, so) in build_both(&compile(source), "eq_223") {
         assert_eq!(
             program_stdout(&so),
@@ -536,10 +638,21 @@ fn map_and_array_equality_agrees_across_engines() {
 fn expect_error_everywhere(source: &str, mentions: Option<&str>, name: &str) {
     let program = compile(source);
     let outcomes = run_on_every_engine(&program, name);
-    let report: Vec<String> = outcomes.iter().map(|(e, o)| format!("  {e:<13} {o:?}")).collect();
-    assert!(outcomes.len() >= 5, "{name}: too few engines ran:\n{}", report.join("\n"));
+    let report: Vec<String> = outcomes
+        .iter()
+        .map(|(e, o)| format!("  {e:<13} {o:?}"))
+        .collect();
+    assert!(
+        outcomes.len() >= 5,
+        "{name}: too few engines ran:\n{}",
+        report.join("\n")
+    );
     for (engine, o) in &outcomes {
-        assert!(o.is_err(), "{name}: {engine} must fail for {source:?}:\n{}", report.join("\n"));
+        assert!(
+            o.is_err(),
+            "{name}: {engine} must fail for {source:?}:\n{}",
+            report.join("\n")
+        );
         // The JIT refuses some programs it cannot represent exactly (e.g. an
         // int outside its 48-bit payload, like `i64::MIN`) and falls back to
         // FastVM — which still errors. That is a compile refusal, not a wrong
@@ -566,18 +679,36 @@ fn division_edge_cases_agree_across_every_engine() {
     // on some engines and a wrong value on another (CRUSH-213). `id(…)` stops
     // the frontend folding the operands.
     let cases: &[(&str, &str, &str)] = &[
-        ("c213_min_div", "overflow",
-         r#"fn id(x) { return x; } fn main() { let m = id(0 - 9223372036854775807) - 1; return m / id(-1); }"#),
-        ("c213_min_mod", "overflow",
-         r#"fn id(x) { return x; } fn main() { let m = id(0 - 9223372036854775807) - 1; return m % id(-1); }"#),
-        ("c213_int_div0", "divi",
-         r#"fn id(x) { return x; } fn main() { return 10 / id(0); }"#),
-        ("c213_int_mod0", "divi",
-         r#"fn id(x) { return x; } fn main() { return 10 % id(0); }"#),
-        ("c213_float_div0", "divi",
-         r#"fn id(x) { return x; } fn main() { return 1.0 / id(0.0); }"#),
-        ("c213_float_mod0", "divi",
-         r#"fn id(x) { return x; } fn main() { return 1.0 % id(0.0); }"#),
+        (
+            "c213_min_div",
+            "overflow",
+            r#"fn id(x) { return x; } fn main() { let m = id(0 - 9223372036854775807) - 1; return m / id(-1); }"#,
+        ),
+        (
+            "c213_min_mod",
+            "overflow",
+            r#"fn id(x) { return x; } fn main() { let m = id(0 - 9223372036854775807) - 1; return m % id(-1); }"#,
+        ),
+        (
+            "c213_int_div0",
+            "divi",
+            r#"fn id(x) { return x; } fn main() { return 10 / id(0); }"#,
+        ),
+        (
+            "c213_int_mod0",
+            "divi",
+            r#"fn id(x) { return x; } fn main() { return 10 % id(0); }"#,
+        ),
+        (
+            "c213_float_div0",
+            "divi",
+            r#"fn id(x) { return x; } fn main() { return 1.0 / id(0.0); }"#,
+        ),
+        (
+            "c213_float_mod0",
+            "divi",
+            r#"fn id(x) { return x; } fn main() { return 1.0 % id(0.0); }"#,
+        ),
     ];
     for (name, mentions, source) in cases {
         expect_error_everywhere(source, Some(mentions), name);
@@ -591,8 +722,15 @@ fn division_edge_cases_agree_across_every_engine() {
 fn expect_bool_everywhere(source: &str, expected: bool, name: &str) {
     let program = compile(source);
     let outcomes = run_on_every_engine(&program, name);
-    let report: Vec<String> = outcomes.iter().map(|(e, o)| format!("  {e:<13} {o:?}")).collect();
-    assert!(outcomes.len() >= 5, "{name}: too few engines ran:\n{}", report.join("\n"));
+    let report: Vec<String> = outcomes
+        .iter()
+        .map(|(e, o)| format!("  {e:<13} {o:?}"))
+        .collect();
+    assert!(
+        outcomes.len() >= 5,
+        "{name}: too few engines ran:\n{}",
+        report.join("\n")
+    );
     let want = if expected { "true" } else { "false" };
     for (engine, o) in &outcomes {
         assert!(
@@ -617,14 +755,29 @@ fn equality_agrees_across_every_engine() {
         (r#"fn main() { return "ab" == "ba"; }"#, false),
         (r#"fn main() { return "ab" != "ba"; }"#, true),
         // Bool / null via a call, so the frontend cannot fold the comparison.
-        (r#"fn id(x) { return x; } fn main() { return id(true) != id(false); }"#, true),
-        (r#"fn id(x) { return x; } fn main() { return id(true) == id(true); }"#, true),
-        (r#"fn id(x) { return x; } fn main() { return id(null) != id(1); }"#, true),
-        (r#"fn id(x) { return x; } fn main() { return id(null) == id(null); }"#, true),
+        (
+            r#"fn id(x) { return x; } fn main() { return id(true) != id(false); }"#,
+            true,
+        ),
+        (
+            r#"fn id(x) { return x; } fn main() { return id(true) == id(true); }"#,
+            true,
+        ),
+        (
+            r#"fn id(x) { return x; } fn main() { return id(null) != id(1); }"#,
+            true,
+        ),
+        (
+            r#"fn id(x) { return x; } fn main() { return id(null) == id(null); }"#,
+            true,
+        ),
         // Arrays and maps: by value, not identity.
         (r#"fn main() { return [1, 2, 3] == [1, 2, 3]; }"#, true),
         (r#"fn main() { return [1, 2] != [1, 3]; }"#, true),
-        (r#"fn main() { return {"a": 1, "b": 2} == {"b": 2, "a": 1}; }"#, true),
+        (
+            r#"fn main() { return {"a": 1, "b": 2} == {"b": 2, "a": 1}; }"#,
+            true,
+        ),
         (r#"fn main() { return {"a": 1} == {"a": 2}; }"#, false),
         // Numeric cross-type.
         (r#"fn main() { return 1 == 1.0; }"#, true),
@@ -678,9 +831,21 @@ fn io_eprint_goes_to_stderr_on_both_backends() {
     let program = compile("fn main() { io.print(\"out\"); io.eprint(\"diag \", 1); return 0; }");
     for (backend, so) in build_both(&program, "eprint") {
         let out = run(&so);
-        let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        assert!(stdout.contains("out\n"), "{backend}: stdout lost io.print: {stdout:?}");
-        assert!(!stdout.contains("diag"), "{backend}: io.eprint leaked into stdout: {stdout:?}");
-        assert!(stderr.contains("diag 1\n"), "{backend}: io.eprint missing from stderr: {stderr:?}");
+        let (stdout, stderr) = (
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        assert!(
+            stdout.contains("out\n"),
+            "{backend}: stdout lost io.print: {stdout:?}"
+        );
+        assert!(
+            !stdout.contains("diag"),
+            "{backend}: io.eprint leaked into stdout: {stdout:?}"
+        );
+        assert!(
+            stderr.contains("diag 1\n"),
+            "{backend}: io.eprint missing from stderr: {stderr:?}"
+        );
     }
 }

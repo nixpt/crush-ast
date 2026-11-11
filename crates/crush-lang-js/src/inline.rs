@@ -47,7 +47,8 @@ pub fn lower_block_function(
         anyhow::bail!("the block uses the reserved name `{WRAPPER}`");
     }
     // Parse alone first, as node would see it.
-    crate::backend::boa::parse(code).map_err(|e| anyhow::anyhow!("JavaScript syntax error: {e:#}"))?;
+    crate::backend::boa::parse(code)
+        .map_err(|e| anyhow::anyhow!("JavaScript syntax error: {e:#}"))?;
 
     let header = format!("function {WRAPPER}({}) {{", params.join(", "));
     let source = format!("{header}{code}\n;return [{}];\n}}\n", outputs.join(", "));
@@ -67,8 +68,10 @@ pub fn lower_block_function(
     }
     // The rest are lifted `function`s that capture nothing (`f__1`): give
     // them names no other block or Crush function has.
-    let renames: HashMap<String, String> =
-        functions.keys().map(|name| (name.clone(), format!("{prefix}{name}"))).collect();
+    let renames: HashMap<String, String> = functions
+        .keys()
+        .map(|name| (name.clone(), format!("{prefix}{name}")))
+        .collect();
     let rename = |f: Function| -> anyhow::Result<Function> {
         let mut v = serde_json::to_value(&f)?;
         rename_refs(&mut v, &renames);
@@ -78,7 +81,10 @@ pub fn lower_block_function(
         .into_iter()
         .map(|(name, f)| Ok((renames[&name].clone(), rename(f)?)))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(LoweredBlock { function: rename(function)?, helpers })
+    Ok(LoweredBlock {
+        function: rename(function)?,
+        helpers,
+    })
 }
 
 /// Rename every call of / reference to a lifted function (`Call.function`,

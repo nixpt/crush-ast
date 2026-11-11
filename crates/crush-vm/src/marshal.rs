@@ -26,7 +26,9 @@ pub fn marshal_value(value: &Value, name: &str) -> Result<Value, VmError> {
         )))
     };
     let seq = |items: &mut dyn Iterator<Item = &Value>| -> Result<Value, VmError> {
-        let copied = items.map(|v| marshal_value(v, name)).collect::<Result<Vec<_>, _>>()?;
+        let copied = items
+            .map(|v| marshal_value(v, name))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Value::Array(Rc::new(RefCell::new(copied))))
     };
     match value {
@@ -99,9 +101,13 @@ mod tests {
 
     #[test]
     fn non_json_values_are_refused_by_name() {
-        let e = marshal_value(&Value::Float(f64::NAN), "x").unwrap_err().to_string();
+        let e = marshal_value(&Value::Float(f64::NAN), "x")
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("`x`") && e.contains("non-finite"), "{e}");
-        let e = marshal_value(&arr(vec![Value::Handle(1)]), "hs").unwrap_err().to_string();
+        let e = marshal_value(&arr(vec![Value::Handle(1)]), "hs")
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("`hs`") && e.contains("task handle"), "{e}");
     }
 }

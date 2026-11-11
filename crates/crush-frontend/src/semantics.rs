@@ -45,13 +45,19 @@ fn locate(err: anyhow::Error, meta: Option<&HashMap<String, serde_json::Value>>)
 /// imported from (`meta["source_file"]`, CRUSH-110), keeping its position.
 /// Errors in the compiled file itself pass through unchanged.
 fn in_source_file(err: anyhow::Error, func: &Function) -> anyhow::Error {
-    let Some(file) = crate::import_system::source_file(func) else { return err };
+    let Some(file) = crate::import_system::source_file(func) else {
+        return err;
+    };
     let (pos, message) = match err.downcast_ref::<crate::SemanticError>() {
         Some(e) if e.file.is_some() => return err,
         Some(e) => (e.pos, e.message.clone()),
         None => (None, err.to_string()),
     };
-    anyhow::Error::new(crate::SemanticError { pos, message, file: Some(file) })
+    anyhow::Error::new(crate::SemanticError {
+        pos,
+        message,
+        file: Some(file),
+    })
 }
 
 /// The `meta` of the expression kinds the parser stamps with a position of
@@ -110,11 +116,16 @@ impl SemanticAnalyzer {
     /// `self`, for an initialiser).
     pub fn declare_constructors(&mut self, module: &crush_cosm::CosmModule, program: &Program) {
         for k in &module.kinds {
-            let Some((ctor, usage)) = casm::kind_constructor_in(module, &k.name) else { continue };
-            let Some(f) = program.functions.get(ctor.as_str()) else { continue };
+            let Some((ctor, usage)) = casm::kind_constructor_in(module, &k.name) else {
+                continue;
+            };
+            let Some(f) = program.functions.get(ctor.as_str()) else {
+                continue;
+            };
             let leading = usize::from(usage == casm::ConstructorUse::Initialiser);
             let params = f.params.len().saturating_sub(leading);
-            self.functions.insert(k.name.clone(), (vec![Type::Any; params], Type::Any));
+            self.functions
+                .insert(k.name.clone(), (vec![Type::Any; params], Type::Any));
         }
     }
 
@@ -142,7 +153,8 @@ impl SemanticAnalyzer {
 
         // Pass 2: Check function bodies
         for func in program.functions.values() {
-            self.check_function(func).map_err(|e| in_source_file(e, func))?;
+            self.check_function(func)
+                .map_err(|e| in_source_file(e, func))?;
         }
 
         Ok(())
@@ -263,8 +275,9 @@ impl SemanticAnalyzer {
                 }
                 for &i in &scc {
                     let func = &program.functions[names[i].as_str()];
-                    let inferred =
-                        self.infer_function_return_type(func).map_err(|e| in_source_file(e, func))?;
+                    let inferred = self
+                        .infer_function_return_type(func)
+                        .map_err(|e| in_source_file(e, func))?;
                     if let Some((_, ret)) = self.functions.get_mut(names[i].as_str()) {
                         *ret = inferred;
                     }
@@ -273,8 +286,7 @@ impl SemanticAnalyzer {
                     let mut changed = false;
                     for &i in &scc {
                         let depth = self.scopes.len();
-                        match self
-                            .infer_function_return_type(&program.functions[names[i].as_str()])
+                        match self.infer_function_return_type(&program.functions[names[i].as_str()])
                         {
                             Ok(inferred) => {
                                 if let Some((_, ret)) = self.functions.get_mut(names[i].as_str())
@@ -306,7 +318,8 @@ impl SemanticAnalyzer {
             CastType::Null => Ok(Type::Null),
             CastType::Array(inner) => Ok(Type::Array(Box::new(self.parse_cast_type(inner)?))),
             CastType::Tuple(types) => {
-                let parsed: Result<Vec<_>> = types.iter().map(|t| self.parse_cast_type(t)).collect();
+                let parsed: Result<Vec<_>> =
+                    types.iter().map(|t| self.parse_cast_type(t)).collect();
                 Ok(Type::Tuple(parsed?))
             }
             CastType::List(inner) => Ok(Type::List(Box::new(self.parse_cast_type(inner)?))),
@@ -405,7 +418,12 @@ impl SemanticAnalyzer {
                 check_condition("While", &cond_type)?;
                 self.check_block(body)?;
             }
-            Statement::For { variable, iterable, body, .. } => {
+            Statement::For {
+                variable,
+                iterable,
+                body,
+                ..
+            } => {
                 let item_type = self.iterable_item_type(iterable)?;
                 self.enter_scope();
                 self.define_var(variable, item_type);
@@ -416,11 +434,12 @@ impl SemanticAnalyzer {
             Statement::ExprStmt { expr, .. } => {
                 self.check_expr(expr)?;
             }
-            Statement::Return { value, .. } => {
-                if let Some(expr) = value {
-                    self.check_expr(expr)?;
-                }
+            Statement::Return {
+                value: Some(expr), ..
+            } => {
+                self.check_expr(expr)?;
             }
+            Statement::Return { value: None, .. } => {}
             Statement::StructDef { .. } => {} // Already handled in Pass 1
             Statement::LangBlock { meta, .. } => {
                 // A polyglot block's own body is opaque to Crush's checker
@@ -555,9 +574,10 @@ impl SemanticAnalyzer {
                         }
                     }
                     "&&" | "||" => {
-                        if l_type == Type::Bool && r_type == Type::Bool {
-                            Ok(Type::Bool)
-                        } else if l_type == Type::Any || r_type == Type::Any {
+                        if (l_type == Type::Bool && r_type == Type::Bool)
+                            || l_type == Type::Any
+                            || r_type == Type::Any
+                        {
                             Ok(Type::Bool)
                         } else {
                             bail!(
@@ -599,15 +619,29 @@ impl SemanticAnalyzer {
                     _ => bail!("Unknown operator: {}", operator),
                 }
             }
-            Expression::Call { function, args, meta } => {
-                if function == "len" && meta.get("rust_value_method").and_then(serde_json::Value::as_str) == Some("len") {
-                    if args.len() != 1 { bail!("Rust len method expects exactly 1 argument"); }
+            Expression::Call {
+                function,
+                args,
+                meta,
+            } => {
+                if function == "len"
+                    && meta
+                        .get("rust_value_method")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("len")
+                {
+                    if args.len() != 1 {
+                        bail!("Rust len method expects exactly 1 argument");
+                    }
                     self.check_expr(&args[0])?;
                     return Ok(Type::Int);
                 }
-                let source_global = meta.get("rust_source_call") == Some(&serde_json::Value::Bool(true))
+                let source_global = meta.get("rust_source_call")
+                    == Some(&serde_json::Value::Bool(true))
                     && self.functions.contains_key(function);
-                if let Some(intrinsic) = crate::walker_intrinsics::lookup(function).filter(|_| !source_global) {
+                if let Some(intrinsic) =
+                    crate::walker_intrinsics::lookup(function).filter(|_| !source_global)
+                {
                     intrinsic.validate(function, args)?;
                     if function == "__crush_apply__" {
                         let callee_type = self.check_expr(&args[0])?;
@@ -624,14 +658,15 @@ impl SemanticAnalyzer {
                     // not a load; Python's named-expression can bind a new name.
                     if function == "__crush_assign__" {
                         let ty = self.check_expr(&args[1])?;
-                        if let Expression::Var { name, .. } = &args[0] {
-                            if self.resolve_var(name).is_none() {
-                                self.define_var(name, ty);
-                            }
+                        if let Expression::Var { name, .. } = &args[0]
+                            && self.resolve_var(name).is_none()
+                        {
+                            self.define_var(name, ty);
                         }
                         return Ok(Type::Null);
                     }
-                    let types = args.iter()
+                    let types = args
+                        .iter()
                         .map(|arg| self.check_expr(arg))
                         .collect::<Result<Vec<_>>>()?;
                     use crate::walker_intrinsics::ResultType;
@@ -639,8 +674,9 @@ impl SemanticAnalyzer {
                         ResultType::Null => Type::Null,
                         ResultType::Bool => Type::Bool,
                         ResultType::First => types[0].clone(),
-                        ResultType::Branches => self.merge_types(&types[1], &types[2])
-                            .unwrap_or(Type::Any),
+                        ResultType::Branches => {
+                            self.merge_types(&types[1], &types[2]).unwrap_or(Type::Any)
+                        }
                         ResultType::Any => Type::Any,
                         ResultType::Int => {
                             if !matches!(types[0], Type::Int | Type::Any) {
@@ -650,9 +686,12 @@ impl SemanticAnalyzer {
                         }
                     });
                 }
-                let func_type = if let Some((arg_types, ret_type)) = self.functions.get(function).cloned() {
+                let func_type = if let Some((arg_types, ret_type)) =
+                    self.functions.get(function).cloned()
+                {
                     Some((arg_types, ret_type))
-                } else if let Some(Type::Function(arg_types, ret_type)) = self.resolve_var(function) {
+                } else if let Some(Type::Function(arg_types, ret_type)) = self.resolve_var(function)
+                {
                     Some((arg_types, *ret_type))
                 } else {
                     None
@@ -762,9 +801,10 @@ impl SemanticAnalyzer {
                     for stmt in body {
                         self.check_stmt(stmt)?;
                     }
-                    let ret = returns.into_iter().reduce(|left, right| {
-                        self.merge_types(&left, &right).unwrap_or(Type::Any)
-                    }).unwrap_or(Type::Null);
+                    let ret = returns
+                        .into_iter()
+                        .reduce(|left, right| self.merge_types(&left, &right).unwrap_or(Type::Any))
+                        .unwrap_or(Type::Null);
                     Ok(Type::Function(param_types, Box::new(ret)))
                 })();
                 self.exit_scope();
@@ -995,8 +1035,10 @@ impl SemanticAnalyzer {
                     let ty = self.check_expr(value)?;
                     self.define_var(name, ty);
                 }
-                Statement::Assign { target, value, .. } => {
-                    let ty = self.check_expr(value)?;
+                Statement::Assign {
+                    target: _, value, ..
+                } => {
+                    self.check_expr(value)?;
                     // In a stricter lang we'd check if target is defined and matches ty.
                 }
                 Statement::ExprStmt { expr, .. } => {

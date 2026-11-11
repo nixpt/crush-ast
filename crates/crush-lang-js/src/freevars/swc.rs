@@ -123,9 +123,7 @@ fn collect_bound_stmt(stmt: &Stmt, bound: &mut HashSet<String>) {
         Stmt::While(WhileStmt { body, .. }) | Stmt::DoWhile(DoWhileStmt { body, .. }) => {
             collect_bound_stmt(body, bound);
         }
-        Stmt::If(IfStmt {
-            cons, alt, ..
-        }) => {
+        Stmt::If(IfStmt { cons, alt, .. }) => {
             collect_bound_stmt(cons, bound);
             if let Some(alt) = alt {
                 collect_bound_stmt(alt, bound);
@@ -158,11 +156,7 @@ fn collect_bound_stmt(stmt: &Stmt, bound: &mut HashSet<String>) {
     }
 }
 
-fn collect_reads_item(
-    item: &ModuleItem,
-    reads: &mut Vec<String>,
-    dedup: &mut HashSet<String>,
-) {
+fn collect_reads_item(item: &ModuleItem, reads: &mut Vec<String>, dedup: &mut HashSet<String>) {
     match item {
         ModuleItem::Stmt(stmt) => collect_reads_stmt(stmt, reads, dedup),
         ModuleItem::ModuleDecl(_) => {}
@@ -188,10 +182,7 @@ fn collect_reads_stmt(stmt: &Stmt, reads: &mut Vec<String>, dedup: &mut HashSet<
         }
         Stmt::Return(ReturnStmt { arg: Some(e), .. }) => collect_reads_expr(e, reads, dedup),
         Stmt::If(IfStmt {
-            test,
-            cons,
-            alt,
-            ..
+            test, cons, alt, ..
         }) => {
             collect_reads_expr(test, reads, dedup);
             collect_reads_stmt(cons, reads, dedup);
@@ -295,10 +286,7 @@ fn collect_reads_expr(expr: &Expr, reads: &mut Vec<String>, dedup: &mut HashSet<
             }
         }
         Expr::Cond(CondExpr {
-            test,
-            cons,
-            alt,
-            ..
+            test, cons, alt, ..
         }) => {
             collect_reads_expr(test, reads, dedup);
             collect_reads_expr(cons, reads, dedup);

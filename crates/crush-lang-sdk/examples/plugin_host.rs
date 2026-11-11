@@ -5,7 +5,7 @@
 
 use std::error::Error;
 
-use crush_lang_sdk::{compile::compile_crush_source, HostCaps, Runtime, Value};
+use crush_lang_sdk::{HostCaps, Runtime, Value, compile::compile_crush_source};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let plugin_path = std::env::args()

@@ -3,8 +3,8 @@ pub mod lowerer;
 pub mod parser;
 
 use crush_cast::Program;
-use std::any::Any;
 use crush_walker_core::{FeatureReport, Frontend, LowerCtx};
+use std::any::Any;
 
 pub struct BashFrontend;
 
@@ -47,12 +47,7 @@ pub fn bash_to_cast(source: &str) -> anyhow::Result<Program> {
 
 use crush_walker_core::impl_adapter_from_frontend;
 
-impl_adapter_from_frontend!(
-    BashAdapter,
-    "bash",
-    &["sh", "bash"],
-    crate::bash_to_cast
-);
+impl_adapter_from_frontend!(BashAdapter, "bash", &["sh", "bash"], crate::bash_to_cast);
 
 #[cfg(test)]
 mod tests {

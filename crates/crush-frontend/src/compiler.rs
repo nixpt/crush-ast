@@ -127,7 +127,9 @@ impl Compiler {
             m.kinds.iter().any(|k| {
                 matches!(
                     k.semantics,
-                    crush_cosm::Semantics::Value(crush_cosm::ValueMode::Copy | crush_cosm::ValueMode::Move)
+                    crush_cosm::Semantics::Value(
+                        crush_cosm::ValueMode::Copy | crush_cosm::ValueMode::Move
+                    )
                 )
             })
         })
@@ -135,7 +137,11 @@ impl Compiler {
 
     /// `copy` after a value that is assigned, passed or returned (see
     /// [`Compiler::copies_values`]).
-    fn emit_value_copy(&self, instrs: &mut Vec<Instruction>, meta: &HashMap<String, serde_json::Value>) {
+    fn emit_value_copy(
+        &self,
+        instrs: &mut Vec<Instruction>,
+        meta: &HashMap<String, serde_json::Value>,
+    ) {
         if self.copies_values() {
             instrs.push(self.create_instr("copy", serde_json::json!({}), meta));
         }
@@ -154,8 +160,10 @@ impl Compiler {
     fn constructed_kind(&self, function: &str) -> Option<String> {
         let k = self.kind(function)?;
         let constructed = !matches!(k.construct, crush_cosm::Construct::Literal);
-        (constructed && !self.local_functions.contains(function) && !self.declared_vars.contains(function))
-            .then(|| k.name.clone())
+        (constructed
+            && !self.local_functions.contains(function)
+            && !self.declared_vars.contains(function))
+        .then(|| k.name.clone())
     }
 
     /// Compile a CAST program whose `impl` / `trait` declarations
@@ -169,8 +177,10 @@ impl Compiler {
         if let Some(module) = &cosm {
             crate::cosm_lower::refuse_unimplemented_strategies(module)?;
         }
-        self.receiver_methods =
-            cosm.as_ref().map(crate::cosm_lower::receiver_methods).unwrap_or_default();
+        self.receiver_methods = cosm
+            .as_ref()
+            .map(crate::cosm_lower::receiver_methods)
+            .unwrap_or_default();
         self.cosm = cosm;
         self.compile_program(program)
     }
@@ -202,9 +212,17 @@ impl Compiler {
         meta: &HashMap<String, serde_json::Value>,
     ) {
         for p in params.iter().filter(|p| self.boxed.contains(*p)) {
-            instrs.push(self.create_instr("load", serde_json::json!({"name": p, "raw": true}), meta));
+            instrs.push(self.create_instr(
+                "load",
+                serde_json::json!({"name": p, "raw": true}),
+                meta,
+            ));
             instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
-            instrs.push(self.create_instr("store", serde_json::json!({"name": p, "raw": true}), meta));
+            instrs.push(self.create_instr(
+                "store",
+                serde_json::json!({"name": p, "raw": true}),
+                meta,
+            ));
         }
         let mut boxed_locals: Vec<&String> = locals
             .iter()
@@ -214,7 +232,11 @@ impl Compiler {
         for l in boxed_locals {
             instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
             instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
-            instrs.push(self.create_instr("store", serde_json::json!({"name": l, "raw": true}), meta));
+            instrs.push(self.create_instr(
+                "store",
+                serde_json::json!({"name": l, "raw": true}),
+                meta,
+            ));
         }
     }
 
@@ -225,8 +247,16 @@ impl Compiler {
             return;
         }
         for instr in &mut instrs[from..] {
-            let raw = instr.args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
-            let boxed = instr.args.get("name").and_then(|v| v.as_str()).is_some_and(|n| self.boxed.contains(n));
+            let raw = instr
+                .args
+                .get("raw")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let boxed = instr
+                .args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .is_some_and(|n| self.boxed.contains(n));
             if raw || !boxed {
                 continue;
             }
@@ -254,7 +284,13 @@ impl Compiler {
         let mut level = Level::default();
         scan_level(&body_json, &mut level);
         let locals: HashSet<String> = level.decls.union(&level.assigns).cloned().collect();
-        self.scopes = vec![pnames.iter().cloned().chain(locals.iter().cloned()).collect()];
+        self.scopes = vec![
+            pnames
+                .iter()
+                .cloned()
+                .chain(locals.iter().cloned())
+                .collect(),
+        ];
         self.emit_cell_init(&pnames, &locals, instrs, meta);
         instrs.len()
     }
@@ -274,7 +310,10 @@ impl Compiler {
             && !self.declared_vars.contains(name)
             && !self.local_functions.contains(name)
             && self.resolve_lambda_alias(name).is_none()
-            && self.lambda_outer_vars.iter().any(|outer| outer.contains(name))
+            && self
+                .lambda_outer_vars
+                .iter()
+                .any(|outer| outer.contains(name))
         {
             bail!(
                 "lambda uses `{name}` from the enclosing function; lambdas can't capture \
@@ -292,7 +331,9 @@ impl Compiler {
     /// exists in any host, and the call is emitted with no arguments, so a
     /// program compiled with this on fails at run time. `crushc
     /// --invariant-runtime` was removed for that reason.
-    #[deprecated(note = "emits a call to an `invariant.evaluate` capability no host provides (CRUSH-370)")]
+    #[deprecated(
+        note = "emits a call to an `invariant.evaluate` capability no host provides (CRUSH-370)"
+    )]
     pub fn with_invariant_runtime(mut self, enabled: bool) -> Self {
         self.invariant_runtime = enabled;
         self
@@ -312,7 +353,10 @@ impl Compiler {
     }
 
     fn compile_program(&mut self, mut program: Program) -> Result<CasmProgram> {
-        let declared_capabilities = program.manifest.as_ref().and_then(|m| m.capabilities.clone());
+        let declared_capabilities = program
+            .manifest
+            .as_ref()
+            .and_then(|m| m.capabilities.clone());
         self.local_functions.clear();
         self.lambdas.clear();
         self.lambda_aliases.clear();
@@ -383,7 +427,8 @@ impl Compiler {
                     }
                     self.lambda_aliases
                         .push(params.iter().map(|(n, _)| (n.clone(), None)).collect());
-                    let body_start = self.enter_function_scope(params, body, &mut func_instrs, meta);
+                    let body_start =
+                        self.enter_function_scope(params, body, &mut func_instrs, meta);
                     let nested: Result<()> = body
                         .iter()
                         .try_for_each(|inner_stmt| self.compile_stmt(inner_stmt, &mut func_instrs));
@@ -437,34 +482,35 @@ impl Compiler {
             // param-store loop so the runtime evaluator may read function
             // arguments from the operand stack if the check expression
             // references them.
-            if self.invariant_runtime {
-                if let Some(manifest) = &program.manifest {
-                    for inv in &manifest.invariants {
-                        if !inv.applies_to.contains(&name) {
-                            continue;
-                        }
-                        let Some(src) = inv.check_source.as_deref() else {
-                            continue;
-                        };
-                        // Empty `check_source` is a doc stub — no evaluator
-                        // can run an empty expression. Asking the runtime to
-                        // fetch a cap for it would just produce an unhelpful
-                        // cap_error, so skip silently (same policy as the
-                        // missing-source case immediately above).
-                        if src.is_empty() {
-                            continue;
-                        }
-                        self.all_permissions.insert("invariant.evaluate".to_string());
-
-                        let args = serde_json::json!({
-                            "name": "invariant.evaluate",
-                            "argc": 0,
-                            "invariant_name": inv.name.clone(),
-                            "function_name": name.clone(),
-                            "check_source": src,
-                        });
-                        instrs.push(self.create_instr("cap_call", args, &func.meta));
+            if self.invariant_runtime
+                && let Some(manifest) = &program.manifest
+            {
+                for inv in &manifest.invariants {
+                    if !inv.applies_to.contains(&name) {
+                        continue;
                     }
+                    let Some(src) = inv.check_source.as_deref() else {
+                        continue;
+                    };
+                    // Empty `check_source` is a doc stub — no evaluator
+                    // can run an empty expression. Asking the runtime to
+                    // fetch a cap for it would just produce an unhelpful
+                    // cap_error, so skip silently (same policy as the
+                    // missing-source case immediately above).
+                    if src.is_empty() {
+                        continue;
+                    }
+                    self.all_permissions
+                        .insert("invariant.evaluate".to_string());
+
+                    let args = serde_json::json!({
+                        "name": "invariant.evaluate",
+                        "argc": 0,
+                        "invariant_name": inv.name.clone(),
+                        "function_name": name.clone(),
+                        "check_source": src,
+                    });
+                    instrs.push(self.create_instr("cap_call", args, &func.meta));
                 }
             }
             if func.is_async {
@@ -478,8 +524,12 @@ impl Compiler {
                         &func.meta,
                     ));
                 }
-                let inner_start =
-                    self.enter_function_scope(&func.params, &func.body, &mut inner_instrs, &func.meta);
+                let inner_start = self.enter_function_scope(
+                    &func.params,
+                    &func.body,
+                    &mut inner_instrs,
+                    &func.meta,
+                );
 
                 for stmt in &func.body {
                     if !matches!(stmt, Statement::FunctionDef { .. }) {
@@ -489,7 +539,12 @@ impl Compiler {
                 self.rewrite_cells(&mut inner_instrs, inner_start);
 
                 self.ensure_return(&mut inner_instrs, Some(&func.meta));
-                self.record_debug_info_for_function(&inner_name, &inner_instrs, &mut debug_info, &mut source_files);
+                self.record_debug_info_for_function(
+                    &inner_name,
+                    &inner_instrs,
+                    &mut debug_info,
+                    &mut source_files,
+                );
 
                 let hints = extract_type_hints(&func.params, &func.body);
                 casm_program.functions.insert(
@@ -525,7 +580,12 @@ impl Compiler {
 
                 instrs.push(self.create_instr("ret", serde_json::json!({}), &func.meta));
 
-                self.record_debug_info_for_function(&name, &instrs, &mut debug_info, &mut source_files);
+                self.record_debug_info_for_function(
+                    &name,
+                    &instrs,
+                    &mut debug_info,
+                    &mut source_files,
+                );
 
                 casm_program.functions.insert(
                     name.clone(),
@@ -545,7 +605,12 @@ impl Compiler {
                 self.rewrite_cells(&mut instrs, body_start);
 
                 self.ensure_return(&mut instrs, Some(&func.meta));
-                self.record_debug_info_for_function(&name, &instrs, &mut debug_info, &mut source_files);
+                self.record_debug_info_for_function(
+                    &name,
+                    &instrs,
+                    &mut debug_info,
+                    &mut source_files,
+                );
 
                 let hints = extract_type_hints(&func.params, &func.body);
                 casm_program.functions.insert(
@@ -570,7 +635,10 @@ impl Compiler {
             // Sorted, so the same source writes the same CASM JSON (#365).
             let mut permissions: Vec<String> = self.all_permissions.iter().cloned().collect();
             permissions.sort_unstable();
-            casm_program.manifest = Manifest { permissions, declared: None };
+            casm_program.manifest = Manifest {
+                permissions,
+                declared: None,
+            };
         }
         // #258: the `@capabilities` declaration travels with the artifact.
         casm_program.manifest.declared = declared_capabilities;
@@ -639,9 +707,12 @@ impl Compiler {
         let ends_in_terminator = instrs
             .last()
             .is_some_and(|i| matches!(i.op.as_str(), "ret" | "throw" | "jmp" | "halt"));
-        let jumps_past_end = instrs
-            .iter()
-            .any(|i| i.args.get("target").and_then(|t| t.as_u64()).is_some_and(|t| t >= len));
+        let jumps_past_end = instrs.iter().any(|i| {
+            i.args
+                .get("target")
+                .and_then(|t| t.as_u64())
+                .is_some_and(|t| t >= len)
+        });
         if !ends_in_terminator || jumps_past_end {
             let meta_json = meta
                 .map(|m| serde_json::to_value(m).unwrap())
@@ -717,7 +788,11 @@ impl Compiler {
                     serde_json::json!({"name": matched_val}),
                     &HashMap::new(),
                 ));
-                instrs.push(self.create_instr("is_kind", serde_json::json!({"kind": name}), &HashMap::new()));
+                instrs.push(self.create_instr(
+                    "is_kind",
+                    serde_json::json!({"kind": name}),
+                    &HashMap::new(),
+                ));
                 fail_jumps.push(instrs.len());
                 instrs.push(self.create_instr(
                     "jmp_if_not",
@@ -759,58 +834,63 @@ impl Compiler {
         //
         //     i = start
         //     while __end > i { body; i = i + 1 }
-        if let Statement::For { variable, iterable, body, meta } = stmt {
-            if let Expression::Range { start, end, .. } = iterable.as_ref() {
-                let end_var = format!("__end_{}", self.temp_counter);
-                self.temp_counter += 1;
+        if let Statement::For {
+            variable,
+            iterable,
+            body,
+            meta,
+        } = stmt
+            && let Expression::Range { start, end, .. } = iterable.as_ref()
+        {
+            let end_var = format!("__end_{}", self.temp_counter);
+            self.temp_counter += 1;
 
-                self.compile_expr(start, instrs)?;
-                instrs.push(self.create_instr("store", serde_json::json!({"name": variable}), meta));
-                self.compile_expr(end, instrs)?;
-                instrs.push(self.create_instr("store", serde_json::json!({"name": &end_var}), meta));
+            self.compile_expr(start, instrs)?;
+            instrs.push(self.create_instr("store", serde_json::json!({"name": variable}), meta));
+            self.compile_expr(end, instrs)?;
+            instrs.push(self.create_instr("store", serde_json::json!({"name": &end_var}), meta));
 
-                self.loop_stack.push(LoopInfo {
-                    continue_target: 0,
-                    continue_indices: Vec::new(),
-                    break_indices: Vec::new(),
-                });
+            self.loop_stack.push(LoopInfo {
+                continue_target: 0,
+                continue_indices: Vec::new(),
+                break_indices: Vec::new(),
+            });
 
-                let loop_start = instrs.len();
-                instrs.push(self.create_instr("load", serde_json::json!({"name": &end_var}), meta));
-                instrs.push(self.create_instr("load", serde_json::json!({"name": variable}), meta));
-                instrs.push(self.create_instr("gt", serde_json::json!({}), meta));
-                let jmp_if_not_idx = instrs.len();
-                instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+            let loop_start = instrs.len();
+            instrs.push(self.create_instr("load", serde_json::json!({"name": &end_var}), meta));
+            instrs.push(self.create_instr("load", serde_json::json!({"name": variable}), meta));
+            instrs.push(self.create_instr("gt", serde_json::json!({}), meta));
+            let jmp_if_not_idx = instrs.len();
+            instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
 
-                for st in body {
-                    self.compile_stmt(st, instrs)?;
-                }
-
-                let continue_idx = instrs.len();
-                let loop_info = self.loop_stack.last_mut().unwrap();
-                for idx in loop_info.continue_indices.drain(..) {
-                    instrs[idx].args = serde_json::json!({"target": continue_idx});
-                }
-                loop_info.continue_target = continue_idx;
-
-                instrs.push(self.create_instr("load", serde_json::json!({"name": variable}), meta));
-                instrs.push(self.create_instr("push_int", serde_json::json!({"value": 1}), meta));
-                instrs.push(self.create_instr("add", serde_json::json!({}), meta));
-                instrs.push(self.create_instr("store", serde_json::json!({"name": variable}), meta));
-
-                instrs.push(self.create_instr("jmp", serde_json::json!({"target": loop_start}), meta));
-
-                let loop_end = instrs.len();
-                instrs[jmp_if_not_idx].args = serde_json::json!({"target": loop_end});
-                let loop_info = self.loop_stack.pop().unwrap();
-                for idx in loop_info.continue_indices {
-                    instrs[idx].args = serde_json::json!({"target": loop_start});
-                }
-                for idx in loop_info.break_indices {
-                    instrs[idx].args = serde_json::json!({"target": loop_end});
-                }
-                return Ok(());
+            for st in body {
+                self.compile_stmt(st, instrs)?;
             }
+
+            let continue_idx = instrs.len();
+            let loop_info = self.loop_stack.last_mut().unwrap();
+            for idx in loop_info.continue_indices.drain(..) {
+                instrs[idx].args = serde_json::json!({"target": continue_idx});
+            }
+            loop_info.continue_target = continue_idx;
+
+            instrs.push(self.create_instr("load", serde_json::json!({"name": variable}), meta));
+            instrs.push(self.create_instr("push_int", serde_json::json!({"value": 1}), meta));
+            instrs.push(self.create_instr("add", serde_json::json!({}), meta));
+            instrs.push(self.create_instr("store", serde_json::json!({"name": variable}), meta));
+
+            instrs.push(self.create_instr("jmp", serde_json::json!({"target": loop_start}), meta));
+
+            let loop_end = instrs.len();
+            instrs[jmp_if_not_idx].args = serde_json::json!({"target": loop_end});
+            let loop_info = self.loop_stack.pop().unwrap();
+            for idx in loop_info.continue_indices {
+                instrs[idx].args = serde_json::json!({"target": loop_start});
+            }
+            for idx in loop_info.break_indices {
+                instrs[idx].args = serde_json::json!({"target": loop_end});
+            }
+            return Ok(());
         }
 
         match stmt {
@@ -820,10 +900,10 @@ impl Compiler {
                 self.declared_vars.insert(name.clone());
                 // `let f = 5` after `let f = |x| ..`: `f` is no longer the lambda,
                 // so a later `f(..)` must not call it (a new lambda re-adds it).
-                if !matches!(value, Expression::Lambda { .. }) {
-                    if let Some(scope) = self.lambda_aliases.last_mut() {
-                        scope.insert(name.clone(), None);
-                    }
+                if !matches!(value, Expression::Lambda { .. })
+                    && let Some(scope) = self.lambda_aliases.last_mut()
+                {
+                    scope.insert(name.clone(), None);
                 }
                 // A Crush `let` — or a walker declaration marked as a block
                 // binding (JS `let` / `const`) — is a fresh binding each time
@@ -838,14 +918,20 @@ impl Compiler {
                 if self.boxed.contains(name.as_str()) && block_binding {
                     instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
                     instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
-                    instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
+                    instrs.push(self.create_instr(
+                        "store",
+                        serde_json::json!({"name": name, "raw": true}),
+                        meta,
+                    ));
                 }
                 self.compile_expr_with_name_hint(value, instrs, Some(name))?;
                 self.emit_value_copy(instrs, meta);
                 instrs.push(self.create_typed_instr(OpCode::Store(name.clone()), meta)?);
             }
             Statement::Assign {
-                target, value, meta
+                target,
+                value,
+                meta,
             } => {
                 self.reject_lambda_alias_reassignment(target)?;
                 self.check_lambda_capture(target)?;
@@ -1244,19 +1330,22 @@ impl Compiler {
                     bail!("continue outside of loop");
                 }
                 let idx = instrs.len();
-                instrs.push(self.create_instr(
-                    "jmp",
-                    serde_json::json!({"target": 0}),
-                    meta,
-                ));
-                self.loop_stack.last_mut().unwrap().continue_indices.push(idx);
+                instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
+                self.loop_stack
+                    .last_mut()
+                    .unwrap()
+                    .continue_indices
+                    .push(idx);
             }
             Statement::StructDef { .. } => {}
             // Lowered to COSM + lifted functions before code generation
             // (`cosm_lower`); reaching here means an `impl`/`trait` outside
             // the top level of a file.
             Statement::ImplBlock { meta, .. } | Statement::TraitDef { meta, .. } => {
-                let at = match (meta.get("line").and_then(|v| v.as_u64()), meta.get("col").and_then(|v| v.as_u64())) {
+                let at = match (
+                    meta.get("line").and_then(|v| v.as_u64()),
+                    meta.get("col").and_then(|v| v.as_u64()),
+                ) {
                     (Some(l), Some(c)) => format!("line {l}, col {c}: "),
                     _ => String::new(),
                 };
@@ -1269,7 +1358,10 @@ impl Compiler {
                 // lowering and is refused — never compiled to a runtime call
                 // no host provides.
                 if let Some(why) = crate::import_system::unsupported_import(import) {
-                    let at = match (meta.get("line").and_then(|v| v.as_u64()), meta.get("col").and_then(|v| v.as_u64())) {
+                    let at = match (
+                        meta.get("line").and_then(|v| v.as_u64()),
+                        meta.get("col").and_then(|v| v.as_u64()),
+                    ) {
                         (Some(l), Some(c)) if l > 0 => format!("line {l}, col {c}: "),
                         _ => String::new(),
                     };
@@ -1594,7 +1686,10 @@ impl Compiler {
                 instrs.push(self.create_typed_instr(OpCode::PushNull, meta)?);
             }
             Expression::Var { name, meta } => {
-                let outer = self.lambda_outer_vars.iter().any(|o| o.contains(name.as_str()));
+                let outer = self
+                    .lambda_outer_vars
+                    .iter()
+                    .any(|o| o.contains(name.as_str()));
                 let declared = self.declared_vars.contains(name.as_str());
                 match self.function_arity.get(name.as_str()) {
                     // A function's name used as a value (`apply(fib, 3)`).
@@ -1714,13 +1809,25 @@ impl Compiler {
                         let name = format!("__crush_rust_call_arg_{}", self.temp_counter);
                         self.temp_counter += 1;
                         self.compile_arg(arg, instrs)?;
-                        instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
+                        instrs.push(self.create_instr(
+                            "store",
+                            serde_json::json!({"name": name, "raw": true}),
+                            meta,
+                        ));
                         temporaries.push(name);
                     }
                     for name in temporaries.iter().rev() {
-                        instrs.push(self.create_instr("load", serde_json::json!({"name": name}), meta));
+                        instrs.push(self.create_instr(
+                            "load",
+                            serde_json::json!({"name": name}),
+                            meta,
+                        ));
                     }
-                    instrs.push(self.create_instr("call", serde_json::json!({"function": function, "argc": args.len()}), meta));
+                    instrs.push(self.create_instr(
+                        "call",
+                        serde_json::json!({"function": function, "argc": args.len()}),
+                        meta,
+                    ));
                     return Ok(());
                 }
                 if let Some(intrinsic) = crate::walker_intrinsics::lookup(function) {
@@ -1763,7 +1870,9 @@ impl Compiler {
                     }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("len", serde_json::json!({}), meta));
-                } else if function == "parallel_map" && !self.local_functions.contains("parallel_map") {
+                } else if function == "parallel_map"
+                    && !self.local_functions.contains("parallel_map")
+                {
                     // #175: a VM capability (it starts workers); capabilities
                     // take their arguments in order.
                     if args.len() != 2 {
@@ -1789,51 +1898,79 @@ impl Compiler {
                         meta,
                     ));
                 } else if function == "str.contains" {
-                    if args.len() != 2 { bail!("str.contains() expects exactly 2 arguments"); }
-                    self.compile_expr(&args[0], instrs)?; self.compile_expr(&args[1], instrs)?;
+                    if args.len() != 2 {
+                        bail!("str.contains() expects exactly 2 arguments");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
                     instrs.push(self.create_instr("str_contains", serde_json::json!({}), meta));
                 } else if function == "str.starts_with" {
-                    if args.len() != 2 { bail!("str.starts_with() expects exactly 2 arguments"); }
-                    self.compile_expr(&args[0], instrs)?; self.compile_expr(&args[1], instrs)?;
+                    if args.len() != 2 {
+                        bail!("str.starts_with() expects exactly 2 arguments");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
                     instrs.push(self.create_instr("str_starts_with", serde_json::json!({}), meta));
                 } else if function == "str.ends_with" {
-                    if args.len() != 2 { bail!("str.ends_with() expects exactly 2 arguments"); }
-                    self.compile_expr(&args[0], instrs)?; self.compile_expr(&args[1], instrs)?;
+                    if args.len() != 2 {
+                        bail!("str.ends_with() expects exactly 2 arguments");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
                     instrs.push(self.create_instr("str_ends_with", serde_json::json!({}), meta));
                 } else if function == "str.to_upper" {
-                    if args.len() != 1 { bail!("str.to_upper() expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("str.to_upper() expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("str_to_upper", serde_json::json!({}), meta));
                 } else if function == "str.to_lower" {
-                    if args.len() != 1 { bail!("str.to_lower() expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("str.to_lower() expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("str_to_lower", serde_json::json!({}), meta));
                 } else if function == "str.trim" {
-                    if args.len() != 1 { bail!("str.trim() expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("str.trim() expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("str_trim", serde_json::json!({}), meta));
                 } else if function == "math.pow" {
-                    if args.len() != 2 { bail!("math.pow() expects exactly 2 arguments"); }
-                    self.compile_expr(&args[0], instrs)?; self.compile_expr(&args[1], instrs)?;
+                    if args.len() != 2 {
+                        bail!("math.pow() expects exactly 2 arguments");
+                    }
+                    self.compile_expr(&args[0], instrs)?;
+                    self.compile_expr(&args[1], instrs)?;
                     instrs.push(self.create_instr("math_pow", serde_json::json!({}), meta));
                 } else if function == "math.sqrt" {
-                    if args.len() != 1 { bail!("math.sqrt() expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("math.sqrt() expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("math_sqrt", serde_json::json!({}), meta));
                 } else if function == "math.abs" {
-                    if args.len() != 1 { bail!("math.abs() expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("math.abs() expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("math_abs", serde_json::json!({}), meta));
                 } else if function == "math.round" {
-                    if args.len() != 1 { bail!("math.round() expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("math.round() expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("math_round", serde_json::json!({}), meta));
                 } else if function == "math.floor" {
-                    if args.len() != 1 { bail!("math.floor() expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("math.floor() expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("math_floor", serde_json::json!({}), meta));
                 } else if function == "math.ceil" {
-                    if args.len() != 1 { bail!("math.ceil() expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("math.ceil() expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("math_ceil", serde_json::json!({}), meta));
                 } else if function == "str.split" {
@@ -1871,8 +2008,14 @@ impl Compiler {
                         );
                     }
                     let argc = args.len();
-                    for arg in args { self.compile_expr(arg, instrs)?; }
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "make_range", "argc": argc}), meta));
+                    for arg in args {
+                        self.compile_expr(arg, instrs)?;
+                    }
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "make_range", "argc": argc}),
+                        meta,
+                    ));
                 } else if function == "arr_set" {
                     if args.len() != 3 {
                         bail!("arr_set() expects exactly 3 arguments");
@@ -1880,14 +2023,22 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
                     self.compile_expr(&args[2], instrs)?;
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_set", "argc": 3}), meta));
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "arr_set", "argc": 3}),
+                        meta,
+                    ));
                 } else if function == "arr_get" {
                     if args.len() != 2 {
                         bail!("arr_get() expects exactly 2 arguments");
                     }
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_get", "argc": 2}), meta));
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "arr_get", "argc": 2}),
+                        meta,
+                    ));
                 } else if function == "array.push" {
                     if args.len() != 2 {
                         bail!("array.push() expects exactly 2 arguments");
@@ -1895,7 +2046,6 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
                     instrs.push(self.create_instr("array_push", serde_json::json!({}), meta));
-
                 } else if function == "array.pop" {
                     if args.len() != 1 {
                         bail!("array.pop() expects exactly 1 argument");
@@ -1917,7 +2067,11 @@ impl Compiler {
                     for a in args {
                         self.compile_expr(a, instrs)?;
                     }
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "seq.slice", "argc": 4}), &meta));
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "seq.slice", "argc": 4}),
+                        meta,
+                    ));
                 } else if function == "__crush_setindex__" {
                     // Intrinsic: indexed assignment lowered from walker (e.g., `arr[i] = val`)
                     // args[0] = target, args[1] = index, args[2] = value
@@ -1927,7 +2081,11 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
                     self.compile_expr(&args[2], instrs)?;
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "arr_set", "argc": 3}), &meta));
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "arr_set", "argc": 3}),
+                        meta,
+                    ));
                 } else if function == "__crush_has__" {
                     // Intrinsic: does the value have the named member
                     // (CASM `has_member`)? The key must be a literal —
@@ -1946,7 +2104,7 @@ impl Compiler {
                     instrs.push(self.create_instr(
                         "has_member",
                         serde_json::json!({"name": key}),
-                        &meta,
+                        meta,
                     ));
                 } else if function == "__crush_deffield__" {
                     // Intrinsic: define an own field on an instance,
@@ -1965,7 +2123,11 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
                     self.compile_expr(&args[2], instrs)?;
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "define_field", "argc": 3}), &meta));
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "define_field", "argc": 3}),
+                        meta,
+                    ));
                 } else if function == "__crush_rebind__" {
                     // A fresh binding holding the variable's current value
                     // (JS `for (let ..)` per-iteration copy, CRUSH-251 step
@@ -1975,9 +2137,17 @@ impl Compiler {
                         bail!("__crush_rebind__ expects a variable");
                     };
                     if self.boxed.contains(name.as_str()) {
-                        instrs.push(self.create_instr("load_cell", serde_json::json!({"name": name}), meta));
+                        instrs.push(self.create_instr(
+                            "load_cell",
+                            serde_json::json!({"name": name}),
+                            meta,
+                        ));
                         instrs.push(self.create_instr("cell_new", serde_json::json!({}), meta));
-                        instrs.push(self.create_instr("store", serde_json::json!({"name": name, "raw": true}), meta));
+                        instrs.push(self.create_instr(
+                            "store",
+                            serde_json::json!({"name": name, "raw": true}),
+                            meta,
+                        ));
                     }
                     instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
                 } else if function == "__crush_assign__" {
@@ -1994,14 +2164,10 @@ impl Compiler {
                         instrs.push(self.create_instr(
                             "store",
                             serde_json::json!({"name": name}),
-                            &meta,
+                            meta,
                         ));
                         // store pops the value; push null so the enclosing ExprStmt pop doesn't underflow
-                        instrs.push(self.create_instr(
-                            "push_null",
-                            serde_json::json!({}),
-                            &meta,
-                        ));
+                        instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
                     } else {
                         bail!("__crush_assign__ target must be a variable");
                     }
@@ -2009,8 +2175,12 @@ impl Compiler {
                     // Shared CASM expansion: one source evaluation, no new
                     // runtime opcode, host capability, temporary binding or ABI.
                     self.compile_expr(&args[0], instrs)?;
-                    let Expression::IntLiteral { value: width, .. } = args[1] else { unreachable!() };
-                    let Expression::BoolLiteral { value: signed, .. } = args[2] else { unreachable!() };
+                    let Expression::IntLiteral { value: width, .. } = args[1] else {
+                        unreachable!()
+                    };
+                    let Expression::BoolLiteral { value: signed, .. } = args[2] else {
+                        unreachable!()
+                    };
                     if width != 64 {
                         let modulus = 1i64 << width;
                         instrs.push(self.create_typed_instr(OpCode::PushInt(modulus), meta)?);
@@ -2021,50 +2191,75 @@ impl Compiler {
                         instrs.push(self.create_typed_instr(OpCode::PushInt(0), meta)?);
                         instrs.push(self.create_typed_instr(OpCode::Lt, meta)?);
                         let skip = instrs.len();
-                        instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+                        instrs.push(self.create_instr(
+                            "jmp_if_not",
+                            serde_json::json!({"target": 0}),
+                            meta,
+                        ));
                         instrs.push(self.create_typed_instr(OpCode::PushInt(modulus), meta)?);
                         instrs.push(self.create_typed_instr(OpCode::Add, meta)?);
                         instrs[skip].args = serde_json::json!({"target": instrs.len()});
                         if signed {
                             instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
-                            instrs.push(self.create_typed_instr(OpCode::PushInt(modulus / 2), meta)?);
+                            instrs
+                                .push(self.create_typed_instr(OpCode::PushInt(modulus / 2), meta)?);
                             instrs.push(self.create_typed_instr(OpCode::Ge, meta)?);
                             let skip = instrs.len();
-                            instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+                            instrs.push(self.create_instr(
+                                "jmp_if_not",
+                                serde_json::json!({"target": 0}),
+                                meta,
+                            ));
                             instrs.push(self.create_typed_instr(OpCode::PushInt(modulus), meta)?);
                             instrs.push(self.create_typed_instr(OpCode::Sub, meta)?);
                             instrs[skip].args = serde_json::json!({"target": instrs.len()});
                         }
                     }
                 } else if function == "__crush_not__" {
-                    if args.len() != 1 { bail!("__crush_not__ expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("__crush_not__ expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
-                    instrs.push(self.create_instr("not", serde_json::json!({}), &meta));
+                    instrs.push(self.create_instr("not", serde_json::json!({}), meta));
                 } else if function == "__crush_bit_not__" {
-                    if args.len() != 1 { bail!("__crush_bit_not__ expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("__crush_bit_not__ expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
-                    instrs.push(self.create_instr("bit_not", serde_json::json!({}), &meta));
+                    instrs.push(self.create_instr("bit_not", serde_json::json!({}), meta));
                 } else if function == "__crush_neg__" {
-                    if args.len() != 1 { bail!("__crush_neg__ expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("__crush_neg__ expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
-                    instrs.push(self.create_instr("neg", serde_json::json!({}), &meta));
+                    instrs.push(self.create_instr("neg", serde_json::json!({}), meta));
                 } else if function == "__crush_pos__" {
-                    if args.len() != 1 { bail!("__crush_pos__ expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("__crush_pos__ expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     // unary plus is identity — result is already on stack
                 } else if function == "__crush_subscript__" {
-                    if args.len() != 2 { bail!("__crush_subscript__ expects exactly 2 arguments"); }
+                    if args.len() != 2 {
+                        bail!("__crush_subscript__ expects exactly 2 arguments");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     self.compile_expr(&args[1], instrs)?;
-                    instrs.push(self.create_instr("arr_get", serde_json::json!({}), &meta));
+                    instrs.push(self.create_instr("arr_get", serde_json::json!({}), meta));
                 } else if function == "__crush_ternary__" {
-                    if args.len() != 3 { bail!("__crush_ternary__ expects exactly 3 arguments"); }
+                    if args.len() != 3 {
+                        bail!("__crush_ternary__ expects exactly 3 arguments");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     let jmp_if_not_idx = instrs.len();
-                    instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), &meta));
+                    instrs.push(self.create_instr(
+                        "jmp_if_not",
+                        serde_json::json!({"target": 0}),
+                        meta,
+                    ));
                     self.compile_expr(&args[1], instrs)?;
                     let jmp_end_idx = instrs.len();
-                    instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), &meta));
+                    instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
                     let else_start = instrs.len();
                     instrs[jmp_if_not_idx].args = serde_json::json!({"target": else_start});
                     self.compile_expr(&args[2], instrs)?;
@@ -2077,17 +2272,31 @@ impl Compiler {
                     // boolean.
                     //   ||:  <a> dup js.truthy jmp_if_not R  jmp E  R: pop <b>  E:
                     //   &&:  <a> dup js.truthy jmp_if_not E  pop <b>  E:
-                    if args.len() != 2 { bail!("{function} expects exactly 2 arguments"); }
+                    if args.len() != 2 {
+                        bail!("{function} expects exactly 2 arguments");
+                    }
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
                     self.all_permissions.insert("js.truthy".to_string());
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "js.truthy", "argc": 1}), meta));
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "js.truthy", "argc": 1}),
+                        meta,
+                    ));
                     let test_idx = instrs.len();
-                    instrs.push(self.create_instr("jmp_if_not", serde_json::json!({"target": 0}), meta));
+                    instrs.push(self.create_instr(
+                        "jmp_if_not",
+                        serde_json::json!({"target": 0}),
+                        meta,
+                    ));
                     let mut to_end = Vec::new();
                     if function == "__crush_js_or__" {
                         to_end.push(instrs.len());
-                        instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
+                        instrs.push(self.create_instr(
+                            "jmp",
+                            serde_json::json!({"target": 0}),
+                            meta,
+                        ));
                         let rhs = instrs.len();
                         instrs[test_idx].args = serde_json::json!({"target": rhs});
                     } else {
@@ -2099,10 +2308,14 @@ impl Compiler {
                     for idx in to_end {
                         instrs[idx].args = serde_json::json!({"target": end_label});
                     }
-                } else if function == "__crush_pre_inc__" || function == "__crush_post_inc__"
-                    || function == "__crush_pre_dec__" || function == "__crush_post_dec__"
+                } else if function == "__crush_pre_inc__"
+                    || function == "__crush_post_inc__"
+                    || function == "__crush_pre_dec__"
+                    || function == "__crush_post_dec__"
                 {
-                    if args.len() != 1 { bail!("{function} expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("{function} expects exactly 1 argument");
+                    }
                     let var_name = if let Expression::Var { name, .. } = &args[0] {
                         name.clone()
                     } else {
@@ -2110,48 +2323,81 @@ impl Compiler {
                     };
                     let is_inc = function.contains("inc");
                     let is_pre = function.contains("pre");
-                    self.compile_expr(&args[0], instrs)?;  // load var
+                    self.compile_expr(&args[0], instrs)?; // load var
                     if !is_pre {
-                        instrs.push(self.create_typed_instr(OpCode::Dup, &meta)?);
+                        instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
                     }
-                    instrs.push(self.create_instr("push_int", serde_json::json!({"value": 1}), &meta));
+                    instrs.push(self.create_instr(
+                        "push_int",
+                        serde_json::json!({"value": 1}),
+                        meta,
+                    ));
                     if is_inc {
-                        instrs.push(self.create_instr("add", serde_json::json!({}), &meta));
+                        instrs.push(self.create_instr("add", serde_json::json!({}), meta));
                     } else {
-                        instrs.push(self.create_instr("sub", serde_json::json!({}), &meta));
+                        instrs.push(self.create_instr("sub", serde_json::json!({}), meta));
                     }
                     if is_pre {
-                        instrs.push(self.create_typed_instr(OpCode::Dup, &meta)?);
+                        instrs.push(self.create_typed_instr(OpCode::Dup, meta)?);
                     }
-                    instrs.push(self.create_instr("store", serde_json::json!({"name": var_name}), &meta));
+                    instrs.push(self.create_instr(
+                        "store",
+                        serde_json::json!({"name": var_name}),
+                        meta,
+                    ));
                 } else if function == "__crush_deref__" {
-                    if args.len() != 1 { bail!("__crush_deref__ expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("__crush_deref__ expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "__crush_deref__", "argc": 1}), &meta));
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "__crush_deref__", "argc": 1}),
+                        meta,
+                    ));
                 } else if function == "__crush_addr_of__" {
-                    if args.len() != 1 { bail!("__crush_addr_of__ expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("__crush_addr_of__ expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "__crush_addr_of__", "argc": 1}), &meta));
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "__crush_addr_of__", "argc": 1}),
+                        meta,
+                    ));
                 } else if function == "__crush_unary__" {
-                    if args.len() != 1 { bail!("__crush_unary__ expects exactly 1 argument"); }
+                    if args.len() != 1 {
+                        bail!("__crush_unary__ expects exactly 1 argument");
+                    }
                     self.compile_expr(&args[0], instrs)?;
-                    instrs.push(self.create_instr("cap_call", serde_json::json!({"name": "__crush_unary__", "argc": 1}), &meta));
+                    instrs.push(self.create_instr(
+                        "cap_call",
+                        serde_json::json!({"name": "__crush_unary__", "argc": 1}),
+                        meta,
+                    ));
                 } else if function == "ai_synthesize" {
                     // ai_synthesize(type_str [, constraints=[...]]) — lower to ai_synthesize CASM
-                    let type_str = if let Some(Expression::StringLiteral { value, .. }) = args.first() {
+                    let type_str = if let Some(Expression::StringLiteral { value, .. }) =
+                        args.first()
+                    {
                         value.clone()
                     } else {
-                        bail!("ai_synthesize: first argument must be a string literal (output type)");
+                        bail!(
+                            "ai_synthesize: first argument must be a string literal (output type)"
+                        );
                     };
                     let constraints: Vec<String> = if args.len() > 1 {
                         if let Expression::ArrayLiteral { elements, .. } = &args[1] {
-                            elements.iter().filter_map(|e| {
-                                if let Expression::StringLiteral { value, .. } = e {
-                                    Some(value.clone())
-                                } else {
-                                    None
-                                }
-                            }).collect()
+                            elements
+                                .iter()
+                                .filter_map(|e| {
+                                    if let Expression::StringLiteral { value, .. } = e {
+                                        Some(value.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect()
                         } else {
                             Vec::new()
                         }
@@ -2164,7 +2410,7 @@ impl Compiler {
                             "output_type": type_str,
                             "constraints": constraints
                         }),
-                        &meta,
+                        meta,
                     ));
                 } else if function == "ai_semantic_match" {
                     // ai_semantic_match(target, concept_str [, threshold]) — lower to ai_semantic_match CASM
@@ -2175,13 +2421,16 @@ impl Compiler {
                     let concept = if let Expression::StringLiteral { value, .. } = &args[1] {
                         value.clone()
                     } else {
-                        bail!("ai_semantic_match: second argument must be a string literal (concept)");
+                        bail!(
+                            "ai_semantic_match: second argument must be a string literal (concept)"
+                        );
                     };
-                    let threshold = if let Some(Expression::FloatLiteral { value, .. }) = args.get(2) {
-                        *value
-                    } else {
-                        0.8
-                    };
+                    let threshold =
+                        if let Some(Expression::FloatLiteral { value, .. }) = args.get(2) {
+                            *value
+                        } else {
+                            0.8
+                        };
                     instrs.push(self.create_instr(
                         "ai_semantic_match",
                         serde_json::json!({
@@ -2189,14 +2438,18 @@ impl Compiler {
                             "confidence_threshold": threshold,
                             "stack_args": 1
                         }),
-                        &meta,
+                        meta,
                     ));
                 } else {
                     // Check for method-call syntax: obj.method(args)
                     if let Some(dot_pos) = function.find('.') {
                         let obj_name = &function[..dot_pos];
                         let method = &function[dot_pos + 1..];
-                        instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
+                        instrs.push(self.create_instr(
+                            "load",
+                            serde_json::json!({"name": obj_name}),
+                            meta,
+                        ));
                         // Push args in order: the receiver is already on the stack, then each
                         // argument, then cap_call pops them off in the same order the capability
                         // expects (receiver, arg1, arg2, …). Pushes are in order because the
@@ -2205,7 +2458,11 @@ impl Compiler {
                         for arg in args {
                             self.compile_expr(arg, instrs)?;
                         }
-                        instrs.push(self.create_instr("cap_call", serde_json::json!({"name": method, "argc": args.len() + 1}), &meta));
+                        instrs.push(self.create_instr(
+                            "cap_call",
+                            serde_json::json!({"name": method, "argc": args.len() + 1}),
+                            meta,
+                        ));
                     } else if let Some(kind) = self.constructed_kind(function) {
                         // COSM K1.4: `C(…)` of a Kind built by a constructor
                         // function — CONSTRUCT (arguments last-first, as for `call`).
@@ -2223,17 +2480,30 @@ impl Compiler {
                         for arg in args.iter().rev() {
                             self.compile_arg(arg, instrs)?;
                         }
-                        instrs.push(self.create_instr("call", serde_json::json!({"function": function, "argc": args.len()}), &meta));
+                        instrs.push(self.create_instr(
+                            "call",
+                            serde_json::json!({"function": function, "argc": args.len()}),
+                            meta,
+                        ));
                     }
                 }
             }
-            Expression::VectorMath { operator, args, meta } => {
+            Expression::VectorMath {
+                operator,
+                args,
+                meta,
+            } => {
                 for arg in args {
                     self.compile_expr(arg, instrs)?;
                 }
                 instrs.push(self.create_instr(operator, serde_json::json!({}), meta));
             }
-            Expression::MethodCall { target, method, args, meta } => {
+            Expression::MethodCall {
+                target,
+                method,
+                args,
+                meta,
+            } => {
                 // CRUSH-277 S5: a method call on a computed receiver: the
                 // member resolves on the receiver's Kind at run time
                 // (`call_member`: arguments last-first, the receiver on
@@ -2271,8 +2541,10 @@ impl Compiler {
             Expression::CapabilityCall { name, args, meta } => {
                 // Walkers resolve method receivers before emitting named caps.
                 // Only unresolved parser calls need the `obj.method` heuristic.
-                let resolved_capability = meta.get("resolved_capability")
-                    .and_then(|value| value.as_bool()).unwrap_or(false);
+                let resolved_capability = meta
+                    .get("resolved_capability")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
                 if name == "len" {
                     if args.len() != 1 {
                         bail!("len() expects exactly 1 argument");
@@ -2291,8 +2563,9 @@ impl Compiler {
                     self.compile_expr(&args[0], instrs)?;
                     instrs.push(self.create_instr("type_of", serde_json::json!({}), meta));
                 } else if (name == "array.push" || name == "array.pop")
-                    && (resolved_capability || (!self.declared_vars.contains("array")
-                        && !self.local_functions.contains(name)))
+                    && (resolved_capability
+                        || (!self.declared_vars.contains("array")
+                            && !self.local_functions.contains(name)))
                 {
                     // The parser emits `array.push(a, x)` / `array.pop(a)` as a
                     // dotted CapabilityCall, not a `Call`, so the `Call`-branch
@@ -2345,15 +2618,16 @@ impl Compiler {
                     // member call on a declared receiver; anything else
                     // is a missing method (or a field holding a
                     // function, CRUSH-zorro-44), refused outright.
-                    if meta.get("member_call").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    if meta
+                        .get("member_call")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
                         let resolves = name.find('.').is_some_and(|pos| {
                             self.declared_vars.contains(&name[..pos])
                                 && (self.receiver_methods.contains(&name[pos + 1..])
                                     || (&name[pos + 1..] == "clone"
-                                        && self
-                                            .cosm
-                                            .as_ref()
-                                            .is_some_and(|m| !m.kinds.is_empty())))
+                                        && self.cosm.as_ref().is_some_and(|m| !m.kinds.is_empty())))
                         });
                         if !resolves {
                             let (obj_name, method) =
@@ -2367,15 +2641,18 @@ impl Compiler {
                     // Parser emits CapabilityCall { name: "obj.method", args } for this.
                     // Only split when the receiver (obj) is a declared variable —
                     // dotted names like "net.fetch" are namespaced capabilities.
-                    let is_method_call = !resolved_capability && name.find('.')
-                        .map(|pos| self.declared_vars.contains(&name[..pos]))
-                        .unwrap_or(false);
+                    let is_method_call = !resolved_capability
+                        && name
+                            .find('.')
+                            .map(|pos| self.declared_vars.contains(&name[..pos]))
+                            .unwrap_or(false);
                     if is_method_call {
                         let dot_pos = name.find('.').unwrap();
                         let obj_name = &name[..dot_pos];
                         let method = &name[dot_pos + 1..];
                         if self.receiver_methods.contains(method)
-                            || (method == "clone" && self.cosm.as_ref().is_some_and(|m| !m.kinds.is_empty()))
+                            || (method == "clone"
+                                && self.cosm.as_ref().is_some_and(|m| !m.kinds.is_empty()))
                         {
                             // COSM K1.4: `p.norm2(…)` resolves the method on the
                             // receiver's Kind (CALL_MEMBER: arguments last-first,
@@ -2384,7 +2661,11 @@ impl Compiler {
                             for arg in args.iter().rev() {
                                 self.compile_arg(arg, instrs)?;
                             }
-                            instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), meta));
+                            instrs.push(self.create_instr(
+                                "load",
+                                serde_json::json!({"name": obj_name}),
+                                meta,
+                            ));
                             instrs.push(self.create_instr(
                                 "call_member",
                                 serde_json::json!({"name": method, "argc": args.len()}),
@@ -2397,7 +2678,11 @@ impl Compiler {
                         // split; only the parser's unmarked idiom
                         // reaches this grant.
                         self.all_permissions.insert(method.to_string());
-                        instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), &meta));
+                        instrs.push(self.create_instr(
+                            "load",
+                            serde_json::json!({"name": obj_name}),
+                            meta,
+                        ));
                         // Push args in order: the receiver is already on the stack, then each
                         // argument, then cap_call pops them top-first and reverses, so the
                         // capability sees (receiver, arg1, arg2, …). (CRUSH-235: the old
@@ -2405,7 +2690,11 @@ impl Compiler {
                         for arg in args {
                             self.compile_expr(arg, instrs)?;
                         }
-                        instrs.push(self.create_instr("cap_call", serde_json::json!({"name": method, "argc": args.len() + 1}), &meta));
+                        instrs.push(self.create_instr(
+                            "cap_call",
+                            serde_json::json!({"name": method, "argc": args.len() + 1}),
+                            meta,
+                        ));
                     } else {
                         self.all_permissions.insert(name.clone());
                         for arg in args {
@@ -2651,7 +2940,10 @@ impl Compiler {
                 // the JIT and AOT a map, as before. A literal builds the
                 // instance directly, whatever the Kind's `construct` (a
                 // factory constructor is written with one).
-                let kind = meta.get("struct").and_then(|v| v.as_str()).filter(|k| self.kind(k).is_some());
+                let kind = meta
+                    .get("struct")
+                    .and_then(|v| v.as_str())
+                    .filter(|k| self.kind(k).is_some());
                 let args = match kind {
                     Some(k) => serde_json::json!({"kind": k}),
                     None => serde_json::json!({}),
@@ -2720,7 +3012,10 @@ impl Compiler {
                     if self.lambda_aliases.is_empty() {
                         self.lambda_aliases.push(HashMap::new());
                     }
-                    self.lambda_aliases.last_mut().expect("scope").insert(hint.to_string(), Some(lambda_name.clone()));
+                    self.lambda_aliases
+                        .last_mut()
+                        .expect("scope")
+                        .insert(hint.to_string(), Some(lambda_name.clone()));
                 }
 
                 // Entry: captures, then parameters, popped in that order. These
@@ -2745,7 +3040,12 @@ impl Compiler {
                 self.lambda_aliases
                     .push(params.iter().map(|(n, _)| (n.clone(), None)).collect());
                 self.scopes.push(
-                    pnames.iter().chain(captures.iter()).chain(locals.iter()).cloned().collect(),
+                    pnames
+                        .iter()
+                        .chain(captures.iter())
+                        .chain(locals.iter())
+                        .cloned()
+                        .collect(),
                 );
                 let body_result: Result<()> = body
                     .iter()
@@ -2771,7 +3071,11 @@ impl Compiler {
 
                 // The captured values, in order (raw: a boxed variable's cell).
                 for name in &captures {
-                    instrs.push(self.create_instr("load", serde_json::json!({"name": name, "raw": true}), meta));
+                    instrs.push(self.create_instr(
+                        "load",
+                        serde_json::json!({"name": name, "raw": true}),
+                        meta,
+                    ));
                 }
                 instrs.push(self.create_instr(
                     "make_closure",
@@ -2779,7 +3083,11 @@ impl Compiler {
                     meta,
                 ));
             }
-            Expression::Match { expression, arms, meta } => {
+            Expression::Match {
+                expression,
+                arms,
+                meta,
+            } => {
                 self.compile_expr(expression, instrs)?;
                 let temp_var = format!("__match_val_{}", self.temp_counter);
                 self.temp_counter += 1;
@@ -2810,20 +3118,23 @@ impl Compiler {
                             self.compile_stmt(stmt, instrs)?;
                         }
                         let last_stmt = &arm.body[arm.body.len() - 1];
-                        if let Statement::ExprStmt { expr: last_expr, .. } = last_stmt {
+                        if let Statement::ExprStmt {
+                            expr: last_expr, ..
+                        } = last_stmt
+                        {
                             self.compile_expr(last_expr, instrs)?;
                         } else {
                             self.compile_stmt(last_stmt, instrs)?;
-                            instrs.push(self.create_instr("push_null", serde_json::json!({}), meta));
+                            instrs.push(self.create_instr(
+                                "push_null",
+                                serde_json::json!({}),
+                                meta,
+                            ));
                         }
                     }
 
                     end_jumps.push(instrs.len());
-                    instrs.push(self.create_instr(
-                        "jmp",
-                        serde_json::json!({"target": 0}),
-                        meta,
-                    ));
+                    instrs.push(self.create_instr("jmp", serde_json::json!({"target": 0}), meta));
 
                     prev_fail_jumps = current_fail_jumps;
                 }
@@ -3123,7 +3434,10 @@ impl Compiler {
     ) -> Result<()> {
         let expect = |n: usize| -> Result<()> {
             if args.len() != n {
-                bail!("{name}() expects exactly {n} argument(s), got {}", args.len());
+                bail!(
+                    "{name}() expects exactly {n} argument(s), got {}",
+                    args.len()
+                );
             }
             Ok(())
         };
@@ -3164,7 +3478,11 @@ impl Compiler {
             "gpu.load_f32" => {
                 expect(2)?;
                 f32_addr(self, instrs)?;
-                instrs.push(op(self, "ptx_ld_global", serde_json::json!({"type": "f32"})));
+                instrs.push(op(
+                    self,
+                    "ptx_ld_global",
+                    serde_json::json!({"type": "f32"}),
+                ));
             }
             "gpu.store_f32" => {
                 expect(3)?;
@@ -3219,7 +3537,10 @@ impl Compiler {
     }
 }
 
-fn extract_type_hints(params: &[(String, CastType)], body: &[Statement]) -> HashMap<String, String> {
+fn extract_type_hints(
+    params: &[(String, CastType)],
+    body: &[Statement],
+) -> HashMap<String, String> {
     let mut hints = HashMap::new();
     for (name, ty) in params {
         if !matches!(ty, CastType::Any) {
@@ -3229,12 +3550,18 @@ fn extract_type_hints(params: &[(String, CastType)], body: &[Statement]) -> Hash
     fn scan_stmts(stmts: &[Statement], hints: &mut HashMap<String, String>) {
         for stmt in stmts {
             match stmt {
-                Statement::VarDecl { name, type_hint, .. } => {
+                Statement::VarDecl {
+                    name, type_hint, ..
+                } => {
                     if !matches!(type_hint, CastType::Any) {
                         hints.insert(name.clone(), type_hint.to_string());
                     }
                 }
-                Statement::If { then_body, else_body, .. } => {
+                Statement::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
                     scan_stmts(then_body, hints);
                     if let Some(eb) = else_body {
                         scan_stmts(eb, hints);
@@ -3306,7 +3633,11 @@ fn rebound_names(params: &[(String, CastType)], body: &[Statement]) -> HashSet<S
         bind(Some(p), &mut counts);
     }
     walk(&serde_json::to_value(body).unwrap_or_default(), &mut counts);
-    counts.into_iter().filter(|(_, n)| *n > 1).map(|(k, _)| k).collect()
+    counts
+        .into_iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|(k, _)| k)
+        .collect()
 }
 
 /// What one scope binds and references at its own level — not inside nested
@@ -3365,7 +3696,9 @@ fn scan_level<'a>(v: &'a serde_json::Value, level: &mut Level<'a>) {
                             level.assigns.extend(target.map(str::to_string));
                         } else {
                             // `obj.method(..)` loads `obj`.
-                            level.refs.insert(f.split('.').next().unwrap_or(f).to_string());
+                            level
+                                .refs
+                                .insert(f.split('.').next().unwrap_or(f).to_string());
                         }
                     }
                 }
@@ -3450,7 +3783,12 @@ fn lambda_captures(
     for nested in &level.lambdas {
         let body = nested.get("body").unwrap_or(&serde_json::Value::Null);
         let nonlocals = python_nonlocals(nested.get("meta"));
-        used.extend(lambda_captures(&lambda_params(nested), body, nonlocals.as_ref(), &inner_enclosing));
+        used.extend(lambda_captures(
+            &lambda_params(nested),
+            body,
+            nonlocals.as_ref(),
+            &inner_enclosing,
+        ));
     }
     used.into_iter()
         .filter(|n| !locals.contains(n) && enclosing.contains(n))
@@ -3464,7 +3802,12 @@ fn lambda_captures(
 /// exactly once in the whole function: its value can't change after the
 /// closure is made, so the closure gets a copy.
 fn boxed_names(params: &[String], body: &serde_json::Value) -> HashSet<String> {
-    fn walk(lambdas: &[&serde_json::Value], enclosing: &HashSet<String>, captured: &mut HashSet<String>, all_params: &mut HashSet<String>) {
+    fn walk(
+        lambdas: &[&serde_json::Value],
+        enclosing: &HashSet<String>,
+        captured: &mut HashSet<String>,
+        all_params: &mut HashSet<String>,
+    ) {
         for lambda in lambdas {
             let ps = lambda_params(lambda);
             all_params.extend(ps.iter().cloned());
@@ -3494,11 +3837,12 @@ fn boxed_names(params: &[String], body: &serde_json::Value) -> HashSet<String> {
     if captured.is_empty() {
         return captured;
     }
-    let cast_params: Vec<(String, CastType)> = params.iter().map(|p| (p.clone(), CastType::Any)).collect();
+    let cast_params: Vec<(String, CastType)> =
+        params.iter().map(|p| (p.clone(), CastType::Any)).collect();
     let body_stmts: Vec<Statement> = serde_json::from_value(body.clone()).unwrap_or_default();
     let rebound = rebound_names(&cast_params, &body_stmts);
     captured
         .into_iter()
-        .filter(|n| !(all_params.contains(n) && !rebound.contains(n)))
+        .filter(|n| !all_params.contains(n) || rebound.contains(n))
         .collect()
 }

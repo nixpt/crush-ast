@@ -19,7 +19,10 @@ fn loud(source: &str, reason: &str) {
         Ok(out) => panic!("{source:?} printed {out:?}; expected a loud error about {reason}"),
         Err(e) => {
             let msg = format!("{e:#}");
-            assert!(msg.contains("not supported") && msg.contains(reason), "{source:?}: {msg}");
+            assert!(
+                msg.contains("not supported") && msg.contains(reason),
+                "{source:?}: {msg}"
+            );
         }
     }
 }
@@ -40,7 +43,9 @@ fn loose_equality_of_object_and_primitive_needs_to_primitive() {
 #[test]
 fn strict_equality_never_needs_to_primitive() {
     // `==` is loud here (see above); `===` is simply false — no coercion.
-    let out = run("console.log([1] === 1, 'a' !== {}, null === 0, 1 === '1', 1 === 1, 'a' === 'a');").unwrap();
+    let out =
+        run("console.log([1] === 1, 'a' !== {}, null === 0, 1 === '1', 1 === 1, 'a' === 'a');")
+            .unwrap();
     assert_eq!(out.trim_end(), "false true false false true true");
 }
 
@@ -55,7 +60,9 @@ fn strict_equality_compiles_through_the_checked_door() {
     .unwrap();
     let casm = crush_frontend::compile_cast(&cast).expect("compile_cast (checked door)");
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).unwrap();
-    let out = crush_vm::run_with_caps(&vm, &crush_vm::Quotas::default(), None).unwrap().output;
+    let out = crush_vm::run_with_caps(&vm, &crush_vm::Quotas::default(), None)
+        .unwrap()
+        .output;
     assert_eq!(out.trim_end(), "true false true false true");
 }
 
@@ -84,7 +91,9 @@ switch (n) { case 9: console.log('nine'); break; default: console.log('default o
     let cast = crush_lang_js::js_to_cast(source, "js").unwrap();
     let casm = crush_frontend::compile_cast(&cast).expect("compile_cast (checked door)");
     let vm = crush_lang_sdk::compile::casm_to_vm(&casm).unwrap();
-    let out = crush_vm::run_with_caps(&vm, &crush_vm::Quotas::default(), None).unwrap().output;
+    let out = crush_vm::run_with_caps(&vm, &crush_vm::Quotas::default(), None)
+        .unwrap()
+        .output;
     assert_eq!(out, "two\nB\nC\nnot coerced\ndefault only\n");
 }
 

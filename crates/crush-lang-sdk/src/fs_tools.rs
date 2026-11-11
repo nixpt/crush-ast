@@ -106,7 +106,9 @@ impl HostCap for FsToolCap {
                 arity(name, &args, 1, 2)?;
                 let path = fs.resolve_nofollow(&args[0])?;
                 fs.refuse_working_dir(name, &path)?;
-                let kind = fs.backend().symlink_kind(&path)
+                let kind = fs
+                    .backend()
+                    .symlink_kind(&path)
                     .map_err(|e| format!("{name} {}: {e}", fs.display(&path)))?;
                 let result = if kind == Kind::Dir {
                     if !flag(&args, 1) {
@@ -170,8 +172,15 @@ impl HostCap for FsToolCap {
                 let pattern = args.get(1).map(crate::caps::value_as_text);
                 let want = args.get(2).map(|v| find_type(name, v)).transpose()?;
                 let mut found = Vec::new();
-                find(fs, &dir, Path::new(&base), pattern.as_deref(), want, &mut found)
-                    .map_err(|e| format!("{name} {base}: {e}"))?;
+                find(
+                    fs,
+                    &dir,
+                    Path::new(&base),
+                    pattern.as_deref(),
+                    want,
+                    &mut found,
+                )
+                .map_err(|e| format!("{name} {base}: {e}"))?;
                 found.sort();
                 Value::new_array(found.into_iter().map(Value::Str).collect())
             }
@@ -241,7 +250,9 @@ fn copy_tree(fs: &FsSandbox, src: &Path, dst: &Path) -> Result<(), String> {
         } else if kind == Kind::Dir {
             copy_tree(fs, &from, &to)?;
         } else {
-            fs.backend().copy_file(&from, &to).map_err(|e| err(&to, e))?;
+            fs.backend()
+                .copy_file(&from, &to)
+                .map_err(|e| err(&to, e))?;
         }
     }
     Ok(())
@@ -264,7 +275,9 @@ fn find(
         let name = entry.name;
         let kind = entry.kind?;
         let shown = base.join(&name);
-        if want.is_none_or(|w| w == kind) && pattern.is_none_or(|p| glob_match(p, &name.to_string_lossy())) {
+        if want.is_none_or(|w| w == kind)
+            && pattern.is_none_or(|p| glob_match(p, &name.to_string_lossy()))
+        {
             if found.len() >= FIND_MAX_RESULTS {
                 return Err(std::io::Error::other(format!(
                     "more than {FIND_MAX_RESULTS} results"
@@ -431,7 +444,10 @@ mod tests {
             assert_escape(sb.call("fs.cat", &[path]), &format!("cat {path}"));
             assert_escape(sb.call("fs.stat", &[path]), &format!("stat {path}"));
             assert_escape(sb.call("fs.is_file", &[path]), &format!("is_file {path}"));
-            assert_escape(sb.call("fs.append", &[path, "x"]), &format!("append {path}"));
+            assert_escape(
+                sb.call("fs.append", &[path, "x"]),
+                &format!("append {path}"),
+            );
             assert_escape(sb.call("fs.touch", &[path]), &format!("touch {path}"));
             assert_escape(
                 sb.call("fs.mkdir", &[path, "true"]),
@@ -454,7 +470,10 @@ mod tests {
             assert_escape(sb.call("fs.cat", &[path]), &format!("cat {path}"));
             assert_escape(sb.call("fs.stat", &[path]), &format!("stat {path}"));
             assert_escape(sb.call("fs.is_file", &[path]), &format!("is_file {path}"));
-            assert_escape(sb.call("fs.append", &[path, "x"]), &format!("append {path}"));
+            assert_escape(
+                sb.call("fs.append", &[path, "x"]),
+                &format!("append {path}"),
+            );
             assert_escape(sb.call("fs.touch", &[path]), &format!("touch {path}"));
             assert_escape(sb.call("fs.cp", &["a.txt", path]), &format!("cp -> {path}"));
             assert_escape(sb.call("fs.cd", &[path]), &format!("cd {path}"));
@@ -503,26 +522,42 @@ mod tests {
 
         for link in ["dangle", "dangle-abs", "chain"] {
             assert_escape(
-                sb.call_values("fs.write", vec![Value::Str(link.into()), Value::Str("x".into())]),
+                sb.call_values(
+                    "fs.write",
+                    vec![Value::Str(link.into()), Value::Str("x".into())],
+                ),
                 &format!("write {link}"),
             );
             assert_escape(sb.call("fs.touch", &[link]), &format!("touch {link}"));
             assert_escape(sb.call("fs.cp", &["a.txt", link]), &format!("cp -> {link}"));
             assert_escape(sb.call("fs.mkdir", &[link]), &format!("mkdir {link}"));
-            assert_escape(sb.call_values("fs.mkdir", vec![Value::Str(link.into()), Value::Bool(true)]), &format!("mkdir -p {link}"));
+            assert_escape(
+                sb.call_values("fs.mkdir", vec![Value::Str(link.into()), Value::Bool(true)]),
+                &format!("mkdir -p {link}"),
+            );
         }
         // A dangling or outside-pointing directory link as a middle component.
         for path in ["dmid/x", "odir/x", "dmid/a/b", "odir/a/b"] {
             assert_escape(
-                sb.call_values("fs.write", vec![Value::Str(path.into()), Value::Str("x".into())]),
+                sb.call_values(
+                    "fs.write",
+                    vec![Value::Str(path.into()), Value::Str("x".into())],
+                ),
                 &format!("write {path}"),
             );
             assert_escape(sb.call("fs.touch", &[path]), &format!("touch {path}"));
             assert_escape(sb.call("fs.cp", &["a.txt", path]), &format!("cp -> {path}"));
             assert_escape(sb.call("fs.mv", &["a.txt", path]), &format!("mv -> {path}"));
-            assert_escape(sb.call_values("fs.mkdir", vec![Value::Str(path.into()), Value::Bool(true)]), &format!("mkdir -p {path}"));
+            assert_escape(
+                sb.call_values("fs.mkdir", vec![Value::Str(path.into()), Value::Bool(true)]),
+                &format!("mkdir -p {path}"),
+            );
         }
-        let copy = vec![Value::Str("sub".into()), Value::Str("dmid".into()), Value::Bool(true)];
+        let copy = vec![
+            Value::Str("sub".into()),
+            Value::Str("dmid".into()),
+            Value::Bool(true),
+        ];
         assert_escape(sb.call_values("fs.cp", copy), "cp -r -> dangling dir link");
         // A loop is an error, not a hang and not an escape.
         assert!(sb.call("fs.touch", &["loop-a"]).is_err());
@@ -532,7 +567,11 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         entries.sort();
-        assert_eq!(entries, ["secret.txt"], "something was created outside the root");
+        assert_eq!(
+            entries,
+            ["secret.txt"],
+            "something was created outside the root"
+        );
         assert!(root.join("a.txt").exists(), "mv moved a.txt somewhere");
     }
 
@@ -553,7 +592,11 @@ mod tests {
         ] {
             std::fs::create_dir(root.join(dest)).unwrap();
             symlink(target, root.join(dest).join(link)).unwrap();
-            let args = vec![Value::Str("tree".into()), Value::Str(dest.into()), Value::Bool(true)];
+            let args = vec![
+                Value::Str("tree".into()),
+                Value::Str(dest.into()),
+                Value::Bool(true),
+            ];
             let err = sb.call_values("fs.cp", args).expect_err(dest);
             assert!(err.contains("symlink"), "{dest}: {err}");
         }
@@ -562,7 +605,11 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         entries.sort();
-        assert_eq!(entries, ["secret.txt"], "something was created outside the root");
+        assert_eq!(
+            entries,
+            ["secret.txt"],
+            "something was created outside the root"
+        );
     }
 
     /// Links that stay inside the root keep working, dangling ones included:
@@ -577,13 +624,22 @@ mod tests {
         symlink("sub/fresh.txt", root.join("fresh")).unwrap();
         symlink("../root/sub/../made", root.join("made-link")).unwrap();
 
-        sb.call_values("fs.write", vec![Value::Str("alink".into()), Value::Str("via".into())])
-            .unwrap();
+        sb.call_values(
+            "fs.write",
+            vec![Value::Str("alink".into()), Value::Str("via".into())],
+        )
+        .unwrap();
         assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "via");
-        assert!(root.join("alink").is_symlink(), "the link itself was replaced");
+        assert!(
+            root.join("alink").is_symlink(),
+            "the link itself was replaced"
+        );
 
-        sb.call_values("fs.write", vec![Value::Str("sublink/x.txt".into()), Value::Str("x".into())])
-            .unwrap();
+        sb.call_values(
+            "fs.write",
+            vec![Value::Str("sublink/x.txt".into()), Value::Str("x".into())],
+        )
+        .unwrap();
         assert!(root.join("sub/x.txt").is_file());
 
         sb.call("fs.touch", &["fresh"]).unwrap();
@@ -591,7 +647,11 @@ mod tests {
 
         sb.call("fs.cp", &["a.txt", "made-link"]).unwrap();
         assert_eq!(std::fs::read_to_string(root.join("made")).unwrap(), "via");
-        sb.call_values("fs.mkdir", vec![Value::Str("sublink/d/e".into()), Value::Bool(true)]).unwrap();
+        sb.call_values(
+            "fs.mkdir",
+            vec![Value::Str("sublink/d/e".into()), Value::Bool(true)],
+        )
+        .unwrap();
         assert!(root.join("sub/d/e").is_dir());
     }
 
@@ -874,9 +934,18 @@ mod tests {
         assert_eq!(stat("alink")["size"], Value::Int(5));
 
         // The two predicates agree with it.
-        assert_eq!(sb.call("fs.is_file", &["a.txt"]).unwrap(), Some(Value::Int(1)));
-        assert_eq!(sb.call("fs.is_file", &["sub"]).unwrap(), Some(Value::Int(0)));
-        assert_eq!(sb.call("fs.is_file", &["nope"]).unwrap(), Some(Value::Int(0)));
+        assert_eq!(
+            sb.call("fs.is_file", &["a.txt"]).unwrap(),
+            Some(Value::Int(1))
+        );
+        assert_eq!(
+            sb.call("fs.is_file", &["sub"]).unwrap(),
+            Some(Value::Int(0))
+        );
+        assert_eq!(
+            sb.call("fs.is_file", &["nope"]).unwrap(),
+            Some(Value::Int(0))
+        );
 
         // A missing path is an error, naming the sandbox path only.
         let err = sb.call("fs.stat", &["nope"]).unwrap_err();

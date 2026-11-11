@@ -24,7 +24,9 @@ pub(crate) fn register(caps: &mut HostCaps, fs: &FsSandbox) {
 }
 
 fn read(fs: &FsSandbox, cap: &str, path: &Path) -> Result<String, String> {
-    fs.backend().read_to_string(path).map_err(|e| format!("{cap} {}: {e}", path.display()))
+    fs.backend()
+        .read_to_string(path)
+        .map_err(|e| format!("{cap} {}: {e}", path.display()))
 }
 
 fn count_arg(cap: &str, v: &Value) -> Result<usize, String> {

@@ -46,23 +46,37 @@ fn the_point_fixture_round_trips_casm_json_to_cvm1_blob() {
 #[test]
 fn a_compiled_crush_program_carries_its_kind_table_into_the_blob() {
     let casm = compile_crush_to_casm(PROGRAM).unwrap();
-    let want = crush_frontend::lower_to_cosm(PROGRAM).unwrap().expect("declares a kind");
-    assert_eq!(casm.cosm.as_ref(), Some(&want), "the compiler hands its module to CASM");
+    let want = crush_frontend::lower_to_cosm(PROGRAM)
+        .unwrap()
+        .expect("declares a kind");
+    assert_eq!(
+        casm.cosm.as_ref(),
+        Some(&want),
+        "the compiler hands its module to CASM"
+    );
     assert_eq!(want.kinds[0].name, "Point");
     assert_eq!(want.interfaces[0].name, "Shape");
 
     let loaded = through_every_form(&casm);
     assert_eq!(loaded.cosm, Some(want));
     // The blob is version 3: it has the kind-table section.
-    assert_eq!(casm_to_vm(&casm).unwrap().to_blob()[4], crush_vm::bytecode::VERSION_KIND_TABLE);
+    assert_eq!(
+        casm_to_vm(&casm).unwrap().to_blob()[4],
+        crush_vm::bytecode::VERSION_KIND_TABLE
+    );
 
     // And it runs, as before, on both VMs.
-    let out = crush_vm::run(&loaded, &Quotas::default()).expect("scheduler").output;
+    let out = crush_vm::run(&loaded, &Quotas::default())
+        .expect("scheduler")
+        .output;
     assert_eq!(out, "129\n");
     let mut vm = PortableVm::new(loaded);
     vm.set_input(crush_vm::InputSource::supplied(""));
     while !vm.is_halted() {
-        assert!(vm.step().expect("portable vm").is_none(), "unexpected pause");
+        assert!(
+            vm.step().expect("portable vm").is_none(),
+            "unexpected pause"
+        );
     }
     assert_eq!(vm.take_output(), "129\n");
 }
@@ -86,11 +100,24 @@ fn a_kind_table_the_vms_cant_honour_is_refused_at_load() {
     casm.cosm.as_mut().unwrap().kinds[0].semantics =
         crush_cosm::Semantics::Value(crush_cosm::ValueMode::Copy);
     let loaded = through_every_form(&casm);
-    assert_eq!(crush_vm::run(&loaded, &Quotas::default()).expect("runs").output, "129\n");
+    assert_eq!(
+        crush_vm::run(&loaded, &Quotas::default())
+            .expect("runs")
+            .output,
+        "129\n"
+    );
 
     casm.cosm.as_mut().unwrap().kinds[0].resolution = crush_cosm::Resolution::EmbeddingPromotion;
     let loaded = through_every_form(&casm);
-    let e = crush_vm::run(&loaded, &Quotas::default()).unwrap_err().to_string();
-    assert!(e.contains("COSM strategies not supported on this VM yet"), "{e}");
-    assert!(e.contains("`Point` declares resolution: embedding_promotion"), "{e}");
+    let e = crush_vm::run(&loaded, &Quotas::default())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("COSM strategies not supported on this VM yet"),
+        "{e}"
+    );
+    assert!(
+        e.contains("`Point` declares resolution: embedding_promotion"),
+        "{e}"
+    );
 }

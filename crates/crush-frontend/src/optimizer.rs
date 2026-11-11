@@ -294,8 +294,10 @@ impl Optimizer {
                 Self::replace_vars_expr(operand, consts);
             }
             Expression::Call { function, args, .. } => {
-                let skip = usize::from(crate::walker_intrinsics::lookup(function)
-                    .is_some_and(|intrinsic| intrinsic.variable_target));
+                let skip = usize::from(
+                    crate::walker_intrinsics::lookup(function)
+                        .is_some_and(|intrinsic| intrinsic.variable_target),
+                );
                 for arg in args.iter_mut().skip(skip) {
                     Self::replace_vars_expr(arg, consts);
                 }
@@ -622,7 +624,11 @@ impl Optimizer {
                         out.insert(var);
                     }
                 }
-                Statement::If { then_body, else_body, .. } => {
+                Statement::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
                     Self::collect_mutated_vars(then_body, out);
                     if let Some(eb) = else_body {
                         Self::collect_mutated_vars(eb, out);
@@ -649,10 +655,25 @@ mod rust_method_float_tests {
     use super::*;
     #[test]
     fn nonfinite_results_stay_runtime_operations() {
-        for (op, a, b) in [("*",1e308,1e308),("+",1e308,1e308),("-",-1e308,1e308)] {
-            let mut e=Expression::BinaryOp { operator:op.into(),left:Box::new(Expression::FloatLiteral { value:a,meta:Default::default() }),right:Box::new(Expression::FloatLiteral { value:b,meta:Default::default() }),meta:Default::default() };
+        for (op, a, b) in [
+            ("*", 1e308, 1e308),
+            ("+", 1e308, 1e308),
+            ("-", -1e308, 1e308),
+        ] {
+            let mut e = Expression::BinaryOp {
+                operator: op.into(),
+                left: Box::new(Expression::FloatLiteral {
+                    value: a,
+                    meta: Default::default(),
+                }),
+                right: Box::new(Expression::FloatLiteral {
+                    value: b,
+                    meta: Default::default(),
+                }),
+                meta: Default::default(),
+            };
             Optimizer::optimize_expr(&mut e);
-            assert!(matches!(e,Expression::BinaryOp { .. }));
+            assert!(matches!(e, Expression::BinaryOp { .. }));
         }
     }
 }

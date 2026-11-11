@@ -99,7 +99,11 @@ impl<'a> NumericValue<'a> {
     }
 
     /// Perform zero-copy addition
-    #[inline]
+    ///
+    /// Not `std::ops::Add`: the VM's arithmetic returns `RuntimeValue` (the
+    /// value enum) rather than `Self`, so the trait's `Output = Self` contract
+    /// cannot be met.
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, other: NumericValue) -> RuntimeValue {
         match (self, other) {
             (NumericValue::Int(a), NumericValue::Int(b)) => RuntimeValue::Int(*a + *b),
@@ -109,8 +113,8 @@ impl<'a> NumericValue<'a> {
         }
     }
 
-    /// Perform zero-copy subtraction
-    #[inline]
+    /// Perform zero-copy subtraction (same trait rationale as [`NumericValue::add`])
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(self, other: NumericValue) -> RuntimeValue {
         match (self, other) {
             (NumericValue::Int(a), NumericValue::Int(b)) => RuntimeValue::Int(*a - *b),
@@ -120,8 +124,8 @@ impl<'a> NumericValue<'a> {
         }
     }
 
-    /// Perform zero-copy multiplication
-    #[inline]
+    /// Perform zero-copy multiplication (same trait rationale as [`NumericValue::add`])
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(self, other: NumericValue) -> RuntimeValue {
         match (self, other) {
             (NumericValue::Int(a), NumericValue::Int(b)) => RuntimeValue::Int(*a * *b),
@@ -131,8 +135,8 @@ impl<'a> NumericValue<'a> {
         }
     }
 
-    /// Perform zero-copy division
-    #[inline]
+    /// Perform zero-copy division (same trait rationale as [`NumericValue::add`])
+    #[allow(clippy::should_implement_trait)]
     pub fn div(self, other: NumericValue) -> Result<RuntimeValue, &'static str> {
         match (self, other) {
             (NumericValue::Int(a), NumericValue::Int(b)) => {
