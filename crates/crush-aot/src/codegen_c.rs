@@ -1965,6 +1965,15 @@ fn emit_c_instr(
                 "append" | "push" | "arr.push" | "array.push" => {
                     out.push_str(&format!("                {{ Value __val = _pop(); Value __arr = _pop(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; _array_push(__a, __val); }} }} _push(__arr); }} _pc={next_pc}; break; // cap_call append/push\n"));
                 }
+                // The `pop` capability (method-call form `a.pop()`, CRUSH-391):
+                // only the removed element stays — null for an empty array —
+                // matching the portable VM's dispatch.
+                "pop" if argc != 1 => {
+                    unsupported = Some(format!("cap_call 'pop' with {argc} arguments (the array receiver)"));
+                }
+                "pop" => {
+                    out.push_str(&format!("                {{ Value __arr = _pop(); Value __v = mk_null(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; if (__a->len > 0) {{ __v = __a->data[--__a->len]; }} }} }} _push(__v); }} _pc={next_pc}; break; // cap_call pop\n"));
+                }
                 "arr_get" => {
                     out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break; // cap_call arr_get\n"));
                 }
@@ -1978,10 +1987,10 @@ fn emit_c_instr(
                 "io.read" => {
                     out.push_str(&format!("                {{ _push(mk_string(io_read_line())); }} _pc={next_pc}; break; // cap_call io.read\n"));
                 }
-                "conv.chr" => {
+                "conv.chr" | "str.chr" => {
                     out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag != TAG_INT) _crush_arith_error(\"conv.chr: expected int\"); _push(mk_string(_conv_chr(__v.i))); }} _pc={next_pc}; break; // cap_call conv.chr\n"));
                 }
-                "conv.ord" => {
+                "conv.ord" | "str.ord" => {
                     out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag != TAG_STRING) _crush_arith_error(\"conv.ord: expected string\"); _push(mk_int(_conv_ord(__v.s))); }} _pc={next_pc}; break; // cap_call conv.ord\n"));
                 }
                 "io.read_line" => {

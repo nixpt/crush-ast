@@ -621,3 +621,70 @@ fn crush_run_fs_write_as_a_statement_and_as_a_value() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout), "null\nonetwo\n");
 }
+
+// CRUSH-391 (GitHub issue #370): the repro from the issue — `a.pop()`,
+// `io.eprint`, `str.ord` — was rejected up front by the capability check
+// ("not available in this host"). All three run now: `e` lands on stderr,
+// `65` on stdout, and pop removes and returns the last element.
+#[test]
+fn crush_run_issue_370_repro_pop_eprint_str_ord() {
+    let (_dir, path) = temp_program(
+        "fn main() {\n    let a = [1, 2]\n    let x = a.pop()\n    io.eprint(\"e\")\n    print(str.ord(\"A\"))\n}\n",
+    );
+    let output = run_crush_run(&["run", &path]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stdout, "65\n", "str.ord(\"A\") is 65, on stdout");
+    assert!(
+        stdout.lines().all(|l| l != "e"),
+        "the eprint text must not leak to stdout"
+    );
+    assert_eq!(stderr, "e\n", "io.eprint writes to stderr (and only stderr)");
+}
+
+// CRUSH-391: pop's contract end to end — the element is the value, the array
+// shrinks, an empty array pops null.
+#[test]
+fn crush_run_method_pop_removes_and_returns_the_last_element() {
+    let (_dir, path) = temp_program(
+        "fn main() {\n    let a = [1, 2, 3]\n    let x = a.pop()\n    print(x)\n    print(len(a))\n    print(a.pop())\n    let empty = []\n    print(empty.pop())\n}\n",
+    );
+    let output = run_crush_run(&["run", &path]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "3\n2\n2\nnull\n");
+}
+
+// CRUSH-391: the built-ins show up in the `caps` listing, and the issue's
+// repro program needs no grants — everything it uses is ambient.
+#[test]
+fn crush_run_caps_lists_pop_and_str_ord_chr_as_ambient() {
+    let output = run_crush_run(&["caps"]);
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("str.ord/chr"), "caps should list str.ord/chr, got: {text}");
+    assert!(text.contains("push/pop"), "caps should list push/pop, got: {text}");
+
+    let (_dir, path) = temp_program(
+        "fn main() {\n    let a = [1, 2]\n    let x = a.pop()\n    io.eprint(\"e\")\n    print(str.ord(\"A\"))\n}\n",
+    );
+    let output = run_crush_run(&["caps", &path]);
+    let text = String::from_utf8_lossy(&output.stdout);
+    for name in ["pop", "str.ord", "io.eprint"] {
+        assert!(
+            text.contains(name),
+            "{name} should appear in the program's caps listing, got: {text}"
+        );
+    }
+    assert!(
+        text.contains("needs no grants"),
+        "every capability the repro uses is ambient, got: {text}"
+    );
+    assert!(
+        !text.contains("not available in this host"),
+        "none of the repro's capabilities may be refused any more, got: {text}"
+    );
+}

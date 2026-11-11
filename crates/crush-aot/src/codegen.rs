@@ -1114,6 +1114,16 @@ fn emit_body(
                     out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ a.borrow_mut().push(__val); }} stack.push(__arr.unwrap_or(RuntimeValue::Null)); }}\n"));
                     out.push_str(&next_pc_str);
                 }
+                // The `pop` capability (method-call form `a.pop()`, CRUSH-391):
+                // the removed element is the expression's value — only that
+                // stays on the stack, matching the portable VM's dispatch.
+                "pop" if argc != 1 => {
+                    unsupported = Some(format!("cap_call 'pop' with {argc} arguments (the array receiver)"));
+                }
+                "pop" => {
+                    out.push_str(&format!("{ind}{{ let __arr = stack.pop().unwrap_or(RuntimeValue::Null); let __v = if let RuntimeValue::Array(ref a) = __arr {{ a.borrow_mut().pop().unwrap_or(RuntimeValue::Null) }} else {{ RuntimeValue::Null }}; stack.push(__v); }}\n"));
+                    out.push_str(&next_pc_str);
+                }
                 "arr_get" => {
                     out.push_str(&format!("{ind}{{ let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ let __v = wrap_index(i, a.len()).and_then(|j| a.get(j).cloned()).unwrap_or(RuntimeValue::Null); stack.push(__v); }} }} else if let Some(RuntimeValue::Object(ref m)) = __arr {{ stack.push(map_index(&m.borrow(), &__idx)); }} else {{ stack.push(RuntimeValue::Null); }} }}\n"));
                     out.push_str(&next_pc_str);
@@ -1134,11 +1144,11 @@ fn emit_body(
                     out.push_str(&format!("{ind}{{ stack.push(io_read_line_opt().map_or(RuntimeValue::Null, RuntimeValue::String)); }}\n"));
                     out.push_str(&next_pc_str);
                 }
-                "conv.chr" => {
+                "conv.chr" | "str.chr" => {
                     out.push_str(&format!("{ind}{{ let v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(conv_chr_value(v)); }}\n"));
                     out.push_str(&next_pc_str);
                 }
-                "conv.ord" => {
+                "conv.ord" | "str.ord" => {
                     out.push_str(&format!("{ind}{{ let v = stack.pop().unwrap_or(RuntimeValue::Null); stack.push(conv_ord_value(v)); }}\n"));
                     out.push_str(&next_pc_str);
                 }

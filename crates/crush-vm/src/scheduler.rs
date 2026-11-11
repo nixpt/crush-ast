@@ -2337,7 +2337,7 @@ fn dispatch_cap(
                     other => Err(VmError::TypeError { expected: "array", got: other.type_name() }),
                 }
             }
-            "conv.chr" => {
+            "conv.chr" | "str.chr" => {
                 let codepoint = match &args[0] {
                     Value::Int(value) => *value,
                     other => return Err(VmError::TypeError { expected: "int", got: other.type_name() }),
@@ -2348,7 +2348,7 @@ fn dispatch_cap(
                 })?;
                 Ok(Some(Value::Str(character.to_string())))
             }
-            "conv.ord" => {
+            "conv.ord" | "str.ord" => {
                 let text = match &args[0] {
                     Value::Str(value) => value,
                     other => return Err(VmError::TypeError { expected: "string", got: other.type_name() }),
@@ -2372,6 +2372,15 @@ fn dispatch_cap(
                 if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
                 match &args[0] {
                     Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(Some(args[0].clone())) }
+                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                }
+            }
+            "pop" => {
+                // Same contract as portable_vm's dispatch: the removed element
+                // (null when empty), the method-call form's value (CRUSH-391).
+                if args.len() != 1 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 1, got: args.len() }); }
+                match &args[0] {
+                    Value::Array(elems) => Ok(Some(elems.borrow_mut().pop().unwrap_or(Value::Null))),
                     _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
                 }
             }

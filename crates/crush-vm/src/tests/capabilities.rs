@@ -227,3 +227,99 @@ fn failing_registered_capability_is_reported_as_cap_and_message() {
     );
     assert_eq!(error.to_string(), "test.boom: test.boom target.txt: permission denied");
 }
+
+// ── CRUSH-391: `pop` (the a.pop() method form) and str.ord / str.chr ────────
+
+#[test]
+fn cap_pop_is_registered_as_one_arg_returning() {
+    let spec = crate::capabilities()
+        .get("pop")
+        .expect("pop should be in the portable registry");
+    assert_eq!(spec.argc, Some(1));
+    assert!(spec.returns);
+    assert!(!spec.privileged);
+}
+
+#[test]
+fn cap_pop_removes_and_returns_the_last_element() {
+    let r = run_src_with_perms(
+        "PUSH_STR \"a\"\nPUSH_STR \"b\"\nNEW_ARRAY 2\nCAP_CALL \"pop\" 1\nHALT",
+        &["pop"],
+    );
+    // Only the element stays: the receiver is consumed as the argument and
+    // mutated in place (the program's variable still references it), and the
+    // removed element is the expression's value — nothing is left under it.
+    assert_eq!(r.stack, vec![Value::Str("b".to_string())]);
+}
+
+#[test]
+fn cap_pop_on_an_empty_array_returns_null() {
+    let r = run_src_with_perms("NEW_ARRAY 0\nCAP_CALL \"pop\" 1\nHALT", &["pop"]);
+    assert_eq!(r.stack, vec![Value::Null]);
+}
+
+#[test]
+fn cap_pop_rejects_a_non_array_receiver() {
+    let program = assemble("PUSH 5\nCAP_CALL \"pop\" 1\nHALT", Some(&["pop"]), Some("t")).unwrap();
+    assert!(run(&program, &Quotas::default()).is_err());
+}
+
+#[test]
+fn portable_vm_pop_matches_the_scheduler() {
+    let source = "PUSH 1\nPUSH 2\nNEW_ARRAY 2\nCAP_CALL \"pop\" 1\nHALT";
+    let program = assemble(source, Some(&["pop"]), Some("t")).unwrap();
+    let mut vm = crate::PortableVm::new(program.clone());
+    let via_portable = vm.run().expect("portable vm run");
+    let via_scheduler = run(&program, &Quotas::default()).expect("scheduler run");
+    assert_eq!(via_portable.stack, via_scheduler.stack, "pop must not diverge between the CVM1 engines");
+    assert_eq!(via_portable.stack, vec![Value::Int(2)]);
+}
+
+#[test]
+fn cap_str_ord_chr_are_registered_one_arg_returning() {
+    for name in ["str.ord", "str.chr"] {
+        let spec = crate::capabilities().get(name)
+            .unwrap_or_else(|| panic!("{name} should be in the portable registry"));
+        assert_eq!(spec.argc, Some(1));
+        assert!(spec.returns);
+        assert!(!spec.privileged);
+    }
+}
+
+#[test]
+fn cap_str_ord_chr_round_trip() {
+    let r = run_src_with_perms("PUSH_STR \"A\"\nCAP_CALL \"str.ord\" 1\nHALT", &["str.ord"]);
+    assert_eq!(r.stack, vec![Value::Int(65)]);
+    let r = run_src_with_perms("PUSH 66\nCAP_CALL \"str.chr\" 1\nHALT", &["str.chr"]);
+    assert_eq!(r.stack, vec![Value::Str("B".to_string())]);
+    let r = run_src_with_perms("PUSH_STR \"é\"\nCAP_CALL \"str.ord\" 1\nCAP_CALL \"str.chr\" 1\nHALT", &["str.ord", "str.chr"]);
+    assert_eq!(r.stack, vec![Value::Str("é".to_string())]);
+}
+
+#[test]
+fn cap_str_ord_chr_match_conv_ord_chr_exactly() {
+    // The str.* names are aliases of the conv.* capabilities (CRUSH-391):
+    // same accepted inputs, same results, same rejections — one shared
+    // implementation, not a second one.
+    for (ord_push, chr_push) in [
+        ("PUSH_STR \"A\"", "PUSH 65"),
+        ("PUSH_STR \"é\"", "PUSH 233"),
+        ("PUSH_STR \"󰀀\"", "PUSH 130048"),
+    ] {
+        let via_conv = run_src_with_perms(&format!("{ord_push}\nCAP_CALL \"conv.ord\" 1\nHALT"), &["conv.ord"]);
+        let via_str = run_src_with_perms(&format!("{ord_push}\nCAP_CALL \"str.ord\" 1\nHALT"), &["str.ord"]);
+        assert_eq!(via_conv.stack, via_str.stack, "str.ord must match conv.ord for {ord_push}");
+        let via_conv = run_src_with_perms(&format!("{chr_push}\nCAP_CALL \"conv.chr\" 1\nHALT"), &["conv.chr"]);
+        let via_str = run_src_with_perms(&format!("{chr_push}\nCAP_CALL \"str.chr\" 1\nHALT"), &["str.chr"]);
+        assert_eq!(via_conv.stack, via_str.stack, "str.chr must match conv.chr for {chr_push}");
+    }
+    for source in [
+        "PUSH_STR \"\"\nCAP_CALL \"str.ord\" 1\nHALT",
+        "PUSH_STR \"ab\"\nCAP_CALL \"str.ord\" 1\nHALT",
+        "PUSH -1\nCAP_CALL \"str.chr\" 1\nHALT",
+        "PUSH 1114112\nCAP_CALL \"str.chr\" 1\nHALT",
+    ] {
+        let program = assemble(source, Some(&["str.ord", "str.chr"]), Some("test")).unwrap();
+        assert!(run(&program, &Quotas::default()).is_err(), "expected rejection: {source}");
+    }
+}

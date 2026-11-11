@@ -627,6 +627,24 @@ pub fn execute_one(
             }
         }
 
+        FastOp::ArrayPopValue => {
+            // The cap_call "pop" contract (CRUSH-391): the removed element is
+            // the expression's value, and nothing else is left on the stack —
+            // unlike ARR_POP / ArrayPop, which keep [array, value] for the
+            // compiler's swap+pop compensation on the `array.pop(a)` path.
+            let arr_ref = stack.pop().ok_or(FastError::StackUnderflow)?;
+            if let RuntimeValue::Ref(ptr) = arr_ref {
+                let val = if let Ok(Object::Array(arr)) = arena.get_mut(ptr) {
+                    arr.pop().unwrap_or(RuntimeValue::Null)
+                } else {
+                    return Err(FastError::TypeMismatch);
+                };
+                stack.push(val);
+            } else {
+                return Err(FastError::TypeMismatch);
+            }
+        }
+
         FastOp::TuplePush => {
             let val = stack.pop().ok_or(FastError::StackUnderflow)?;
             let arr_ref = stack.pop().ok_or(FastError::StackUnderflow)?;

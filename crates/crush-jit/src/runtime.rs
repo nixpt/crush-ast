@@ -128,6 +128,10 @@ pub(crate) const OP_UNINIT_LOAD: i64 = 42;
 /// (`crush_vm::value::runtime_value_eq`) so strings/arrays/maps compare by
 /// value, not arena identity (CRUSH-215).
 pub(crate) const OP_CMP_EQUAL: i64 = 43;
+/// The cap_call "pop" capability (CRUSH-391): pop the array, push only the
+/// removed element — the method-call form's value (unlike OP_ARRAY_POP,
+/// which keeps [array, value] for the `array.pop(a)` opcode path).
+pub(crate) const OP_ARRAY_POP_VALUE: i64 = 44;
 
 /// `ctx.error` for a load of an unassigned local; the message is in
 /// [`take_error_message`] (CRUSH-zorro-55).
@@ -487,6 +491,30 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             };
             ctx.push(container);
             ctx.push(result);
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // OP_ARRAY_POP_VALUE (44) — cap_call "pop" (CRUSH-391)
+        // ════════════════════════════════════════════════════════════════════
+        OP_ARRAY_POP_VALUE => {
+            // The capability's contract: only the removed element stays —
+            // null for an empty array, matching the portable VM's dispatch.
+            let container = ctx.pop().unwrap_or(JitValue::null());
+            let popped = container.to_ref().and_then(|ref_idx| {
+                arena_mut(ctx.arena).and_then(|arena| match arena.get_mut(ref_idx) {
+                    Ok(Object::Array(arr)) => Some(arr.pop()),
+                    _ => None,
+                })
+            });
+            match popped {
+                Some(v) => {
+                    let result = v.map(|v| rtv_to_jit(&v)).unwrap_or(JitValue::null());
+                    ctx.push(result);
+                }
+                None => {
+                    ctx.error = 1; // FastVM: TypeMismatch
+                }
+            }
         }
 
         // ════════════════════════════════════════════════════════════════════

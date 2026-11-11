@@ -2695,6 +2695,7 @@ mod tests {
             // Arena (runtime helpers)
             FastOp::MakeList, FastOp::MakeMap, FastOp::Index, FastOp::Len,
             FastOp::TypeOf, FastOp::NewArray, FastOp::ArrayPush, FastOp::ArrayPop,
+            FastOp::ArrayPopValue,
             FastOp::ArrSet,
             // String (runtime helpers)
             FastOp::StrContains, FastOp::StrStartsWith, FastOp::StrEndsWith,

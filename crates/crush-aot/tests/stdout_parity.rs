@@ -326,3 +326,44 @@ fn heap_values_print_their_value_not_the_arena_ref() {
         "42\n",
     );
 }
+
+// CRUSH-391: the `pop` capability (the `a.pop()` method form) agrees with the
+// VM on every engine: the removed element is the expression's value, an empty
+// array pops null, and nothing is left on the stack under it. (str.ord /
+// str.chr stay out of the every-engine source: the FastVM/JIT only know the
+// capabilities their caller supplies — there the conv.* pair is the shared
+// implementation, and the AOT backends inline both names identically.)
+#[test]
+fn method_pop_matches_the_vm_on_every_engine() {
+    assert_prints_everywhere(
+        "method_pop",
+        r#"fn main() {
+               let a = [10, 20, 30]
+               let x = a.pop()
+               io.print(x)
+               io.print(len(a))
+               io.print(a.pop())
+               let empty = []
+               io.print(empty.pop())
+               return 0
+           }"#,
+        "30\n2\n20\nnull\n",
+    );
+}
+
+// CRUSH-391: the str.* names route to the same conv.* implementation on both
+// AOT backends (inlined identically), so alias and original agree exactly.
+#[test]
+fn str_ord_chr_aliases_match_conv_on_the_aot_backends() {
+    assert_prints(
+        "str_ord_chr_aliases",
+        r#"fn main() {
+               io.print(str.ord("A"))
+               io.print(str.chr(98))
+               io.print(conv.ord("A"))
+               io.print(conv.chr(98))
+               return 0
+           }"#,
+        "65\nb\n65\nb\n",
+    );
+}
