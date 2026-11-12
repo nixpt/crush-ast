@@ -39,6 +39,35 @@ pub struct JitEngine {
 }
 
 impl JitEngine {
+    /// A JIT run's error message, from the context's error flag (CRUSH-213
+    /// classes + the throw/cap flags). When the flag was set while a try
+    /// handler was still active, the message says loudly that this backend
+    /// can't catch VM faults inside try (CRUSH-369) — the CVM1 engines catch
+    /// the same fault — instead of diverging silently.
+    fn error_message(ctx: &JitContext) -> String {
+        use crate::runtime::{ERR_ARITH_OVERFLOW, ERR_COSM, ERR_DIV_ZERO, ERR_UNINIT};
+        let msg = if ctx.error == ERR_COSM || ctx.error == ERR_UNINIT {
+            crate::runtime::take_error_message().unwrap_or_else(|| "COSM error".to_string())
+        } else if ctx.error == ERR_DIV_ZERO {
+            "division by zero".to_string()
+        } else if ctx.error == ERR_ARITH_OVERFLOW {
+            "arithmetic overflow".to_string()
+        } else if ctx.error == 3 {
+            "Uncaught exception (no handler)".to_string()
+        } else if ctx.error == 4 {
+            "Capability call failed".to_string()
+        } else {
+            format!("JIT execution error (flag={})", ctx.error)
+        };
+        if ctx.handler_stack_top > 0 {
+            format!(
+                "try/catch around VM faults is not supported on this backend yet (CRUSH-369): {msg}"
+            )
+        } else {
+            msg
+        }
+    }
+
     /// Create a new JIT engine (compiler initialisation is deferred).
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self {
@@ -173,19 +202,7 @@ impl JitEngine {
 
         if ctx.error != 0 {
             use crush_vm::fastvm::FastError;
-            let msg = if ctx.error == runtime::ERR_COSM || ctx.error == runtime::ERR_UNINIT {
-                runtime::take_error_message().unwrap_or_else(|| "COSM error".to_string())
-            } else if ctx.error == runtime::ERR_DIV_ZERO {
-                "division by zero".to_string()
-            } else if ctx.error == runtime::ERR_ARITH_OVERFLOW {
-                "arithmetic overflow".to_string()
-            } else if ctx.error == 3 {
-                "Uncaught exception (no handler)".to_string()
-            } else if ctx.error == 4 {
-                "Capability call failed".to_string()
-            } else {
-                format!("JIT execution error (flag={})", ctx.error)
-            };
+            let msg = Self::error_message(ctx);
             return Ok(FastYield::Error(FastError::ExecutionError(msg)));
         }
 
@@ -261,19 +278,7 @@ impl JitEngine {
 
         if ctx.error != 0 {
             use crush_vm::fastvm::FastError;
-            let msg = if ctx.error == runtime::ERR_COSM || ctx.error == runtime::ERR_UNINIT {
-                runtime::take_error_message().unwrap_or_else(|| "COSM error".to_string())
-            } else if ctx.error == runtime::ERR_DIV_ZERO {
-                "division by zero".to_string()
-            } else if ctx.error == runtime::ERR_ARITH_OVERFLOW {
-                "arithmetic overflow".to_string()
-            } else if ctx.error == 3 {
-                "Uncaught exception (no handler)".to_string()
-            } else if ctx.error == 4 {
-                "Capability call failed".to_string()
-            } else {
-                format!("JIT execution error (flag={})", ctx.error)
-            };
+            let msg = Self::error_message(ctx);
             return Ok(FastYield::Error(FastError::ExecutionError(msg)));
         }
 
@@ -2183,6 +2188,53 @@ mod tests {
             fastvm, jit,
             "Rethrow through 3 functions: JIT ({:?}) should match FastVM ({:?})",
             jit, fastvm
+        );
+    }
+
+    #[test]
+    fn test_fault_inside_try_fastvm_catches_jit_refuses_loudly() {
+        // CRUSH-369: a VM fault (1/0) inside try is a catchable error value on
+        // the CVM1 engines and on FastVM — the handler receives the fault's
+        // message and execution resumes there. The JIT's fault dispatch is not
+        // wired to handlers, so it refuses loudly instead of diverging
+        // silently: its error names the limitation.
+        //
+        // PC 0: EnterTry(7)      handler at PC 7
+        // PC 1: PushInt(1)
+        // PC 2: PushInt(0)
+        // PC 3: Div              1/0 — DivisionByZero fault
+        // PC 4: Halt             (not reached on FastVM)
+        // PC 5: Halt             (padding)
+        // PC 6: Halt             (padding)
+        // PC 7: Halt             handler — the caught message is the result
+        let prog = make_prog(vec![
+            (FastOp::EnterTry, 7, 0),
+            (FastOp::PushInt, 1, 0),
+            (FastOp::PushInt, 0, 0),
+            (FastOp::Div, 0, 0),
+            (FastOp::Halt, 0, 0),
+            (FastOp::Halt, 0, 0),
+            (FastOp::Halt, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+
+        let fastvm = run_fastvm(&prog);
+        assert!(
+            matches!(
+                &fastvm,
+                FastYield::Finished(Some(RuntimeValue::String(m))) if m == "division by zero"
+            ),
+            "FastVM should catch the fault as the CVM1 engines do, got {fastvm:?}"
+        );
+
+        let jit = run_jit(&prog);
+        assert!(
+            matches!(
+                &jit,
+                FastYield::Error(crush_vm::fastvm::FastError::ExecutionError(m))
+                    if m.starts_with("try/catch around VM faults is not supported on this backend yet (CRUSH-369)")
+            ),
+            "the JIT should refuse loudly when a fault lands inside try, got {jit:?}"
         );
     }
 

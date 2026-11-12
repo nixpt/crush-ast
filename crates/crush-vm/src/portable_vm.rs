@@ -723,7 +723,21 @@ impl PortableVm {
                 .record_instruction(ip, &code[ip..next_ip.min(code.len())]);
             before
         };
-        self.execute_instruction(opcode, next_ip)?;
+        // CRUSH-369: a catchable fault raised with a try handler active becomes
+        // a caught `Value::Error` instead of aborting the run — the same unwind
+        // a `THROW` would do (shared with the scheduler).
+        if let Err(err) = self.execute_instruction(opcode, next_ip) {
+            match crate::vm::raise_fault_to_handler(
+                err,
+                &mut self.try_stack,
+                &mut self.call_stack,
+                &mut self.stack,
+                &mut self.captures,
+            ) {
+                Ok(handler_ip) => self.jump_to(handler_ip),
+                Err(err) => return Err(err),
+            }
+        }
         if let Some(args) = self.lang_yield.take() {
             // A deferred `@lang` block: this EXEC_LANG runs again once the
             // host provides its result (see `set_lang_deferred`).
@@ -3384,6 +3398,86 @@ HALT"#;
         let mut vm = PortableVm::new(program);
         let r = vm.run().unwrap();
         assert_eq!(r.stack, vec![Value::Str("msg".to_string())]);
+    }
+
+    #[test]
+    fn test_portable_a_fault_inside_try_is_caught_as_an_error_value() {
+        // CRUSH-369: try { 1/0 } catch { } — the DivByZero fault unwinds to
+        // the handler as a caught Value::Error carrying the fault's message,
+        // and execution resumes at the handler, exactly like a THROW would.
+        let source = r#"ENTER_TRY handler
+PUSH 1
+PUSH 0
+DIV
+EXIT_TRY
+JMP done
+handler:
+HALT
+done:
+HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Error("division by zero".to_string())]);
+    }
+
+    #[test]
+    fn test_portable_a_fault_without_try_still_aborts() {
+        let program = assemble("PUSH 1\nPUSH 0\nDIV\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run();
+        assert!(matches!(result, Err(VmError::DivByZero)), "{result:?}");
+    }
+
+    #[test]
+    fn test_portable_a_fault_in_a_callee_unwinds_to_the_callers_try() {
+        let source = r#".func main
+    ENTER_TRY handler
+    PUSH 0
+    CALL boom
+    EXIT_TRY
+    JMP done
+handler:
+    HALT
+done:
+    HALT
+.func boom
+    PUSH 1
+    PUSH 0
+    DIV
+    RET"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Error("division by zero".to_string())]);
+    }
+
+    #[test]
+    fn test_portable_call_depth_quota_is_not_catchable() {
+        // Quotas stay fatal (CRUSH-369): infinite recursion inside try still
+        // ends the run with the quota error.
+        let source = r#".func main
+    ENTER_TRY handler
+    PUSH 0
+    CALL recurse
+    EXIT_TRY
+    JMP done
+handler:
+    POP
+    PUSH 99
+done:
+    HALT
+.func recurse
+    PUSH 1
+    CALL recurse
+    RET"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run();
+        assert!(
+            matches!(result, Err(VmError::CallDepthQuota(_))),
+            "{result:?}"
+        );
     }
 
     #[test]

@@ -13,6 +13,49 @@ use crate::memory::{Arena, Object};
 use crate::value::RuntimeValue;
 use std::sync::Arc;
 
+/// The innermost call frame with an active try handler, and that handler's
+/// PC. Shared by `FastOp::Throw` and the run loop's fault recovery
+/// (CRUSH-369) so a thrown value and a catchable fault unwind the same way —
+/// cross-function walks included.
+pub(crate) fn handler_frame(call_stack: &[FastFrame]) -> Option<(usize, usize)> {
+    let index = call_stack
+        .iter()
+        .rposition(|frame| !frame.handlers.is_empty())?;
+    Some((index, *call_stack[index].handlers.last()?))
+}
+
+/// Whether a `try` handler may catch this FastVM fault (CRUSH-369).
+///
+/// Catchable — the program-level faults FastVM actually raises with real
+/// detail: `DivisionByZero`, `ArithmeticOverflow`, `TypeMismatch` (the
+/// counterparts of the CVM1 engines' catchable `DivByZero` /
+/// `ArithmeticOverflow` / `TypeError`). Everything else stays fatal:
+/// `ResourceLimitExceeded` is the quota (never catchable, as on the CVM1
+/// engines), `InvalidCapability` is a security decision, and
+/// `StackUnderflow`/`InvalidLocal`/`InvalidFunction`/`InternalError` are
+/// broken VM state; `Unimplemented`/`ExecutionError` are backend gaps, not
+/// program faults.
+pub(crate) fn is_catchable_fault(err: &FastError) -> bool {
+    matches!(
+        err,
+        FastError::DivisionByZero | FastError::ArithmeticOverflow | FastError::TypeMismatch
+    )
+}
+
+/// A caught fault's message — the text the handler's error variable binds
+/// (CRUSH-369). Matches the CVM1 engines' wording where the fault has a
+/// counterpart there (`DivisionByZero`/`ArithmeticOverflow`); `TypeMismatch`
+/// carries no expected/got detail on FastVM, so it can only bind the generic
+/// text (noted on the ticket).
+pub(crate) fn fault_message(err: &FastError) -> String {
+    match err {
+        FastError::DivisionByZero => "division by zero".to_string(),
+        FastError::ArithmeticOverflow => "arithmetic overflow".to_string(),
+        FastError::TypeMismatch => "type mismatch".to_string(),
+        other => other.to_string(),
+    }
+}
+
 /// Execute a single instruction
 #[inline(always)]
 #[allow(clippy::too_many_arguments)] // one VM dispatch signature; a params struct would obscure the opcode plumbing
@@ -1053,27 +1096,19 @@ pub fn execute_one(
 
         FastOp::Throw => {
             let err_val = stack.pop().ok_or(FastError::StackUnderflow)?;
-            let mut caught = false;
-            let mut target_frame_index = 0;
-
-            for (i, frame) in call_stack.iter().enumerate().rev() {
-                if !frame.handlers.is_empty() {
-                    caught = true;
-                    target_frame_index = i;
-                    break;
+            match handler_frame(call_stack) {
+                Some((frame_index, target_pc)) => {
+                    call_stack.truncate(frame_index + 1);
+                    let frame = call_stack.last_mut().expect("frame just matched");
+                    frame.handlers.pop();
+                    *pc = target_pc;
+                    stack.push(err_val);
                 }
-            }
-
-            if caught {
-                call_stack.truncate(target_frame_index + 1);
-                let frame = call_stack.last_mut().unwrap();
-                let target_pc = frame.handlers.pop().unwrap();
-                *pc = target_pc;
-                stack.push(err_val);
-            } else {
-                return Err(FastError::Unimplemented(
-                    "Uncaught exception (no handler)".to_string(),
-                ));
+                None => {
+                    return Err(FastError::Unimplemented(
+                        "Uncaught exception (no handler)".to_string(),
+                    ));
+                }
             }
         }
 
