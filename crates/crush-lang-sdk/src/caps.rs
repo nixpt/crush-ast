@@ -156,17 +156,19 @@ fn parse_value(s: &str, depth: usize) -> Value {
 
     // Value::Bytes inverse — `<N bytes>`. Display only preserves length;
     // reconstruct zero-filled Vec<u8> of that length (documented caveat).
-    if s.starts_with('<') && s.ends_with(" bytes>") {
-        if let Ok(n) = s[1..s.len() - 7].parse::<usize>() {
-            return Value::Bytes(vec![0; n]);
-        }
+    if s.starts_with('<')
+        && s.ends_with(" bytes>")
+        && let Ok(n) = s[1..s.len() - 7].parse::<usize>()
+    {
+        return Value::Bytes(vec![0; n]);
     }
 
     // Value::Handle inverse — `<handle N>`.
-    if s.starts_with("<handle ") && s.ends_with('>') {
-        if let Ok(n) = s[8..s.len() - 1].parse::<u64>() {
-            return Value::Handle(n);
-        }
+    if s.starts_with("<handle ")
+        && s.ends_with('>')
+        && let Ok(n) = s[8..s.len() - 1].parse::<u64>()
+    {
+        return Value::Handle(n);
     }
 
     Value::Str(s.to_string())
@@ -325,10 +327,7 @@ mod tests {
         // covered `vm.rs::visit_str`'s analogous Error branch via the
         // serde path; restored here so the canonical parser-side
         // contract remains explicitly locked).
-        assert_eq!(
-            text_as_value("error(foo)"),
-            Value::Error("foo".to_string())
-        );
+        assert_eq!(text_as_value("error(foo)"), Value::Error("foo".to_string()));
         assert_eq!(
             text_as_value("error((foo)"),
             Value::Error("(foo".to_string()) // s[6..10] = "(foo"

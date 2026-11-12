@@ -11,14 +11,25 @@ fn invariant_runtime_flag_is_a_clear_error() {
     let out = d.path().join("p.cvm1");
     std::fs::write(&src, "fn main() { print(\"ran\") }\n").unwrap();
     let o = Command::new(bin)
-        .args([src.to_str().unwrap(), "--invariant-runtime", "-o", out.to_str().unwrap()])
+        .args([
+            src.to_str().unwrap(),
+            "--invariant-runtime",
+            "-o",
+            out.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success());
-    assert!(err.contains("--invariant-runtime was removed") && err.contains("invariant.evaluate"), "{err}");
+    assert!(
+        err.contains("--invariant-runtime was removed") && err.contains("invariant.evaluate"),
+        "{err}"
+    );
     assert!(!out.exists(), "no artifact");
     // Without the flag the same program builds.
-    let o = Command::new(bin).args([src.to_str().unwrap(), "-o", out.to_str().unwrap()]).output().unwrap();
+    let o = Command::new(bin)
+        .args([src.to_str().unwrap(), "-o", out.to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(o.status.success() && out.exists());
 }

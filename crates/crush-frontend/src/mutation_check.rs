@@ -38,12 +38,10 @@ pub fn check_mutation_ordering(program: &Program) -> Vec<CompilerDiagnostic> {
                         continue;
                     }
                     // required_before must appear strictly before `idx`.
-                    let guard_present = calls[..idx]
-                        .iter()
-                        .any(|c| *c == required_before.as_str());
+                    let guard_present = calls[..idx].contains(&required_before.as_str());
                     if !guard_present {
                         diags.push(CompilerDiagnostic {
-                            code: "E-MUT-001".into(),
+                            code: "E-MUT-001",
                             severity: DiagnosticSeverity::Error,
                             message: format!(
                                 "`{callee_name}` requires `{required_before}` to be called \
@@ -64,12 +62,10 @@ pub fn check_mutation_ordering(program: &Program) -> Vec<CompilerDiagnostic> {
                         continue;
                     }
                     // required_after must appear strictly after `idx`.
-                    let cleanup_present = calls[idx + 1..]
-                        .iter()
-                        .any(|c| *c == required_after.as_str());
+                    let cleanup_present = calls[idx + 1..].contains(&required_after.as_str());
                     if !cleanup_present {
                         diags.push(CompilerDiagnostic {
-                            code: "E-MUT-002".into(),
+                            code: "E-MUT-002",
                             severity: DiagnosticSeverity::Error,
                             message: format!(
                                 "`{callee_name}` requires `{required_after}` to be called \
@@ -92,7 +88,8 @@ pub fn check_mutation_ordering(program: &Program) -> Vec<CompilerDiagnostic> {
 fn call_name_in_stmt(stmt: &crush_cast::Statement) -> Option<&str> {
     match stmt {
         crush_cast::Statement::ExprStmt { expr, .. } => call_name_in_expr(expr),
-        crush_cast::Statement::VarDecl { value, .. } | crush_cast::Statement::Assign { value, .. } => call_name_in_expr(value),
+        crush_cast::Statement::VarDecl { value, .. }
+        | crush_cast::Statement::Assign { value, .. } => call_name_in_expr(value),
         crush_cast::Statement::Return { value: Some(e), .. } => call_name_in_expr(e),
         _ => None,
     }
@@ -108,8 +105,8 @@ fn call_name_in_expr(expr: &crush_cast::Expression) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crush_cast::{Expression, Function, Statement};
     use crush_cast::manifest::FunctionAnnotations;
+    use crush_cast::{Expression, Function, Statement};
     use std::collections::HashMap;
 
     fn make_call(name: &str) -> Statement {

@@ -8,9 +8,9 @@ use crush_vm::RuntimeValue;
 #[test]
 fn test_c_codegen_int() {
     let source = r#"fn main() { return 42; }"#;
-    let c_src = crush_aot::codegen_c::gen_c_source(
-        &crush_frontend::compile_crush_source(source).unwrap()
-    ).unwrap();
+    let c_src =
+        crush_aot::codegen_c::gen_c_source(&crush_frontend::compile_crush_source(source).unwrap())
+            .unwrap();
     assert!(c_src.contains("fn_main"));
     assert!(c_src.contains("crush_run"));
     assert!(c_src.contains("TAG_INT"));
@@ -20,9 +20,9 @@ fn test_c_codegen_int() {
 #[test]
 fn test_c_codegen_bool() {
     let source = r#"fn main() { return true; }"#;
-    let c_src = crush_aot::codegen_c::gen_c_source(
-        &crush_frontend::compile_crush_source(source).unwrap()
-    ).unwrap();
+    let c_src =
+        crush_aot::codegen_c::gen_c_source(&crush_frontend::compile_crush_source(source).unwrap())
+            .unwrap();
     assert!(c_src.contains("TAG_BOOL"));
     assert!(c_src.contains("true"));
 }
@@ -30,18 +30,18 @@ fn test_c_codegen_bool() {
 #[test]
 fn test_c_codegen_float() {
     let source = r#"fn main() { return 3.14; }"#;
-    let c_src = crush_aot::codegen_c::gen_c_source(
-        &crush_frontend::compile_crush_source(source).unwrap()
-    ).unwrap();
+    let c_src =
+        crush_aot::codegen_c::gen_c_source(&crush_frontend::compile_crush_source(source).unwrap())
+            .unwrap();
     assert!(c_src.contains("3.14"));
 }
 
 #[test]
 fn test_c_codegen_io_read() {
     let source = r#"fn main() { let line = io.read(); io.print(line); }"#;
-    let c_src = crush_aot::codegen_c::gen_c_source(
-        &crush_frontend::compile_crush_source(source).unwrap()
-    ).unwrap();
+    let c_src =
+        crush_aot::codegen_c::gen_c_source(&crush_frontend::compile_crush_source(source).unwrap())
+            .unwrap();
     assert!(c_src.contains("io_read_line"));
     assert!(c_src.contains("cap_call io.read"));
 }
@@ -59,27 +59,27 @@ fn test_c_codegen_io_read_line_yields_null_at_eof() {
 #[test]
 fn test_c_codegen_arithmetic() {
     let source = r#"fn main() { return 40 + 2; }"#;
-    let c_src = crush_aot::codegen_c::gen_c_source(
-        &crush_frontend::compile_crush_source(source).unwrap()
-    ).unwrap();
+    let c_src =
+        crush_aot::codegen_c::gen_c_source(&crush_frontend::compile_crush_source(source).unwrap())
+            .unwrap();
     assert!(c_src.contains("_add"));
 }
 
 #[test]
 fn test_c_codegen_null() {
     let source = r#"fn main() { return null; }"#;
-    let c_src = crush_aot::codegen_c::gen_c_source(
-        &crush_frontend::compile_crush_source(source).unwrap()
-    ).unwrap();
+    let c_src =
+        crush_aot::codegen_c::gen_c_source(&crush_frontend::compile_crush_source(source).unwrap())
+            .unwrap();
     assert!(c_src.contains("TAG_NULL"));
 }
 
 #[test]
 fn test_c_codegen_has_entry_point() {
     let source = r#"fn main() { return 42; }"#;
-    let c_src = crush_aot::codegen_c::gen_c_source(
-        &crush_frontend::compile_crush_source(source).unwrap()
-    ).unwrap();
+    let c_src =
+        crush_aot::codegen_c::gen_c_source(&crush_frontend::compile_crush_source(source).unwrap())
+            .unwrap();
     assert!(c_src.contains("visibility"));
     assert!(c_src.contains("crush_run"));
 }
@@ -90,7 +90,9 @@ fn test_c_codegen_has_entry_point() {
 fn test_c_gcc_int() {
     let compiler = AotCompiler::new();
     let program = crush_frontend::compile_crush_source("fn main() { return 42; }").unwrap();
-    let so_path = compiler.compile_c(&program, "test_c_gcc_int", "gcc").expect("gcc compile failed");
+    let so_path = compiler
+        .compile_c(&program, "test_c_gcc_int", "gcc")
+        .expect("gcc compile failed");
     let module = Module::load(&so_path).expect("load failed");
     assert_eq!(module.call_main().unwrap(), RuntimeValue::Int(42));
 }
@@ -98,10 +100,9 @@ fn test_c_gcc_int() {
 #[test]
 fn test_c_gcc_io_read_codegen_compiles() {
     let compiler = AotCompiler::new();
-    let program = crush_frontend::compile_crush_source(
-        "fn main() { let line = io.read(); io.print(line); }",
-    )
-    .unwrap();
+    let program =
+        crush_frontend::compile_crush_source("fn main() { let line = io.read(); io.print(line); }")
+            .unwrap();
     let so_path = compiler
         .compile_c(&program, "test_c_gcc_io_read", "gcc")
         .expect("gcc compile failed");
@@ -114,7 +115,9 @@ fn test_c_gcc_io_read_codegen_compiles() {
 fn test_c_gcc_bool() {
     let compiler = AotCompiler::new();
     let program = crush_frontend::compile_crush_source("fn main() { return true; }").unwrap();
-    let so_path = compiler.compile_c(&program, "test_c_gcc_bool", "gcc").expect("gcc compile failed");
+    let so_path = compiler
+        .compile_c(&program, "test_c_gcc_bool", "gcc")
+        .expect("gcc compile failed");
     let module = Module::load(&so_path).expect("load failed");
     assert_eq!(module.call_main().unwrap(), RuntimeValue::Bool(true));
 }
@@ -122,10 +125,12 @@ fn test_c_gcc_bool() {
 #[test]
 fn test_c_gcc_arithmetic() {
     let compiler = AotCompiler::new();
-    let program = crush_frontend::compile_crush_source(
-        "fn main() { let x = 10; let y = 32; return x + y; }"
-    ).unwrap();
-    let so_path = compiler.compile_c(&program, "test_c_gcc_add", "gcc").expect("gcc compile failed");
+    let program =
+        crush_frontend::compile_crush_source("fn main() { let x = 10; let y = 32; return x + y; }")
+            .unwrap();
+    let so_path = compiler
+        .compile_c(&program, "test_c_gcc_add", "gcc")
+        .expect("gcc compile failed");
     let module = Module::load(&so_path).expect("load failed");
     assert_eq!(module.call_main().unwrap(), RuntimeValue::Int(42));
 }
@@ -133,10 +138,10 @@ fn test_c_gcc_arithmetic() {
 #[test]
 fn test_c_gcc_comparison() {
     let compiler = AotCompiler::new();
-    let program = crush_frontend::compile_crush_source(
-        "fn main() { return 42 == 42; }"
-    ).unwrap();
-    let so_path = compiler.compile_c(&program, "test_c_gcc_eq", "gcc").expect("gcc compile failed");
+    let program = crush_frontend::compile_crush_source("fn main() { return 42 == 42; }").unwrap();
+    let so_path = compiler
+        .compile_c(&program, "test_c_gcc_eq", "gcc")
+        .expect("gcc compile failed");
     let module = Module::load(&so_path).expect("load failed");
     assert_eq!(module.call_main().unwrap(), RuntimeValue::Bool(true));
 }
@@ -144,10 +149,11 @@ fn test_c_gcc_comparison() {
 #[test]
 fn test_c_gcc_logic() {
     let compiler = AotCompiler::new();
-    let program = crush_frontend::compile_crush_source(
-        "fn main() { return true && !false; }"
-    ).unwrap();
-    let so_path = compiler.compile_c(&program, "test_c_gcc_logic", "gcc").expect("gcc compile failed");
+    let program =
+        crush_frontend::compile_crush_source("fn main() { return true && !false; }").unwrap();
+    let so_path = compiler
+        .compile_c(&program, "test_c_gcc_logic", "gcc")
+        .expect("gcc compile failed");
     let module = Module::load(&so_path).expect("load failed");
     assert_eq!(module.call_main().unwrap(), RuntimeValue::Bool(true));
 }
@@ -155,10 +161,10 @@ fn test_c_gcc_logic() {
 #[test]
 fn test_c_gcc_null() {
     let compiler = AotCompiler::new();
-    let program = crush_frontend::compile_crush_source(
-        "fn main() { return null; }"
-    ).unwrap();
-    let so_path = compiler.compile_c(&program, "test_c_gcc_null", "gcc").expect("gcc compile failed");
+    let program = crush_frontend::compile_crush_source("fn main() { return null; }").unwrap();
+    let so_path = compiler
+        .compile_c(&program, "test_c_gcc_null", "gcc")
+        .expect("gcc compile failed");
     let module = Module::load(&so_path).expect("load failed");
     assert_eq!(module.call_main().unwrap(), RuntimeValue::Null);
 }
@@ -166,10 +172,11 @@ fn test_c_gcc_null() {
 #[test]
 fn test_c_gcc_conv_chr_ord_unicode_round_trip() {
     let compiler = AotCompiler::new();
-    let program = crush_frontend::compile_crush_source(
-        "fn main() { return conv.ord(conv.chr(233)); }"
-    ).unwrap();
-    let so_path = compiler.compile_c(&program, "test_c_gcc_conv_chr_ord", "gcc")
+    let program =
+        crush_frontend::compile_crush_source("fn main() { return conv.ord(conv.chr(233)); }")
+            .unwrap();
+    let so_path = compiler
+        .compile_c(&program, "test_c_gcc_conv_chr_ord", "gcc")
         .expect("gcc compile failed");
     let module = Module::load(&so_path).expect("load failed");
     assert_eq!(module.call_main().unwrap(), RuntimeValue::Int(233));
@@ -181,7 +188,9 @@ fn test_c_gcc_conv_chr_ord_unicode_round_trip() {
 fn test_c_clang_int() {
     let compiler = AotCompiler::new();
     let program = crush_frontend::compile_crush_source("fn main() { return 42; }").unwrap();
-    let so_path = compiler.compile_c(&program, "test_c_clang_int", "clang").expect("clang compile failed");
+    let so_path = compiler
+        .compile_c(&program, "test_c_clang_int", "clang")
+        .expect("clang compile failed");
     let module = Module::load(&so_path).expect("load failed");
     assert_eq!(module.call_main().unwrap(), RuntimeValue::Int(42));
 }
@@ -189,10 +198,10 @@ fn test_c_clang_int() {
 #[test]
 fn test_c_clang_arithmetic() {
     let compiler = AotCompiler::new();
-    let program = crush_frontend::compile_crush_source(
-        "fn main() { return 100 - 58; }"
-    ).unwrap();
-    let so_path = compiler.compile_c(&program, "test_c_clang_sub", "clang").expect("clang compile failed");
+    let program = crush_frontend::compile_crush_source("fn main() { return 100 - 58; }").unwrap();
+    let so_path = compiler
+        .compile_c(&program, "test_c_clang_sub", "clang")
+        .expect("clang compile failed");
     let module = Module::load(&so_path).expect("load failed");
     assert_eq!(module.call_main().unwrap(), RuntimeValue::Int(42));
 }
@@ -220,7 +229,9 @@ fn test_cross_c_clang_vs_rust() {
     let program = crush_frontend::compile_crush_source(source).unwrap();
     let compiler = AotCompiler::new();
 
-    let so_c = compiler.compile_c(&program, "cross_c_clang", "clang").unwrap();
+    let so_c = compiler
+        .compile_c(&program, "cross_c_clang", "clang")
+        .unwrap();
     let so_rust = compiler.compile_casm(&program, "cross_rust2").unwrap();
 
     let mod_c = Module::load(&so_c).unwrap();
@@ -236,7 +247,9 @@ fn test_cross_c_gcc_vs_clang() {
     let compiler = AotCompiler::new();
 
     let so_gcc = compiler.compile_c(&program, "cross_gcc", "gcc").unwrap();
-    let so_clang = compiler.compile_c(&program, "cross_clang", "clang").unwrap();
+    let so_clang = compiler
+        .compile_c(&program, "cross_clang", "clang")
+        .unwrap();
 
     let mod_gcc = Module::load(&so_gcc).unwrap();
     let mod_clang = Module::load(&so_clang).unwrap();
@@ -255,8 +268,14 @@ fn test_cross_all_three_vs_fastvm() {
     let so_clang = compiler.compile_c(&program, "all_clang", "clang").unwrap();
 
     let expected = Module::load(&so_rust).unwrap().call_main().unwrap();
-    assert_eq!(Module::load(&so_gcc).unwrap().call_main().unwrap(), expected);
-    assert_eq!(Module::load(&so_clang).unwrap().call_main().unwrap(), expected);
+    assert_eq!(
+        Module::load(&so_gcc).unwrap().call_main().unwrap(),
+        expected
+    );
+    assert_eq!(
+        Module::load(&so_clang).unwrap().call_main().unwrap(),
+        expected
+    );
 
     let fv = crush_vm::run_fastvm(&program)
         .map_err(|e| format!("FastVM: {:?}", e))
@@ -288,13 +307,24 @@ fn test_c_cache_hit() {
 fn cached_casm_path_reports_exactly_what_compile_casm_caches() {
     let dir = std::env::temp_dir().join(format!("crush-aot-probe-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let compiler = AotCompiler::new().with_optimize(false).with_cache_dir(dir.clone());
+    let compiler = AotCompiler::new()
+        .with_optimize(false)
+        .with_cache_dir(dir.clone());
     let program = crush_frontend::compile_crush_source("fn main() { return 6 * 7; }").unwrap();
-    assert_eq!(compiler.cached_casm_path(&program, "probe").unwrap(), None, "cold cache");
+    assert_eq!(
+        compiler.cached_casm_path(&program, "probe").unwrap(),
+        None,
+        "cold cache"
+    );
     let so = compiler.compile_casm(&program, "probe").unwrap();
-    assert_eq!(compiler.cached_casm_path(&program, "probe").unwrap(), Some(so));
+    assert_eq!(
+        compiler.cached_casm_path(&program, "probe").unwrap(),
+        Some(so)
+    );
     // The optimization setting is part of the key.
-    let optimized = AotCompiler::new().with_optimize(true).with_cache_dir(dir.clone());
+    let optimized = AotCompiler::new()
+        .with_optimize(true)
+        .with_cache_dir(dir.clone());
     assert_eq!(optimized.cached_casm_path(&program, "probe").unwrap(), None);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -4,11 +4,11 @@
 use std::collections::HashSet;
 
 use boa_ast::declaration::{Binding, Declaration, ImportKind, LexicalDeclaration, VarDeclaration};
+use boa_ast::expression::Expression;
 use boa_ast::expression::access::{PropertyAccess, PropertyAccessField};
 use boa_ast::expression::literal::{PropertyDefinition, TemplateElement};
 use boa_ast::expression::operator::assign::AssignTarget;
 use boa_ast::expression::operator::binary::BinaryOp;
-use boa_ast::expression::Expression;
 use boa_ast::statement::iteration::{ForLoopInitializer, IterableLoopInitializer};
 use boa_ast::{ModuleItem, Statement, StatementListItem};
 use boa_interner::{Interner, Sym};
@@ -36,7 +36,11 @@ pub(super) fn free_variables(source: &str) -> Result<FreeVars, String> {
             w.reads_item(sli, &mut reads);
         }
     }
-    let reads = reads.seen.into_iter().filter(|n| !bound_anywhere.contains(n)).collect();
+    let reads = reads
+        .seen
+        .into_iter()
+        .filter(|n| !bound_anywhere.contains(n))
+        .collect();
 
     let mut top_level_bound = Vec::new();
     for item in &items {
@@ -59,7 +63,11 @@ pub(super) fn free_variables(source: &str) -> Result<FreeVars, String> {
         }
     }
 
-    Ok(FreeVars { reads, top_level_bound, bound_anywhere })
+    Ok(FreeVars {
+        reads,
+        top_level_bound,
+        bound_anywhere,
+    })
 }
 
 /// A top-level item of either a module or a script.
@@ -110,11 +118,20 @@ impl Walk<'_> {
     }
 
     fn var_names(&self, v: &VarDeclaration, out: &mut Vec<String>) {
-        out.extend(v.0.as_ref().iter().filter_map(|d| self.binding_name(d.binding())));
+        out.extend(
+            v.0.as_ref()
+                .iter()
+                .filter_map(|d| self.binding_name(d.binding())),
+        );
     }
 
     fn lexical_names(&self, lex: &LexicalDeclaration, out: &mut Vec<String>) {
-        out.extend(lex.variable_list().as_ref().iter().filter_map(|d| self.binding_name(d.binding())));
+        out.extend(
+            lex.variable_list()
+                .as_ref()
+                .iter()
+                .filter_map(|d| self.binding_name(d.binding())),
+        );
     }
 
     // ── bound names ─────────────────────────────────────────────────────────
@@ -183,7 +200,9 @@ impl Walk<'_> {
                 let mut names = Vec::new();
                 match fl.init() {
                     Some(ForLoopInitializer::Var(v)) => self.var_names(v, &mut names),
-                    Some(ForLoopInitializer::Lexical(l)) => self.lexical_names(l.declaration(), &mut names),
+                    Some(ForLoopInitializer::Lexical(l)) => {
+                        self.lexical_names(l.declaration(), &mut names)
+                    }
                     _ => {}
                 }
                 bound.extend(names);
@@ -256,8 +275,12 @@ impl Walk<'_> {
             // swc's `Decl::Fn` covers async and generator functions too.
             Declaration::FunctionDeclaration(f) => self.reads_list(f.body().statements(), reads),
             Declaration::GeneratorDeclaration(f) => self.reads_list(f.body().statements(), reads),
-            Declaration::AsyncFunctionDeclaration(f) => self.reads_list(f.body().statements(), reads),
-            Declaration::AsyncGeneratorDeclaration(f) => self.reads_list(f.body().statements(), reads),
+            Declaration::AsyncFunctionDeclaration(f) => {
+                self.reads_list(f.body().statements(), reads)
+            }
+            Declaration::AsyncGeneratorDeclaration(f) => {
+                self.reads_list(f.body().statements(), reads)
+            }
             Declaration::ClassDeclaration(_) => {}
         }
     }

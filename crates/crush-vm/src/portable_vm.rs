@@ -57,7 +57,6 @@
 //!
 //! Until then, this file stays as one module.
 
-
 use crate::bytecode::{Program, instruction_size};
 use crate::host::HostCaps;
 use crate::vm::{Quotas, Value, VmError, VmResult};
@@ -232,7 +231,9 @@ impl PortableVm {
     pub fn new(program: Program) -> Self {
         let (kinds, load_error) = match crate::cosm_rt::KindTable::load(&program) {
             Ok(kinds) => (kinds, None),
-            Err(VmError::Unsupported(reason)) => (Default::default(), Some(LoadError::Unsupported(reason))),
+            Err(VmError::Unsupported(reason)) => {
+                (Default::default(), Some(LoadError::Unsupported(reason)))
+            }
             Err(e) => (Default::default(), Some(LoadError::Cosm(e.to_string()))),
         };
         // Extract permissions before moving program
@@ -255,12 +256,11 @@ impl PortableVm {
             .unwrap_or_else(|| func_entry.values().copied().next().unwrap_or(0));
 
         // Initialize call stack with entry frame
-        let mut call_stack = Vec::new();
-        call_stack.push(Frame {
+        let call_stack = vec![Frame {
             return_ip: None,
             memory: std::collections::HashMap::new(),
             on_ret: crate::vm::RetValue::Keep,
-        });
+        }];
 
         let declared_caps: std::collections::HashSet<String> = permissions.into_iter().collect();
         #[cfg(feature = "transcript")]
@@ -633,7 +633,9 @@ impl PortableVm {
             return Ok(None);
         }
         match &self.load_error {
-            Some(LoadError::Unsupported(reason)) => return Err(VmError::Unsupported(reason.clone())),
+            Some(LoadError::Unsupported(reason)) => {
+                return Err(VmError::Unsupported(reason.clone()));
+            }
             Some(LoadError::Cosm(reason)) => return Err(VmError::Cosm(reason.clone())),
             None => {}
         }
@@ -696,13 +698,14 @@ impl PortableVm {
         let opcode = code[ip];
         let next_ip = ip + instruction_size(opcode).ok_or(VmError::UnknownOpcode(opcode, ip))?;
 
-        if opcode == crate::bytecode::CAP_CALL && self.input.would_block() {
-            if let Some(capability) = self.awaited_input_cap(ip) {
-                return Ok(Some(VmYield::HostCall {
-                    capability,
-                    args: Vec::new(),
-                }));
-            }
+        if opcode == crate::bytecode::CAP_CALL
+            && self.input.would_block()
+            && let Some(capability) = self.awaited_input_cap(ip)
+        {
+            return Ok(Some(VmYield::HostCall {
+                capability,
+                args: Vec::new(),
+            }));
         }
 
         // Control-flow ops (CALL, RET, JMP/JZ/JNZ taken, THROW, AWAIT) set
@@ -716,7 +719,8 @@ impl PortableVm {
         let transcript_before = {
             let before = self.transcript.clone();
             let code = &self.program.code;
-            self.transcript.record_instruction(ip, &code[ip..next_ip.min(code.len())]);
+            self.transcript
+                .record_instruction(ip, &code[ip..next_ip.min(code.len())]);
             before
         };
         self.execute_instruction(opcode, next_ip)?;
@@ -729,7 +733,10 @@ impl PortableVm {
             {
                 self.transcript = transcript_before;
             }
-            return Ok(Some(VmYield::HostCall { capability: "lang.exec".to_string(), args }));
+            return Ok(Some(VmYield::HostCall {
+                capability: "lang.exec".to_string(),
+                args,
+            }));
         }
         if !self.jumped {
             self.ip = next_ip;
@@ -852,7 +859,9 @@ impl PortableVm {
             }
             PICK => {
                 let n = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
                 if n >= self.stack.len() {
                     return Err(VmError::StackUnderflow);
@@ -861,7 +870,9 @@ impl PortableVm {
             }
             ROLL => {
                 let n = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
                 if n >= self.stack.len() {
                     return Err(VmError::StackUnderflow);
@@ -890,12 +901,18 @@ impl PortableVm {
                     && matches!(
                         (self.peek_n(1), self.peek_n(0)),
                         (Some(Value::Array(_)), Some(Value::Array(_)))
-                    ))
-                    && (!matches!(self.peek_n(0), Some(Value::Int(_)) | Some(Value::Float(_)))
-                        || !matches!(self.peek_n(1), Some(Value::Int(_)) | Some(Value::Float(_)))) =>
+                    )
+                    || matches!(self.peek_n(0), Some(Value::Int(_)) | Some(Value::Float(_)))
+                        && matches!(
+                            self.peek_n(1),
+                            Some(Value::Int(_)) | Some(Value::Float(_))
+                        )) =>
             {
                 let got = self.peek_n(0).map(value_type_name).unwrap_or("nothing");
-                return Err(VmError::TypeError { expected: "numeric", got });
+                return Err(VmError::TypeError {
+                    expected: "numeric",
+                    got,
+                });
             }
             ADD | SUB | MUL | DIV | MOD => {
                 let b = self.pop()?;
@@ -951,7 +968,7 @@ impl PortableVm {
                 } else {
                     return Err(VmError::TypeError {
                         expected: "array",
-                        got: "non-array in VEC_ADD".into(),
+                        got: "non-array in VEC_ADD",
                     });
                 }
             }
@@ -972,7 +989,7 @@ impl PortableVm {
                 } else {
                     return Err(VmError::TypeError {
                         expected: "array",
-                        got: "non-array in VEC_DOT".into(),
+                        got: "non-array in VEC_DOT",
                     });
                 }
             }
@@ -989,16 +1006,32 @@ impl PortableVm {
                         self.push(Value::new_array(vec![]));
                     } else {
                         let rows_a = a_ref.len();
-                        let cols_a = if let Value::Array(first) = &a_ref[0] { first.borrow().len() } else { 0 };
-                        let cols_b = if let Value::Array(first) = &b_ref[0] { first.borrow().len() } else { 0 };
-                        
+                        let cols_a = if let Value::Array(first) = &a_ref[0] {
+                            first.borrow().len()
+                        } else {
+                            0
+                        };
+                        let cols_b = if let Value::Array(first) = &b_ref[0] {
+                            first.borrow().len()
+                        } else {
+                            0
+                        };
+
                         for i in 0..rows_a {
                             let mut row_res = Vec::new();
                             for j in 0..cols_b {
                                 let mut sum = 0.0;
                                 for k in 0..cols_a {
-                                    let val_a = if let Value::Array(r) = &a_ref[i] { to_f64_p(&r.borrow()[k]) } else { 0.0 };
-                                    let val_b = if let Value::Array(r) = &b_ref[k] { to_f64_p(&r.borrow()[j]) } else { 0.0 };
+                                    let val_a = if let Value::Array(r) = &a_ref[i] {
+                                        to_f64_p(&r.borrow()[k])
+                                    } else {
+                                        0.0
+                                    };
+                                    let val_b = if let Value::Array(r) = &b_ref[k] {
+                                        to_f64_p(&r.borrow()[j])
+                                    } else {
+                                        0.0
+                                    };
                                     sum += val_a * val_b;
                                 }
                                 row_res.push(Value::Float(sum));
@@ -1010,7 +1043,7 @@ impl PortableVm {
                 } else {
                     return Err(VmError::TypeError {
                         expected: "array",
-                        got: "non-array in MAT_MUL".into(),
+                        got: "non-array in MAT_MUL",
                     });
                 }
             }
@@ -1075,14 +1108,22 @@ impl PortableVm {
             }
             TYPEOF => {
                 let v = self.pop()?;
-                let name = crate::cosm_rt::type_name(&v).unwrap_or_else(|| value_type_name(&v).to_string());
+                let name = crate::cosm_rt::type_name(&v)
+                    .unwrap_or_else(|| value_type_name(&v).to_string());
                 self.push(Value::Str(name));
             }
             CAST => {
                 let idx = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
-                let type_name = self.program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let type_name = self
+                    .program
+                    .consts
+                    .get(idx)
+                    .ok_or(VmError::ConstOutOfRange(idx))?
+                    .clone();
                 let v = self.pop()?;
                 match type_name.as_str() {
                     "str" | "string" => self.push(Value::Str(value_to_text(&v))),
@@ -1184,16 +1225,27 @@ impl PortableVm {
                     }
                 }
                 if crate::cosm_rt::is_index_cap(&cap, &args) {
-                    let access =
-                        crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)
-                            .and_then(|()| crate::cosm_rt::index_cap(&cap, &args));
+                    let access = crate::scheduler::check_cap_permitted(
+                        &cap,
+                        self.declared_caps.contains(cap.as_str()),
+                        &self.quotas,
+                    )
+                    .and_then(|()| crate::cosm_rt::index_cap(&cap, &args));
                     // CRUSH-165 hook: an index cap's outcome.
                     #[cfg(feature = "transcript")]
-                    self.transcript.record_cap(&cap, &args, match &access {
-                        Ok(crate::cosm_rt::IndexAccess::Done(v)) => crate::transcript::CapOutcome::Value(v),
-                        Ok(crate::cosm_rt::IndexAccess::Call { .. }) => crate::transcript::CapOutcome::AccessorCall,
-                        Err(e) => crate::transcript::CapOutcome::Error(e),
-                    });
+                    self.transcript.record_cap(
+                        &cap,
+                        &args,
+                        match &access {
+                            Ok(crate::cosm_rt::IndexAccess::Done(v)) => {
+                                crate::transcript::CapOutcome::Value(v)
+                            }
+                            Ok(crate::cosm_rt::IndexAccess::Call { .. }) => {
+                                crate::transcript::CapOutcome::AccessorCall
+                            }
+                            Err(e) => crate::transcript::CapOutcome::Error(e),
+                        },
+                    );
                     match access? {
                         crate::cosm_rt::IndexAccess::Done(v) => self.push(v),
                         crate::cosm_rt::IndexAccess::Call { call, after } => {
@@ -1209,15 +1261,22 @@ impl PortableVm {
                 let args = crate::cosm_rt::cap_args(&cap, args)?;
 
                 if cap == "parallel_map" {
-                    let mapped =
-                        crate::scheduler::check_cap_permitted(&cap, self.declared_caps.contains(cap.as_str()), &self.quotas)
-                            .and_then(|()| self.parallel_map(&args));
+                    let mapped = crate::scheduler::check_cap_permitted(
+                        &cap,
+                        self.declared_caps.contains(cap.as_str()),
+                        &self.quotas,
+                    )
+                    .and_then(|()| self.parallel_map(&args));
                     // CRUSH-165 hook: parallel_map's results (its workers aren't transcribed).
                     #[cfg(feature = "transcript")]
-                    self.transcript.record_cap(&cap, &args, match &mapped {
-                        Ok((_, results)) => crate::transcript::CapOutcome::Value(results),
-                        Err(e) => crate::transcript::CapOutcome::Error(e),
-                    });
+                    self.transcript.record_cap(
+                        &cap,
+                        &args,
+                        match &mapped {
+                            Ok((_, results)) => crate::transcript::CapOutcome::Value(results),
+                            Err(e) => crate::transcript::CapOutcome::Error(e),
+                        },
+                    );
                     let (output, results) = mapped?;
                     if !output.is_empty() {
                         self.out_len += output.len();
@@ -1234,7 +1293,11 @@ impl PortableVm {
                     let result = self.dispatch_cap(&cap, args);
                     // CRUSH-165 hook: every other CAP_CALL (built-in and host caps).
                     #[cfg(feature = "transcript")]
-                    self.transcript.record_cap(&cap, &recorded_args, crate::transcript::CapOutcome::of(&result));
+                    self.transcript.record_cap(
+                        &cap,
+                        &recorded_args,
+                        crate::transcript::CapOutcome::of(&result),
+                    );
                     if let Some(v) = result? {
                         self.push(v);
                     }
@@ -1264,7 +1327,8 @@ impl PortableVm {
             }
             MAKE_CLOSURE => {
                 let code = &self.program.code;
-                let idx = u16::from_be_bytes(code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+                let idx =
+                    u16::from_be_bytes(code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
                 let (arity, ncap) = (code[self.ip + 3], code[self.ip + 4] as usize);
                 let fname = self
                     .program
@@ -1301,7 +1365,9 @@ impl PortableVm {
             CALL_VALUE => {
                 // Stack: args (pushed last-first, as for CALL), then the callee.
                 let argc = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
                 let callee = self.pop()?;
                 let func = crate::vm::callable(&callee, argc)?;
@@ -1411,10 +1477,19 @@ impl PortableVm {
                         let idx = need_array_index(&idx_v)?;
                         let len = s.chars().count();
                         let actual = wrap_index(idx, len)?;
-                        let ch = s.chars().nth(actual).map(|c| c.to_string()).unwrap_or_default();
+                        let ch = s
+                            .chars()
+                            .nth(actual)
+                            .map(|c| c.to_string())
+                            .unwrap_or_default();
                         self.push(Value::Str(ch));
                     }
-                    _ => return Err(VmError::TypeError { expected: "array, map, or string", got: arr_v.type_name() }),
+                    _ => {
+                        return Err(VmError::TypeError {
+                            expected: "array, map, or string",
+                            got: arr_v.type_name(),
+                        });
+                    }
                 }
             }
             ARR_SET => {
@@ -1464,7 +1539,7 @@ impl PortableVm {
                         return Err(VmError::TypeError {
                             expected: "array or string",
                             got: other.type_name(),
-                        })
+                        });
                     }
                 }
             }
@@ -1481,7 +1556,11 @@ impl PortableVm {
                 self.push(val);
             }
             NEW_TUPLE => {
-                let count = u16::from_be_bytes(self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+                let count = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
                 let mut vals = Vec::with_capacity(count);
                 for _ in 0..count {
                     vals.push(self.pop()?);
@@ -1496,7 +1575,11 @@ impl PortableVm {
                 self.push(Value::Tuple(t));
             }
             NEW_LIST => {
-                let count = u16::from_be_bytes(self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+                let count = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
                 let mut vals = Vec::with_capacity(count);
                 for _ in 0..count {
                     vals.push(self.pop()?);
@@ -1511,7 +1594,11 @@ impl PortableVm {
                 self.push(Value::List(l_rc));
             }
             NEW_VECTOR => {
-                let count = u16::from_be_bytes(self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+                let count = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
                 let mut vals = Vec::with_capacity(count);
                 for _ in 0..count {
                     vals.push(self.pop()?);
@@ -1526,7 +1613,11 @@ impl PortableVm {
                 self.push(Value::Vector(v_rc));
             }
             NEW_SET => {
-                let count = u16::from_be_bytes(self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
+                let count = u16::from_be_bytes(
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
                 let mut vals = Vec::with_capacity(count);
                 for _ in 0..count {
                     vals.push(self.pop()?);
@@ -1658,14 +1749,20 @@ impl PortableVm {
                 let argc = self.program.code[self.ip + 3] as usize;
                 let recv = self.pop()?;
                 match crate::cosm_rt::call_member(&recv, &name, argc)? {
-                    crate::cosm_rt::MemberCall::Call(callee) => self.call_callee(callee, next_ip)?,
+                    crate::cosm_rt::MemberCall::Call(callee) => {
+                        self.call_callee(callee, next_ip)?
+                    }
                     crate::cosm_rt::MemberCall::Done(v) => self.push(v),
                 }
             }
             CONSTRUCT => {
                 let kind = self.kinds.get(&self.const_operand()?)?.clone();
                 let argc = self.program.code[self.ip + 3] as usize;
-                let base = self.stack.len().checked_sub(argc).ok_or(VmError::StackUnderflow)?;
+                let base = self
+                    .stack
+                    .len()
+                    .checked_sub(argc)
+                    .ok_or(VmError::StackUnderflow)?;
                 // First argument first (they were pushed last-first).
                 let args: Vec<Value> = self.stack[base..].iter().rev().cloned().collect();
                 match crate::cosm_rt::construct(&kind, &args)? {
@@ -1695,12 +1792,21 @@ impl PortableVm {
             }
             GET_SLOT | SET_SLOT => {
                 let slot = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
-                let val = if opcode == SET_SLOT { Some(self.pop()?) } else { None };
+                let val = if opcode == SET_SLOT {
+                    Some(self.pop()?)
+                } else {
+                    None
+                };
                 let target = self.pop()?;
                 let Value::Record(r) = &target else {
-                    return Err(VmError::TypeError { expected: "record", got: value_type_name(&target) });
+                    return Err(VmError::TypeError {
+                        expected: "record",
+                        got: value_type_name(&target),
+                    });
                 };
                 match val {
                     Some(v) => {
@@ -1746,9 +1852,11 @@ impl PortableVm {
                 // block, as a failing EXEC_LANG does: fatal, its output
                 // dropped (#312).
                 let handler_depth = self.try_stack.last().map(|h| h.call_depth);
-                if let Some(err) =
-                    crate::block_capture::escaping_throw(&mut self.captures, handler_depth, &err_val)
-                {
+                if let Some(err) = crate::block_capture::escaping_throw(
+                    &mut self.captures,
+                    handler_depth,
+                    &err_val,
+                ) {
                     return Err(err);
                 }
                 if let Some(handler) = self.try_stack.pop() {
@@ -1811,7 +1919,7 @@ impl PortableVm {
                 let d = value_to_text(&delim);
                 match arr_v {
                     Value::Array(elems) => {
-                        let parts: Vec<String> = elems.borrow().iter().map(|v| value_to_text(v)).collect();
+                        let parts: Vec<String> = elems.borrow().iter().map(value_to_text).collect();
                         self.push(Value::Str(parts.join(&d)));
                     }
                     other => {
@@ -1829,16 +1937,28 @@ impl PortableVm {
             }
             EXEC_LANG => {
                 let idx = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
-                let spec_json = self.program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+                let spec_json = self
+                    .program
+                    .consts
+                    .get(idx)
+                    .ok_or(VmError::ConstOutOfRange(idx))?
+                    .clone();
                 let spec: std::collections::HashMap<String, serde_json::Value> =
-                    serde_json::from_str(&spec_json)
-                        .map_err(|_| VmError::UnknownCap("exec_lang: invalid args JSON".to_string()))?;
+                    serde_json::from_str(&spec_json).map_err(|_| {
+                        VmError::UnknownCap("exec_lang: invalid args JSON".to_string())
+                    })?;
                 let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
                 let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
-                let crush_line = spec.get("crush_line").and_then(|v| v.as_u64()).map(|v| v as u32);
-                let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let crush_line = spec
+                    .get("crush_line")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let var_count =
+                    spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let mut var_names: Vec<String> = Vec::with_capacity(var_count);
                 let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
                 for i in 0..var_count {
@@ -1852,20 +1972,34 @@ impl PortableVm {
                 let deps: Vec<String> = spec
                     .get("deps")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 // Use the SAME allowlist as scheduler.rs — not Command::new(lang).arg("-c").
                 // crush-diff caught this drifting: `javascript` needs `node -e`, not a binary
                 // named "javascript" with `-c`. An unknown language is a loud error, never a
                 // silent spawn attempt. (Re-checked inside `run_exec_lang_stdout` too, cheaply — kept
                 // here so an unknown language fails before the capability gate, not after.)
-                crate::scheduler::resolve_lang_binary(lang)
-                    .ok_or_else(|| VmError::UnknownCap(format!("no executor registered for language '{lang}'")))?;
+                crate::scheduler::resolve_lang_binary(lang).ok_or_else(|| {
+                    VmError::UnknownCap(format!("no executor registered for language '{lang}'"))
+                })?;
                 // CAPABILITY GATE — must match scheduler.rs exactly (crush-diff would catch drift).
                 // A @lang block spawns an interpreter with full host authority; require polyglot.<lang>.
                 let gate = crate::scheduler::polyglot_gate_name(lang);
-                crate::scheduler::check_cap_permitted(&gate, self.declared_caps.contains(&gate), &self.quotas)?;
-                if self.host_caps.as_ref().map(|h| h.get(&gate).is_none()).unwrap_or(true) {
+                crate::scheduler::check_cap_permitted(
+                    &gate,
+                    self.declared_caps.contains(&gate),
+                    &self.quotas,
+                )?;
+                if self
+                    .host_caps
+                    .as_ref()
+                    .map(|h| h.get(&gate).is_none())
+                    .unwrap_or(true)
+                {
                     return Err(VmError::UnknownCap(format!(
                         "@{lang} requires the '{gate}' capability (run with --polyglot to grant it); refusing to spawn"
                     )));
@@ -1885,23 +2019,32 @@ impl PortableVm {
                 // `SubprocessExecutor` (`crate::scheduler::run_exec_lang_stdout` — see its doc
                 // comment for the CRUSH-20 buckets-sandboxing wiring). A `LangExecutor` set with
                 // `set_lang_executor` (#91) takes precedence over both.
-                let outcome: Result<crate::scheduler::ExecLangOutcome, VmError> = if self.lang_deferred {
+                let outcome: Result<crate::scheduler::ExecLangOutcome, VmError> = if self
+                    .lang_deferred
+                {
                     match self.lang_result.take() {
                         Some(Ok(stdout)) => Ok(crate::scheduler::parse_exec_lang_stdout(&stdout)),
-                        Some(Err(message)) => {
-                            Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line))
-                        }
+                        Some(Err(message)) => Err(crate::scheduler::lang_runtime_error(
+                            lang,
+                            message.as_bytes(),
+                            crush_line,
+                        )),
                         None => {
                             // Hand the block to the host: put the inputs back,
                             // so this EXEC_LANG runs again with its result.
                             let env = Value::new_map(
-                                env_vars.iter().map(|(k, v)| (k.clone(), Value::Str(v.clone()))),
+                                env_vars
+                                    .iter()
+                                    .map(|(k, v)| (k.clone(), Value::Str(v.clone()))),
                             );
                             for value in var_values {
                                 self.push(value);
                             }
-                            self.lang_yield =
-                                Some(vec![Value::Str(lang.to_string()), Value::Str(code_str.to_string()), env]);
+                            self.lang_yield = Some(vec![
+                                Value::Str(lang.to_string()),
+                                Value::Str(code_str.to_string()),
+                                env,
+                            ]);
                             return Ok(());
                         }
                     }
@@ -1912,9 +2055,11 @@ impl PortableVm {
                             Ok(stdout) => Ok(crate::scheduler::parse_exec_lang_stdout(&stdout)),
                             // What the guest reported, as a subprocess's stderr is: the
                             // same error, and message, as a native run of the block.
-                            Err(message) => {
-                                Err(crate::scheduler::lang_runtime_error(lang, message.as_bytes(), crush_line))
-                            }
+                            Err(message) => Err(crate::scheduler::lang_runtime_error(
+                                lang,
+                                message.as_bytes(),
+                                crush_line,
+                            )),
                         },
                         None => {
                             let outputs = crate::lang_exec::declared_outputs(&spec);
@@ -1925,11 +2070,16 @@ impl PortableVm {
                                 outputs: &outputs,
                                 deps: &deps,
                                 gate: &gate,
-                                deadline_ms: crate::wall::remaining_ms(self.quotas.max_wall_time_ms),
+                                deadline_ms: crate::wall::remaining_ms(
+                                    self.quotas.max_wall_time_ms,
+                                ),
                                 crush_line,
                             };
-                            let executor =
-                                self.host_caps.as_ref().and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
+                            let executor = self
+                                .host_caps
+                                .as_ref()
+                                .and_then(|h| h.polyglot_executor())
+                                .map(|e| e.as_ref());
                             crate::lang_exec::run_block(executor, &request)
                         }
                     }
@@ -1941,8 +2091,13 @@ impl PortableVm {
                     let transcript = &mut self.transcript;
                     crate::transcript::record_exec_lang(
                         &mut |name, args, outcome| transcript.record_cap(name, args, outcome),
-                        &gate, lang, code_str, &env_vars,
-                        outcome.as_ref().map(|o| (o.visible.as_str(), &o.result_value)),
+                        &gate,
+                        lang,
+                        code_str,
+                        &env_vars,
+                        outcome
+                            .as_ref()
+                            .map(|o| (o.visible.as_str(), &o.result_value)),
                     );
                 }
                 let outcome = outcome?;
@@ -1959,8 +2114,9 @@ impl PortableVm {
                     self.push(value);
                 }
             }
-            AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
-            | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
+            AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH
+            | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN | AI_GOAL_DECLARATION
+            | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
                 // CRUSH-32/156: gate the AI opcodes through `self.host_caps.get("ai_native.<kind>")`
                 // with payload + stack operands (mirrors scheduler.rs; contract in `crate::ai_args`).
                 let kind = crate::bytecode::ai_native_kind_for_opcode(opcode)
@@ -1982,8 +2138,9 @@ impl PortableVm {
                 }
                 let operands = self.stack.split_off(self.stack.len() - n);
                 #[cfg(feature = "transcript")]
-                let recorded_args: Vec<Value> =
-                    std::iter::once(Value::Str(raw.clone())).chain(operands.iter().cloned()).collect();
+                let recorded_args: Vec<Value> = std::iter::once(Value::Str(raw.clone()))
+                    .chain(operands.iter().cloned())
+                    .collect();
                 let value = crate::ai_args::dispatch(
                     kind,
                     &payload,
@@ -1994,7 +2151,9 @@ impl PortableVm {
                 // CRUSH-165 hook: an AI opcode, as cap `ai_native.<kind>`.
                 #[cfg(feature = "transcript")]
                 self.transcript.record_cap(
-                    &format!("ai_native.{kind}"), &recorded_args, crate::transcript::CapOutcome::of_value(&value),
+                    &format!("ai_native.{kind}"),
+                    &recorded_args,
+                    crate::transcript::CapOutcome::of_value(&value),
                 );
                 self.push(value?);
             }
@@ -2008,8 +2167,8 @@ impl PortableVm {
             // GitHub issue #378 (CRUSH-234's AI fix, mirrored): ungranted is a
             // named `VmError::CapDenied` (`crate::dom_args`) — not a silent
             // null — and a granted handler's error propagates.
-            DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE
-            | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
+            DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT
+            | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
                 let kind = crate::bytecode::dom_native_kind_for_opcode(opcode)
                     .expect("DOM opcode byte in combined match arm must map to a known kind");
                 let value = crate::dom_args::dispatch(
@@ -2020,13 +2179,17 @@ impl PortableVm {
                 // CRUSH-165 hook: a DOM opcode, as cap `dom_native.<kind>`.
                 #[cfg(feature = "transcript")]
                 self.transcript.record_cap(
-                    &format!("dom_native.{kind}"), &[], crate::transcript::CapOutcome::of_value(&value),
+                    &format!("dom_native.{kind}"),
+                    &[],
+                    crate::transcript::CapOutcome::of_value(&value),
                 );
                 self.push(value?);
             }
             SPAWN => {
                 let argc = u16::from_be_bytes(
-                    self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap(),
+                    self.program.code[self.ip + 1..self.ip + 3]
+                        .try_into()
+                        .unwrap(),
                 ) as usize;
                 let callee = self.pop()?;
                 let mut args = Vec::with_capacity(argc);
@@ -2049,7 +2212,7 @@ impl PortableVm {
                                 call_stack: vec![Frame::new(None)],
                                 ip: entry,
                                 try_stack: Vec::new(),
-            captures: Vec::new(),
+                                captures: Vec::new(),
                             }),
                             ..GreenTask::default()
                         });
@@ -2212,7 +2375,8 @@ impl PortableVm {
                 }
                 "py.print" => {
                     crate::vm::reject_func_print(&args)?;
-                    let parts: Vec<String> = args.iter().map(crate::io_print::py_value_to_text).collect();
+                    let parts: Vec<String> =
+                        args.iter().map(crate::io_print::py_value_to_text).collect();
                     let line = crate::io_print::format_py_print_line(&parts);
                     self.out_len += line.len();
                     if self.out_len > self.quotas.max_output {
@@ -2221,31 +2385,25 @@ impl PortableVm {
                     self.emit_part(line);
                     Ok(None)
                 }
-                "math.truediv" => {
-                    crate::arithmetic::true_div_values(&args[0], &args[1]).map(Some)
-                }
-                "js.div" => {
-                    crate::arithmetic::js_div_values(&args[0], &args[1]).map(Some)
-                }
+                "math.truediv" => crate::arithmetic::true_div_values(&args[0], &args[1]).map(Some),
+                "js.div" => crate::arithmetic::js_div_values(&args[0], &args[1]).map(Some),
                 "js.add" => crate::js_ops::add(&args[0], &args[1]).map(Some),
                 "js.truthy" => Ok(Some(crate::js_ops::truthy(&args[0]))),
                 "js.loose_eq" => crate::js_ops::loose_eq(&args[0], &args[1]).map(Some),
                 "js.strict_eq" => crate::js_ops::strict_eq(&args[0], &args[1]).map(Some),
                 "js.format" => crate::js_ops::format(&args).map(Some),
-                "conv.text" => {
-                    crate::num_text::text_as(&args[0], &args[1]).map(Some)
-                }
+                "conv.text" => crate::num_text::text_as(&args[0], &args[1]).map(Some),
                 "lang.marshal" => crate::marshal::marshal_cap(&args),
                 "lang.capture_begin" => {
                     crate::block_capture::begin(&mut self.captures, &args, self.call_stack.len())
                 }
-                "lang.capture_end" => crate::block_capture::end(&mut self.captures, &mut self.out_parts),
+                "lang.capture_end" => {
+                    crate::block_capture::end(&mut self.captures, &mut self.out_parts)
+                }
                 "seq.slice" => {
                     crate::seq::slice_values(&args[0], &args[1], &args[2], &args[3]).map(Some)
                 }
-                "math.power" => {
-                    crate::arithmetic::power_values(&args[0], &args[1]).map(Some)
-                }
+                "math.power" => crate::arithmetic::power_values(&args[0], &args[1]).map(Some),
                 "math.floordiv" => {
                     crate::arithmetic::floor_div_values(&args[0], &args[1]).map(Some)
                 }
@@ -2270,7 +2428,9 @@ impl PortableVm {
                     let s = value_to_text(&args[0]);
                     Ok(Some(Value::Int(crate::str_len::str_len(&s))))
                 }
-                "str.contains" => crate::rust_methods::call(cap, &args).map(Some).map_err(VmError::Io),
+                "str.contains" => crate::rust_methods::call(cap, &args)
+                    .map(Some)
+                    .map_err(VmError::Io),
                 "str.split" => {
                     let s = value_to_text(&args[0]);
                     let delim = value_to_text(&args[1]);
@@ -2281,13 +2441,15 @@ impl PortableVm {
                     };
                     Ok(Some(Value::new_array(parts)))
                 }
-                "str.replace" => crate::rust_methods::call(cap, &args).map(Some).map_err(VmError::Io),
+                "str.replace" => crate::rust_methods::call(cap, &args)
+                    .map(Some)
+                    .map_err(VmError::Io),
                 "str.join" => {
                     let delim = value_to_text(&args[1]);
                     match &args[0] {
                         Value::Array(elems) => {
                             let parts: Vec<String> =
-                                elems.borrow().iter().map(|v| value_to_text(v)).collect();
+                                elems.borrow().iter().map(value_to_text).collect();
                             Ok(Some(Value::Str(parts.join(&delim))))
                         }
                         other => Err(VmError::TypeError {
@@ -2299,9 +2461,14 @@ impl PortableVm {
                 "conv.chr" => {
                     let codepoint = match &args[0] {
                         Value::Int(value) => *value,
-                        other => return Err(VmError::TypeError { expected: "int", got: value_type_name(other) }),
+                        other => {
+                            return Err(VmError::TypeError {
+                                expected: "int",
+                                got: value_type_name(other),
+                            });
+                        }
                     };
-                    let character = char::from_u32(codepoint as u32).ok_or_else(|| VmError::TypeError {
+                    let character = char::from_u32(codepoint as u32).ok_or(VmError::TypeError {
                         expected: "valid Unicode codepoint",
                         got: "invalid codepoint",
                     })?;
@@ -2310,10 +2477,15 @@ impl PortableVm {
                 "conv.ord" => {
                     let text = match &args[0] {
                         Value::Str(value) => value,
-                        other => return Err(VmError::TypeError { expected: "string", got: value_type_name(other) }),
+                        other => {
+                            return Err(VmError::TypeError {
+                                expected: "string",
+                                got: value_type_name(other),
+                            });
+                        }
                     };
                     let mut chars = text.chars();
-                    let character = chars.next().ok_or_else(|| VmError::TypeError {
+                    let character = chars.next().ok_or(VmError::TypeError {
                         expected: "single Unicode character",
                         got: "empty string",
                     })?;
@@ -2325,22 +2497,45 @@ impl PortableVm {
                     }
                     Ok(Some(Value::Int(character as i64)))
                 }
-                                "arr_slice" => crate::seq::arr_slice_values(cap, &args).map(Some),
+                "arr_slice" => crate::seq::arr_slice_values(cap, &args).map(Some),
                 "make_range" => crate::make_range::make_range_values(&args).map(Some),
                 "append" | "push" => {
-                    if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                    if args.len() < 2 {
+                        return Err(VmError::CapArity {
+                            cap: cap.to_string(),
+                            expected: 2,
+                            got: args.len(),
+                        });
+                    }
                     match &args[0] {
-                        Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(Some(args[0].clone())) }
-                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                        Value::Array(elems) => {
+                            elems.borrow_mut().push(args[1].clone());
+                            Ok(Some(args[0].clone()))
+                        }
+                        _ => Err(VmError::TypeError {
+                            expected: "array",
+                            got: args[0].type_name(),
+                        }),
                     }
                 }
                 "arr_set" => {
-                    if args.len() < 3 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 3, got: args.len() }); }
+                    if args.len() < 3 {
+                        return Err(VmError::CapArity {
+                            cap: cap.to_string(),
+                            expected: 3,
+                            got: args.len(),
+                        });
+                    }
                     match &args[0] {
                         Value::Array(elems) => {
-                            let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
+                            let idx = match &args[1] {
+                                Value::Int(i) => *i as usize,
+                                _ => 0,
+                            };
                             let mut arr = elems.borrow_mut();
-                            if idx < arr.len() { arr[idx] = args[2].clone(); }
+                            if idx < arr.len() {
+                                arr[idx] = args[2].clone();
+                            }
                             Ok(Some(args[0].clone()))
                         }
                         Value::Map(map) => {
@@ -2348,21 +2543,38 @@ impl PortableVm {
                             map.borrow_mut().insert(key, args[2].clone());
                             Ok(Some(args[0].clone()))
                         }
-                        _ => Err(VmError::TypeError { expected: "array or map", got: args[0].type_name() }),
+                        _ => Err(VmError::TypeError {
+                            expected: "array or map",
+                            got: args[0].type_name(),
+                        }),
                     }
                 }
                 "arr_get" => {
-                    if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                    if args.len() < 2 {
+                        return Err(VmError::CapArity {
+                            cap: cap.to_string(),
+                            expected: 2,
+                            got: args.len(),
+                        });
+                    }
                     match &args[0] {
                         Value::Array(elems) => {
-                            let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
-                            Ok(Some(elems.borrow().get(idx).cloned().unwrap_or(Value::Null)))
+                            let idx = match &args[1] {
+                                Value::Int(i) => *i as usize,
+                                _ => 0,
+                            };
+                            Ok(Some(
+                                elems.borrow().get(idx).cloned().unwrap_or(Value::Null),
+                            ))
                         }
                         Value::Map(map) => {
                             let key = crate::map_ops::map_key_string(&args[1])?;
                             Ok(Some(crate::map_ops::map_get(&map.borrow(), &key)?))
                         }
-                        _ => Err(VmError::TypeError { expected: "array or map", got: args[0].type_name() }),
+                        _ => Err(VmError::TypeError {
+                            expected: "array or map",
+                            got: args[0].type_name(),
+                        }),
                     }
                 }
                 _ => Err(VmError::UnknownCap(cap.to_string())),
@@ -2390,7 +2602,10 @@ impl PortableVm {
                     got: args.len(),
                 });
             }
-            return match handler.call_with_deadline(args, crate::wall::remaining_ms(self.quotas.max_wall_time_ms)) {
+            return match handler.call_with_deadline(
+                args,
+                crate::wall::remaining_ms(self.quotas.max_wall_time_ms),
+            ) {
                 // A host cap that returns nothing (`fs.write`, `akg.write`, …) still
                 // leaves Null: the compiler only knows the built-ins' arity, so it pops
                 // the result of every host call, and `let x = fs.write(..)` stores one
@@ -2400,9 +2615,10 @@ impl PortableVm {
                     cap: cap.to_string(),
                     limit_ms: self.quotas.max_wall_time_ms,
                 }),
-                Err(crate::host::HostCapError::Message(msg)) => {
-                    Err(VmError::CapFailed { cap: cap.to_string(), message: msg })
-                }
+                Err(crate::host::HostCapError::Message(msg)) => Err(VmError::CapFailed {
+                    cap: cap.to_string(),
+                    message: msg,
+                }),
                 Err(crate::host::HostCapError::Exit(code)) => Err(VmError::Exit(code)),
             };
         }
@@ -2412,13 +2628,25 @@ impl PortableVm {
 
     /// The string-constant operand of the current instruction.
     fn const_operand(&self) -> Result<String, VmError> {
-        let idx = u16::from_be_bytes(self.program.code[self.ip + 1..self.ip + 3].try_into().unwrap()) as usize;
-        self.program.consts.get(idx).cloned().ok_or(VmError::ConstOutOfRange(idx))
+        let idx = u16::from_be_bytes(
+            self.program.code[self.ip + 1..self.ip + 3]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        self.program
+            .consts
+            .get(idx)
+            .cloned()
+            .ok_or(VmError::ConstOutOfRange(idx))
     }
 
     /// COSM K1.4: call `callee` as `CALL_VALUE` calls a function value — its
     /// leading values (the receiver) on top of the arguments already pushed.
-    fn call_callee(&mut self, callee: crate::cosm_rt::Callee, next_ip: usize) -> Result<(), VmError> {
+    fn call_callee(
+        &mut self,
+        callee: crate::cosm_rt::Callee,
+        next_ip: usize,
+    ) -> Result<(), VmError> {
         let entry = self.get_function_entry(&callee.func)?;
         if self.call_stack.len() >= self.quotas.max_call_depth {
             return Err(VmError::CallDepthQuota(self.quotas.max_call_depth));
@@ -2560,7 +2788,10 @@ impl PortableVm {
     /// The ADD arms must inspect operand TYPES before committing to a numeric or a string
     /// interpretation, which they cannot do after popping.
     fn peek_n(&self, n: usize) -> Option<&Value> {
-        self.stack.len().checked_sub(n + 1).and_then(|k| self.stack.get(k))
+        self.stack
+            .len()
+            .checked_sub(n + 1)
+            .and_then(|k| self.stack.get(k))
     }
 
     fn check_step_quota(&self) -> Result<(), VmError> {
@@ -2608,7 +2839,9 @@ impl PortableVm {
         self.slice_remaining = TASK_SLICE;
         let n = self.tasks.len();
         let cur = self.current_task;
-        let next = (1..=n).map(|k| (cur + k) % n).find(|&i| self.task_runnable(i));
+        let next = (1..=n)
+            .map(|k| (cur + k) % n)
+            .find(|&i| self.task_runnable(i));
         // Nothing runnable: the program ends with main's result, as natively.
         let Some(next) = next.or((cur != 0).then_some(0)) else {
             self.halted = true;
@@ -2675,35 +2908,52 @@ pub enum VmYield {
 fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Array(a) => Ok(a),
-        other => Err(VmError::TypeError { expected: "array", got: value_type_name(&other) }),
+        other => Err(VmError::TypeError {
+            expected: "array",
+            got: value_type_name(&other),
+        }),
     }
 }
 
 fn need_tuple(v: Value) -> Result<Vec<Value>, VmError> {
     match v {
         Value::Tuple(t) => Ok(t),
-        other => Err(VmError::TypeError { expected: "tuple", got: value_type_name(&other) }),
+        other => Err(VmError::TypeError {
+            expected: "tuple",
+            got: value_type_name(&other),
+        }),
     }
 }
 
-fn need_list(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<std::collections::LinkedList<Value>>>, VmError> {
+fn need_list(
+    v: Value,
+) -> Result<std::rc::Rc<std::cell::RefCell<std::collections::LinkedList<Value>>>, VmError> {
     match v {
         Value::List(l) => Ok(l),
-        other => Err(VmError::TypeError { expected: "list", got: value_type_name(&other) }),
+        other => Err(VmError::TypeError {
+            expected: "list",
+            got: value_type_name(&other),
+        }),
     }
 }
 
 fn need_vector(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Vector(v_rc) => Ok(v_rc),
-        other => Err(VmError::TypeError { expected: "vector", got: value_type_name(&other) }),
+        other => Err(VmError::TypeError {
+            expected: "vector",
+            got: value_type_name(&other),
+        }),
     }
 }
 
 fn need_set(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Set(s) => Ok(s),
-        other => Err(VmError::TypeError { expected: "set", got: value_type_name(&other) }),
+        other => Err(VmError::TypeError {
+            expected: "set",
+            got: value_type_name(&other),
+        }),
     }
 }
 
@@ -2815,7 +3065,11 @@ pub fn value_to_text(v: &Value) -> String {
         Value::Cell(_) => "<cell>".to_string(),
         // Crush's struct print: the map the struct used to be.
         Value::Record(r) => {
-            let items: Vec<String> = r.fields().iter().map(|(k, v)| format!("{}: {}", k, value_to_text(v))).collect();
+            let items: Vec<String> = r
+                .fields()
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, value_to_text(v)))
+                .collect();
             format!("{{{}}}", items.join(", "))
         }
         Value::Kind(k) => format!("<kind {}>", k.name()),
@@ -3200,7 +3454,10 @@ HALT"#;
     /// `exec_lang_permission_tests`). Denied before any spawn.
     fn portable_python_block(declared: &[&str], quotas: Quotas) -> PortableVm {
         let spec = serde_json::json!({"lang": "python", "code": "print(1)", "var_count": 0});
-        let src = format!("EXEC_LANG \"{}\"\nHALT", spec.to_string().replace('"', "\\\""));
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('"', "\\\"")
+        );
         let mut vm = PortableVm::new(assemble(&src, Some(declared), Some("test")).unwrap());
         let mut caps = crate::HostCaps::new();
         caps.grant_polyglot(&["python"]);
@@ -3211,7 +3468,10 @@ HALT"#;
 
     #[test]
     fn test_portable_exec_lang_respects_allowed_caps() {
-        let quotas = Quotas { allowed_caps: Some(vec!["io.print".into()]), ..Quotas::default() };
+        let quotas = Quotas {
+            allowed_caps: Some(vec!["io.print".into()]),
+            ..Quotas::default()
+        };
         let mut vm = portable_python_block(&["polyglot.python"], quotas);
         match vm.run() {
             Err(VmError::CapDenied(cap)) => assert_eq!(cap, "polyglot.python"),
@@ -3340,7 +3600,12 @@ HALT"#;
         caps.grant_polyglot(&["bash"]);
         vm.set_host_caps(caps);
         match vm.run() {
-            Err(VmError::LangRuntimeError { lang, message, crush_line, .. }) => {
+            Err(VmError::LangRuntimeError {
+                lang,
+                message,
+                crush_line,
+                ..
+            }) => {
                 assert_eq!(lang, "bash");
                 assert!(
                     message.contains("boom"),

@@ -49,7 +49,9 @@ pub fn limit_ms() -> Option<u64> {
 /// Time left until the current run's deadline, if a run is active on this
 /// thread. Blocking capabilities (`process.exec`) use this as their timeout.
 pub fn remaining() -> Option<Duration> {
-    DEADLINE.with(|d| d.get()).map(|(d, _)| d.saturating_duration_since(Instant::now()))
+    DEADLINE
+        .with(|d| d.get())
+        .map(|(d, _)| d.saturating_duration_since(Instant::now()))
 }
 
 /// The budget to hand a blocking capability: what is left of the run's

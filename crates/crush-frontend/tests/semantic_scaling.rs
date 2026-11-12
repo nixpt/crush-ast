@@ -40,7 +40,10 @@ fn chain_program(n: usize, forward: bool) -> String {
             ));
         }
     }
-    src.push_str(&format!("fn main() {{\n    chain{:04}(1)\n    return 0\n}}\n", n - 1));
+    src.push_str(&format!(
+        "fn main() {{\n    chain{:04}(1)\n    return 0\n}}\n",
+        n - 1
+    ));
     src
 }
 

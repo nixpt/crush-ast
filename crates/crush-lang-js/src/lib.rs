@@ -10,9 +10,9 @@ pub mod sdk;
 #[cfg(feature = "js-boa")]
 pub mod analyzer_boa;
 #[cfg(feature = "js-boa")]
-pub mod lower;
-#[cfg(feature = "js-boa")]
 pub mod inline;
+#[cfg(feature = "js-boa")]
+pub mod lower;
 
 use std::any::Any;
 
@@ -54,7 +54,9 @@ impl JsLowering {
                 if cfg!(feature = "swc-backend") {
                     Ok(JsLowering::Swc)
                 } else {
-                    anyhow::bail!("`.jsx` needs crush-lang-js's `swc-backend` feature (boa has no JSX)")
+                    anyhow::bail!(
+                        "`.jsx` needs crush-lang-js's `swc-backend` feature (boa has no JSX)"
+                    )
                 }
             }
             "js" | "mjs" | "cjs" => {
@@ -63,7 +65,9 @@ impl JsLowering {
                 } else if cfg!(feature = "js-boa") {
                     Ok(JsLowering::Boa)
                 } else {
-                    anyhow::bail!("crush-lang-js was built without a JS parser: enable `js-boa` or `swc-backend`")
+                    anyhow::bail!(
+                        "crush-lang-js was built without a JS parser: enable `js-boa` or `swc-backend`"
+                    )
                 }
             }
             // An unknown extension used to be treated as plain JS, so a `.ts`
@@ -86,12 +90,18 @@ pub struct JsFrontend {
 
 impl JsFrontend {
     pub fn new(ext: impl Into<String>) -> Self {
-        JsFrontend { ext: ext.into(), lowering: None }
+        JsFrontend {
+            ext: ext.into(),
+            lowering: None,
+        }
     }
 
     /// Force a lowering, e.g. to run the boa frontend while swc is the default.
     pub fn with_lowering(ext: impl Into<String>, lowering: JsLowering) -> Self {
-        JsFrontend { ext: ext.into(), lowering: Some(lowering) }
+        JsFrontend {
+            ext: ext.into(),
+            lowering: Some(lowering),
+        }
     }
 }
 
@@ -146,8 +156,10 @@ impl Frontend for JsFrontend {
     }
 
     fn analyze(&self, ast: &Box<dyn Any>) -> anyhow::Result<FeatureReport> {
-        let mut r = FeatureReport::default();
-        r.lang = "javascript".to_string();
+        let mut r = FeatureReport {
+            lang: "javascript".to_string(),
+            ..Default::default()
+        };
 
         #[cfg(feature = "js-boa")]
         if let Some((_, parsed)) = ast.downcast_ref::<(String, BoaParsed)>() {
@@ -207,19 +219,30 @@ pub fn js_to_cast(source: &str, ext: &str) -> anyhow::Result<Program> {
 
 use crush_walker_core::LanguageAdapter;
 
-
 /// JS/TS adapter — handles .js/.mjs/.cjs/.ts/.tsx/.mts
 pub struct JsAdapter;
 
 impl LanguageAdapter for JsAdapter {
-    fn language_name(&self) -> &'static str { "javascript" }
-    fn file_extensions(&self) -> &[&'static str] { &["js", "mjs", "cjs", "jsx", "ts", "tsx", "mts", "cts"] }
+    fn language_name(&self) -> &'static str {
+        "javascript"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &["js", "mjs", "cjs", "jsx", "ts", "tsx", "mts", "cts"]
+    }
     fn walk(&self, source: &str, filename: &str) -> anyhow::Result<(FeatureReport, Program)> {
-        let ext = std::path::Path::new(filename).extension()
-            .and_then(|e| e.to_str()).unwrap_or("js");
-        let program = crate::js_to_cast(source, ext)
-            .map_err(|e| anyhow::anyhow!("javascript@CAST: {e}"))?;
-        Ok((FeatureReport { lang: "javascript".to_string(), ..Default::default() }, program))
+        let ext = std::path::Path::new(filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("js");
+        let program =
+            crate::js_to_cast(source, ext).map_err(|e| anyhow::anyhow!("javascript@CAST: {e}"))?;
+        Ok((
+            FeatureReport {
+                lang: "javascript".to_string(),
+                ..Default::default()
+            },
+            program,
+        ))
     }
 }
 
@@ -231,7 +254,11 @@ mod tests {
     fn js_lowering_per_extension() {
         let js = JsLowering::for_ext("js");
         if cfg!(feature = "swc-backend") {
-            assert_eq!(js.unwrap(), JsLowering::Swc, "swc keeps `.js` until CRUSH-250 flips it");
+            assert_eq!(
+                js.unwrap(),
+                JsLowering::Swc,
+                "swc keeps `.js` until CRUSH-250 flips it"
+            );
         } else if cfg!(feature = "js-boa") {
             assert_eq!(js.unwrap(), JsLowering::Boa);
         } else {

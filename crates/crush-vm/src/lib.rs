@@ -14,42 +14,42 @@ pub mod memory;
 // FastVM bakes ai_optimizer::VmOptimizer into its state unconditionally —
 // same gate as ai_optimizer. Neither needs native code any more (ort was
 // removed, CRUSH-256); ungating them for wasm/no-default builds is a follow-up.
-#[cfg(feature = "native-plugins")]
-pub mod fastvm;
-pub mod value;
-pub mod assembler;
-pub mod bytecode;
-pub mod cosm_gate;
-pub mod cosm_rt;
 pub mod ai_args;
 pub mod arithmetic;
+pub mod assembler;
+pub mod block_capture;
+pub mod bytecode;
+pub mod cap_inference;
+pub mod caps;
+pub mod cosm_gate;
+pub mod cosm_rt;
+pub mod debug;
 pub mod dom_args;
-pub mod make_range;
-pub mod seq;
-pub mod num_text;
+#[cfg(feature = "native-plugins")]
+pub mod fastvm;
 pub mod float_text;
 pub mod float_text_core;
-pub mod rust_debug;
-pub mod rust_methods;
-pub mod rust_methods_core;
-pub mod rust_debug_core;
-pub mod js_core;
-pub mod js_ops;
-pub mod map_ops;
-pub mod marshal;
-pub mod block_capture;
-pub mod caps;
-pub mod cap_inference;
-pub mod debug;
 pub mod host;
 pub mod io_print;
 pub mod io_read;
+pub mod js_core;
+pub mod js_ops;
 pub mod lang_exec;
-pub mod str_len;
-pub mod wall;
+pub mod make_range;
+pub mod map_ops;
+pub mod marshal;
+pub mod num_text;
 pub mod parallel;
 pub mod portable_vm;
+pub mod rust_debug;
+pub mod rust_debug_core;
+pub mod rust_methods;
+pub mod rust_methods_core;
 pub mod scheduler;
+pub mod seq;
+pub mod str_len;
+pub mod value;
+pub mod wall;
 // CRUSH-165: hash-chained execution transcript (scheduler VM + PortableVm).
 #[cfg(feature = "transcript")]
 pub mod transcript;
@@ -57,6 +57,7 @@ pub mod vm;
 
 pub use assembler::{AssemblyError, assemble, disassemble};
 pub use bytecode::Program;
+pub use cap_inference::capabilities_used;
 pub use caps::{CapabilitySpec, capabilities, is_privileged as cap_is_privileged};
 pub use debug::{
     DebugStop, DebugVisibility, FrameSnapshot, Redactor, StepMode, ValueView, WatchId, WatchScope,
@@ -67,20 +68,19 @@ pub use lang_exec::{
     PolyglotError, PolyglotExecutor, PolyglotRequest, SubprocessExecutor, polyglot_executor_fn,
 };
 pub use portable_vm::{Frame, LangExecutor, PortableVm, VmYield, value_to_text};
-pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
-pub use scheduler::{polyglot_gate_name, resolve_lang_binary};
 #[cfg(feature = "transcript")]
 pub use scheduler::run_scheduled_with_transcript;
+pub use scheduler::{polyglot_gate_name, resolve_lang_binary};
 #[cfg(feature = "transcript")]
 pub use transcript::{TRANSCRIPT_VERSION, Transcript, TranscriptDigest};
-pub use cap_inference::capabilities_used;
+pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
 
 /// Whether this build runs `@lang[deps]` blocks in a buckets-provisioned bwrap
 /// sandbox (cargo feature `sandboxed-polyglot`). Lets host tooling report it.
 pub const SANDBOXED_POLYGLOT: bool = cfg!(feature = "sandboxed-polyglot");
 
 #[cfg(feature = "native-plugins")]
-pub use vm::{run_fastvm, run_fastvm_with_caps, run_casm_json, CrushResultExt};
+pub use vm::{CrushResultExt, run_casm_json, run_fastvm, run_fastvm_with_caps};
 
 pub use memory::{Arena, Object};
 pub use value::RuntimeValue;

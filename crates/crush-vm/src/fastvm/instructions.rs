@@ -84,7 +84,7 @@ pub enum FastOp {
     ExecLang,
     CrossLangCall,
     Await,
-    
+
     // AI opcodes
     AiQuery,
     AiToolchain,
@@ -103,7 +103,7 @@ pub enum FastOp {
     GetField,
     SetField,
     NewArray,
-    ArrSet,    // indexed array write (arr, idx, val on stack)
+    ArrSet, // indexed array write (arr, idx, val on stack)
     ArrayPush,
     ArrayPop,
     NewTuple,
@@ -409,12 +409,20 @@ pub fn check_sealed_write(class_name: &str, field: &str) -> Result<(), String> {
     let mut parts = rest.split(SEALED_SEP);
     let kind = parts.next().unwrap_or_default();
     let fields: Vec<&str> = parts.collect();
-    if fields.contains(&field) { Ok(()) } else { Err(casm::sealed_field_error(kind, field, &fields)) }
+    if fields.contains(&field) {
+        Ok(())
+    } else {
+        Err(casm::sealed_field_error(kind, field, &fields))
+    }
 }
 
 /// The struct map a sealed Kind's instance starts as: `NewStruct` with its
 /// [`sealed_class`]; `None` for any other Kind (a plain `NewObj`).
-fn sealed_new(module: Option<&crush_cosm::CosmModule>, kind: Option<&str>, symbols: &mut SymbolTables) -> Option<FastInstr> {
+fn sealed_new(
+    module: Option<&crush_cosm::CosmModule>,
+    kind: Option<&str>,
+    symbols: &mut SymbolTables,
+) -> Option<FastInstr> {
     let fields = casm::sealed_fields(module?, kind?)?;
     let idx = symbols.intern_string(&sealed_class(kind?, &fields));
     Some(FastInstr::new(FastOp::NewStruct, idx as u64, 0))
@@ -422,10 +430,18 @@ fn sealed_new(module: Option<&crush_cosm::CosmModule>, kind: Option<&str>, symbo
 
 /// Lower a CASM program to FastInstr representation
 pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
-    program.refuse_cosm(FASTVM_ENGINES).map_err(LowerError::CosmUnsupported)?;
-    program.refuse_green_task(FASTVM_ENGINES).map_err(LowerError::GreenTasksUnsupported)?;
+    program
+        .refuse_cosm(FASTVM_ENGINES)
+        .map_err(LowerError::CosmUnsupported)?;
+    program
+        .refuse_green_task(FASTVM_ENGINES)
+        .map_err(LowerError::GreenTasksUnsupported)?;
     if program.kind_table().is_some()
-        && program.functions.values().flat_map(|f| &f.body).any(|i| i.op == "type_of")
+        && program
+            .functions
+            .values()
+            .flat_map(|f| &f.body)
+            .any(|i| i.op == "type_of")
     {
         return Err(typeof_of_a_struct());
     }
@@ -443,15 +459,16 @@ pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
     for func_name in &func_names {
         let func = &program.functions[*func_name];
         let start_pc = pc;
-        symbols
-            .functions
-            .insert((*func_name).clone(), (start_pc, 0, func.params.len() as u32));
+        symbols.functions.insert(
+            (*func_name).clone(),
+            (start_pc, 0, func.params.len() as u32),
+        );
 
         for instr in &func.body {
-            if instr.op == "label" {
-                if let Some(name) = instr.args.get("name").and_then(|v| v.as_str()) {
-                    label_positions.insert(format!("{}:{}", func_name, name), pc);
-                }
+            if instr.op == "label"
+                && let Some(name) = instr.args.get("name").and_then(|v| v.as_str())
+            {
+                label_positions.insert(format!("{}:{}", func_name, name), pc);
             }
             pc += 1;
         }
@@ -484,7 +501,9 @@ pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
             // COSM K1.4: a struct literal of a sealed Kind (`new_obj` tagged
             // with it) remembers its declared fields, so a write of any
             // other field is refused as on the VMs.
-            let tag = (instr.op == "new_obj").then(|| instr.args.get("kind").and_then(|v| v.as_str())).flatten();
+            let tag = (instr.op == "new_obj")
+                .then(|| instr.args.get("kind").and_then(|v| v.as_str()))
+                .flatten();
             let sealed = sealed_new(program.kind_table(), tag, &mut symbols);
             let fast = match sealed {
                 Some(fast) => fast,
@@ -498,7 +517,10 @@ pub fn lower_program(program: &Program) -> Result<LoweredProgram, LowerError> {
                 )?,
             };
             let fast = match fast.op {
-                FastOp::LoadLocal if to_check[at] => FastInstr { op: FastOp::LoadLocalChecked, ..fast },
+                FastOp::LoadLocal if to_check[at] => FastInstr {
+                    op: FastOp::LoadLocalChecked,
+                    ..fast
+                },
                 _ => fast,
             };
             instructions.push(fast);
@@ -545,34 +567,35 @@ pub fn lower_bytecode_program(
     program: &crate::bytecode::Program,
 ) -> Result<LoweredProgram, LowerError> {
     use crate::bytecode::*;
-    program.refuse_cosm(FASTVM_ENGINES).map_err(LowerError::CosmUnsupported)?;
-    
+    program
+        .refuse_cosm(FASTVM_ENGINES)
+        .map_err(LowerError::CosmUnsupported)?;
+
     let mut symbols = SymbolTables::new();
     let mut instructions: Vec<FastInstr> = Vec::new();
-    
+
     // Register manifest permissions as capabilities.
     for perm in &program.manifest.permissions {
         symbols.register_capability(perm);
     }
-    
+
     // Register functions from the manifest function table.
     // Collect and sort function names for deterministic ordering of symbol entries.
     let mut func_names: Vec<&String> = program.manifest.functions.keys().collect();
     func_names.sort();
-    
+
     // Determine entry point. First check manifest.entry (named entry),
     // then look for "main", else use 0.
-    let known_entry_name = program.manifest.entry.as_deref()
-        .or_else(|| {
-            if program.manifest.functions.contains_key("main") {
-                Some("main")
-            } else {
-                None
-            }
-        });
-    
+    let known_entry_name = program.manifest.entry.as_deref().or_else(|| {
+        if program.manifest.functions.contains_key("main") {
+            Some("main")
+        } else {
+            None
+        }
+    });
+
     let mut entry_point: usize = 0;
-    
+
     // Register all function table entries with their start PCs.
     // All functions share the same flat code section (no per-function sub-range
     // tracking), so we record only the start PC. End PC = code.len() for all.
@@ -583,11 +606,11 @@ pub fn lower_bytecode_program(
             (*func_name).clone(),
             (entry_off, code_len, 0), // arity=0 since bytecode format doesn't encode it
         );
-        if known_entry_name.map_or(false, |n| n == func_name.as_str()) {
+        if known_entry_name == Some(func_name.as_str()) {
             entry_point = entry_off;
         }
     }
-    
+
     // Walk the flat bytecode and produce one FastInstr per instruction.
     let code = &program.code;
     let mut pc: usize = 0;
@@ -596,20 +619,22 @@ pub fn lower_bytecode_program(
         let kind = operand_kind(opcode).ok_or_else(|| {
             LowerError::UnknownOpcode(format!("bytecode 0x{:02X} at offset {pc}", opcode))
         })?;
-        
+
         let fast = match opcode {
             NOP => FastInstr::simple(FastOp::Nop),
             PUSH => {
                 let v = i64::from_be_bytes(
-                    code[pc+1..pc+9].try_into().map_err(|_| 
-                        LowerError::MissingArgument("PUSH value".into()))?,
+                    code[pc + 1..pc + 9]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("PUSH value".into()))?,
                 );
                 FastInstr::new(FastOp::PushInt, v as u64, 0)
             }
             PUSH_STR => {
                 let idx = u16::from_be_bytes(
-                    code[pc+1..pc+3].try_into().map_err(|_|
-                        LowerError::MissingArgument("PUSH_STR index".into()))?,
+                    code[pc + 1..pc + 3]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("PUSH_STR index".into()))?,
                 ) as usize;
                 // Intern the string from the program's const pool.
                 if idx < program.consts.len() {
@@ -626,65 +651,70 @@ pub fn lower_bytecode_program(
             ROT => FastInstr::simple(FastOp::Rot),
             PICK => {
                 let n = u16::from_be_bytes(
-                    code[pc+1..pc+3].try_into().map_err(|_|
-                        LowerError::MissingArgument("PICK n".into()))?,
+                    code[pc + 1..pc + 3]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("PICK n".into()))?,
                 ) as u64;
                 FastInstr::new(FastOp::Pick, n, 0)
             }
             ROLL => {
                 let n = u16::from_be_bytes(
-                    code[pc+1..pc+3].try_into().map_err(|_|
-                        LowerError::MissingArgument("ROLL n".into()))?,
+                    code[pc + 1..pc + 3]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("ROLL n".into()))?,
                 ) as u64;
                 FastInstr::new(FastOp::Roll, n, 0)
             }
             PUSH_F64 => {
                 let bits = f64::from_be_bytes(
-                    code[pc+1..pc+9].try_into().map_err(|_|
-                        LowerError::MissingArgument("PUSH_F64 value".into()))?,
+                    code[pc + 1..pc + 9]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("PUSH_F64 value".into()))?,
                 );
                 FastInstr::new(FastOp::PushFloat, bits.to_bits(), 0)
             }
             PUSH_NULL => FastInstr::simple(FastOp::PushNull),
             PUSH_BOOL => {
                 let v = i64::from_be_bytes(
-                    code[pc+1..pc+9].try_into().map_err(|_|
-                        LowerError::MissingArgument("PUSH_BOOL value".into()))?,
+                    code[pc + 1..pc + 9]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("PUSH_BOOL value".into()))?,
                 );
                 FastInstr::new(FastOp::PushBool, v as u64, 0)
             }
-            
-            ADD  => FastInstr::simple(FastOp::Add),
-            SUB  => FastInstr::simple(FastOp::Sub),
-            MUL  => FastInstr::simple(FastOp::Mul),
-            DIV  => FastInstr::simple(FastOp::Div),
-            MOD  => FastInstr::simple(FastOp::Mod),
-            NEG  => FastInstr::simple(FastOp::Neg),
-            
-            EQ  => FastInstr::simple(FastOp::Eq),
-            LT  => FastInstr::simple(FastOp::Lt),
-            GT  => FastInstr::simple(FastOp::Gt),
+
+            ADD => FastInstr::simple(FastOp::Add),
+            SUB => FastInstr::simple(FastOp::Sub),
+            MUL => FastInstr::simple(FastOp::Mul),
+            DIV => FastInstr::simple(FastOp::Div),
+            MOD => FastInstr::simple(FastOp::Mod),
+            NEG => FastInstr::simple(FastOp::Neg),
+
+            EQ => FastInstr::simple(FastOp::Eq),
+            LT => FastInstr::simple(FastOp::Lt),
+            GT => FastInstr::simple(FastOp::Gt),
             NOT => FastInstr::simple(FastOp::Not),
-            NE  => FastInstr::simple(FastOp::Ne),
-            LE  => FastInstr::simple(FastOp::Le),
-            GE  => FastInstr::simple(FastOp::Ge),
+            NE => FastInstr::simple(FastOp::Ne),
+            LE => FastInstr::simple(FastOp::Le),
+            GE => FastInstr::simple(FastOp::Ge),
             AND => FastInstr::simple(FastOp::And),
-            OR  => FastInstr::simple(FastOp::Or),
-            
+            OR => FastInstr::simple(FastOp::Or),
+
             BITAND => FastInstr::simple(FastOp::BitAnd),
-            BITOR  => FastInstr::simple(FastOp::BitOr),
+            BITOR => FastInstr::simple(FastOp::BitOr),
             BITXOR => FastInstr::simple(FastOp::BitXor),
             BITNOT => FastInstr::simple(FastOp::BitNot),
-            SHL    => FastInstr::simple(FastOp::Shl),
-            SHR    => FastInstr::simple(FastOp::Shr),
-            
+            SHL => FastInstr::simple(FastOp::Shl),
+            SHR => FastInstr::simple(FastOp::Shr),
+
             TYPEOF if program.kind_table().is_some() => return Err(typeof_of_a_struct()),
             TYPEOF => FastInstr::simple(FastOp::TypeOf),
-            
+
             LOAD => {
                 let slot = u16::from_be_bytes(
-                    code[pc+1..pc+3].try_into().map_err(|_|
-                        LowerError::MissingArgument("LOAD slot".into()))?,
+                    code[pc + 1..pc + 3]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("LOAD slot".into()))?,
                 ) as u64;
                 // No definite-assignment pass over CVM1 bytecode: every load
                 // is checked (CRUSH-zorro-55).
@@ -692,47 +722,52 @@ pub fn lower_bytecode_program(
             }
             STORE => {
                 let slot = u16::from_be_bytes(
-                    code[pc+1..pc+3].try_into().map_err(|_|
-                        LowerError::MissingArgument("STORE slot".into()))?,
+                    code[pc + 1..pc + 3]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("STORE slot".into()))?,
                 ) as u64;
                 FastInstr::new(FastOp::StoreLocal, slot, 0)
             }
-            
+
             JMP => {
                 let target = u32::from_be_bytes(
-                    code[pc+1..pc+5].try_into().map_err(|_|
-                        LowerError::MissingArgument("JMP target".into()))?,
+                    code[pc + 1..pc + 5]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("JMP target".into()))?,
                 ) as u64;
                 FastInstr::new(FastOp::Jump, target, 0)
             }
             JZ => {
                 let target = u32::from_be_bytes(
-                    code[pc+1..pc+5].try_into().map_err(|_|
-                        LowerError::MissingArgument("JZ target".into()))?,
+                    code[pc + 1..pc + 5]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("JZ target".into()))?,
                 ) as u64;
                 FastInstr::new(FastOp::JumpIfNot, target, 0)
             }
             JNZ => {
                 let target = u32::from_be_bytes(
-                    code[pc+1..pc+5].try_into().map_err(|_|
-                        LowerError::MissingArgument("JNZ target".into()))?,
+                    code[pc + 1..pc + 5]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("JNZ target".into()))?,
                 ) as u64;
                 FastInstr::new(FastOp::JumpIf, target, 0)
             }
-            
+
             PRINT => {
                 // Convert PRINT to CapCall to "io.print" with argc=1.
                 // Register "io.print" as a capability if not already registered.
                 let cap_idx = symbols.register_capability("io.print");
                 FastInstr::new(FastOp::CapCall, cap_idx as u64, 1)
             }
-            
+
             CAP_CALL => {
                 let idx = u16::from_be_bytes(
-                    code[pc+1..pc+3].try_into().map_err(|_|
-                        LowerError::MissingArgument("CAP_CALL cap index".into()))?,
+                    code[pc + 1..pc + 3]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("CAP_CALL cap index".into()))?,
                 ) as usize;
-                let argc = code[pc+3] as u32;
+                let argc = code[pc + 3] as u32;
                 let cap_name = if idx < program.consts.len() {
                     &program.consts[idx]
                 } else {
@@ -741,11 +776,12 @@ pub fn lower_bytecode_program(
                 let cap_idx = symbols.register_capability(cap_name);
                 FastInstr::new(FastOp::CapCall, cap_idx as u64, argc)
             }
-            
+
             CALL => {
                 let idx = u16::from_be_bytes(
-                    code[pc+1..pc+3].try_into().map_err(|_|
-                        LowerError::MissingArgument("CALL func index".into()))?,
+                    code[pc + 1..pc + 3]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("CALL func index".into()))?,
                 ) as usize;
                 let func_name = if idx < program.consts.len() {
                     &program.consts[idx]
@@ -755,26 +791,27 @@ pub fn lower_bytecode_program(
                 let name_idx = symbols.intern_string(func_name);
                 FastInstr::new(FastOp::Call, name_idx as u64, 0)
             }
-            
+
             RET => FastInstr::simple(FastOp::Return),
-            
+
             ENTER_TRY => {
                 let target = u32::from_be_bytes(
-                    code[pc+1..pc+5].try_into().map_err(|_|
-                        LowerError::MissingArgument("ENTER_TRY target".into()))?,
+                    code[pc + 1..pc + 5]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("ENTER_TRY target".into()))?,
                 ) as u64;
                 FastInstr::new(FastOp::EnterTry, target, 0)
             }
             EXIT_TRY => FastInstr::simple(FastOp::ExitTry),
             THROW => FastInstr::simple(FastOp::Throw),
-            
+
             NEW_ARRAY => FastInstr::simple(FastOp::NewArray),
             ARR_GET => FastInstr::simple(FastOp::Index),
             ARR_SET => FastInstr::simple(FastOp::ArrSet),
             ARR_LEN => FastInstr::simple(FastOp::Len),
             ARR_PUSH => FastInstr::simple(FastOp::ArrayPush),
             ARR_POP => FastInstr::simple(FastOp::ArrayPop),
-            
+
             NEW_TUPLE => FastInstr::simple(FastOp::NewTuple),
             TUPLE_PUSH => FastInstr::simple(FastOp::TuplePush),
             NEW_LIST => FastInstr::simple(FastOp::NewList),
@@ -784,12 +821,13 @@ pub fn lower_bytecode_program(
             NEW_SET => FastInstr::simple(FastOp::NewSet),
             SET_PUSH => FastInstr::simple(FastOp::SetPush),
             MAP_KEYS => FastInstr::simple(FastOp::MapKeys),
-            
+
             NEW_OBJ => FastInstr::simple(FastOp::NewObj),
             SET_FIELD => {
                 let idx = u16::from_be_bytes(
-                    code[pc+1..pc+3].try_into().map_err(|_|
-                        LowerError::MissingArgument("SET_FIELD name index".into()))?,
+                    code[pc + 1..pc + 3]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("SET_FIELD name index".into()))?,
                 ) as usize;
                 let name = if idx < program.consts.len() {
                     symbols.intern_string(&program.consts[idx])
@@ -800,8 +838,9 @@ pub fn lower_bytecode_program(
             }
             GET_FIELD => {
                 let idx = u16::from_be_bytes(
-                    code[pc+1..pc+3].try_into().map_err(|_|
-                        LowerError::MissingArgument("GET_FIELD name index".into()))?,
+                    code[pc + 1..pc + 3]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("GET_FIELD name index".into()))?,
                 ) as usize;
                 let name = if idx < program.consts.len() {
                     symbols.intern_string(&program.consts[idx])
@@ -810,7 +849,7 @@ pub fn lower_bytecode_program(
                 };
                 FastInstr::new(FastOp::GetField, name as u64, 0)
             }
-            
+
             STR_CONTAINS => FastInstr::simple(FastOp::StrContains),
             STR_SPLIT => FastInstr::simple(FastOp::StrSplit),
             STR_REPLACE => FastInstr::simple(FastOp::StrReplace),
@@ -820,18 +859,18 @@ pub fn lower_bytecode_program(
             STR_TO_UPPER => FastInstr::simple(FastOp::StrToUpper),
             STR_TO_LOWER => FastInstr::simple(FastOp::StrToLower),
             STR_TRIM => FastInstr::simple(FastOp::StrTrim),
-            
-            MATH_POW   => FastInstr::simple(FastOp::MathPow),
-            MATH_SQRT  => FastInstr::simple(FastOp::MathSqrt),
-            MATH_ABS   => FastInstr::simple(FastOp::MathAbs),
+
+            MATH_POW => FastInstr::simple(FastOp::MathPow),
+            MATH_SQRT => FastInstr::simple(FastOp::MathSqrt),
+            MATH_ABS => FastInstr::simple(FastOp::MathAbs),
             MATH_ROUND => FastInstr::simple(FastOp::MathRound),
             MATH_FLOOR => FastInstr::simple(FastOp::MathFloor),
-            MATH_CEIL  => FastInstr::simple(FastOp::MathCeil),
-            
+            MATH_CEIL => FastInstr::simple(FastOp::MathCeil),
+
             SPAWN => FastInstr::simple(FastOp::Spawn),
             YIELD => FastInstr::simple(FastOp::Yield),
             AWAIT => FastInstr::simple(FastOp::Await),
-            
+
             HALT => FastInstr::simple(FastOp::Halt),
 
             // COSM K1.4 (CRUSH-zorro-43): struct instances are maps here. The
@@ -843,24 +882,25 @@ pub fn lower_bytecode_program(
             CONSTRUCT | NEW_RECORD if opcode == NEW_RECORD || code.get(pc + 3) == Some(&0) => {
                 let idx = u16::from_be_bytes([code[pc + 1], code[pc + 2]]) as usize;
                 let kind = program.consts.get(idx).map(String::as_str);
-                sealed_new(program.kind_table(), kind, &mut symbols).unwrap_or(FastInstr::simple(FastOp::NewObj))
+                sealed_new(program.kind_table(), kind, &mut symbols)
+                    .unwrap_or(FastInstr::simple(FastOp::NewObj))
             }
-            GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | CALL_MEMBER | CONSTRUCT | GET_SLOT
-            | SET_SLOT | IS_KIND | COPY | LOAD_KIND => {
+            GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | CALL_MEMBER | CONSTRUCT
+            | GET_SLOT | SET_SLOT | IS_KIND | COPY | LOAD_KIND => {
                 return Err(LowerError::UnknownOpcode(format!(
                     "bytecode 0x{opcode:02X} at offset {pc}: COSM member ops need Kinds, \
                      which FastVM and the JIT don't implement (they run on the scheduler VM and the portable VM)"
                 )));
             }
-            
+
             _ => FastInstr::simple(FastOp::Nop),
         };
-        
+
         instructions.push(fast);
         let isize = 1 + kind.byte_width();
         pc += isize;
     }
-    
+
     Ok(LoweredProgram {
         instructions,
         symbols,
@@ -961,12 +1001,12 @@ fn lower_instruction(
 
         "jump" | "jmp" => {
             let func_start = symbols.functions.get(current_func).copied().map(|(s,_,_)| s).unwrap_or(0);
-            return lower_jump(instr, current_func, labels, pending_jumps, pc, FastOp::Jump, func_start);
+            lower_jump(instr, current_func, labels, pending_jumps, pc, FastOp::Jump, func_start)
         }
 
         "jump_if" | "jmp_if" | "branch_if" => {
             let func_start = symbols.functions.get(current_func).copied().map(|(s,_,_)| s).unwrap_or(0);
-            return lower_jump(
+            lower_jump(
                 instr,
                 current_func,
                 labels,
@@ -974,12 +1014,12 @@ fn lower_instruction(
                 pc,
                 FastOp::JumpIf,
                 func_start,
-            );
+            )
         }
 
         "jump_if_not" | "jmp_if_not" | "branch_if_not" => {
             let func_start = symbols.functions.get(current_func).copied().map(|(s,_,_)| s).unwrap_or(0);
-            return lower_jump(
+            lower_jump(
                 instr,
                 current_func,
                 labels,
@@ -987,7 +1027,7 @@ fn lower_instruction(
                 pc,
                 FastOp::JumpIfNot,
                 func_start,
-            );
+            )
         }
 
         "make_closure" => Err(LowerError::UnknownOpcode(
@@ -1525,13 +1565,13 @@ mod tests {
 
     #[test]
     fn test_lower_bytecode_simple_program() {
-        use crate::bytecode::{Program, Manifest};
+        use crate::bytecode::{Manifest, Program};
         // Build a simple bytecode program: PUSH 42; HALT
         let mut code = Vec::new();
         code.push(crate::bytecode::PUSH);
         code.extend_from_slice(&42i64.to_be_bytes());
         code.push(crate::bytecode::HALT);
-        
+
         let program = Program::new(code, vec![], Manifest::default());
         let lowered = lower_bytecode_program(&program).expect("lower bytecode");
         assert_eq!(lowered.instructions.len(), 2);
@@ -1543,7 +1583,7 @@ mod tests {
 
     #[test]
     fn test_lower_bytecode_basic_ops() {
-        use crate::bytecode::{Program, Manifest};
+        use crate::bytecode::{Manifest, Program};
         // PUSH_STR "hello" → CAP_CALL "io.print" 1 → HALT
         let mut code = Vec::new();
         code.push(crate::bytecode::PUSH_STR);
@@ -1552,7 +1592,7 @@ mod tests {
         code.extend_from_slice(&1u16.to_be_bytes()); // consts[1] = "io.print"
         code.push(1u8); // argc = 1
         code.push(crate::bytecode::HALT);
-        
+
         let program = Program::new(
             code,
             vec!["hello".into(), "io.print".into()],

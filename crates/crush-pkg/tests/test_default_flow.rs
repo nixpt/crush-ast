@@ -43,7 +43,11 @@ fn app_with_dep(root: &Path) -> std::path::PathBuf {
          [[dependencies]]\nname = \"util\"\npath = \"../util\"\n",
     )
     .unwrap();
-    std::fs::write(app.join("src/main.crush"), "fn main() {\n    io.print(greet())\n}\n").unwrap();
+    std::fs::write(
+        app.join("src/main.crush"),
+        "fn main() {\n    io.print(greet())\n}\n",
+    )
+    .unwrap();
     app
 }
 
@@ -56,9 +60,18 @@ fn bare_builds_writes_target_and_runs_the_built_program() {
     let all = text(&out);
     assert!(out.status.success(), "bare crush-pkg failed:\n{all}");
     assert!(all.contains("building app v0.1.0"), "{all}");
-    assert!(all.contains("hi from util"), "program output missing:\n{all}");
-    assert!(app.join("target/app.cvm1").is_file(), "target/app.cvm1 not written");
-    assert!(app.join("target/app.casm").is_file(), "target/app.casm not written");
+    assert!(
+        all.contains("hi from util"),
+        "program output missing:\n{all}"
+    );
+    assert!(
+        app.join("target/app.cvm1").is_file(),
+        "target/app.cvm1 not written"
+    );
+    assert!(
+        app.join("target/app.casm").is_file(),
+        "target/app.casm not written"
+    );
 
     // `run` is the same build-then-run path (CRUSH-348): the dep's function is there.
     let run = crush_pkg(&app, &["run"]);
@@ -70,13 +83,20 @@ fn bare_builds_writes_target_and_runs_the_built_program() {
 fn bare_reports_compile_errors_with_the_builder_code() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app_with_dep(tmp.path());
-    std::fs::write(app.join("src/main.crush"), "fn main() {\n    io.print(nope())\n}\n").unwrap();
+    std::fs::write(
+        app.join("src/main.crush"),
+        "fn main() {\n    io.print(nope())\n}\n",
+    )
+    .unwrap();
 
     let out = crush_pkg(&app, &[]);
     let all = text(&out);
     assert!(!out.status.success());
     assert!(all.contains("crush-pkg[E-BUILDER]"), "{all}");
-    assert!(!app.join("target/app.cvm1").exists(), "failed build must not write target/");
+    assert!(
+        !app.join("target/app.cvm1").exists(),
+        "failed build must not write target/"
+    );
 }
 
 fn python_capsule(root: &Path) -> std::path::PathBuf {
@@ -99,9 +119,14 @@ fn build_and_check_refuse_non_crush_capsules() {
     for sub in ["build", "check"] {
         let out = crush_pkg(&dir, &[sub]);
         let all = text(&out);
-        assert!(!out.status.success(), "{sub} should refuse a python capsule");
         assert!(
-            all.contains(&format!("`crush-pkg {sub}` only applies to Crush-source capsules")),
+            !out.status.success(),
+            "{sub} should refuse a python capsule"
+        );
+        assert!(
+            all.contains(&format!(
+                "`crush-pkg {sub}` only applies to Crush-source capsules"
+            )),
             "{sub}: {all}"
         );
         assert!(all.contains("language = \"python\""), "{sub}: {all}");
@@ -112,7 +137,10 @@ fn build_and_check_refuse_non_crush_capsules() {
     let out = crush_pkg(&dir, &["check", "--message-format", "json"]);
     let line = String::from_utf8_lossy(&out.stdout);
     assert!(line.contains("\"code\":\"E-BUILDER\""), "{line}");
-    assert!(line.contains("only applies to Crush-source capsules"), "{line}");
+    assert!(
+        line.contains("only applies to Crush-source capsules"),
+        "{line}"
+    );
 }
 
 #[cfg(unix)]
@@ -133,8 +161,14 @@ fn bare_on_a_native_capsule_skips_build_and_passes_args() {
     let out = crush_pkg(tmp.path(), &["--", "alpha", "beta"]);
     let all = text(&out);
     assert!(out.status.success(), "{all}");
-    assert!(String::from_utf8_lossy(&out.stdout).contains("alpha beta"), "{all}");
-    assert!(!all.contains("building"), "native capsule must not be built:\n{all}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("alpha beta"),
+        "{all}"
+    );
+    assert!(
+        !all.contains("building"),
+        "native capsule must not be built:\n{all}"
+    );
     assert!(!tmp.path().join("target").exists());
 }
 
@@ -158,7 +192,11 @@ fn crush_capsule(root: &Path, manifest_extra: &str, body: &str) -> std::path::Pa
 #[test]
 fn crush_program_args_reach_sys_args() {
     let tmp = tempfile::tempdir().unwrap();
-    let dir = crush_capsule(tmp.path(), "", "io.print(\"args=\" + str.join(sys.args(), \",\"))\n");
+    let dir = crush_capsule(
+        tmp.path(),
+        "",
+        "io.print(\"args=\" + str.join(sys.args(), \",\"))\n",
+    );
 
     let out = crush_pkg(&dir, &["--", "alpha", "-b", "gamma delta"]);
     let all = text(&out);
@@ -181,25 +219,49 @@ fn crush_program_quotas_follow_flags_and_manifest_gas() {
 
     let dir = crush_capsule(tmp.path(), "", spin);
     let out = crush_pkg(&dir, &[]);
-    assert!(out.status.success() && text(&out).contains("spun"), "{}", text(&out));
+    assert!(
+        out.status.success() && text(&out).contains("spun"),
+        "{}",
+        text(&out)
+    );
     let out = crush_pkg(&dir, &["--max-steps", "1000"]);
-    assert!(!out.status.success() && !text(&out).contains("spun"), "--max-steps ignored: {}", text(&out));
+    assert!(
+        !out.status.success() && !text(&out).contains("spun"),
+        "--max-steps ignored: {}",
+        text(&out)
+    );
 
     std::fs::remove_dir_all(&dir).unwrap();
     let dir = crush_capsule(tmp.path(), "\n[resources]\ngas = 1000\n", spin);
     let out = crush_pkg(&dir, &["run"]);
-    assert!(!out.status.success() && !text(&out).contains("spun"), "gas ignored: {}", text(&out));
+    assert!(
+        !out.status.success() && !text(&out).contains("spun"),
+        "gas ignored: {}",
+        text(&out)
+    );
     let out = crush_pkg(&dir, &["run", "--max-steps", "10000000"]);
-    assert!(out.status.success() && text(&out).contains("spun"), "flag must beat gas: {}", text(&out));
+    assert!(
+        out.status.success() && text(&out).contains("spun"),
+        "flag must beat gas: {}",
+        text(&out)
+    );
 
     // Recursion deeper than the VM's default call depth (256).
     std::fs::remove_dir_all(&dir).unwrap();
     let deep = "fn d(n) {\n    if n == 0 {\n        return 0\n    }\n    return 1 + d(n - 1)\n}\nio.print(\"depth \" + d(300))\n";
     let dir = crush_capsule(tmp.path(), "", deep);
     let out = crush_pkg(&dir, &[]);
-    assert!(!out.status.success(), "default depth should refuse 300: {}", text(&out));
+    assert!(
+        !out.status.success(),
+        "default depth should refuse 300: {}",
+        text(&out)
+    );
     let out = crush_pkg(&dir, &["--max-call-depth", "1000"]);
-    assert!(out.status.success() && text(&out).contains("depth 300"), "{}", text(&out));
+    assert!(
+        out.status.success() && text(&out).contains("depth 300"),
+        "{}",
+        text(&out)
+    );
 }
 
 #[test]
@@ -232,5 +294,8 @@ fn show_prints_catalogue_fields_and_rejects_unknown_ones() {
     let all = text(&out);
     assert!(!out.status.success());
     assert!(all.contains("crush-pkg[E-MANIFEST]"), "{all}");
-    assert!(all.contains("unknown [capsule] category \"toolz\""), "{all}");
+    assert!(
+        all.contains("unknown [capsule] category \"toolz\""),
+        "{all}"
+    );
 }

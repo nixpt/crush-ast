@@ -32,7 +32,11 @@ fn consumer_with_dep(root: &Path) -> PathBuf {
         "[capsule]\nname = \"dep\"\nversion = \"0.1.0\"\nentry = \"dep.crush\"\nlanguage = \"crush\"\ncategory = \"library\"\n",
     )
     .unwrap();
-    std::fs::write(dep.join("dep.crush"), "fn dep_hello() {\n    return \"hello from dep\"\n}\n").unwrap();
+    std::fs::write(
+        dep.join("dep.crush"),
+        "fn dep_hello() {\n    return \"hello from dep\"\n}\n",
+    )
+    .unwrap();
 
     let consumer = root.join("consumer");
     std::fs::create_dir_all(&consumer).unwrap();
@@ -41,7 +45,11 @@ fn consumer_with_dep(root: &Path) -> PathBuf {
         "[capsule]\nname = \"consumer\"\nversion = \"0.1.0\"\nentry = \"main.crush\"\nlanguage = \"crush\"\ncategory = \"cli\"\n\n[[dependencies]]\nname = \"dep\"\npath = \"../dep\"\n",
     )
     .unwrap();
-    std::fs::write(consumer.join("main.crush"), "fn main() {\n    print(dep_hello())\n}\n").unwrap();
+    std::fs::write(
+        consumer.join("main.crush"),
+        "fn main() {\n    print(dep_hello())\n}\n",
+    )
+    .unwrap();
     consumer
 }
 
@@ -54,7 +62,11 @@ fn probe(root: &Path, body: &str) -> PathBuf {
         "[capsule]\nname = \"probe\"\nversion = \"0.1.0\"\nentry = \"main.crush\"\nlanguage = \"crush\"\ncategory = \"cli\"\n",
     )
     .unwrap();
-    std::fs::write(dir.join("main.crush"), format!("fn main() {{\n{body}\n}}\n")).unwrap();
+    std::fs::write(
+        dir.join("main.crush"),
+        format!("fn main() {{\n{body}\n}}\n"),
+    )
+    .unwrap();
     dir
 }
 
@@ -66,7 +78,11 @@ fn run_sees_path_dependencies_like_build_and_bare() {
     for args in [&["run"][..], &[][..]] {
         let out = crush_pkg(&app, args);
         assert!(out.status.success(), "{args:?} failed:\n{}", all(&out));
-        assert!(stdout(&out).contains("hello from dep"), "{args:?}:\n{}", all(&out));
+        assert!(
+            stdout(&out).contains("hello from dep"),
+            "{args:?}:\n{}",
+            all(&out)
+        );
     }
     // `run` now also writes target/ (it is the build-then-run path).
     assert!(app.join("target/consumer.cvm1").is_file());
@@ -76,7 +92,11 @@ fn run_sees_path_dependencies_like_build_and_bare() {
 fn run_reports_compile_errors_with_the_builder_code() {
     let tmp = tempfile::tempdir().unwrap();
     let app = consumer_with_dep(tmp.path());
-    std::fs::write(app.join("main.crush"), "fn main() {\n    print(nope())\n}\n").unwrap();
+    std::fs::write(
+        app.join("main.crush"),
+        "fn main() {\n    print(nope())\n}\n",
+    )
+    .unwrap();
     let out = crush_pkg(&app, &["run"]);
     assert!(!out.status.success());
     assert!(all(&out).contains("crush-pkg[E-BUILDER]"), "{}", all(&out));
@@ -89,7 +109,11 @@ fn sys_exit_zero_is_success_and_keeps_output() {
     for args in [&["run"][..], &[][..]] {
         let out = crush_pkg(&dir, args);
         assert_eq!(out.status.code(), Some(0), "{args:?}:\n{}", all(&out));
-        assert!(stdout(&out).contains("before exit"), "{args:?}:\n{}", all(&out));
+        assert!(
+            stdout(&out).contains("before exit"),
+            "{args:?}:\n{}",
+            all(&out)
+        );
         assert!(!all(&out).contains("E-RUN"), "{args:?}:\n{}", all(&out));
     }
 }
@@ -101,7 +125,11 @@ fn sys_exit_n_is_the_process_status_without_a_crash_banner() {
     for args in [&["run"][..], &[][..]] {
         let out = crush_pkg(&dir, args);
         assert_eq!(out.status.code(), Some(2), "{args:?}:\n{}", all(&out));
-        assert!(stdout(&out).contains("usage: probe"), "{args:?}:\n{}", all(&out));
+        assert!(
+            stdout(&out).contains("usage: probe"),
+            "{args:?}:\n{}",
+            all(&out)
+        );
         assert!(!all(&out).contains("E-RUN"), "{args:?}:\n{}", all(&out));
     }
 }
@@ -110,11 +138,18 @@ fn sys_exit_n_is_the_process_status_without_a_crash_banner() {
 fn genuine_runtime_errors_keep_e_run_and_earlier_output() {
     let tmp = tempfile::tempdir().unwrap();
     // Compiles, fails at run time: indexing an empty list.
-    let dir = probe(tmp.path(), "    print(\"partial\")\n    let xs = []\n    print(xs[3])");
+    let dir = probe(
+        tmp.path(),
+        "    print(\"partial\")\n    let xs = []\n    print(xs[3])",
+    );
     for args in [&["run"][..], &[][..]] {
         let out = crush_pkg(&dir, args);
         assert_eq!(out.status.code(), Some(1), "{args:?}:\n{}", all(&out));
-        assert!(all(&out).contains("crush-pkg[E-RUN]"), "{args:?}:\n{}", all(&out));
+        assert!(
+            all(&out).contains("crush-pkg[E-RUN]"),
+            "{args:?}:\n{}",
+            all(&out)
+        );
         assert!(stdout(&out).contains("partial"), "{args:?}:\n{}", all(&out));
     }
 }

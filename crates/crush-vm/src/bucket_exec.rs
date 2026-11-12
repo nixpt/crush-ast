@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use buckets::config::Config;
 use buckets::index::Index;
 use buckets::resolve::resolve_multi;
-use buckets::sandbox::{sandboxed_command, SandboxProfile};
+use buckets::sandbox::{SandboxProfile, sandboxed_command};
 use buckets::types::ResolvedEnvironment;
 
 /// Map a canonical `@lang` tag to the bare-runtime `buckets` spec used to
@@ -112,7 +112,11 @@ pub(crate) fn build_sandboxed_command(
         // rw-bound for `--chdir` to succeed inside bwrap's fresh mount
         // namespace (see CRUSHAST-BUCKETSPIKE-1's `SPIKE_RESULTS.md`).
         project_dir: Some(cwd.clone()),
-        extra_ro_binds: resolved.installations.iter().map(|i| i.path.clone()).collect(),
+        extra_ro_binds: resolved
+            .installations
+            .iter()
+            .map(|i| i.path.clone())
+            .collect(),
         // Registry deps (`pypi:`/`npm:`) are resolved HOST-side by
         // `resolve_multi` above and RO-bound into the guest via
         // `extra_ro_binds` + `PYTHONPATH`/`NODE_PATH` — the guest itself
@@ -178,13 +182,15 @@ mod tests {
 
     #[test]
     fn validate_deps_accepts_bare_and_registry_specs() {
-        assert!(validate_deps(&[
-            s("openssl@^1.1"),
-            s("pypi:six"),
-            s("npm:is-number@7"),
-            s("cargo:ripgrep"),
-        ])
-        .is_ok());
+        assert!(
+            validate_deps(&[
+                s("openssl@^1.1"),
+                s("pypi:six"),
+                s("npm:is-number@7"),
+                s("cargo:ripgrep"),
+            ])
+            .is_ok()
+        );
     }
 
     #[test]

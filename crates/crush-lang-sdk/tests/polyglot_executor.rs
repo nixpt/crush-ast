@@ -57,9 +57,14 @@ fn doubled(lang: &str, vars: &[(String, String)], outputs: &[String]) -> String 
         .find(|(name, _)| name == "n")
         .map(|(_, v)| v.parse().expect("n is JSON-encoded"))
         .unwrap_or(0);
-    let outs: serde_json::Map<String, serde_json::Value> =
-        outputs.iter().map(|o| (o.clone(), serde_json::json!(n * 2))).collect();
-    format!("ran {lang} in the embedder\n{CRUSH_RESULT_SENTINEL}{}\n", serde_json::Value::Object(outs))
+    let outs: serde_json::Map<String, serde_json::Value> = outputs
+        .iter()
+        .map(|o| (o.clone(), serde_json::json!(n * 2)))
+        .collect();
+    format!(
+        "ran {lang} in the embedder\n{CRUSH_RESULT_SENTINEL}{}\n",
+        serde_json::Value::Object(outs)
+    )
 }
 
 fn compile(src: &str) -> Program {
@@ -87,7 +92,8 @@ fn portable(program: &Program, caps: &HostCaps) -> Result<String, VmError> {
 /// block's own line and the next `print` run together.
 const EXPECTED: &str = "ran python in the embedder42\n";
 
-const DOUBLE: &str = "fn main() {\n  let n = 21\n  @python -> y {\n    y = n * 2\n  }\n  print(y)\n}\n";
+const DOUBLE: &str =
+    "fn main() {\n  let n = 21\n  @python -> y {\n    y = n * 2\n  }\n  print(y)\n}\n";
 
 #[test]
 fn the_executor_runs_the_block_on_the_scheduler_vm() {
@@ -105,7 +111,10 @@ fn the_executor_runs_the_block_on_the_scheduler_vm() {
     assert_eq!(call.gate, "polyglot.python");
     // CRUSH-186: the block gets what is left of the run's wall-clock budget.
     assert!(call.deadline_ms > 0 && call.deadline_ms <= Quotas::default().max_wall_time_ms);
-    assert!(call.code_mentions_body, "the executor gets the block's source");
+    assert!(
+        call.code_mentions_body,
+        "the executor gets the block's source"
+    );
 }
 
 #[test]
@@ -119,8 +128,15 @@ fn both_engines_agree_with_the_same_executor() {
     let seen = doubler.seen.lock().unwrap();
     assert_eq!(seen.len(), 2);
     // The remaining wall budget differs by a few ms between the two runs (CRUSH-186).
-    let norm = |c: &Seen| Seen { deadline_ms: 0, ..c.clone() };
-    assert_eq!(norm(&seen[0]), norm(&seen[1]), "both engines hand the executor the same request");
+    let norm = |c: &Seen| Seen {
+        deadline_ms: 0,
+        ..c.clone()
+    };
+    assert_eq!(
+        norm(&seen[0]),
+        norm(&seen[1]),
+        "both engines hand the executor the same request"
+    );
 }
 
 #[test]
@@ -128,7 +144,8 @@ fn the_executor_matches_portable_vms_lang_executor() {
     // The older `PortableVm::set_lang_executor` seam, given the same runner,
     // produces what the scheduler VM produces through the new one.
     let program = compile(DOUBLE);
-    let native = scheduler(&program, &granted_with(Arc::new(Doubler::default()))).expect("scheduler");
+    let native =
+        scheduler(&program, &granted_with(Arc::new(Doubler::default()))).expect("scheduler");
 
     let mut vm = PortableVm::new(program);
     let mut caps = HostCaps::new();
@@ -153,14 +170,23 @@ fn an_ungranted_block_never_reaches_the_executor() {
     // 1. No `polyglot.python` grant at all.
     let mut no_grant = HostCaps::new();
     no_grant.set_polyglot_executor(doubler.clone());
-    for result in [scheduler(&program, &no_grant), portable(&program, &no_grant)] {
+    for result in [
+        scheduler(&program, &no_grant),
+        portable(&program, &no_grant),
+    ] {
         let e = result.expect_err("refused").to_string();
-        assert!(e.contains("requires the 'polyglot.python' capability"), "{e}");
+        assert!(
+            e.contains("requires the 'polyglot.python' capability"),
+            "{e}"
+        );
     }
 
     // 2. Granted, but outside the embedder's `allowed_caps`.
     let caps = granted_with(doubler.clone());
-    let quotas = Quotas { allowed_caps: Some(vec!["io.print".into()]), ..Quotas::default() };
+    let quotas = Quotas {
+        allowed_caps: Some(vec!["io.print".into()]),
+        ..Quotas::default()
+    };
     match crush_vm::run_with_caps(&program, &quotas, Some(&caps)) {
         Err(VmError::CapDenied(cap)) => assert_eq!(cap, "polyglot.python"),
         other => panic!("expected CapDenied, got {other:?}"),
@@ -172,9 +198,15 @@ fn an_ungranted_block_never_reaches_the_executor() {
     every.grant_polyglot(&["python", "javascript", "bash", "zsh"]);
     every.set_polyglot_executor(doubler.clone());
     let e = scheduler(&zsh, &every).expect_err("refused").to_string();
-    assert!(e.contains("no executor registered for language 'zsh'"), "{e}");
+    assert!(
+        e.contains("no executor registered for language 'zsh'"),
+        "{e}"
+    );
 
-    assert!(doubler.seen.lock().unwrap().is_empty(), "the executor was called for an ungranted block");
+    assert!(
+        doubler.seen.lock().unwrap().is_empty(),
+        "the executor was called for an ungranted block"
+    );
 }
 
 #[test]
@@ -191,7 +223,9 @@ fn an_executor_error_becomes_a_vm_error() {
     }
 
     let guest = granted_with(polyglot_executor_fn(|_req: &PolyglotRequest<'_>| {
-        Err(PolyglotError::Guest("ZeroDivisionError: division by zero".into()))
+        Err(PolyglotError::Guest(
+            "ZeroDivisionError: division by zero".into(),
+        ))
     }));
     match crush_vm::run_with_caps(&program, &Quotas::default(), Some(&guest)) {
         Err(VmError::LangRuntimeError { lang, message, .. }) => {
@@ -201,8 +235,13 @@ fn an_executor_error_becomes_a_vm_error() {
         other => panic!("expected LangRuntimeError, got {other:?}"),
     }
 
-    let slow = granted_with(polyglot_executor_fn(|_req: &PolyglotRequest<'_>| Err(PolyglotError::Timeout)));
-    let quotas = Quotas { max_wall_time_ms: 250, ..Quotas::default() };
+    let slow = granted_with(polyglot_executor_fn(|_req: &PolyglotRequest<'_>| {
+        Err(PolyglotError::Timeout)
+    }));
+    let quotas = Quotas {
+        max_wall_time_ms: 250,
+        ..Quotas::default()
+    };
     match crush_vm::run_with_caps(&program, &quotas, Some(&slow)) {
         Err(VmError::CapTimeout { cap, limit_ms }) => {
             assert_eq!(cap, "polyglot.python");
@@ -222,7 +261,11 @@ fn spawned_tasks_use_the_same_executor() {
     let seen = doubler.seen.lock().unwrap();
     let mut ns: Vec<&str> = seen.iter().map(|s| s.vars[0].1.as_str()).collect();
     ns.sort();
-    assert_eq!(ns, vec!["5", "7"], "each spawned task's block went through the executor");
+    assert_eq!(
+        ns,
+        vec!["5", "7"],
+        "each spawned task's block went through the executor"
+    );
 }
 
 #[test]
@@ -247,8 +290,15 @@ fn runtime_and_builder_carry_the_executor() {
 
     // Through the SDK builder.
     let doubler = Arc::new(Doubler::default());
-    let caps = HostCapsBuilder::new().polyglot(&["python"]).polyglot_executor(doubler.clone()).build();
-    let out = Runtime::new().with_host_caps(caps).run(&program).expect("run").output;
+    let caps = HostCapsBuilder::new()
+        .polyglot(&["python"])
+        .polyglot_executor(doubler.clone())
+        .build();
+    let out = Runtime::new()
+        .with_host_caps(caps)
+        .run(&program)
+        .expect("run")
+        .output;
     assert_eq!(out, EXPECTED);
 
     // Through `Runtime::with_polyglot_executor`, before or after the caps.
@@ -256,9 +306,13 @@ fn runtime_and_builder_carry_the_executor() {
         let doubler = Arc::new(Doubler::default());
         let caps = HostCapsBuilder::new().polyglot(&["python"]).build();
         let rt = if executor_first {
-            Runtime::new().with_polyglot_executor(doubler.clone()).with_host_caps(caps)
+            Runtime::new()
+                .with_polyglot_executor(doubler.clone())
+                .with_host_caps(caps)
         } else {
-            Runtime::new().with_host_caps(caps).with_polyglot_executor(doubler.clone())
+            Runtime::new()
+                .with_host_caps(caps)
+                .with_polyglot_executor(doubler.clone())
         };
         assert_eq!(rt.run(&program).expect("run").output, EXPECTED);
         assert_eq!(doubler.seen.lock().unwrap().len(), 1);

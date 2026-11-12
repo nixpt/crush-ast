@@ -89,7 +89,9 @@ impl NetState {
             tls_client_conns: HashMap::new(),
         }
     }
-    pub fn next(&mut self) -> ConnId {
+    /// Allocate the next connection id. (Named `alloc_conn`, not
+    /// `Iterator::next` — this is an id allocator, not an iteration.)
+    pub fn alloc_conn(&mut self) -> ConnId {
         let id = self.next_id;
         self.next_id += 1;
         id
@@ -134,7 +136,7 @@ impl HostCap for TcpConnectCap {
             .transport
             .connect_endpoint(&ep)
             .map_err(|e| format!("tcp.connect: {e}"))?;
-        let id = s.next();
+        let id = s.alloc_conn();
         s.conns.insert(id, Arc::new(Mutex::new(conn)));
         Ok(Some(Value::Int(id)))
     }
@@ -157,7 +159,7 @@ impl HostCap for TcpListenCap {
             .transport
             .listen_endpoint(&ep)
             .map_err(|e| format!("tcp.listen: {e}"))?;
-        let id = s.next();
+        let id = s.alloc_conn();
         s.listeners.insert(id, Arc::new(Mutex::new(listener)));
         Ok(Some(Value::Int(id)))
     }
@@ -188,7 +190,7 @@ impl HostCap for TcpAcceptCap {
             .accept_blocking()
             .map_err(|e| format!("tcp.accept: {e}"))?;
         let mut s = self.0.lock().unwrap();
-        let id = s.next();
+        let id = s.alloc_conn();
         s.conns.insert(id, Arc::new(Mutex::new(tcp_conn)));
         Ok(Some(Value::Int(id)))
     }
@@ -448,7 +450,7 @@ impl TcpTlsWrapCap {
             let mut g = state
                 .lock()
                 .map_err(|e| format!("state lock poisoned: {e}"))?;
-            let id = g.next();
+            let id = g.alloc_conn();
             g.tls_client_conns
                 .insert(id, std::sync::Arc::new(std::sync::Mutex::new(owned)));
             id

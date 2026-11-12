@@ -105,7 +105,11 @@ fn test_if_condition_type_check() {
 #[test]
 fn test_struct_field_access() {
     let body = vec![
-        Statement::struct_def("User".to_string(), vec![("name".to_string(), CastType::String)], create_empty_meta()),
+        Statement::struct_def(
+            "User".to_string(),
+            vec![("name".to_string(), CastType::String)],
+            create_empty_meta(),
+        ),
         Statement::VarDecl {
             name: "u".to_string(),
             value: Expression::NewStruct {
@@ -139,7 +143,11 @@ fn test_struct_field_access() {
 #[test]
 fn test_invalid_struct_field_access() {
     let body = vec![
-        Statement::struct_def("User".to_string(), vec![("name".to_string(), CastType::String)], create_empty_meta()),
+        Statement::struct_def(
+            "User".to_string(),
+            vec![("name".to_string(), CastType::String)],
+            create_empty_meta(),
+        ),
         Statement::VarDecl {
             name: "u".to_string(),
             value: Expression::NewStruct {
@@ -417,7 +425,9 @@ fn deep_call_chain_return_types_resolve() {
             i - 1
         ));
     }
-    source.push_str("fn main() {\n    if chain39(1) > 0 {\n        return 1\n    }\n    return 0\n}\n");
+    source.push_str(
+        "fn main() {\n    if chain39(1) > 0 {\n        return 1\n    }\n    return 0\n}\n",
+    );
     crush_frontend::compile_crush_source(&source)
         .expect("deep call chain must type-check deterministically");
 }
@@ -448,6 +458,5 @@ fn main() {
     return 0
 }
 "#;
-    crush_frontend::compile_crush_source(source)
-        .expect("mutual recursion must type-check");
+    crush_frontend::compile_crush_source(source).expect("mutual recursion must type-check");
 }

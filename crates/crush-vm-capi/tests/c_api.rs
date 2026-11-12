@@ -27,10 +27,7 @@ fn test_c_embed() {
         std::path::PathBuf::from("/build/debug/libcrush_vm_capi.so"),
     ];
 
-    let so_path = so_candidates
-        .iter()
-        .find(|p| p.exists())
-        .cloned();
+    let so_path = so_candidates.iter().find(|p| p.exists()).cloned();
 
     let so_path = match so_path {
         Some(p) => p,
@@ -59,15 +56,21 @@ fn test_c_embed() {
     let tc = test_c.to_str().unwrap().to_string();
     let oe = out_exe.to_str().unwrap().to_string();
     let compile = std::process::Command::new("gcc")
-        .args([
-            "-o", &oe,
-            &tc,
-            "-I", &idir,
-            "-L", &ldir,
-            "-lcrush_vm_capi",
-            "-ldl",
-            &rpath,
-        ].as_slice())
+        .args(
+            [
+                "-o",
+                &oe,
+                &tc,
+                "-I",
+                &idir,
+                "-L",
+                &ldir,
+                "-lcrush_vm_capi",
+                "-ldl",
+                &rpath,
+            ]
+            .as_slice(),
+        )
         .output()
         .expect("gcc must be on PATH");
 

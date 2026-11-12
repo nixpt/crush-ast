@@ -11,7 +11,8 @@ use crate::vm::{Quotas, Value, VmError, run};
 use crush_cosm::{CosmModule, Semantics, ValueMode};
 
 /// The Point/Shape fixture from crush-cosm (COSM K1.1).
-const POINT_FIXTURE: &str = include_str!("../../../crush-cosm/tests/fixtures/crush_point.cosm.json");
+const POINT_FIXTURE: &str =
+    include_str!("../../../crush-cosm/tests/fixtures/crush_point.cosm.json");
 
 fn point_module() -> CosmModule {
     CosmModule::from_json(POINT_FIXTURE).expect("fixture parses")
@@ -35,7 +36,18 @@ fn old_blob(version: u8) -> Vec<u8> {
     b.extend_from_slice(&(manifest.len() as u16).to_be_bytes());
     b.extend_from_slice(manifest);
     b.extend_from_slice(&0u16.to_be_bytes()); // no consts
-    let code = [crate::bytecode::PUSH, 0, 0, 0, 0, 0, 0, 0, 42, crate::bytecode::HALT];
+    let code = [
+        crate::bytecode::PUSH,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        42,
+        crate::bytecode::HALT,
+    ];
     b.extend_from_slice(&(code.len() as u32).to_be_bytes());
     b.extend_from_slice(&code);
     b
@@ -102,9 +114,15 @@ fn a_v3_blob_must_carry_a_well_formed_section() {
     // Truncated: the version says there is a section, but the blob ends.
     let mut truncated = good[..v2_len].to_vec();
     truncated[4] = VERSION_KIND_TABLE;
-    assert!(matches!(Program::from_blob(&truncated), Err(crate::Error::Truncated)));
+    assert!(matches!(
+        Program::from_blob(&truncated),
+        Err(crate::Error::Truncated)
+    ));
     let cut = &good[..good.len() - 1];
-    assert!(matches!(Program::from_blob(cut), Err(crate::Error::Truncated)));
+    assert!(matches!(
+        Program::from_blob(cut),
+        Err(crate::Error::Truncated)
+    ));
 
     // An unknown section format is an error, not a skip.
     let mut unknown = good.clone();
@@ -142,9 +160,18 @@ fn a_newer_container_version_is_still_refused() {
 fn the_disassembler_prints_the_kind_table_and_it_reassembles() {
     let p = program_with(Some(point_module()));
     let text = disassemble(&p);
-    assert!(text.starts_with("; kind table (COSM): 1 Kind, 1 interface\n"), "{text}");
-    assert!(text.contains(";   kind Point (crush): fields [x, y], members [new, norm2]"), "{text}");
-    assert!(text.contains(";   interface Shape (crush): [area, describe]"), "{text}");
+    assert!(
+        text.starts_with("; kind table (COSM): 1 Kind, 1 interface\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains(";   kind Point (crush): fields [x, y], members [new, norm2]"),
+        "{text}"
+    );
+    assert!(
+        text.contains(";   interface Shape (crush): [area, describe]"),
+        "{text}"
+    );
     assert!(text.contains("\n.cosm {"), "{text}");
     let back = assemble(&text, Some(&["io.print"]), None).expect("reassembles");
     assert_eq!(back.cosm, Some(point_module()));
@@ -155,10 +182,14 @@ fn the_disassembler_prints_the_kind_table_and_it_reassembles() {
 
 #[test]
 fn the_assembler_rejects_a_bad_or_duplicate_cosm_directive() {
-    let e = assemble(".cosm {nope}\nHALT\n", None, None).unwrap_err().to_string();
+    let e = assemble(".cosm {nope}\nHALT\n", None, None)
+        .unwrap_err()
+        .to_string();
     assert!(e.contains("malformed .cosm kind table"), "{e}");
     let line = format!(".cosm {}\n", point_module().to_json());
-    let e = assemble(&format!("{line}{line}HALT\n"), None, None).unwrap_err().to_string();
+    let e = assemble(&format!("{line}{line}HALT\n"), None, None)
+        .unwrap_err()
+        .to_string();
     assert!(e.contains("duplicate .cosm"), "{e}");
 }
 
@@ -171,7 +202,11 @@ fn a_map_equivalent_kind_table_runs_as_before() {
     assert_eq!(with.output, plain.output);
     assert_eq!(with.return_value, Some(Value::Int(7)));
 
-    let portable = |m| crate::portable_vm::PortableVm::new(program_with(m)).run().expect("portable VM runs it");
+    let portable = |m| {
+        crate::portable_vm::PortableVm::new(program_with(m))
+            .run()
+            .expect("portable VM runs it")
+    };
     assert_eq!(portable(Some(point_module())).output, portable(None).output);
 }
 
@@ -186,18 +221,33 @@ fn value_semantics_module() -> CosmModule {
 /// each strategy — the shared rule at `casm::CosmSupport::Kinds`.
 #[test]
 fn the_scheduler_vm_runs_kinds_and_refuses_only_what_it_cant() {
-    let r = run(&program_with(Some(value_semantics_module())), &Quotas::default()).expect("runs");
+    let r = run(
+        &program_with(Some(value_semantics_module())),
+        &Quotas::default(),
+    )
+    .expect("runs");
     assert_eq!(r.return_value, Some(Value::Int(7)));
 
     let mut m = point_module();
     m.kinds[0].resolution = crush_cosm::Resolution::PrototypeChain;
-    m.kinds[0].hooks.eq = Some(crush_cosm::HookImpl::Fn(crush_cosm::FnRef::new("Point::eq")));
-    m.kinds[0].hooks.str = Some(crush_cosm::HookImpl::Fn(crush_cosm::FnRef::new("Point::show")));
-    m.kinds[0].members.push(crush_cosm::MemberDecl::accessor("len", Some("Point::len".into()), None));
+    m.kinds[0].hooks.eq = Some(crush_cosm::HookImpl::Fn(crush_cosm::FnRef::new(
+        "Point::eq",
+    )));
+    m.kinds[0].hooks.str = Some(crush_cosm::HookImpl::Fn(crush_cosm::FnRef::new(
+        "Point::show",
+    )));
+    m.kinds[0].members.push(crush_cosm::MemberDecl::accessor(
+        "len",
+        Some("Point::len".into()),
+        None,
+    ));
     let e = run(&program_with(Some(m)), &Quotas::default()).unwrap_err();
     assert!(matches!(e, VmError::Unsupported(_)), "{e:?}");
     let e = e.to_string();
-    assert!(e.contains("COSM strategies not supported on this VM yet: `Point` declares"), "{e}");
+    assert!(
+        e.contains("COSM strategies not supported on this VM yet: `Point` declares"),
+        "{e}"
+    );
     for want in ["hooks eq"] {
         assert!(e.contains(want), "missing {want:?}: {e}");
     }
@@ -215,12 +265,17 @@ fn the_portable_vm_refuses_what_it_cant_run_before_running() {
     m.kinds[0].resolution = crush_cosm::Resolution::EmbeddingPromotion;
     let mut vm = crate::portable_vm::PortableVm::new(program_with(Some(m)));
     let e = vm.run().unwrap_err().to_string();
-    assert!(e.contains("COSM strategies not supported on this VM yet"), "{e}");
+    assert!(
+        e.contains("COSM strategies not supported on this VM yet"),
+        "{e}"
+    );
     assert!(e.contains("resolution: embedding_promotion"), "{e}");
     // Refused before the first instruction: nothing was printed.
     assert_eq!(vm.take_output(), "");
     // A value Kind runs.
-    let r = crate::portable_vm::PortableVm::new(program_with(Some(value_semantics_module()))).run().expect("runs");
+    let r = crate::portable_vm::PortableVm::new(program_with(Some(value_semantics_module())))
+        .run()
+        .expect("runs");
     assert_eq!(r.output, "hi");
 }
 
@@ -229,7 +284,9 @@ fn fastvm_applies_the_same_rule_to_a_cvm1_kind_table() {
     // A map-equivalent kind table lowers as before.
     assert!(crate::fastvm::lower_bytecode_program(&program_with(Some(point_module()))).is_ok());
     // One a map can't represent is refused, like on the VMs.
-    let Err(e) = crate::fastvm::lower_bytecode_program(&program_with(Some(value_semantics_module()))) else {
+    let Err(e) =
+        crate::fastvm::lower_bytecode_program(&program_with(Some(value_semantics_module())))
+    else {
         panic!("a value(move) Kind must be refused");
     };
     let e = e.to_string();
