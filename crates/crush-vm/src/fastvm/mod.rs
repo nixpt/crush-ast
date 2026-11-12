@@ -215,7 +215,8 @@ impl FastVM {
 /// serviced here and returns `None`. The cap's result comes back as a
 /// `RuntimeValue`: scalars map directly; arrays/maps (which `RuntimeValue`
 /// cannot model) as their JSON text, keys sorted. A cap error is also `None`.
-/// DOM requests still drop their args (CRUSH-33 follow-up).
+/// DOM requests still drop their args (CRUSH-33 follow-up); their ungranted
+/// side is named by [`dom_request_denied`] (GitHub issue #378).
 /// CRUSH-234: the fail-closed counterpart of [`resolve_host_request`]. If `req`
 /// is one of the ten AI requests and `host_caps` has no `ai_native.<kind>`
 /// handler, returns the same named `CapDenied` error the scheduler and
@@ -241,6 +242,31 @@ pub fn ai_request_denied(
     };
     let granted = host_caps.is_some_and(|h| h.get(&format!("ai_native.{kind}")).is_some());
     (!granted).then(|| crate::ai_args::not_granted(kind))
+}
+
+/// GitHub issue #378: the DOM twin of [`ai_request_denied`]. If `req` is one
+/// of the ten DOM requests and `host_caps` has no `dom_native.<kind>`
+/// handler, returns the same named `CapDenied` error the scheduler and
+/// PortableVm raise (`crate::dom_args::not_granted`); otherwise `None`.
+pub fn dom_request_denied(
+    req: &HostRequest,
+    host_caps: Option<&crate::HostCaps>,
+) -> Option<crate::vm::VmError> {
+    let kind = match req {
+        HostRequest::DomQuery { .. } => "query",
+        HostRequest::DomGet { .. } => "get",
+        HostRequest::DomSet { .. } => "set",
+        HostRequest::DomCreate { .. } => "create",
+        HostRequest::DomRemove { .. } => "remove",
+        HostRequest::DomChild { .. } => "child",
+        HostRequest::DomParent { .. } => "parent",
+        HostRequest::DomAttr { .. } => "attr",
+        HostRequest::DomText { .. } => "text",
+        HostRequest::DomEvent { .. } => "event",
+        _ => return None,
+    };
+    let granted = host_caps.is_some_and(|h| h.get(&format!("dom_native.{kind}")).is_some());
+    (!granted).then(|| crate::dom_args::not_granted(kind))
 }
 
 pub fn resolve_host_request(

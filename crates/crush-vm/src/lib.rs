@@ -23,6 +23,7 @@ pub mod cosm_gate;
 pub mod cosm_rt;
 pub mod ai_args;
 pub mod arithmetic;
+pub mod dom_args;
 pub mod make_range;
 pub mod seq;
 pub mod num_text;

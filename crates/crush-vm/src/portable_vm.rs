@@ -2005,23 +2005,24 @@ impl PortableVm {
             // Slots are 0x9A-0x9F (CRUD/nav) and 0xB5-0xB8
             // (parent/attr/text/event) per CRUSH-33 Commit 1; the
             // `dom_native_kind_for_opcode` switch maps slot -> kind.
+            // GitHub issue #378 (CRUSH-234's AI fix, mirrored): ungranted is a
+            // named `VmError::CapDenied` (`crate::dom_args`) — not a silent
+            // null — and a granted handler's error propagates.
             DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE
             | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
                 let kind = crate::bytecode::dom_native_kind_for_opcode(opcode)
                     .expect("DOM opcode byte in combined match arm must map to a known kind");
-                let gate = format!("dom_native.{kind}");
-                let value = match self.host_caps.as_ref().and_then(|h| h.get(&gate)) {
-                    Some(handler) => handler
-                        .call(vec![])
-                        .ok()
-                        .flatten()
-                        .unwrap_or(Value::Null),
-                    None => Value::Null,
-                };
+                let value = crate::dom_args::dispatch(
+                    kind,
+                    self.host_caps.as_ref(),
+                    crate::wall::remaining_ms(self.quotas.max_wall_time_ms),
+                );
                 // CRUSH-165 hook: a DOM opcode, as cap `dom_native.<kind>`.
                 #[cfg(feature = "transcript")]
-                self.transcript.record_cap(&gate, &[], crate::transcript::CapOutcome::Value(&value));
-                self.push(value);
+                self.transcript.record_cap(
+                    &format!("dom_native.{kind}"), &[], crate::transcript::CapOutcome::of_value(&value),
+                );
+                self.push(value?);
             }
             SPAWN => {
                 let argc = u16::from_be_bytes(

@@ -1722,23 +1722,26 @@ fn execute_one(
         // `dom_native_kind_for_opcode` switch in `crush_vm/src/bytecode.rs`
         // maps slot -> kind, and `dom_native::KINDS` in `crush-lang-sdk`
         // is the single source of truth for both surfaces.
+        // GitHub issue #378 (CRUSH-234's AI fix, mirrored): ungranted is a
+        // named `VmError::CapDenied` (`crate::dom_args`) — not a silent
+        // null — and a granted handler's error propagates. The opcode's
+        // string operand is not passed to handlers on any tier today
+        // (`dom_args::dispatch` documents the gap).
         DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE
         | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
             let kind = bytecode::dom_native_kind_for_opcode(opcode)
                 .expect("DOM opcode byte in combined match arm must map to a known kind");
-            let gate = format!("dom_native.{kind}");
-            let value = match host_caps.and_then(|h| h.get(&gate)) {
-                Some(handler) => handler
-                    .call(vec![])
-                    .ok()
-                    .flatten()
-                    .unwrap_or(Value::Null),
-                None => Value::Null,
-            };
+            let value = crate::dom_args::dispatch(
+                kind,
+                host_caps,
+                crate::wall::remaining_ms(quotas.max_wall_time_ms),
+            );
             // CRUSH-165 hook: a DOM opcode, as cap `dom_native.<kind>`.
             #[cfg(feature = "transcript")]
-            crate::transcript::active::cap(&gate, &[], crate::transcript::CapOutcome::Value(&value));
-            push!(value);
+            crate::transcript::active::cap(
+                &format!("dom_native.{kind}"), &[], crate::transcript::CapOutcome::of_value(&value),
+            );
+            push!(value?);
         }
         ENTER_TRY => {
             let target = u32::from_be_bytes(code[ip + 1..ip + 5].try_into().unwrap()) as usize;
