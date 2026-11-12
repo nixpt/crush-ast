@@ -55,7 +55,10 @@ fn main() {
     count(0, 5);
 }
 "#);
-    assert_eq!(out.lines().collect::<Vec<_>>(), ["0", "1", "2", "3", "4", "5"]);
+    assert_eq!(
+        out.lines().collect::<Vec<_>>(),
+        ["0", "1", "2", "3", "4", "5"]
+    );
 }
 
 #[test]
@@ -106,7 +109,12 @@ print(pow2(30))
 "#,
     )
     .expect("compile");
-    let result = Runtime::with_quotas(Quotas { max_steps: 100_000, ..Quotas::default() }).run(&prog).expect("run");
+    let result = Runtime::with_quotas(Quotas {
+        max_steps: 100_000,
+        ..Quotas::default()
+    })
+    .run(&prog)
+    .expect("run");
     assert_eq!(result.output.trim(), "1073741824");
 }
 

@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 
 use std::io::Write;
 
-use crush_diagnostics::{diag_line, strict_downgrade, DiagRecord};
+use crush_diagnostics::{DiagRecord, diag_line, strict_downgrade};
 
 // =========================================================================
 // Output format enum — third `value_name = "FORMAT"` value alongside
@@ -58,8 +58,7 @@ use std::collections::HashSet;
 use crush_pkg::manifest::{CapsuleType, Manifest};
 use crush_pkg::packer::{pack, unpack};
 use crush_pkg::runners::{
-    ExecutionResult, PluginGrant, capsule_type_for_format, detect_payload_format,
-    get_runner_with,
+    ExecutionResult, PluginGrant, capsule_type_for_format, detect_payload_format, get_runner_with,
 };
 use crush_pkg::signer::{generate_keys, sign_package, verify_package};
 
@@ -160,7 +159,11 @@ struct GrantArgs {
     #[arg(long, value_name = "LIBRARY")]
     rust_plugin: Option<PathBuf>,
     /// Grant one named export from --rust-plugin (repeatable).
-    #[arg(long = "plugin-export", value_name = "EXPORT", requires = "rust_plugin")]
+    #[arg(
+        long = "plugin-export",
+        value_name = "EXPORT",
+        requires = "rust_plugin"
+    )]
     plugin_exports: Vec<String>,
     /// Maximum VM instruction steps (default: the manifest's
     /// `[resources] gas`, else the VM default).
@@ -226,7 +229,9 @@ impl GrantArgs {
                 let mut unique = HashSet::new();
                 for export in &self.plugin_exports {
                     if export.is_empty() || !unique.insert(export) {
-                        anyhow::bail!("plugin export names must be non-empty and unique: `{export}`");
+                        anyhow::bail!(
+                            "plugin export names must be non-empty and unique: `{export}`"
+                        );
                     }
                 }
                 Ok(vec![PluginGrant {
@@ -492,7 +497,8 @@ fn emit_diag(
 fn main() {
     let cli = Cli::parse();
     OFFLINE.store(
-        cli.offline || std::env::var_os("CRUSH_PKG_OFFLINE").is_some_and(|v| !v.is_empty() && v != "0"),
+        cli.offline
+            || std::env::var_os("CRUSH_PKG_OFFLINE").is_some_and(|v| !v.is_empty() && v != "0"),
         std::sync::atomic::Ordering::Relaxed,
     );
     let json_mode = matches!(
@@ -601,13 +607,12 @@ fn emit_post_dispatch_lint(
     // (manifest unparseable / no entry field / entry file
     // unreadable), pass `None` and the dispatcher skips the
     // entry-aware rule rather than flagging every dep.
-    let entry_refs: Option<HashSet<String>> =
-        Manifest::from_str(&content, manifest_path)
-            .ok()
-            .and_then(|manifest| {
-                let root = manifest_path.parent()?;
-                crush_pkg::builder::entry_references_with_deps(&manifest, root)
-            });
+    let entry_refs: Option<HashSet<String>> = Manifest::from_str(&content, manifest_path)
+        .ok()
+        .and_then(|manifest| {
+            let root = manifest_path.parent()?;
+            crush_pkg::builder::entry_references_with_deps(&manifest, root)
+        });
     let findings = crush_pkg::builder::lint_capsule_toml_with_entry(&content, entry_refs.as_ref());
     if json_mode {
         for f in &findings {
@@ -637,34 +642,40 @@ fn emit_post_dispatch_lint(
     Ok(findings.len())
 }
 
-fn dispatch(
-    cli: Cli,
-    json_mode: bool,
-    strict_mode: bool,
-) -> Result<(), CommandFailure> {
+fn dispatch(cli: Cli, json_mode: bool, strict_mode: bool) -> Result<(), CommandFailure> {
     let Some(command) = cli.command else {
-        return handle_default(cli.args, &cli.grants, strict_mode)
-            .map_err(|e| e.into_failure());
+        return handle_default(cli.args, &cli.grants, strict_mode).map_err(|e| e.into_failure());
     };
     match command {
-        Commands::New { name, dir, cli, lib, facet_path } => handle_new(name, dir, cli, lib, facet_path)
+        Commands::New {
+            name,
+            dir,
+            cli,
+            lib,
+            facet_path,
+        } => handle_new(name, dir, cli, lib, facet_path)
             .map_err(|e| CommandFailure::New(format!("{e:#}"))),
-        Commands::Build => handle_build()
-            .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
-        Commands::Run { args, grants } => handle_run(args, &grants, strict_mode)
-            .map_err(|e| e.into_failure()),
+        Commands::Build => handle_build().map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
+        Commands::Run { args, grants } => {
+            handle_run(args, &grants, strict_mode).map_err(|e| e.into_failure())
+        }
         Commands::Check => handle_check(json_mode, strict_mode)
             .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
-        Commands::Pack { output } => handle_pack(output)
-            .map_err(|e| CommandFailure::Manifest(format!("{e:#}"))),
-        Commands::Unpack { pack, dir } => handle_unpack(pack, dir)
-            .map_err(|e| CommandFailure::Manifest(format!("{e:#}"))),
-        Commands::GenerateKeys { dir } => handle_keygen(dir)
-            .map_err(|e| CommandFailure::Sign(format!("{e:#}"))),
-        Commands::Sign { package, key } => handle_sign(package, key)
-            .map_err(|e| CommandFailure::Sign(format!("{e:#}"))),
-        Commands::Verify { package, key } => handle_verify(package, key)
-            .map_err(|e| CommandFailure::Sign(format!("{e:#}"))),
+        Commands::Pack { output } => {
+            handle_pack(output).map_err(|e| CommandFailure::Manifest(format!("{e:#}")))
+        }
+        Commands::Unpack { pack, dir } => {
+            handle_unpack(pack, dir).map_err(|e| CommandFailure::Manifest(format!("{e:#}")))
+        }
+        Commands::GenerateKeys { dir } => {
+            handle_keygen(dir).map_err(|e| CommandFailure::Sign(format!("{e:#}")))
+        }
+        Commands::Sign { package, key } => {
+            handle_sign(package, key).map_err(|e| CommandFailure::Sign(format!("{e:#}")))
+        }
+        Commands::Verify { package, key } => {
+            handle_verify(package, key).map_err(|e| CommandFailure::Sign(format!("{e:#}")))
+        }
         Commands::Site {
             dir,
             name,
@@ -675,12 +686,13 @@ fn dispatch(
             did,
         } => handle_site(dir, name, version, entry, output, sign, did)
             .map_err(|e| CommandFailure::Site(format!("{e:#}"))),
-        Commands::SiteExtract { capsule, dir } => handle_site_extract(capsule, dir)
-            .map_err(|e| CommandFailure::Site(format!("{e:#}"))),
-        Commands::Show => handle_show()
-            .map_err(|e| CommandFailure::Manifest(format!("{e:#}"))),
-        Commands::Lint {} => handle_lint(json_mode, strict_mode)
-            .map_err(|e| CommandFailure::Lint(format!("{e:#}"))),
+        Commands::SiteExtract { capsule, dir } => {
+            handle_site_extract(capsule, dir).map_err(|e| CommandFailure::Site(format!("{e:#}")))
+        }
+        Commands::Show => handle_show().map_err(|e| CommandFailure::Manifest(format!("{e:#}"))),
+        Commands::Lint {} => {
+            handle_lint(json_mode, strict_mode).map_err(|e| CommandFailure::Lint(format!("{e:#}")))
+        }
     }
 }
 
@@ -706,7 +718,10 @@ fn handle_new(
             target.join("capsule.toml").display()
         );
         println!("  entry:   src/main.crush");
-        println!("  next:    cd {} && crush-pkg run -- --help", target.display());
+        println!(
+            "  next:    cd {} && crush-pkg run -- --help",
+            target.display()
+        );
         return Ok(());
     }
     let manifest = if lib {
@@ -794,7 +809,10 @@ fn run_payload(
         } else {
             "[]".to_string()
         };
-        let ext = payload.extension().and_then(|e| e.to_str()).unwrap_or("none");
+        let ext = payload
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("none");
         anyhow::bail!(
             "unknown payload format for entry path: {} (ext: {}, magic: {})",
             payload.display(),
@@ -960,7 +978,8 @@ fn handle_default(
         crush_pkg::flow::buildability(&manifest, &root)
     {
         let payload = root.join(&manifest.capsule.entry);
-        return run_payload(manifest, payload, args, grants, strict_mode).map_err(DefaultFailure::Run);
+        return run_payload(manifest, payload, args, grants, strict_mode)
+            .map_err(DefaultFailure::Run);
     }
 
     build_and_run(manifest, root, args, grants)
@@ -1000,8 +1019,8 @@ fn build_and_run(
 
 fn handle_pack(output: Option<PathBuf>) -> anyhow::Result<()> {
     let (manifest, root) = load_manifest()?;
-    let output = output
-        .unwrap_or_else(|| PathBuf::from(format!("{}.crush-pack", manifest.capsule.name)));
+    let output =
+        output.unwrap_or_else(|| PathBuf::from(format!("{}.crush-pack", manifest.capsule.name)));
     pack(&root, &output)?;
     Ok(())
 }
@@ -1073,7 +1092,10 @@ fn handle_site_extract(capsule: PathBuf, dir: PathBuf) -> anyhow::Result<()> {
 
 fn handle_show() -> anyhow::Result<()> {
     let (manifest, root) = load_manifest()?;
-    println!("{}", crush_pkg::manifest::Manifest::to_toml_string(&manifest)?);
+    println!(
+        "{}",
+        crush_pkg::manifest::Manifest::to_toml_string(&manifest)?
+    );
     println!("  (at {})", root.join("capsule.toml").display());
     Ok(())
 }
@@ -1101,12 +1123,7 @@ fn handle_lint_with(
     json_mode: bool,
     strict_mode: bool,
 ) -> anyhow::Result<()> {
-    let count = emit_post_dispatch_lint(
-        out,
-        Some(manifest_path),
-        json_mode,
-        strict_mode,
-    )?;
+    let count = emit_post_dispatch_lint(out, Some(manifest_path), json_mode, strict_mode)?;
     if strict_mode && count > 0 {
         anyhow::bail!(
             "lint found {count} dead-code finding(s) in {} (fail under strict mode)",
@@ -1264,8 +1281,8 @@ mod tests {
                     .get_name(),
             );
             let argv: [&str; 3] = ["crush-pkg", "build", arg.as_str()];
-            let cli = Cli::try_parse_from(argv)
-                .unwrap_or_else(|e| panic!("parse {argv:?} failed: {e}"));
+            let cli =
+                Cli::try_parse_from(argv).unwrap_or_else(|e| panic!("parse {argv:?} failed: {e}"));
             assert_eq!(
                 cli.message_format,
                 Some(variant),
@@ -1361,7 +1378,7 @@ mod tests {
             "note",
             "synthetic-warn",
             Some("capsule.toml"),
-            None,  // line
+            None, // line
             Some("h"),
             true, // strict_mode
         )
@@ -1434,9 +1451,7 @@ mod tests {
     /// `emit_post_dispatch_lint` would mask it as "no findings").
     /// Tests must bind both returns so the TempDir outlives the
     /// read.
-    fn write_capsule_with_placeholder(
-        content: &str,
-    ) -> (tempfile::TempDir, PathBuf) {
+    fn write_capsule_with_placeholder(content: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir creation");
         let manifest_path = dir.path().join("capsule.toml");
         std::fs::write(&manifest_path, content).expect("write fixture capsule.toml");
@@ -1498,10 +1513,7 @@ mod tests {
         // prefixes like `dead-code:` belong to text-mode rendering,
         // not the JSON message slot.
         assert!(
-            v["message"]
-                .as_str()
-                .unwrap()
-                .contains("placeholder value"),
+            v["message"].as_str().unwrap().contains("placeholder value"),
             "message should describe the rule semantic (placeholder value), got: {:?}",
             v["message"]
         );
@@ -1665,18 +1677,10 @@ mod tests {
         // position sensitivity assumption from `build` — verify
         // both pre- and post-subcommand positions are accepted
         // (same `global = true` behavior as build/check).
-        let pre = Cli::try_parse_from([
-            "crush-pkg",
-            "--message-format=json",
-            "lint",
-        ])
-        .expect("--message-format before subcommand must parse");
-        let post = Cli::try_parse_from([
-            "crush-pkg",
-            "lint",
-            "--message-format=strict",
-        ])
-        .expect("--message-format after subcommand must parse");
+        let pre = Cli::try_parse_from(["crush-pkg", "--message-format=json", "lint"])
+            .expect("--message-format before subcommand must parse");
+        let post = Cli::try_parse_from(["crush-pkg", "lint", "--message-format=strict"])
+            .expect("--message-format after subcommand must parse");
         assert!(matches!(pre.command, Some(Commands::Lint { .. })));
         assert!(matches!(post.command, Some(Commands::Lint { .. })));
     }
@@ -1691,14 +1695,17 @@ mod tests {
         assert!(bare.command.is_none());
         assert!(bare.args.is_empty());
 
-        let with_args = Cli::try_parse_from(["crush-pkg", "--message-format=json", "--", "a", "-b"])
-            .expect("bare with -- args must parse");
+        let with_args =
+            Cli::try_parse_from(["crush-pkg", "--message-format=json", "--", "a", "-b"])
+                .expect("bare with -- args must parse");
         assert!(with_args.command.is_none());
         assert_eq!(with_args.args, vec!["a".to_string(), "-b".to_string()]);
         assert_eq!(with_args.message_format, Some(MessageFormat::Json));
 
         let run = Cli::try_parse_from(["crush-pkg", "run", "--", "x"]).expect("run -- x");
-        assert!(matches!(run.command, Some(Commands::Run { ref args, .. }) if args == &["x".to_string()]));
+        assert!(
+            matches!(run.command, Some(Commands::Run { ref args, .. }) if args == &["x".to_string()])
+        );
         assert!(run.args.is_empty(), "run's args belong to the subcommand");
 
         // Grants parse on `run` and on the bare flow (CRUSH-172).
@@ -1736,8 +1743,8 @@ mod tests {
         )
         .expect("non-strict mode must NOT bail on findings");
         let s = std::str::from_utf8(&out).unwrap();
-        let v: serde_json::Value = serde_json::from_str(s.trim_end())
-            .expect("NDJSON record must round-trip via serde");
+        let v: serde_json::Value =
+            serde_json::from_str(s.trim_end()).expect("NDJSON record must round-trip via serde");
         // Per-finding wire shape mirrors `crush-pkg build`'s
         // post-dispatch emit (same helper, same canonical shape):
         assert_eq!(v["code"], "E-BUILDER");
@@ -1763,9 +1770,7 @@ mod tests {
             /* json_mode */ true,
             /* strict_mode */ true,
         )
-        .expect_err(
-            "strict mode MUST bail when findings exist (CI gate behavior)",
-        );
+        .expect_err("strict mode MUST bail when findings exist (CI gate behavior)");
         let msg = format!("{err:#}");
         // The bail message carries the count + path so dispatch's
         // failure-path emit (which surfaces `{e:#}` as the
@@ -1868,11 +1873,8 @@ name = \"alpha-dep\"
         // so the dep MUST NOT be flagged as unreferenced. (A comment-
         // only mention like `# alpha-dep` would NOT satisfy it —
         // comment strips are now part of the dispatch contract.)
-        std::fs::write(
-            dir.path().join("main.crush"),
-            "import alpha-dep\n",
-        )
-        .expect("write entry file");
+        std::fs::write(dir.path().join("main.crush"), "import alpha-dep\n")
+            .expect("write entry file");
 
         let mut out = Vec::<u8>::new();
         let count = emit_post_dispatch_lint(
@@ -1926,9 +1928,7 @@ name = \"alpha-dep\"
             line >= 7 && line < 9,
             "finding line must point into the [env] block (7 ≤ line < 9 in the fixture); got line = {line}"
         );
-        let msg = v["message"]
-            .as_str()
-            .expect("message must be a string");
+        let msg = v["message"].as_str().expect("message must be a string");
         assert!(
             msg.contains("TEMP"),
             "env placeholder finding must name the env key `TEMP` (got: {msg:?})"
@@ -1957,9 +1957,7 @@ name = \"alpha-dep\"
             "wire col must be present + null for source-level findings (got: {:?})",
             v.get("col")
         );
-        let hint = v["hint"]
-            .as_str()
-            .expect("hint must be a string");
+        let hint = v["hint"].as_str().expect("hint must be a string");
         assert!(
             !hint.contains("alpha-dep"),
             "dep cross-ref should suppress the `alpha-dep` hint leak (got: {hint:?})"
@@ -2091,8 +2089,7 @@ name = \"beta-dep\"
 {\"code\":\"E-BUILDER\",\"level\":\"note\",\"file\":\"capsule.toml\",\"line\":7,\"col\":null,\"message\":\"placeholder value `TODO` on [env] key `TEMP`\",\"hint\":\"on key `TEMP`: replace `TODO` with a real value, or remove `TEMP`\"}
 {\"code\":\"E-BUILDER\",\"level\":\"note\",\"file\":\"capsule.toml\",\"line\":10,\"col\":null,\"message\":\"dependency `beta-dep` declared in [dependencies] but not referenced by entry file\",\"hint\":\"remove `beta-dep` from [dependencies] or reference it in the entry file\"}
 ";
-        let actual =
-            std::str::from_utf8(&out).expect("NDJSON output must be UTF-8");
+        let actual = std::str::from_utf8(&out).expect("NDJSON output must be UTF-8");
         assert_eq!(
             actual, expected,
             "byte-exact NDJSON pin failed — dispatcher order or wire shape drifted.\n\
@@ -2126,7 +2123,7 @@ entry = "main.unknown"
         std::env::set_current_dir(dir.path()).unwrap();
 
         let result_strict = handle_run(vec![], &GrantArgs::default(), /* strict_mode */ true);
-        
+
         std::env::set_current_dir(old_cwd).unwrap();
 
         assert!(result_strict.is_err());

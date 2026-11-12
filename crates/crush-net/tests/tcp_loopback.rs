@@ -12,7 +12,7 @@
 use std::{
     io::Read,
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener as StdTcpListener},
-    sync::{mpsc, Arc},
+    sync::{Arc, mpsc},
     thread,
     time::Duration,
 };
@@ -23,8 +23,7 @@ use serde_json::json;
 #[test]
 fn tcp_loopback_with_mesh_request_tlv() {
     // Bind std listener on OS-assigned port.
-    let std_listener =
-        StdTcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).expect("bind");
+    let std_listener = StdTcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).expect("bind");
     let bound_port = std_listener.local_addr().expect("local_addr").port();
     let endpoint = crush_net::Endpoint(IpAddr::V4(Ipv4Addr::LOCALHOST), bound_port);
 
@@ -59,7 +58,11 @@ fn tcp_loopback_with_mesh_request_tlv() {
     };
     let bytes = crush_net::encode_request(&original).expect("encode");
     let written = conn.blocking_write(&bytes).expect("blocking_write");
-    assert_eq!(written, bytes.len(), "blocking_write must succeed end-to-end");
+    assert_eq!(
+        written,
+        bytes.len(),
+        "blocking_write must succeed end-to-end"
+    );
 
     let received = decoded_rx
         .recv_timeout(Duration::from_secs(5))

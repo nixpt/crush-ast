@@ -53,14 +53,14 @@
 //! are refused. Dynamic Debug requires the host's explicit stdlib registration;
 //! Rust AOT embeds the same kernel and C refuses until its bridge is available.
 
+mod bindings;
+mod diagnostics;
+mod formatting;
 pub mod lower_expr;
 pub mod lower_stmt;
-pub mod parser;
-mod bindings;
-mod formatting;
-mod diagnostics;
-mod numeric;
 mod methods;
+mod numeric;
+pub mod parser;
 mod values;
 
 use std::any::Any;
@@ -90,8 +90,10 @@ impl Frontend for RustFrontend {
         let (_, file) = ast
             .downcast_ref::<(String, syn::File)>()
             .ok_or_else(|| anyhow::anyhow!("expected (String, syn::File)"))?;
-        let mut r = FeatureReport::default();
-        r.lang = "rust".to_string();
+        let mut r = FeatureReport {
+            lang: "rust".to_string(),
+            ..Default::default()
+        };
         for item in &file.items {
             match item {
                 syn::Item::Fn(_) => r.uses_functions = true,
@@ -125,20 +127,26 @@ pub fn rust_to_cast(source: &str) -> anyhow::Result<Program> {
 
 fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
     let ctx = LowerCtx::new(source, "<crush>", "rust");
-    let mut main_body = Vec::new();
+    let main_body = Vec::new();
     let mut functions: HashMap<String, Function> = HashMap::new();
 
     for item in &file.items {
         match item {
             syn::Item::Fn(_) => {
                 if let syn::Item::Fn(f) = item {
-                    anyhow::ensure!(f.sig.ident != numeric::CAST,
+                    anyhow::ensure!(
+                        f.sig.ident != numeric::CAST,
                         "unsupported Rust function at {}:{}: reserved Rust numeric compiler helper (CRUSH-xps-8)",
-                        f.sig.ident.span().start().line, f.sig.ident.span().start().column + 1);
+                        f.sig.ident.span().start().line,
+                        f.sig.ident.span().start().column + 1
+                    );
                 }
                 let lowered = lower_stmt::lower_stmt(&syn::Stmt::Item(item.clone()), &ctx)?;
                 if let Statement::FunctionDef {
-                    name, params, body, meta
+                    name,
+                    params,
+                    body,
+                    meta,
                 } = lowered
                 {
                     functions.insert(
@@ -158,7 +166,9 @@ fn file_to_cast(file: syn::File, source: &str) -> anyhow::Result<Program> {
             // been accepted, then fail later or silently do nothing.
             _ => anyhow::bail!(
                 "unsupported Rust top-level item `{}` at {}:{}; Rust imports and crate APIs need an explicit Crush capability/plugin; type declarations need COSM walker support",
-                item.to_token_stream(), item.span().start().line, item.span().start().column + 1
+                item.to_token_stream(),
+                item.span().start().line,
+                item.span().start().column + 1
             ),
         }
     }
@@ -202,8 +212,8 @@ mod tests {
     //! Tests use the *function-call form* `println(x)`; the macro form
     //! `println!` is covered by `tests/rustc_corpus_test.rs` (CRUSH-197).
 
-    use super::{rust_to_cast, RustFrontend};
-        use crush_walker_core_no_tree_sitter::Frontend;
+    use super::{RustFrontend, rust_to_cast};
+    use crush_walker_core_no_tree_sitter::Frontend;
 
     /// Mirror of python's `test_analyze` helper: frontend.parse ->
     /// frontend.analyze on raw rust source.
@@ -220,9 +230,7 @@ mod tests {
     /// of any top-level `fn` keeps `uses_functions` false.
     #[test]
     fn test_rust_analyze_classes_and_ffi() {
-        let report = test_analyze(
-            "struct Foo { x: i32 }\nextern \"C\" { fn bar(); }\n",
-        );
+        let report = test_analyze("struct Foo { x: i32 }\nextern \"C\" { fn bar(); }\n");
         assert!(
             report.uses_classes,
             "expected `struct Foo` to flip uses_classes (rust-native, not python's class)"
@@ -245,9 +253,7 @@ mod tests {
     /// syn 2.0 and would invite an unrelated lint failure later.
     #[test]
     fn test_rust_analyze_imports() {
-        let report = test_analyze(
-            "use std::collections::HashMap;\nuse std::io::Result;\n",
-        );
+        let report = test_analyze("use std::collections::HashMap;\nuse std::io::Result;\n");
         assert_eq!(
             report.uses_imports.len(),
             2,
@@ -319,9 +325,4 @@ mod tests {
 
 use crush_walker_core_no_tree_sitter::impl_adapter_from_frontend;
 
-impl_adapter_from_frontend!(
-    RustAdapter,
-    "rust",
-    &["rs"],
-    crate::rust_to_cast
-);
+impl_adapter_from_frontend!(RustAdapter, "rust", &["rs"], crate::rust_to_cast);

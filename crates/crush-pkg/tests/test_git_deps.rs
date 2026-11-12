@@ -7,12 +7,25 @@ use std::process::{Command, Output, Stdio};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "tag.gpgsign=false",
+        ])
         .args(args)
         .current_dir(dir)
         .output()
         .expect("spawn git");
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -34,7 +47,11 @@ fn write_lib(repo: &Path, greeting: &str) {
         "[capsule]\nname = \"gdlib\"\nversion = \"0.1.0\"\nentry = \"gd.crush\"\nlanguage = \"crush\"\ncategory = \"library\"\n",
     )
     .unwrap();
-    std::fs::write(repo.join("gd.crush"), format!("fn gd_greet() {{\n    return \"{greeting}\"\n}}\n")).unwrap();
+    std::fs::write(
+        repo.join("gd.crush"),
+        format!("fn gd_greet() {{\n    return \"{greeting}\"\n}}\n"),
+    )
+    .unwrap();
 }
 
 fn url(repo: &Path) -> String {
@@ -52,7 +69,11 @@ fn consumer(root: &Path, dep_body: &str) -> PathBuf {
         ),
     )
     .unwrap();
-    std::fs::write(dir.join("main.crush"), "fn main() {\n    print(gd_greet())\n}\n").unwrap();
+    std::fs::write(
+        dir.join("main.crush"),
+        "fn main() {\n    print(gd_greet())\n}\n",
+    )
+    .unwrap();
     dir
 }
 
@@ -68,7 +89,11 @@ fn crush_pkg(dir: &Path, cache: &Path, args: &[&str]) -> Output {
 }
 
 fn out_text(o: &Output) -> String {
-    format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    )
 }
 
 struct Fx {
@@ -83,7 +108,12 @@ fn fixture(dep_body: impl FnOnce(&str) -> String) -> Fx {
     let repo = lib_repo(tmp.path(), "hello from gitdep");
     let app = consumer(tmp.path(), &dep_body(&url(&repo)));
     let cache = tmp.path().join("cache");
-    Fx { _tmp: tmp, repo, app, cache }
+    Fx {
+        _tmp: tmp,
+        repo,
+        app,
+        cache,
+    }
 }
 
 #[test]
@@ -93,7 +123,11 @@ fn tag_dependency_builds_runs_and_is_pinned_in_the_lockfile() {
 
     let out = crush_pkg(&fx.app, &fx.cache, &["run"]);
     assert!(out.status.success(), "{}", out_text(&out));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("hello from gitdep"), "{}", out_text(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("hello from gitdep"),
+        "{}",
+        out_text(&out)
+    );
     // The lint knows `gd_greet` belongs to `gdlib`: no false dead-dep note.
     assert!(!out_text(&out).contains("dead-code"), "{}", out_text(&out));
 
@@ -109,14 +143,18 @@ fn tag_dependency_builds_runs_and_is_pinned_in_the_lockfile() {
 }
 
 fn walk_for(root: &Path, name: &str) -> Option<PathBuf> {
-    walkdir_lite(root).into_iter().find(|e| e.file_name().is_some_and(|n| n == name))
+    walkdir_lite(root)
+        .into_iter()
+        .find(|e| e.file_name().is_some_and(|n| n == name))
 }
 
 fn walkdir_lite(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -140,25 +178,48 @@ fn lockfile_keeps_builds_reproducible_when_the_tag_moves() {
     git(&fx.repo, &["tag", "-f", "-a", "v1", "-m", "moved"]);
 
     let again = crush_pkg(&fx.app, &fx.cache, &["run"]);
-    assert!(String::from_utf8_lossy(&again.stdout).contains("hello from gitdep"), "{}", out_text(&again));
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("hello from gitdep"),
+        "{}",
+        out_text(&again)
+    );
 
     // Dropping the lock re-resolves the tag.
     std::fs::remove_file(fx.app.join("capsule.lock")).unwrap();
     let fresh = crush_pkg(&fx.app, &fx.cache, &["run"]);
-    assert!(String::from_utf8_lossy(&fresh.stdout).contains("changed upstream"), "{}", out_text(&fresh));
+    assert!(
+        String::from_utf8_lossy(&fresh.stdout).contains("changed upstream"),
+        "{}",
+        out_text(&fresh)
+    );
 }
 
 #[test]
 fn rev_and_branch_dependencies_resolve() {
     let fx = fixture(|u| format!("git = \"{u}\"\nbranch = \"main\""));
     let out = crush_pkg(&fx.app, &fx.cache, &["run"]);
-    assert!(String::from_utf8_lossy(&out.stdout).contains("hello from gitdep"), "{}", out_text(&out));
-    assert!(std::fs::read_to_string(fx.app.join("capsule.lock")).unwrap().contains("ref = \"branch:main\""));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("hello from gitdep"),
+        "{}",
+        out_text(&out)
+    );
+    assert!(
+        std::fs::read_to_string(fx.app.join("capsule.lock"))
+            .unwrap()
+            .contains("ref = \"branch:main\"")
+    );
 
     let sha = git(&fx.repo, &["rev-parse", "HEAD"]);
-    let app = consumer(fx.app.parent().unwrap().join("second").as_path(), &format!("git = \"{}\"\nrev = \"{sha}\"", url(&fx.repo)));
+    let app = consumer(
+        fx.app.parent().unwrap().join("second").as_path(),
+        &format!("git = \"{}\"\nrev = \"{sha}\"", url(&fx.repo)),
+    );
     let out = crush_pkg(&app, &fx.cache, &["run"]);
-    assert!(String::from_utf8_lossy(&out.stdout).contains("hello from gitdep"), "{}", out_text(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("hello from gitdep"),
+        "{}",
+        out_text(&out)
+    );
 }
 
 #[test]
@@ -185,7 +246,10 @@ fn offline_uses_only_the_cache_and_says_so_when_it_cannot() {
     let net = crush_pkg(&fx.app, &cold_cache, &["build"]);
     assert!(!net.status.success());
     let t = out_text(&net);
-    assert!(t.contains("could not reach") && t.contains("--offline"), "{t}");
+    assert!(
+        t.contains("could not reach") && t.contains("--offline"),
+        "{t}"
+    );
 }
 
 #[test]
@@ -193,7 +257,11 @@ fn unknown_tag_is_a_clear_error() {
     let fx = fixture(|u| format!("git = \"{u}\"\ntag = \"nope\""));
     let out = crush_pkg(&fx.app, &fx.cache, &["build"]);
     assert!(!out.status.success());
-    assert!(out_text(&out).contains("tag `nope` not found"), "{}", out_text(&out));
+    assert!(
+        out_text(&out).contains("tag `nope` not found"),
+        "{}",
+        out_text(&out)
+    );
 }
 
 #[test]
@@ -206,22 +274,48 @@ fn dependency_without_a_usable_entry_is_a_clear_error() {
     let out = crush_pkg(&fx.app, &fx.cache, &["build"]);
     assert!(!out.status.success());
     let t = out_text(&out);
-    assert!(t.contains("entry file `gd.crush`") && t.contains("git dependency"), "{t}");
+    assert!(
+        t.contains("entry file `gd.crush`") && t.contains("git dependency"),
+        "{t}"
+    );
 }
 
 #[test]
 fn exactly_one_source_and_one_ref_are_required() {
     let fx = fixture(|u| format!("git = \"{u}\"\ntag = \"v1\""));
     for (body, needle) in [
-        ("path = \"../gdlib\"\ngit = \"file:///x\"\ntag = \"v1\"", "not both"),
+        (
+            "path = \"../gdlib\"\ngit = \"file:///x\"\ntag = \"v1\"",
+            "not both",
+        ),
         ("", "needs a source"),
-        ("git = \"file:///x\"", "exactly one of `tag`, `rev` or `branch`"),
-        ("git = \"file:///x\"\ntag = \"a\"\nbranch = \"b\"", "exactly one of `tag`, `rev` or `branch`"),
-        ("path = \"../gdlib\"\ntag = \"v1\"", "only apply to a `git` dependency"),
+        (
+            "git = \"file:///x\"",
+            "exactly one of `tag`, `rev` or `branch`",
+        ),
+        (
+            "git = \"file:///x\"\ntag = \"a\"\nbranch = \"b\"",
+            "exactly one of `tag`, `rev` or `branch`",
+        ),
+        (
+            "path = \"../gdlib\"\ntag = \"v1\"",
+            "only apply to a `git` dependency",
+        ),
     ] {
-        let app = consumer(fx.app.parent().unwrap().join(format!("bad{}", needle.len())).as_path(), body);
+        let app = consumer(
+            fx.app
+                .parent()
+                .unwrap()
+                .join(format!("bad{}", needle.len()))
+                .as_path(),
+            body,
+        );
         let out = crush_pkg(&app, &fx.cache, &["build"]);
         assert!(!out.status.success(), "{body}");
-        assert!(out_text(&out).contains(needle), "{body}: {}", out_text(&out));
+        assert!(
+            out_text(&out).contains(needle),
+            "{body}: {}",
+            out_text(&out)
+        );
     }
 }

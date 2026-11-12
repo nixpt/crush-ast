@@ -10,7 +10,6 @@
 
 pub use crate::float_text_core::crush_float_to_text;
 
-
 /// The core file's text, for the Rust AOT code generator to embed.
 pub const SOURCE: &str = include_str!("float_text_core.rs");
 

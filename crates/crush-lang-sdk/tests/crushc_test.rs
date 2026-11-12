@@ -157,7 +157,11 @@ fn crushc_emits_json_diagnostic_for_io_error() {
     assert_eq!(parsed["code"].as_str(), Some("E-IO"));
     assert_eq!(parsed["level"].as_str(), Some("error"));
     // IO failures name the file but carry no source coordinates.
-    assert!(parsed["file"].as_str().is_some_and(|f| f.ends_with("missing.crush")));
+    assert!(
+        parsed["file"]
+            .as_str()
+            .is_some_and(|f| f.ends_with("missing.crush"))
+    );
     assert!(parsed["line"].is_null());
     assert!(parsed["col"].is_null());
     assert!(
@@ -210,7 +214,11 @@ fn crushc_emits_casm() {
 
     // `--emit casm` is CASM JSON now, written beside the input.
     let output = run_crushc(&["--emit", "casm", src.to_str().unwrap()]);
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let json: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("emit.casm")).unwrap()).unwrap();
     assert_eq!(json["manifest"]["permissions"][0], "io.print");
@@ -265,15 +273,31 @@ fn crushc_compiles_a_constructed_kind_call() {
             args.insert(0, "-O");
         }
         let compile = run_crushc(&args);
-        assert!(compile.status.success(), "-O={opt}: {}", String::from_utf8_lossy(&compile.stderr));
+        assert!(
+            compile.status.success(),
+            "-O={opt}: {}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
         let run = Command::new(crush_run_bin())
             .args(["run", out.to_str().unwrap()])
             .output()
             .expect("failed to execute crush-run");
-        assert!(run.status.success(), "-O={opt}: {}", String::from_utf8_lossy(&run.stderr));
-        assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "15", "-O={opt}");
+        assert!(
+            run.status.success(),
+            "-O={opt}: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout).trim(),
+            "15",
+            "-O={opt}"
+        );
     }
     let casm = run_crushc(&["-O", "--emit", "cvms", "-o", "-", src.to_str().unwrap()]);
-    assert!(casm.status.success(), "{}", String::from_utf8_lossy(&casm.stderr));
+    assert!(
+        casm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&casm.stderr)
+    );
     assert!(String::from_utf8_lossy(&casm.stdout).contains("CONSTRUCT \"Acc\" 1"));
 }

@@ -16,6 +16,9 @@ fn main() -> anyhow::Result<()> {
     assert_eq!(result.output, "hello from Crush\n");
     let returned = result.return_value.unwrap_or(Value::Null);
     assert_eq!(returned, Value::Int(42));
-    println!("Crush printed {:?} and returned {returned} to Rust", result.output);
+    println!(
+        "Crush printed {:?} and returned {returned} to Rust",
+        result.output
+    );
     Ok(())
 }

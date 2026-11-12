@@ -150,32 +150,162 @@ use BuiltinRet as R;
 /// capability calls, constructor / method / user-function fallthroughs — those
 /// are not compiler-owned names.
 pub(crate) const BUILTINS: &[Builtin] = &[
-    Builtin { name: "len", min_args: 1, max_args: 1, ret: R::Int },
-    Builtin { name: "print", min_args: 1, max_args: 1, ret: R::Null },
-    Builtin { name: "parallel_map", min_args: 2, max_args: 2, ret: R::ArrayAny },
-    Builtin { name: "make_range", min_args: 1, max_args: 3, ret: R::ArrayInt },
-    Builtin { name: "range", min_args: 1, max_args: 3, ret: R::ArrayInt },
-    Builtin { name: "arr_get", min_args: 2, max_args: 2, ret: R::Any },
-    Builtin { name: "arr_set", min_args: 3, max_args: 3, ret: R::Any },
-    Builtin { name: "array.push", min_args: 2, max_args: 2, ret: R::Null },
-    Builtin { name: "array.pop", min_args: 1, max_args: 1, ret: R::Any },
-    Builtin { name: "str.contains", min_args: 2, max_args: 2, ret: R::Bool },
-    Builtin { name: "str.starts_with", min_args: 2, max_args: 2, ret: R::Bool },
-    Builtin { name: "str.ends_with", min_args: 2, max_args: 2, ret: R::Bool },
-    Builtin { name: "str.to_upper", min_args: 1, max_args: 1, ret: R::Str },
-    Builtin { name: "str.to_lower", min_args: 1, max_args: 1, ret: R::Str },
-    Builtin { name: "str.trim", min_args: 1, max_args: 1, ret: R::Str },
-    Builtin { name: "str.split", min_args: 2, max_args: 2, ret: R::ArrayStr },
-    Builtin { name: "str.replace", min_args: 3, max_args: 3, ret: R::Str },
-    Builtin { name: "str.join", min_args: 2, max_args: 2, ret: R::Str },
-    Builtin { name: "math.pow", min_args: 2, max_args: 2, ret: R::Any },
-    Builtin { name: "math.sqrt", min_args: 1, max_args: 1, ret: R::Any },
-    Builtin { name: "math.abs", min_args: 1, max_args: 1, ret: R::Any },
-    Builtin { name: "math.round", min_args: 1, max_args: 1, ret: R::Any },
-    Builtin { name: "math.floor", min_args: 1, max_args: 1, ret: R::Any },
-    Builtin { name: "math.ceil", min_args: 1, max_args: 1, ret: R::Any },
-    Builtin { name: "ai_synthesize", min_args: 1, max_args: 2, ret: R::Any },
-    Builtin { name: "ai_semantic_match", min_args: 2, max_args: 3, ret: R::Any },
+    Builtin {
+        name: "len",
+        min_args: 1,
+        max_args: 1,
+        ret: R::Int,
+    },
+    Builtin {
+        name: "print",
+        min_args: 1,
+        max_args: 1,
+        ret: R::Null,
+    },
+    Builtin {
+        name: "parallel_map",
+        min_args: 2,
+        max_args: 2,
+        ret: R::ArrayAny,
+    },
+    Builtin {
+        name: "make_range",
+        min_args: 1,
+        max_args: 3,
+        ret: R::ArrayInt,
+    },
+    Builtin {
+        name: "range",
+        min_args: 1,
+        max_args: 3,
+        ret: R::ArrayInt,
+    },
+    Builtin {
+        name: "arr_get",
+        min_args: 2,
+        max_args: 2,
+        ret: R::Any,
+    },
+    Builtin {
+        name: "arr_set",
+        min_args: 3,
+        max_args: 3,
+        ret: R::Any,
+    },
+    Builtin {
+        name: "array.push",
+        min_args: 2,
+        max_args: 2,
+        ret: R::Null,
+    },
+    Builtin {
+        name: "array.pop",
+        min_args: 1,
+        max_args: 1,
+        ret: R::Any,
+    },
+    Builtin {
+        name: "str.contains",
+        min_args: 2,
+        max_args: 2,
+        ret: R::Bool,
+    },
+    Builtin {
+        name: "str.starts_with",
+        min_args: 2,
+        max_args: 2,
+        ret: R::Bool,
+    },
+    Builtin {
+        name: "str.ends_with",
+        min_args: 2,
+        max_args: 2,
+        ret: R::Bool,
+    },
+    Builtin {
+        name: "str.to_upper",
+        min_args: 1,
+        max_args: 1,
+        ret: R::Str,
+    },
+    Builtin {
+        name: "str.to_lower",
+        min_args: 1,
+        max_args: 1,
+        ret: R::Str,
+    },
+    Builtin {
+        name: "str.trim",
+        min_args: 1,
+        max_args: 1,
+        ret: R::Str,
+    },
+    Builtin {
+        name: "str.split",
+        min_args: 2,
+        max_args: 2,
+        ret: R::ArrayStr,
+    },
+    Builtin {
+        name: "str.replace",
+        min_args: 3,
+        max_args: 3,
+        ret: R::Str,
+    },
+    Builtin {
+        name: "str.join",
+        min_args: 2,
+        max_args: 2,
+        ret: R::Str,
+    },
+    Builtin {
+        name: "math.pow",
+        min_args: 2,
+        max_args: 2,
+        ret: R::Any,
+    },
+    Builtin {
+        name: "math.sqrt",
+        min_args: 1,
+        max_args: 1,
+        ret: R::Any,
+    },
+    Builtin {
+        name: "math.abs",
+        min_args: 1,
+        max_args: 1,
+        ret: R::Any,
+    },
+    Builtin {
+        name: "math.round",
+        min_args: 1,
+        max_args: 1,
+        ret: R::Any,
+    },
+    Builtin {
+        name: "math.floor",
+        min_args: 1,
+        max_args: 1,
+        ret: R::Any,
+    },
+    Builtin {
+        name: "math.ceil",
+        min_args: 1,
+        max_args: 1,
+        ret: R::Any,
+    },
+    Builtin {
+        name: "ai_synthesize",
+        min_args: 1,
+        max_args: 2,
+        ret: R::Any,
+    },
+    Builtin {
+        name: "ai_semantic_match",
+        min_args: 2,
+        max_args: 3,
+        ret: R::Any,
+    },
 ];
 
 pub(crate) fn builtin(name: &str) -> Option<&'static Builtin> {
@@ -195,7 +325,9 @@ pub(crate) fn builtin(name: &str) -> Option<&'static Builtin> {
 pub(crate) const GENERATED_RECEIVER_PREFIXES: &[&str] = &["__comp_", "__crush_"];
 
 pub(crate) fn is_generated_receiver(name: &str) -> bool {
-    GENERATED_RECEIVER_PREFIXES.iter().any(|p| name.starts_with(p))
+    GENERATED_RECEIVER_PREFIXES
+        .iter()
+        .any(|p| name.starts_with(p))
 }
 
 #[cfg(test)]

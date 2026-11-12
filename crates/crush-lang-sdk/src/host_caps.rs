@@ -292,9 +292,13 @@ impl HostCapsBuilder {
         let mut caps = HostCaps::new();
         caps.register(Box::new(crush_caison::vm_cap::CaisonParseCap::new()));
         // Deprecated pre-rename name; removed in 0.5 (CRUSH-149).
-        caps.register(Box::new(crush_caison::vm_cap::CaisonParseCap::deprecated_alias()));
+        caps.register(Box::new(
+            crush_caison::vm_cap::CaisonParseCap::deprecated_alias(),
+        ));
         // Scripting basics, always registered: neither reaches outside the VM.
-        caps.register(Box::new(SysArgsCap { args: self.script_args.clone() }));
+        caps.register(Box::new(SysArgsCap {
+            args: self.script_args.clone(),
+        }));
         caps.register(Box::new(SysExitCap));
         caps.grant_polyglot(&self.polyglot);
         if let Some(executor) = self.polyglot_executor.clone() {
@@ -423,7 +427,9 @@ fn resolve_in(
     }
     let escapes = || Unconfined::Escapes.message(&s);
     let root = Path::new(root);
-    let root_canonical = backend.canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let root_canonical = backend
+        .canonicalize(root)
+        .unwrap_or_else(|_| root.to_path_buf());
 
     // Resolve `.` / `..` lexically first. A path that does not exist yet
     // (an `fs.write` target) cannot be canonicalized, and `Path::starts_with`
@@ -521,7 +527,9 @@ fn confine(
                 if links > MAX_SYMLINKS {
                     return Err(Unconfined::Loop);
                 }
-                let target = backend.read_link(&candidate).map_err(|_| Unconfined::Escapes)?;
+                let target = backend
+                    .read_link(&candidate)
+                    .map_err(|_| Unconfined::Escapes)?;
                 queue(&target, &mut pending);
             }
             // Present and not a link, or missing (so nothing below it can be
@@ -624,7 +632,9 @@ impl FsSandbox {
 
     fn root_canonical(&self) -> std::path::PathBuf {
         let root = std::path::Path::new(&self.root);
-        self.backend.canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
+        self.backend
+            .canonicalize(root)
+            .unwrap_or_else(|_| root.to_path_buf())
     }
 
     /// Resolve a program path against the working directory, inside the root.
@@ -715,7 +725,10 @@ impl HostCap for FsReadCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        let data = self.fs.backend().read_to_string(&path)
+        let data = self
+            .fs
+            .backend()
+            .read_to_string(&path)
             .map_err(|e| format!("fs.read {}: {e}", self.fs.display(&path)))?;
         Ok(Some(Value::Str(data)))
     }
@@ -747,7 +760,9 @@ impl HostCap for FsWriteCap {
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
         let data = fs_write_payload("fs.write", &args[1])?;
-        self.fs.backend().write(&path, &data)
+        self.fs
+            .backend()
+            .write(&path, &data)
             .map_err(|e| format!("fs.write {}: {e}", self.fs.display(&path)))?;
         Ok(None)
     }
@@ -782,7 +797,9 @@ impl HostCap for FsAppendCap {
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
         let data = fs_write_payload("fs.append", &args[1])?;
-        self.fs.backend().append(&path, &data)
+        self.fs
+            .backend()
+            .append(&path, &data)
             .map_err(|e| format!("fs.append {}: {e}", self.fs.display(&path)))?;
         Ok(None)
     }
@@ -832,7 +849,11 @@ impl HostCap for FsExistsCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        Ok(Some(Value::Int(if self.fs.backend().kind(&path).is_ok() { 1 } else { 0 })))
+        Ok(Some(Value::Int(if self.fs.backend().kind(&path).is_ok() {
+            1
+        } else {
+            0
+        })))
     }
 }
 
@@ -890,7 +911,10 @@ impl HostCap for FsIsDirCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        let is_dir = matches!(self.fs.backend().kind(&path), Ok(crate::fs_backend::Kind::Dir));
+        let is_dir = matches!(
+            self.fs.backend().kind(&path),
+            Ok(crate::fs_backend::Kind::Dir)
+        );
         Ok(Some(Value::Int(if is_dir { 1 } else { 0 })))
     }
 }
@@ -924,7 +948,10 @@ impl HostCap for FsIsFileCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let path = self.fs.resolve(&args[0])?;
-        let is_file = matches!(self.fs.backend().kind(&path), Ok(crate::fs_backend::Kind::File));
+        let is_file = matches!(
+            self.fs.backend().kind(&path),
+            Ok(crate::fs_backend::Kind::File)
+        );
         Ok(Some(Value::Int(if is_file { 1 } else { 0 })))
     }
 }
@@ -1045,11 +1072,17 @@ pub struct SysArgsCap {
 
 impl HostCap for SysArgsCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "sys.args".to_string(), argc: Some(0), returns: true }
+        HostCapSpec {
+            name: "sys.args".to_string(),
+            argc: Some(0),
+            returns: true,
+        }
     }
 
     fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
-        Ok(Some(Value::new_array(self.args.iter().cloned().map(Value::Str).collect())))
+        Ok(Some(Value::new_array(
+            self.args.iter().cloned().map(Value::Str).collect(),
+        )))
     }
 }
 
@@ -1059,7 +1092,11 @@ pub struct SysExitCap;
 
 impl HostCap for SysExitCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "sys.exit".to_string(), argc: Some(1), returns: false }
+        HostCapSpec {
+            name: "sys.exit".to_string(),
+            argc: Some(1),
+            returns: false,
+        }
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
@@ -1241,7 +1278,9 @@ time_cap!(TimeNowIsoCap, "time.now_iso", 0, |_args: &[Value]| {
 time_cap!(TimeElapsedCap, "time.elapsed", 1, |args: &[Value]| {
     match &args[0] {
         Value::Int(start) => Ok(Some(Value::Int(now_ms()? - start))),
-        other => Err(format!("time.elapsed: expected int milliseconds, got {other}")),
+        other => Err(format!(
+            "time.elapsed: expected int milliseconds, got {other}"
+        )),
     }
 });
 
@@ -1335,7 +1374,10 @@ fn exec_with_wall_limit(cmd: &str, args: &[String]) -> Result<std::process::Outp
     use std::process::Stdio;
     let err = |e: std::io::Error| format!("process.exec {cmd}: {e}");
     let Some(budget) = crush_vm::wall::remaining() else {
-        return std::process::Command::new(cmd).args(args).output().map_err(err);
+        return std::process::Command::new(cmd)
+            .args(args)
+            .output()
+            .map_err(err);
     };
     let mut child = std::process::Command::new(cmd)
         .args(args)
@@ -1353,8 +1395,18 @@ fn exec_with_wall_limit(cmd: &str, args: &[String]) -> Result<std::process::Outp
             buf
         })
     };
-    let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let errp = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let out = drain(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let errp = drain(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
     let deadline = std::time::Instant::now() + budget;
     let status = loop {
         if let Some(status) = child.try_wait().map_err(err)? {
@@ -1363,9 +1415,7 @@ fn exec_with_wall_limit(cmd: &str, args: &[String]) -> Result<std::process::Outp
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!(
-                "{EXEC_TIMEOUT_MARK}: process.exec {cmd} killed"
-            ));
+            return Err(format!("{EXEC_TIMEOUT_MARK}: process.exec {cmd} killed"));
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     };
@@ -1548,7 +1598,9 @@ mod tests {
         // new files inside the root still work, including via `..` that stays inside
         write.call(vec![text("new.txt"), text("ok")]).unwrap();
         std::fs::create_dir(root.join("sub")).unwrap();
-        write.call(vec![text("sub/../new2.txt"), text("ok")]).unwrap();
+        write
+            .call(vec![text("sub/../new2.txt"), text("ok")])
+            .unwrap();
         assert!(root.join("new.txt").exists() && root.join("new2.txt").exists());
     }
 
@@ -1560,19 +1612,36 @@ mod tests {
         let write = FsWriteCap::new(dir.path().to_str().unwrap());
         let path = |s: &str| Value::Str(s.to_string());
 
-        write.call(vec![path("b.bin"), Value::Bytes(vec![0x41, 0x00, 0xC8, 0xFF])]).unwrap();
-        assert_eq!(std::fs::read(dir.path().join("b.bin")).unwrap(), [0x41, 0x00, 0xC8, 0xFF]);
+        write
+            .call(vec![
+                path("b.bin"),
+                Value::Bytes(vec![0x41, 0x00, 0xC8, 0xFF]),
+            ])
+            .unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("b.bin")).unwrap(),
+            [0x41, 0x00, 0xC8, 0xFF]
+        );
 
         let cells = [0xCA, 0xFE, 0, 0].map(Value::Int).to_vec();
         let buf = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(cells)));
         write.call(vec![path("v.bin"), buf]).unwrap();
-        assert_eq!(std::fs::read(dir.path().join("v.bin")).unwrap(), [0xCA, 0xFE, 0, 0]);
+        assert_eq!(
+            std::fs::read(dir.path().join("v.bin")).unwrap(),
+            [0xCA, 0xFE, 0, 0]
+        );
 
         // strings and other data values keep their text form
         write.call(vec![path("s.txt"), path("é")]).unwrap();
-        assert_eq!(std::fs::read(dir.path().join("s.txt")).unwrap(), "é".as_bytes());
+        assert_eq!(
+            std::fs::read(dir.path().join("s.txt")).unwrap(),
+            "é".as_bytes()
+        );
         write.call(vec![path("n.txt"), Value::Int(42)]).unwrap();
-        assert_eq!(std::fs::read_to_string(dir.path().join("n.txt")).unwrap(), "42");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("n.txt")).unwrap(),
+            "42"
+        );
     }
 
     #[test]
@@ -1581,11 +1650,18 @@ mod tests {
         let write = FsWriteCap::new(dir.path().to_str().unwrap());
         let path = |s: &str| Value::Str(s.to_string());
 
-        let bad = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(300)])));
+        let bad = Value::Vector(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Int(
+            300,
+        )])));
         let err = write.call(vec![path("bad.bin"), bad]).unwrap_err();
-        assert!(err.contains("fs.write") && err.contains("not a byte"), "{err}");
+        assert!(
+            err.contains("fs.write") && err.contains("not a byte"),
+            "{err}"
+        );
 
-        let err = write.call(vec![path("h.txt"), Value::Handle(3)]).unwrap_err();
+        let err = write
+            .call(vec![path("h.txt"), Value::Handle(3)])
+            .unwrap_err();
         assert!(err.contains("has no file form"), "{err}");
         assert!(!dir.path().join("bad.bin").exists() && !dir.path().join("h.txt").exists());
     }
@@ -1624,14 +1700,15 @@ mod tests {
         let err = append
             .call(vec![path("h.txt"), Value::Handle(3)])
             .unwrap_err();
-        assert!(err.contains("fs.append") && err.contains("has no file form"), "{err}");
+        assert!(
+            err.contains("fs.append") && err.contains("has no file form"),
+            "{err}"
+        );
         assert!(!root.join("h.txt").exists());
 
         // `..` and a symlink out of the root are both refused.
         for escape in ["../out.txt", "out/new.txt"] {
-            let err = append
-                .call(vec![path(escape), path("x")])
-                .unwrap_err();
+            let err = append.call(vec![path(escape), path("x")]).unwrap_err();
             assert!(err.contains("escapes sandbox"), "{escape}: {err}");
         }
         let mut outside: Vec<_> = std::fs::read_dir(&outside)
@@ -1639,7 +1716,10 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         outside.sort();
-        assert!(outside.is_empty(), "something was created outside: {outside:?}");
+        assert!(
+            outside.is_empty(),
+            "something was created outside: {outside:?}"
+        );
         let missing = append
             .call(vec![path("nodir/log.txt"), path("x")])
             .unwrap_err();
@@ -1657,7 +1737,10 @@ mod tests {
 
         let write = FsWriteCap::new(root.to_str().unwrap());
         let err = write
-            .call(vec![Value::Str("link/new.txt".into()), Value::Str("x".into())])
+            .call(vec![
+                Value::Str("link/new.txt".into()),
+                Value::Str("x".into()),
+            ])
             .unwrap_err();
         assert!(err.contains("escapes sandbox"), "{err}");
         assert!(!outside.join("new.txt").exists());
@@ -1841,11 +1924,20 @@ mod tests {
 
     // CRUSH-186: the run has ONE wall-clock budget, enforced across a blocking
     // `process.exec` and a plain loop, on the scheduler and on PortableVm.
-    fn run_both_with_wall(source: &str, ms: u64, caps: &crush_vm::HostCaps) -> [(String, std::time::Duration); 2] {
+    fn run_both_with_wall(
+        source: &str,
+        ms: u64,
+        caps: &crush_vm::HostCaps,
+    ) -> [(String, std::time::Duration); 2] {
         let prog = crate::compile::compile_crush_source(source).expect("compile");
-        let quotas = crush_vm::Quotas { max_wall_time_ms: ms, max_steps: usize::MAX, ..Default::default() };
+        let quotas = crush_vm::Quotas {
+            max_wall_time_ms: ms,
+            max_steps: usize::MAX,
+            ..Default::default()
+        };
         let t = std::time::Instant::now();
-        let sched = crush_vm::run_with_caps(&prog, &quotas, Some(caps)).expect_err("scheduler must time out");
+        let sched = crush_vm::run_with_caps(&prog, &quotas, Some(caps))
+            .expect_err("scheduler must time out");
         let sched = (sched.to_string(), t.elapsed());
         let mut vm = crush_vm::PortableVm::new(prog);
         vm.set_quotas(quotas);
@@ -1858,7 +1950,9 @@ mod tests {
     #[test]
     fn wall_limit_stops_while_true() {
         let caps = HostCapsBuilder::new().build();
-        for (msg, took) in run_both_with_wall("fn main() {\n    while true {\n    }\n}\n", 200, &caps) {
+        for (msg, took) in
+            run_both_with_wall("fn main() {\n    while true {\n    }\n}\n", 200, &caps)
+        {
             assert!(msg.contains("wall-clock quota exceeded (200ms)"), "{msg}");
             assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
         }
@@ -1869,8 +1963,16 @@ mod tests {
         let caps = HostCapsBuilder::new().process(true).build();
         let src = "fn main() {\n    process.exec(\"sleep\", [\"2\"])\n}\n";
         for (msg, took) in run_both_with_wall(src, 200, &caps) {
-            assert!(msg.contains("process.exec") && msg.contains("wall-clock quota") && msg.contains("killed"), "{msg}");
-            assert!(took < std::time::Duration::from_millis(1500), "sleep 2 must be killed, took {took:?}");
+            assert!(
+                msg.contains("process.exec")
+                    && msg.contains("wall-clock quota")
+                    && msg.contains("killed"),
+                "{msg}"
+            );
+            assert!(
+                took < std::time::Duration::from_millis(1500),
+                "sleep 2 must be killed, took {took:?}"
+            );
         }
     }
 
@@ -1980,5 +2082,3 @@ mod tests {
         );
     }
 }
-
-

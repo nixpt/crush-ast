@@ -26,7 +26,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use crush_cast::{CastType, Expression as E, Function, Program, Statement as S};
 
 /// Which shell's rules apply where bash and zsh differ.
@@ -131,24 +131,69 @@ pub enum RedirKind {
 
 #[derive(Clone, Debug)]
 pub enum Cmd {
-    Simple { assigns: Vec<Assign>, words: Vec<Word>, line: usize },
+    Simple {
+        assigns: Vec<Assign>,
+        words: Vec<Word>,
+        line: usize,
+    },
     /// `cmd < f`, `cmd > f`, `cmd >> f`, `cmd <<EOT`: the command with its
     /// streams pointed somewhere else.
-    Redirected { inner: Box<Cmd>, redirs: Vec<Redir>, line: usize },
-    If { branches: Vec<(List, List)>, else_body: Option<List>, line: usize },
-    Loop { cond: List, body: List, until: bool, line: usize },
+    Redirected {
+        inner: Box<Cmd>,
+        redirs: Vec<Redir>,
+        line: usize,
+    },
+    If {
+        branches: Vec<(List, List)>,
+        else_body: Option<List>,
+        line: usize,
+    },
+    Loop {
+        cond: List,
+        body: List,
+        until: bool,
+        line: usize,
+    },
     /// `for var in words`; `words: None` iterates `"$@"`.
-    For { var: String, words: Option<Vec<Word>>, body: List, line: usize },
-    ArithFor { init: Option<String>, cond: Option<String>, step: Option<String>, body: List, line: usize },
-    Case { word: Word, arms: Vec<(Vec<Word>, List)>, line: usize },
+    For {
+        var: String,
+        words: Option<Vec<Word>>,
+        body: List,
+        line: usize,
+    },
+    ArithFor {
+        init: Option<String>,
+        cond: Option<String>,
+        step: Option<String>,
+        body: List,
+        line: usize,
+    },
+    Case {
+        word: Word,
+        arms: Vec<(Vec<Word>, List)>,
+        line: usize,
+    },
     Group(List),
     /// `[[ … ]]`: a conditional expression that does no field splitting and
     /// no pathname expansion (its right-hand operands are patterns).
-    ExtendedTest { cond: Cond, line: usize },
-    Arith { expr: String, line: usize },
-    FuncDef { name: String, body: List, line: usize },
+    ExtendedTest {
+        cond: Cond,
+        line: usize,
+    },
+    Arith {
+        expr: String,
+        line: usize,
+    },
+    FuncDef {
+        name: String,
+        body: List,
+        line: usize,
+    },
     /// A construct the parser adapter already knows it cannot lower.
-    Unsupported { what: String, line: usize },
+    Unsupported {
+        what: String,
+        line: usize,
+    },
 }
 
 /// One `[[ … ]]` expression.
@@ -191,7 +236,11 @@ pub fn lower_script(dialect: Dialect, script: &List) -> Result<Program> {
     let mut body = Vec::new();
     for item in script {
         match item.first.stages.as_slice() {
-            [Cmd::FuncDef { name, body: fbody, line }] if item.rest.is_empty() && !item.first.negated => {
+            [Cmd::FuncDef {
+                name,
+                body: fbody,
+                line,
+            }] if item.rest.is_empty() && !item.first.negated => {
                 lw.lower_function(name, fbody, *line)?;
                 lw.defined.insert(name.clone());
             }
@@ -221,11 +270,23 @@ pub fn lower_script(dialect: Dialect, script: &List) -> Result<Program> {
 
     // Globals start *unset* (null): `${x-y}` and `${x:=y}` can tell that apart
     // from a variable that was assigned the empty string.
-    let mut main = vec![decl("__g", E::ObjectLiteral { properties: vec![], meta: m() })];
+    let mut main = vec![decl(
+        "__g",
+        E::ObjectLiteral {
+            properties: vec![],
+            meta: m(),
+        },
+    )];
     for g in &lw.globals {
         main.push(set_index("__g", g, null()));
     }
-    main.push(decl("__a", E::ArrayLiteral { elements: vec![], meta: m() }));
+    main.push(decl(
+        "__a",
+        E::ArrayLiteral {
+            elements: vec![],
+            meta: m(),
+        },
+    ));
     main.push(decl("__st", int(0)));
     for (key, init) in [
         (STREAM, int(0)),
@@ -286,37 +347,73 @@ fn m() -> HashMap<String, serde_json::Value> {
     HashMap::new()
 }
 fn s(v: &str) -> E {
-    E::StringLiteral { value: v.to_string(), meta: m() }
+    E::StringLiteral {
+        value: v.to_string(),
+        meta: m(),
+    }
 }
 fn int(v: i64) -> E {
-    E::IntLiteral { value: v, meta: m() }
+    E::IntLiteral {
+        value: v,
+        meta: m(),
+    }
 }
 fn boolean(v: bool) -> E {
-    E::BoolLiteral { value: v, meta: m() }
+    E::BoolLiteral {
+        value: v,
+        meta: m(),
+    }
 }
 fn var(n: &str) -> E {
-    E::Var { name: n.to_string(), meta: m() }
+    E::Var {
+        name: n.to_string(),
+        meta: m(),
+    }
 }
 fn null() -> E {
     E::NullLiteral { meta: m() }
 }
 fn bin(op: &str, l: E, r: E) -> E {
-    E::BinaryOp { operator: op.to_string(), left: Box::new(l), right: Box::new(r), meta: m() }
+    E::BinaryOp {
+        operator: op.to_string(),
+        left: Box::new(l),
+        right: Box::new(r),
+        meta: m(),
+    }
 }
 fn not(e: E) -> E {
-    E::UnaryOp { operator: "!".to_string(), operand: Box::new(e), meta: m() }
+    E::UnaryOp {
+        operator: "!".to_string(),
+        operand: Box::new(e),
+        meta: m(),
+    }
 }
 fn call(f: &str, args: Vec<E>) -> E {
-    E::Call { function: f.to_string(), args, meta: m() }
+    E::Call {
+        function: f.to_string(),
+        args,
+        meta: m(),
+    }
 }
 fn cap(name: &str, args: Vec<E>) -> E {
-    E::CapabilityCall { name: name.to_string(), args, meta: m() }
+    E::CapabilityCall {
+        name: name.to_string(),
+        args,
+        meta: m(),
+    }
 }
 fn index(t: E, i: E) -> E {
-    E::Index { target: Box::new(t), index: Box::new(i), meta: m() }
+    E::Index {
+        target: Box::new(t),
+        index: Box::new(i),
+        meta: m(),
+    }
 }
 fn array(elements: Vec<E>) -> E {
-    E::ArrayLiteral { elements, meta: m() }
+    E::ArrayLiteral {
+        elements,
+        meta: m(),
+    }
 }
 fn tern(c: E, a: E, b: E) -> E {
     call("__crush_ternary__", vec![c, a, b])
@@ -332,10 +429,19 @@ fn chars(e: E) -> E {
     call("str.split", vec![e, s("")])
 }
 fn decl(n: &str, v: E) -> S {
-    S::VarDecl { name: n.to_string(), value: v, type_hint: CastType::Any, meta: m() }
+    S::VarDecl {
+        name: n.to_string(),
+        value: v,
+        type_hint: CastType::Any,
+        meta: m(),
+    }
 }
 fn set(n: &str, v: E) -> S {
-    S::Assign { target: n.to_string(), value: v, meta: m() }
+    S::Assign {
+        target: n.to_string(),
+        value: v,
+        meta: m(),
+    }
 }
 fn set_index(map: &str, key: &str, v: E) -> S {
     expr_stmt(call("__crush_setindex__", vec![var(map), s(key), v]))
@@ -344,19 +450,39 @@ fn expr_stmt(e: E) -> S {
     S::ExprStmt { expr: e, meta: m() }
 }
 fn if_(c: E, then_body: Vec<S>, else_body: Option<Vec<S>>) -> S {
-    S::If { condition: c, then_body, else_body, meta: m() }
+    S::If {
+        condition: c,
+        then_body,
+        else_body,
+        meta: m(),
+    }
 }
 fn while_(c: E, body: Vec<S>) -> S {
-    S::While { condition: Box::new(c), body, meta: m() }
+    S::While {
+        condition: Box::new(c),
+        body,
+        meta: m(),
+    }
 }
 fn for_(v: &str, iter: E, body: Vec<S>) -> S {
-    S::For { variable: v.to_string(), iterable: Box::new(iter), body, meta: m() }
+    S::For {
+        variable: v.to_string(),
+        iterable: Box::new(iter),
+        body,
+        meta: m(),
+    }
 }
 fn ret(e: E) -> S {
-    S::Return { value: Some(e), meta: m() }
+    S::Return {
+        value: Some(e),
+        meta: m(),
+    }
 }
 fn throw(e: E) -> S {
-    S::Throw { value: e, meta: m() }
+    S::Throw {
+        value: e,
+        meta: m(),
+    }
 }
 fn set_st(v: i64) -> S {
     set("__st", int(v))
@@ -366,7 +492,10 @@ fn st_ok() -> E {
 }
 fn func(params: &[&str], body: Vec<S>) -> Function {
     Function {
-        params: params.iter().map(|p| (p.to_string(), CastType::Any)).collect(),
+        params: params
+            .iter()
+            .map(|p| (p.to_string(), CastType::Any))
+            .collect(),
         body,
         meta: m(),
         ..Default::default()
@@ -417,28 +546,69 @@ enum Seg {
     /// `$?`
     Status(bool),
     /// `$@` (`star: false`) or `$*`.
-    All { star: bool, quoted: bool },
+    All {
+        star: bool,
+        quoted: bool,
+    },
     /// `${#name}`
     Len(String, bool),
     /// `$(( … ))`
     Arith(String, bool),
     /// `${name<op>word}`, op ∈ `:- - := = :+ + :? ?`.
-    Default { name: String, op: &'static str, word: Word, quoted: bool },
+    Default {
+        name: String,
+        op: &'static str,
+        word: Word,
+        quoted: bool,
+    },
     /// `${name<op>pat}`, op ∈ `# ## % %%` (remove a prefix/suffix pattern).
-    Trim { name: String, op: &'static str, pat: Word, quoted: bool },
+    Trim {
+        name: String,
+        op: &'static str,
+        pat: Word,
+        quoted: bool,
+    },
     /// `${name/pat/rep}` (`//` replaces every occurrence); `anchor` is 0,
     /// 1 for `/#pat` (the start) or 2 for `/%pat` (the end).
-    Subst { name: String, all: bool, anchor: u8, pat: Word, rep: Word, quoted: bool },
+    Subst {
+        name: String,
+        all: bool,
+        anchor: u8,
+        pat: Word,
+        rep: Word,
+        quoted: bool,
+    },
     /// `${name:off}` / `${name:off:len}` (a substring, by character).
-    Substr { name: String, off: Word, len: Option<Word>, quoted: bool },
+    Substr {
+        name: String,
+        off: Word,
+        len: Option<Word>,
+        quoted: bool,
+    },
     /// `${name^^}` / `${name,,}`.
-    Case { name: String, upper: bool, quoted: bool },
+    Case {
+        name: String,
+        upper: bool,
+        quoted: bool,
+    },
     /// `${a[i]}`; `len` is `${#a[i]}`.
-    ArrElem { name: String, index: Word, len: bool, quoted: bool },
+    ArrElem {
+        name: String,
+        index: Word,
+        len: bool,
+        quoted: bool,
+    },
     /// `${a[@]}` / `${a[*]}`.
-    ArrAll { name: String, star: bool, quoted: bool },
+    ArrAll {
+        name: String,
+        star: bool,
+        quoted: bool,
+    },
     /// `${#a[@]}` / `${#a[*]}`.
-    ArrCount { name: String, quoted: bool },
+    ArrCount {
+        name: String,
+        quoted: bool,
+    },
 }
 
 impl Seg {
@@ -466,7 +636,10 @@ impl Seg {
     }
     /// Expands to digits only: never empty, never split, never a glob.
     fn is_numeric(&self) -> bool {
-        matches!(self, Seg::Count(_) | Seg::Status(_) | Seg::Len(..) | Seg::Arith(..) | Seg::ArrCount { .. })
+        matches!(
+            self,
+            Seg::Count(_) | Seg::Status(_) | Seg::Len(..) | Seg::Arith(..) | Seg::ArrCount { .. }
+        )
     }
     /// The variable this segment reads, if it reads exactly one.
     fn var_name(&self) -> Option<&str> {
@@ -518,14 +691,21 @@ enum A {
     Bin(&'static str, Box<A>, Box<A>),
     Tern(Box<A>, Box<A>, Box<A>),
     Assign(String, &'static str, Box<A>),
-    Inc { name: String, delta: i64, post: bool },
+    Inc {
+        name: String,
+        delta: i64,
+        post: bool,
+    },
 }
 
 const ARITH_OPS: &[&str] = &[
-    "<<=", ">>=", "**", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<=", ">=", "==", "!=", "&&",
-    "||", "<<", ">>", "+", "-", "*", "/", "%", "<", ">", "=", "!", "~", "?", ":", "&", "|", "^", ",", "(", ")",
+    "<<=", ">>=", "**", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<=", ">=",
+    "==", "!=", "&&", "||", "<<", ">>", "+", "-", "*", "/", "%", "<", ">", "=", "!", "~", "?", ":",
+    "&", "|", "^", ",", "(", ")",
 ];
-const ARITH_UNSUPPORTED: &[&str] = &["<<=", ">>=", "&=", "|=", "^=", "<<", ">>", "~", "&", "|", "^", ","];
+const ARITH_UNSUPPORTED: &[&str] = &[
+    "<<=", ">>=", "&=", "|=", "^=", "<<", ">>", "~", "&", "|", "^", ",",
+];
 
 struct ArithParser<'a> {
     toks: &'a [Tok],
@@ -551,7 +731,9 @@ impl ArithParser<'_> {
         }
     }
     fn assign(&mut self) -> Option<A> {
-        if let (Some(Tok::Name(n)), Some(Tok::Op(op))) = (self.toks.get(self.pos), self.toks.get(self.pos + 1)) {
+        if let (Some(Tok::Name(n)), Some(Tok::Op(op))) =
+            (self.toks.get(self.pos), self.toks.get(self.pos + 1))
+        {
             if matches!(*op, "=" | "+=" | "-=" | "*=" | "/=" | "%=") {
                 let (n, op) = (n.clone(), *op);
                 self.pos += 2;
@@ -574,7 +756,14 @@ impl ArithParser<'_> {
         Some(c)
     }
     fn binary(&mut self, level: usize) -> Option<A> {
-        const LEVELS: &[&[&str]] = &[&["||"], &["&&"], &["==", "!="], &["<", "<=", ">", ">="], &["+", "-"], &["*", "/", "%"]];
+        const LEVELS: &[&[&str]] = &[
+            &["||"],
+            &["&&"],
+            &["==", "!="],
+            &["<", "<=", ">", ">="],
+            &["+", "-"],
+            &["*", "/", "%"],
+        ];
         if level == LEVELS.len() {
             return self.power();
         }
@@ -608,7 +797,11 @@ impl ArithParser<'_> {
                     Some(Tok::Name(n)) => {
                         let name = n.clone();
                         self.pos += 1;
-                        Some(A::Inc { name, delta: if op == "++" { 1 } else { -1 }, post: false })
+                        Some(A::Inc {
+                            name,
+                            delta: if op == "++" { 1 } else { -1 },
+                            post: false,
+                        })
                     }
                     _ => None,
                 }
@@ -620,7 +813,11 @@ impl ArithParser<'_> {
         let p = self.primary()?;
         if let (A::Ref(Ref::Name(n)), Some(op @ ("++" | "--"))) = (&p, self.peek_op()) {
             self.pos += 1;
-            return Some(A::Inc { name: n.clone(), delta: if op == "++" { 1 } else { -1 }, post: true });
+            return Some(A::Inc {
+                name: n.clone(),
+                delta: if op == "++" { 1 } else { -1 },
+                post: true,
+            });
         }
         Some(p)
     }
@@ -633,7 +830,11 @@ impl ArithParser<'_> {
             Tok::Pos(n) => Some(A::Ref(Ref::Pos(n))),
             Tok::Op("(") => {
                 let e = self.assign()?;
-                if self.eat(")") { Some(e) } else { None }
+                if self.eat(")") {
+                    Some(e)
+                } else {
+                    None
+                }
             }
             Tok::Op(_) => None,
         }
@@ -675,7 +876,12 @@ fn printf_pieces(fmt: &str) -> std::result::Result<Vec<Piece>, String> {
                     Some('\\') => '\\',
                     Some('"') => '"',
                     Some('\'') => '\'',
-                    other => return Err(format!("`printf` escape `\\{}`", other.map(|c| c.to_string()).unwrap_or_default())),
+                    other => {
+                        return Err(format!(
+                            "`printf` escape `\\{}`",
+                            other.map(|c| c.to_string()).unwrap_or_default()
+                        ))
+                    }
                 });
                 i += 2;
             }
@@ -715,13 +921,36 @@ fn printf_pieces(fmt: &str) -> std::result::Result<Vec<Piece>, String> {
                 let Some(&conv) = cs.get(j) else {
                     return Err("`printf` format ending inside a conversion".to_string());
                 };
-                if !matches!(conv, 's' | 'd' | 'i' | 'u' | 'c' | 'x' | 'X' | 'o' | 'b' | 'f' | 'e' | 'E' | 'g' | 'G') {
+                if !matches!(
+                    conv,
+                    's' | 'd'
+                        | 'i'
+                        | 'u'
+                        | 'c'
+                        | 'x'
+                        | 'X'
+                        | 'o'
+                        | 'b'
+                        | 'f'
+                        | 'e'
+                        | 'E'
+                        | 'g'
+                        | 'G'
+                ) {
                     return Err(format!(
                         "`printf` conversion `%{conv}` (only %s, %d, %i, %u, %c, %x, %X, %o, %b, %f, %e, %E, %g, %G and %% are supported)"
                     ));
                 }
                 pieces.push(Piece::Lit(std::mem::take(&mut lit)));
-                pieces.push(Piece::Conv(Conv { conv, left, zero, plus, space, width, prec }));
+                pieces.push(Piece::Conv(Conv {
+                    conv,
+                    left,
+                    zero,
+                    plus,
+                    space,
+                    width,
+                    prec,
+                }));
                 i = j + 1;
             }
             c => {
@@ -820,11 +1049,20 @@ struct TArg {
     e: E,
 }
 
-const TEST_INT_OPS: &[(&str, &str)] = &[("-eq", "=="), ("-ne", "!="), ("-gt", ">"), ("-ge", ">="), ("-lt", "<"), ("-le", "<=")];
+const TEST_INT_OPS: &[(&str, &str)] = &[
+    ("-eq", "=="),
+    ("-ne", "!="),
+    ("-gt", ">"),
+    ("-ge", ">="),
+    ("-lt", "<"),
+    ("-le", "<="),
+];
 
 fn is_binary_test_op(op: &str) -> bool {
-    matches!(op, "=" | "==" | "!=" | "-a" | "-o" | "<" | ">" | "=~" | "-nt" | "-ot" | "-ef")
-        || TEST_INT_OPS.iter().any(|(o, _)| *o == op)
+    matches!(
+        op,
+        "=" | "==" | "!=" | "-a" | "-o" | "<" | ">" | "=~" | "-nt" | "-ot" | "-ef"
+    ) || TEST_INT_OPS.iter().any(|(o, _)| *o == op)
 }
 
 // ── Lowerer ──────────────────────────────────────────────────────────────────
@@ -887,7 +1125,10 @@ impl Lw {
     }
 
     fn err(&self, what: &str, line: usize) -> anyhow::Error {
-        anyhow!("{} walker: unsupported: {what} at line {line}", self.d.name())
+        anyhow!(
+            "{} walker: unsupported: {what} at line {line}",
+            self.d.name()
+        )
     }
 
     /// Location text passed to run-time checks for their error message.
@@ -916,11 +1157,19 @@ impl Lw {
         } else {
             cap("io.write", vec![text.clone()])
         };
-        let buffered = if newline { bin("+", text, s("\n")) } else { text };
+        let buffered = if newline {
+            bin("+", text, s("\n"))
+        } else {
+            text
+        };
         out.push(if_(
             bin("==", self.stream(STREAM), int(0)),
             vec![expr_stmt(host)],
-            Some(vec![set_index("__g", BUF, bin("+", self.stream(BUF), buffered))]),
+            Some(vec![set_index(
+                "__g",
+                BUF,
+                bin("+", self.stream(BUF), buffered),
+            )]),
         ));
     }
 
@@ -945,7 +1194,11 @@ impl Lw {
     fn set_stdin(&mut self, out: &mut Vec<S>, text: E, from_file: bool) {
         out.push(set_index("__g", IN, text));
         out.push(set_index("__g", IN_SET, int(1)));
-        out.push(set_index("__g", IN_FILE, int(if from_file { 1 } else { 0 })));
+        out.push(set_index(
+            "__g",
+            IN_FILE,
+            int(if from_file { 1 } else { 0 }),
+        ));
     }
 
     fn helper(&mut self, name: &'static str, args: Vec<E>) -> E {
@@ -1033,7 +1286,10 @@ impl Lw {
 
     fn lower_function(&mut self, name: &str, body: &List, line: usize) -> Result<()> {
         if self.in_fn || self.depth > 0 {
-            return Err(self.err("a function defined inside a function or compound command", line));
+            return Err(self.err(
+                "a function defined inside a function or compound command",
+                line,
+            ));
         }
         if !is_ident(name) {
             return Err(self.err(&format!("function name `{name}`"), line));
@@ -1046,7 +1302,8 @@ impl Lw {
         self.locals.clear();
         r?;
         stmts.push(ret(var("__st")));
-        self.functions.insert(fn_name(name), func(&["__g", "__a"], stmts));
+        self.functions
+            .insert(fn_name(name), func(&["__g", "__a"], stmts));
         Ok(())
     }
 
@@ -1197,7 +1454,11 @@ impl Lw {
                     self.set_stdin(out, var(&t), true);
                 }
                 RedirKind::HereDoc => {
-                    let body = if r.expand { self.word_str(&r.word)? } else { s(&r.word.raw) };
+                    let body = if r.expand {
+                        self.word_str(&r.word)?
+                    } else {
+                        s(&r.word.raw)
+                    };
                     self.set_stdin(out, body, false);
                 }
                 RedirKind::Out | RedirKind::Append => {
@@ -1256,10 +1517,11 @@ impl Lw {
         match cmd {
             Cmd::Simple { words, .. } => words.iter().any(globbable),
             Cmd::Redirected { inner, redirs, .. } => {
-                self.cmd_may_glob(inner)
-                    || redirs.iter().any(|r| globbable(&r.word))
+                self.cmd_may_glob(inner) || redirs.iter().any(|r| globbable(&r.word))
             }
-            Cmd::For { words: Some(ws), .. } => ws.iter().any(globbable),
+            Cmd::For {
+                words: Some(ws), ..
+            } => ws.iter().any(globbable),
             _ => false,
         }
     }
@@ -1288,7 +1550,8 @@ impl Lw {
                 error_var: e.clone(),
                 handler: vec![
                     decl(&msg, to_str(var(&e))),
-                    if_(bin("==", head, s(FAILGLOB_SENTINEL)),
+                    if_(
+                        bin("==", head, s(FAILGLOB_SENTINEL)),
                         vec![set_st(1)],
                         Some(vec![throw(var(&e))]),
                     ),
@@ -1302,25 +1565,42 @@ impl Lw {
 
     fn lower_cmd_body(&mut self, cmd: &Cmd, out: &mut Vec<S>) -> Result<()> {
         match cmd {
-            Cmd::Simple { assigns, words, line } => self.lower_simple(assigns, words, *line, out),
-            Cmd::Redirected { inner, redirs, line } => {
-                self.lower_redirected(inner, redirs, *line, out)
-            }
+            Cmd::Simple {
+                assigns,
+                words,
+                line,
+            } => self.lower_simple(assigns, words, *line, out),
+            Cmd::Redirected {
+                inner,
+                redirs,
+                line,
+            } => self.lower_redirected(inner, redirs, *line, out),
             Cmd::ExtendedTest { cond, line } => {
                 let e = self.cond_expr(cond, *line)?;
                 out.push(if_(e, vec![set_st(0)], Some(vec![set_st(1)])));
                 Ok(())
             }
             Cmd::Unsupported { what, line } => Err(self.err(what, *line)),
-            Cmd::FuncDef { line, .. } => Err(self.err("a function defined inside a function or compound command", *line)),
+            Cmd::FuncDef { line, .. } => Err(self.err(
+                "a function defined inside a function or compound command",
+                *line,
+            )),
             Cmd::Group(list) => self.lower_list(list, out),
             Cmd::Arith { expr, line } => {
                 let (pre, v) = self.arith(expr, *line, true)?;
                 out.extend(pre);
-                out.push(if_(bin("!=", v, int(0)), vec![set_st(0)], Some(vec![set_st(1)])));
+                out.push(if_(
+                    bin("!=", v, int(0)),
+                    vec![set_st(0)],
+                    Some(vec![set_st(1)]),
+                ));
                 Ok(())
             }
-            Cmd::If { branches, else_body, .. } => {
+            Cmd::If {
+                branches,
+                else_body,
+                ..
+            } => {
                 let mut tail = match else_body {
                     Some(l) => self.lower_nested(l)?,
                     None => vec![set_st(0)],
@@ -1334,7 +1614,9 @@ impl Lw {
                 out.extend(tail);
                 Ok(())
             }
-            Cmd::Loop { cond, body, until, .. } => {
+            Cmd::Loop {
+                cond, body, until, ..
+            } => {
                 let ls = self.tmp();
                 out.push(decl(&ls, int(0)));
                 let mut loop_body = self.lower_nested(cond)?;
@@ -1349,7 +1631,12 @@ impl Lw {
                 out.push(set("__st", var(&ls)));
                 Ok(())
             }
-            Cmd::For { var: name, words, body, line } => {
+            Cmd::For {
+                var: name,
+                words,
+                body,
+                line,
+            } => {
                 if !is_ident(name) {
                     return Err(self.err(&format!("`for` variable `{name}`"), *line));
                 }
@@ -1370,7 +1657,13 @@ impl Lw {
                 out.push(set("__st", var(&ls)));
                 Ok(())
             }
-            Cmd::ArithFor { init, cond, step, body, line } => {
+            Cmd::ArithFor {
+                init,
+                cond,
+                step,
+                body,
+                line,
+            } => {
                 if let Some(init) = init {
                     let (pre, _) = self.arith(init, *line, true)?;
                     out.extend(pre);
@@ -1387,7 +1680,11 @@ impl Lw {
                 if let Some(cond) = cond {
                     let (pre, v) = self.arith(cond, *line, false)?;
                     loop_body.extend(pre);
-                    loop_body.push(if_(bin("==", v, int(0)), vec![S::Break { meta: m() }], None));
+                    loop_body.push(if_(
+                        bin("==", v, int(0)),
+                        vec![S::Break { meta: m() }],
+                        None,
+                    ));
                 }
                 self.loops.push(ls.clone());
                 let b = self.lower_nested(body);
@@ -1424,7 +1721,13 @@ impl Lw {
 
     // ── simple commands ──
 
-    fn lower_simple(&mut self, assigns: &[Assign], words: &[Word], line: usize, out: &mut Vec<S>) -> Result<()> {
+    fn lower_simple(
+        &mut self,
+        assigns: &[Assign],
+        words: &[Word],
+        line: usize,
+        out: &mut Vec<S>,
+    ) -> Result<()> {
         if words.is_empty() {
             for a in assigns {
                 self.apply_assign(a, out)?;
@@ -1433,7 +1736,10 @@ impl Lw {
             return Ok(());
         }
         if !assigns.is_empty() {
-            return Err(self.err("an assignment before a command (`NAME=value command`)", line));
+            return Err(self.err(
+                "an assignment before a command (`NAME=value command`)",
+                line,
+            ));
         }
         let Some(name) = self.static_lit(&words[0])? else {
             return Err(self.err("a command name that comes from an expansion", line));
@@ -1569,7 +1875,10 @@ impl Lw {
             return Err(self.err(&format!("assignment to `{name}`"), a.line));
         }
         if name == "IFS" {
-            return Err(self.err("an `IFS` assignment (field splitting always uses space, tab and newline)", a.line));
+            return Err(self.err(
+                "an `IFS` assignment (field splitting always uses space, tab and newline)",
+                a.line,
+            ));
         }
         if let Some(elems) = &a.array {
             self.note_array(name, a.line);
@@ -1624,12 +1933,23 @@ impl Lw {
     /// `return N` / `exit N`: N & 255, like the shells.
     fn status_arg(&mut self, w: &Word, line: usize) -> Result<E> {
         let v = self.word_one(w)?;
-        let n = self.helper("__sh_int", vec![v, self.at("exit status", line), boolean(true)]);
-        Ok(bin("%", bin("+", bin("%", n, int(256)), int(256)), int(256)))
+        let n = self.helper(
+            "__sh_int",
+            vec![v, self.at("exit status", line), boolean(true)],
+        );
+        Ok(bin(
+            "%",
+            bin("+", bin("%", n, int(256)), int(256)),
+            int(256),
+        ))
     }
 
     fn lower_echo(&mut self, args: &[Word], line: usize, out: &mut Vec<S>) -> Result<()> {
-        let is_opt = |f: &str| f.len() > 1 && f.starts_with('-') && f[1..].chars().all(|c| matches!(c, 'n' | 'e' | 'E'));
+        let is_opt = |f: &str| {
+            f.len() > 1
+                && f.starts_with('-')
+                && f[1..].chars().all(|c| matches!(c, 'n' | 'e' | 'E'))
+        };
         // Both shells read echo's options from the expanded argv, so only
         // literal leading options can be resolved here (an expansion that
         // turns out to be an option is caught by `__sh_echo_guard`).
@@ -1702,7 +2022,10 @@ impl Lw {
         for w in &args[1..] {
             values.push(self.word_one(w)?);
         }
-        let n_conv = pieces.iter().filter(|p| matches!(p, Piece::Conv(_))).count();
+        let n_conv = pieces
+            .iter()
+            .filter(|p| matches!(p, Piece::Conv(_)))
+            .count();
         let mut parts = Vec::new();
         let mut next = 0;
         loop {
@@ -1741,7 +2064,11 @@ impl Lw {
         let at = self.at("printf", line);
         // Floats have their own formatter: they parse the argument as a
         // decimal number rather than an integer, and pad differently.
-        let helper = if matches!(c.conv, 'f' | 'e' | 'E' | 'g' | 'G') { "__sh_float" } else { "__sh_fmt" };
+        let helper = if matches!(c.conv, 'f' | 'e' | 'E' | 'g' | 'G') {
+            "__sh_float"
+        } else {
+            "__sh_fmt"
+        };
         self.helper(
             helper,
             vec![
@@ -1776,12 +2103,13 @@ impl Lw {
                 "-u" => enable = Some(false),
                 "nullglob" | "failglob" => {
                     let Some(on) = enable else {
-                        return Err(self.err(
-                            &format!("`shopt {lit}` without `-s` or `-u`"),
-                            line,
-                        ));
+                        return Err(self.err(&format!("`shopt {lit}` without `-s` or `-u`"), line));
                     };
-                    let key = if lit == "nullglob" { NULLGLOB } else { FAILGLOB };
+                    let key = if lit == "nullglob" {
+                        NULLGLOB
+                    } else {
+                        FAILGLOB
+                    };
                     out.push(set_index("__g", key, int(if on { 1 } else { 0 })));
                 }
                 other => {
@@ -1800,13 +2128,22 @@ impl Lw {
     /// `nomatch` is the default in a script — an unmatched pattern ends the run
     /// with `no matches found`, the way zsh does — and `no_nomatch` turns it off
     /// so the word stays as written.
-    fn lower_setopt(&mut self, name: &str, args: &[Word], line: usize, out: &mut Vec<S>) -> Result<()> {
+    fn lower_setopt(
+        &mut self,
+        name: &str,
+        args: &[Word],
+        line: usize,
+        out: &mut Vec<S>,
+    ) -> Result<()> {
         if args.is_empty() {
             return Err(self.err(&format!("`{name}` without an option"), line));
         }
         for a in args {
             let Some(lit) = self.static_lit(a)? else {
-                return Err(self.err(&format!("a `{name}` argument that comes from an expansion"), line));
+                return Err(self.err(
+                    &format!("a `{name}` argument that comes from an expansion"),
+                    line,
+                ));
             };
             let (key, on) = match (name, lit.as_str()) {
                 ("setopt", "null_glob" | "nullglob") => (NULLGLOB, true),
@@ -1855,12 +2192,17 @@ impl Lw {
                 }
                 Some(f) if f.len() > 1 && f.starts_with('-') => {
                     if !f[1..].chars().all(|c| matches!(c, 'r' | 's')) {
-                        return Err(self.err(&format!("`read {f}` (only -r, -s and -p are supported)"), line));
+                        return Err(self.err(
+                            &format!("`read {f}` (only -r, -s and -p are supported)"),
+                            line,
+                        ));
                     }
                     raw |= f[1..].contains('r');
                     rest = &rest[1..];
                 }
-                None => return Err(self.err("`read` with an option that comes from an expansion", line)),
+                None => {
+                    return Err(self.err("`read` with an option that comes from an expansion", line))
+                }
                 Some(_) => break,
             }
         }
@@ -1868,7 +2210,12 @@ impl Lw {
         for w in rest {
             match self.static_lit(w)? {
                 Some(n) if is_ident(&n) => names.push(n),
-                _ => return Err(self.err(&format!("`read {}` (only plain variable names)", w.raw), line)),
+                _ => {
+                    return Err(self.err(
+                        &format!("`read {}` (only plain variable names)", w.raw),
+                        line,
+                    ))
+                }
             }
         }
         if names.is_empty() {
@@ -1881,7 +2228,10 @@ impl Lw {
         // `while read …; done < file` and `cmd | read x`: the line comes from
         // the redirected text rather than the host's stdin.
         let (avail, isset) = (self.stream(IN), self.stream(IN_SET));
-        out.push(decl(&rest, self.helper("__sh_in_rest", vec![avail.clone()])));
+        out.push(decl(
+            &rest,
+            self.helper("__sh_in_rest", vec![avail.clone()]),
+        ));
         out.push(decl(
             &text,
             self.helper("__sh_read_from", vec![avail, isset.clone(), boolean(raw)]),
@@ -1891,7 +2241,10 @@ impl Lw {
             vec![set_index("__g", IN, var(&rest))],
             None,
         ));
-        out.push(decl(&fields, self.helper("__sh_read_split", vec![var(&text), int(names.len() as i64)])));
+        out.push(decl(
+            &fields,
+            self.helper("__sh_read_split", vec![var(&text), int(names.len() as i64)]),
+        ));
         for (i, name) in names.iter().enumerate() {
             out.push(self.write_var(name, index(var(&fields), int(i as i64)), line)?);
         }
@@ -1986,14 +2339,21 @@ impl Lw {
                             'w' => words = true,
                             'c' => bytes = true,
                             'm' => chars = true,
-                            other => return Err(self.err(&format!("`wc -{other}` (only -l, -w, -c, -m)"), line)),
+                            other => {
+                                return Err(
+                                    self.err(&format!("`wc -{other}` (only -l, -w, -c, -m)"), line)
+                                )
+                            }
                         }
                     }
                 }
                 if !ops.is_empty() {
                     // The multi-file column widths are a GNU `wc` detail; stdin
                     // (`wc -l < file`, `cat f | wc -l`) is the exact path here.
-                    return Err(self.err("`wc` with a file name (use `wc -l < file` or a pipeline)", line));
+                    return Err(self.err(
+                        "`wc` with a file name (use `wc -l < file` or a pipeline)",
+                        line,
+                    ));
                 }
                 if !(lines || words || bytes || chars) {
                     lines = true;
@@ -2060,7 +2420,11 @@ impl Lw {
                     if f != "-n" {
                         match digits.parse::<i64>() {
                             Ok(v) => count = Some(int(v)),
-                            Err(_) => return Err(self.err(&format!("`{name} {f}` (a numeric count)"), line)),
+                            Err(_) => {
+                                return Err(
+                                    self.err(&format!("`{name} {f}` (a numeric count)"), line)
+                                )
+                            }
                         }
                         continue;
                     }
@@ -2070,7 +2434,9 @@ impl Lw {
                     // A literal count is checked here; a variable one is
                     // converted at run time, so `head -n $n` works and a
                     // non-numeric value is the loud error (not a count of 0).
-                    let lit = self.static_lit(first)?.filter(|l| l.chars().all(|c| c.is_ascii_digit()));
+                    let lit = self
+                        .static_lit(first)?
+                        .filter(|l| l.chars().all(|c| c.is_ascii_digit()));
                     count = Some(match lit {
                         Some(lit) => int(lit.parse::<i64>().unwrap_or(10)),
                         None => {
@@ -2089,7 +2455,11 @@ impl Lw {
                     None => var(&self.stdin_all(out)),
                 };
                 let picked = self.helper("__sh_lines", vec![text]);
-                let take = if name == "head" { "__sh_take" } else { "__sh_last" };
+                let take = if name == "head" {
+                    "__sh_take"
+                } else {
+                    "__sh_last"
+                };
                 let picked = self.helper(take, vec![picked, count.unwrap_or_else(|| int(10))]);
                 let text = self.helper("__sh_lines_out", vec![picked]);
                 self.emit(out, text, false);
@@ -2101,7 +2471,11 @@ impl Lw {
                         match c {
                             'c' => count = true,
                             'v' => invert = true,
-                            other => return Err(self.err(&format!("`grep -{other}` (only -c and -v)"), line)),
+                            other => {
+                                return Err(
+                                    self.err(&format!("`grep -{other}` (only -c and -v)"), line)
+                                )
+                            }
                         }
                     }
                 }
@@ -2149,7 +2523,9 @@ impl Lw {
             }
             "cp" | "mv" => {
                 if no_flags(&flags) {
-                    return Err(self.err(&format!("`{name} {}` (no options)", flags.join(" ")), line));
+                    return Err(
+                        self.err(&format!("`{name} {}` (no options)", flags.join(" ")), line)
+                    );
                 }
                 if ops.len() != 2 {
                     return Err(self.err(&format!("`{name}` without exactly two paths"), line));
@@ -2166,7 +2542,11 @@ impl Lw {
                             'r' | 'R' => recursive = true,
                             // `-f` only suppresses errors, and ours are loud.
                             'f' => {}
-                            other => return Err(self.err(&format!("`rm -{other}` (only -r and -f)"), line)),
+                            other => {
+                                return Err(
+                                    self.err(&format!("`rm -{other}` (only -r and -f)"), line)
+                                )
+                            }
                         }
                     }
                 }
@@ -2175,7 +2555,11 @@ impl Lw {
                 }
                 for w in &ops {
                     let path = self.word_one(w)?;
-                    let args = if recursive { vec![path, boolean(true)] } else { vec![path] };
+                    let args = if recursive {
+                        vec![path, boolean(true)]
+                    } else {
+                        vec![path]
+                    };
                     out.push(expr_stmt(cap("fs.rm", args)));
                 }
             }
@@ -2185,7 +2569,9 @@ impl Lw {
                     for c in f[1..].chars() {
                         match c {
                             'p' => parents = true,
-                            other => return Err(self.err(&format!("`mkdir -{other}` (only -p)"), line)),
+                            other => {
+                                return Err(self.err(&format!("`mkdir -{other}` (only -p)"), line))
+                            }
                         }
                     }
                 }
@@ -2194,13 +2580,19 @@ impl Lw {
                 }
                 for w in &ops {
                     let path = self.word_one(w)?;
-                    let args = if parents { vec![path, boolean(true)] } else { vec![path] };
+                    let args = if parents {
+                        vec![path, boolean(true)]
+                    } else {
+                        vec![path]
+                    };
                     out.push(expr_stmt(cap("fs.mkdir", args)));
                 }
             }
             "touch" => {
                 if no_flags(&flags) {
-                    return Err(self.err(&format!("`touch {}` (no options)", flags.join(" ")), line));
+                    return Err(
+                        self.err(&format!("`touch {}` (no options)", flags.join(" ")), line)
+                    );
                 }
                 if ops.is_empty() {
                     return Err(self.err("`touch` without a path", line));
@@ -2221,12 +2613,18 @@ impl Lw {
                             // blanks, signs and decimals; matching it only for
                             // plain integers would silently order a mixed input
                             // differently.
-                            other => return Err(self.err(&format!("`sort -{other}` (only -r and -u)"), line)),
+                            other => {
+                                return Err(
+                                    self.err(&format!("`sort -{other}` (only -r and -u)"), line)
+                                )
+                            }
                         }
                     }
                 }
                 if !ops.is_empty() {
-                    return Err(self.err("`sort` with a file name (use `< file` or a pipeline)", line));
+                    return Err(
+                        self.err("`sort` with a file name (use `< file` or a pipeline)", line)
+                    );
                 }
                 let text = var(&self.stdin_all(out));
                 let lines = self.helper("__sh_lines", vec![text]);
@@ -2245,7 +2643,11 @@ impl Lw {
                             'c' => 1,
                             'd' => 2,
                             'u' => 3,
-                            other => return Err(self.err(&format!("`uniq -{other}` (only -c, -d, -u)"), line)),
+                            other => {
+                                return Err(
+                                    self.err(&format!("`uniq -{other}` (only -c, -d, -u)"), line)
+                                )
+                            }
                         };
                         if mode != 0 && mode != m {
                             return Err(self.err("`uniq` with two of -c, -d, -u", line));
@@ -2254,7 +2656,9 @@ impl Lw {
                     }
                 }
                 if !ops.is_empty() {
-                    return Err(self.err("`uniq` with a file name (use `< file` or a pipeline)", line));
+                    return Err(
+                        self.err("`uniq` with a file name (use `< file` or a pipeline)", line)
+                    );
                 }
                 let text = var(&self.stdin_all(out));
                 let lines = self.helper("__sh_lines", vec![text]);
@@ -2282,10 +2686,14 @@ impl Lw {
                         return Err(self.err("`cut -d` without a delimiter", line));
                     };
                     let Some(d) = self.static_lit(w)? else {
-                        return Err(self.err("a `cut` delimiter that comes from an expansion", line));
+                        return Err(
+                            self.err("a `cut` delimiter that comes from an expansion", line)
+                        );
                     };
                     if d.chars().count() != 1 {
-                        return Err(self.err("`cut -d` with a delimiter that is not one character", line));
+                        return Err(
+                            self.err("`cut -d` with a delimiter that is not one character", line)
+                        );
                     }
                     delim = Some(d);
                     i += 2;
@@ -2295,7 +2703,9 @@ impl Lw {
                         return Err(self.err("`cut -f` without a field number", line));
                     };
                     let Some(n) = self.static_lit(w)? else {
-                        return Err(self.err("a `cut` field number that comes from an expansion", line));
+                        return Err(
+                            self.err("a `cut` field number that comes from an expansion", line)
+                        );
                     };
                     match n.parse::<i64>() {
                         Ok(v) if v >= 1 => field = Some(v),
@@ -2313,7 +2723,9 @@ impl Lw {
                 Some(lit) if lit.starts_with("-d") => {
                     let d = &lit[2..];
                     if d.chars().count() != 1 {
-                        return Err(self.err("`cut -d` with a delimiter that is not one character", line));
+                        return Err(
+                            self.err("`cut -d` with a delimiter that is not one character", line)
+                        );
                     }
                     delim = Some(d.to_string());
                     i += 1;
@@ -2397,11 +2809,20 @@ impl Lw {
             return Err(self.err("`local` outside a function", line));
         }
         if self.depth > 0 {
-            return Err(self.err("`local` inside a compound command (only at the top of a function body)", line));
+            return Err(self.err(
+                "`local` inside a compound command (only at the top of a function body)",
+                line,
+            ));
         }
         for w in args {
             let (name, value) = match w.raw.split_once('=') {
-                Some((n, v)) => (n.to_string(), Some(Word { raw: v.to_string(), line: w.line })),
+                Some((n, v)) => (
+                    n.to_string(),
+                    Some(Word {
+                        raw: v.to_string(),
+                        line: w.line,
+                    }),
+                ),
                 None => (w.raw.clone(), None),
             };
             if !is_ident(&name) {
@@ -2432,19 +2853,32 @@ impl Lw {
                 let path = self.word_str(w)?;
                 self.file_test(op, path).expect("a file test")
             }
-            Cond::Unary(op, _) => return Err(self.err(&format!("`{op}` in `[[ … ]]` (file and shell-option tests)"), line)),
+            Cond::Unary(op, _) => {
+                return Err(self.err(
+                    &format!("`{op}` in `[[ … ]]` (file and shell-option tests)"),
+                    line,
+                ))
+            }
             Cond::Binary(op, l, r) => match *op {
                 "==" | "=" | "!=" => {
                     let pat = self.pattern_of(r)?;
                     let l = self.word_str(l)?;
                     let m = self.helper("__sh_glob", vec![pat, l]);
-                    if *op == "!=" { not(m) } else { m }
+                    if *op == "!=" {
+                        not(m)
+                    } else {
+                        m
+                    }
                 }
                 "<" | ">" => {
                     let (l, r) = (self.word_str(l)?, self.word_str(r)?);
                     let cmp = self.helper("__sh_strcmp", vec![l, r]);
                     let zero = int(0);
-                    if *op == "<" { bin("<", cmp, zero) } else { bin(">", cmp, zero) }
+                    if *op == "<" {
+                        bin("<", cmp, zero)
+                    } else {
+                        bin(">", cmp, zero)
+                    }
                 }
                 op => {
                     let cmp = match TEST_INT_OPS.iter().find(|(o, _)| *o == op) {
@@ -2507,7 +2941,10 @@ impl Lw {
                 }
                 Err(self.err("this 4-argument test expression", line))
             }
-            _ => Err(self.err("a test expression with more than 4 arguments (`-a`/`-o` chains)", line)),
+            _ => Err(self.err(
+                "a test expression with more than 4 arguments (`-a`/`-o` chains)",
+                line,
+            )),
         }
     }
 
@@ -2559,7 +2996,10 @@ impl Lw {
         if toks.is_empty() {
             return Ok((vec![], int(0)));
         }
-        let mut p = ArithParser { toks: &toks, pos: 0 };
+        let mut p = ArithParser {
+            toks: &toks,
+            pos: 0,
+        };
         let a = match p.assign() {
             Some(a) if p.pos == toks.len() => a,
             _ => return Err(self.err(&format!("arithmetic expression `{}`", text.trim()), line)),
@@ -2583,7 +3023,11 @@ impl Lw {
                 let cur = self.arith_ref(&Ref::Name(name.clone()), line);
                 let mut pre = vec![decl(&t, cur)];
                 pre.push(self.write_var(&name, to_str(bin("+", var(&t), int(delta))), line)?);
-                let v = if post { var(&t) } else { bin("+", var(&t), int(delta)) };
+                let v = if post {
+                    var(&t)
+                } else {
+                    bin("+", var(&t), int(delta))
+                };
                 Ok((pre, v))
             }
             a => Ok((vec![], self.arith_expr(&a, line)?)),
@@ -2593,7 +3037,10 @@ impl Lw {
     fn arith_ref(&mut self, r: &Ref, line: usize) -> E {
         let (v, what) = match r {
             Ref::Name(n) => (self.read_var(n, line), format!("`{n}` in arithmetic")),
-            Ref::Pos(n) => (self.helper("__sh_arg", vec![var("__a"), int(*n as i64)]), format!("`${n}` in arithmetic")),
+            Ref::Pos(n) => (
+                self.helper("__sh_arg", vec![var("__a"), int(*n as i64)]),
+                format!("`${n}` in arithmetic"),
+            ),
         };
         let at = self.at(&what, line);
         self.helper("__sh_int", vec![v, at, boolean(false)])
@@ -2603,7 +3050,11 @@ impl Lw {
         Ok(match a {
             A::Num(n) => int(*n),
             A::Ref(r) => self.arith_ref(r, line),
-            A::Un("-", x) => E::UnaryOp { operator: "-".into(), operand: Box::new(self.arith_expr(x, line)?), meta: m() },
+            A::Un("-", x) => E::UnaryOp {
+                operator: "-".into(),
+                operand: Box::new(self.arith_expr(x, line)?),
+                meta: m(),
+            },
             A::Un("!", x) => tern(bin("==", self.arith_expr(x, line)?, int(0)), int(1), int(0)),
             A::Un(_, x) => self.arith_expr(x, line)?,
             A::Bin(op, l, r) => {
@@ -2614,8 +3065,16 @@ impl Lw {
                         let at = self.at("`**`", line);
                         self.helper("__sh_pow", vec![l, r, at])
                     }
-                    "&&" => tern(bin("and", bin("!=", l, int(0)), bin("!=", r, int(0))), int(1), int(0)),
-                    "||" => tern(bin("or", bin("!=", l, int(0)), bin("!=", r, int(0))), int(1), int(0)),
+                    "&&" => tern(
+                        bin("and", bin("!=", l, int(0)), bin("!=", r, int(0))),
+                        int(1),
+                        int(0),
+                    ),
+                    "||" => tern(
+                        bin("or", bin("!=", l, int(0)), bin("!=", r, int(0))),
+                        int(1),
+                        int(0),
+                    ),
                     cmp => tern(bin(cmp, l, r), int(1), int(0)),
                 }
             }
@@ -2639,7 +3098,10 @@ impl Lw {
             // bash takes any base up to 64; zsh stops at 36.
             let max = if self.d == Dialect::Zsh { 36 } else { 64 };
             if !(2..=max).contains(&base) {
-                return Err(bad(&format!("base out of the 2..{max} range for {}", self.d.name())));
+                return Err(bad(&format!(
+                    "base out of the 2..{max} range for {}",
+                    self.d.name()
+                )));
             }
             if digits.is_empty() {
                 return Err(bad("no digits"));
@@ -2650,7 +3112,10 @@ impl Lw {
                 if d >= base {
                     return Err(bad("digit out of range for the base"));
                 }
-                v = v.checked_mul(base as i64).and_then(|v| v.checked_add(d as i64)).ok_or_else(|| bad("too large"))?;
+                v = v
+                    .checked_mul(base as i64)
+                    .and_then(|v| v.checked_add(d as i64))
+                    .ok_or_else(|| bad("too large"))?;
             }
             return Ok(v);
         }
@@ -2663,7 +3128,8 @@ impl Lw {
         // bash reads a leading zero as octal; zsh reads the same literal as
         // decimal (`$((010))` is 8 in bash and 10 in zsh).
         if t.len() > 1 && t.starts_with('0') && self.d == Dialect::Bash {
-            return i64::from_str_radix(&t[1..], 8).map_err(|_| bad("octal digits (write 10#… for decimal)"));
+            return i64::from_str_radix(&t[1..], 8)
+                .map_err(|_| bad("octal digits (write 10#… for decimal)"));
         }
         t.parse().map_err(|_| bad("decimal digits, or too large"))
     }
@@ -2678,7 +3144,12 @@ impl Lw {
                 i += 1;
             } else if c.is_ascii_digit() {
                 let st = i;
-                while i < cs.len() && (cs[i].is_ascii_alphanumeric() || cs[i] == '#' || cs[i] == '@' || cs[i] == '_') {
+                while i < cs.len()
+                    && (cs[i].is_ascii_alphanumeric()
+                        || cs[i] == '#'
+                        || cs[i] == '@'
+                        || cs[i] == '_')
+                {
                     i += 1;
                 }
                 let t: String = cs[st..i].iter().collect();
@@ -2695,18 +3166,34 @@ impl Lw {
                 toks.push(Tok::Name(n));
             } else if c == '$' {
                 let rest: String = cs[i + 1..].iter().collect();
-                if let Some(d) = rest.chars().next().filter(|d| d.is_ascii_digit() && *d != '0') {
+                if let Some(d) = rest
+                    .chars()
+                    .next()
+                    .filter(|d| d.is_ascii_digit() && *d != '0')
+                {
                     toks.push(Tok::Pos(d.to_digit(10).unwrap() as usize));
                     i += 2;
-                } else if let Some(inner) =
-                    rest.strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n.to_string()).filter(|n| is_ident(n))
+                } else if let Some(inner) = rest
+                    .strip_prefix('{')
+                    .and_then(|r| r.split_once('}'))
+                    .map(|(n, _)| n.to_string())
+                    .filter(|n| is_ident(n))
                 {
                     i += inner.len() + 3;
                     toks.push(Tok::Name(inner));
                 } else {
-                    let n: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+                    let n: String = rest
+                        .chars()
+                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                        .collect();
                     if !is_ident(&n) {
-                        return Err(self.err(&format!("`${}` in arithmetic", rest.chars().take(8).collect::<String>()), line));
+                        return Err(self.err(
+                            &format!(
+                                "`${}` in arithmetic",
+                                rest.chars().take(8).collect::<String>()
+                            ),
+                            line,
+                        ));
                     }
                     i += n.len() + 1;
                     toks.push(Tok::Name(n));
@@ -2777,7 +3264,9 @@ impl Lw {
                             '\\' => {
                                 match cs.get(i + 1) {
                                     Some('\n') => {}
-                                    Some(&n @ ('$' | '`' | '"' | '\\')) => push_lit(&mut segs, n, true),
+                                    Some(&n @ ('$' | '`' | '"' | '\\')) => {
+                                        push_lit(&mut segs, n, true)
+                                    }
                                     Some(&n) => {
                                         push_lit(&mut segs, '\\', true);
                                         push_lit(&mut segs, n, true);
@@ -2820,7 +3309,8 @@ impl Lw {
                 }
                 '{' if {
                     let rest: String = cs[i..].iter().collect();
-                    rest.find('}').is_some_and(|e| rest[..e].contains(',') || rest[..e].contains(".."))
+                    rest.find('}')
+                        .is_some_and(|e| rest[..e].contains(',') || rest[..e].contains(".."))
                 } =>
                 {
                     return Err(self.err(&format!("brace expansion (`{raw}`)"), line));
@@ -2835,7 +3325,14 @@ impl Lw {
     }
 
     /// Parse the expansion starting at `cs[i] == '$'`; returns the index after it.
-    fn parse_dollar(&self, cs: &[char], i: usize, quoted: bool, line: usize, segs: &mut Vec<Seg>) -> Result<usize> {
+    fn parse_dollar(
+        &self,
+        cs: &[char],
+        i: usize,
+        quoted: bool,
+        line: usize,
+        segs: &mut Vec<Seg>,
+    ) -> Result<usize> {
         let next = cs.get(i + 1).copied();
         let zsh_suffix_check = |j: usize| -> Result<()> {
             if self.d == Dialect::Zsh {
@@ -2874,7 +3371,10 @@ impl Lw {
                 segs.push(Seg::Arith(inner, quoted));
                 Ok(j + 1)
             }
-            Some('(') => Err(self.err("command substitution `$(…)` (running commands is not supported)", line)),
+            Some('(') => Err(self.err(
+                "command substitution `$(…)` (running commands is not supported)",
+                line,
+            )),
             Some('{') => {
                 let Some(end) = find_brace_end(cs, i + 1) else {
                     return Err(self.err("an unterminated `${`", line));
@@ -2906,10 +3406,15 @@ impl Lw {
                 Ok(i + 2)
             }
             Some(c @ ('@' | '*')) => {
-                segs.push(Seg::All { star: c == '*', quoted });
+                segs.push(Seg::All {
+                    star: c == '*',
+                    quoted,
+                });
                 Ok(i + 2)
             }
-            Some(c @ ('$' | '!' | '-')) => Err(self.err(&format!("special parameter `${c}`"), line)),
+            Some(c @ ('$' | '!' | '-')) => {
+                Err(self.err(&format!("special parameter `${c}`"), line))
+            }
             Some('\'') if !quoted => Err(self.err("ANSI-C quoting `$'…'`", line)),
             Some('"') if !quoted => Err(self.err("locale quoting `$\"…\"`", line)),
             _ => {
@@ -2921,7 +3426,10 @@ impl Lw {
 
     /// One `${…}` expansion, from its contents between the braces.
     fn param_seg(&self, inner: &str, line: usize, quoted: bool) -> Result<Seg> {
-        let w = |t: &str| Word { raw: t.to_string(), line };
+        let w = |t: &str| Word {
+            raw: t.to_string(),
+            line,
+        };
         let bad = || self.err(&format!("parameter expansion `${{{inner}}}`"), line);
         // ${#…}: counts and lengths.
         if let Some(rest) = inner.strip_prefix('#') {
@@ -2930,9 +3438,17 @@ impl Lw {
             }
             if let Some((name, sub)) = split_subscript(rest).filter(|(n, _)| is_ident(n)) {
                 if sub == "@" || sub == "*" {
-                    return Ok(Seg::ArrCount { name: name.to_string(), quoted });
+                    return Ok(Seg::ArrCount {
+                        name: name.to_string(),
+                        quoted,
+                    });
                 }
-                return Ok(Seg::ArrElem { name: name.to_string(), index: w(sub), len: true, quoted });
+                return Ok(Seg::ArrElem {
+                    name: name.to_string(),
+                    index: w(sub),
+                    len: true,
+                    quoted,
+                });
             }
             if is_ident(rest) {
                 return Ok(Seg::Len(rest.to_string(), quoted));
@@ -2943,11 +3459,18 @@ impl Lw {
         if matches!(cs.first(), Some('@' | '*' | '?')) && cs.len() == 1 {
             return Ok(match cs[0] {
                 '?' => Seg::Status(quoted),
-                c => Seg::All { star: c == '*', quoted },
+                c => Seg::All {
+                    star: c == '*',
+                    quoted,
+                },
             });
         }
-        if !cs.is_empty() && cs.iter().all(|c| c.is_ascii_digit()) && cs.len() > 1 || (cs.len() == 1 && cs[0].is_ascii_digit() && cs[0] != '0') {
-            let n: usize = inner.parse().map_err(|_| self.err("a huge positional parameter", line))?;
+        if !cs.is_empty() && cs.iter().all(|c| c.is_ascii_digit()) && cs.len() > 1
+            || (cs.len() == 1 && cs[0].is_ascii_digit() && cs[0] != '0')
+        {
+            let n: usize = inner
+                .parse()
+                .map_err(|_| self.err("a huge positional parameter", line))?;
             return Ok(Seg::Pos(n, quoted));
         }
         // `${name…}`, including positional parameters (`${1:-x}`, `${10}`).
@@ -2962,7 +3485,10 @@ impl Lw {
         // `${1-y}` cannot tell unset from empty here, so only the `:` forms
         // of a positional default are lowered.
         if is_positional(&name) && rest_matches_no_colon_op(&cs[k..]) {
-            return Err(self.err(&format!("`${{{name}-…}}` (use `${{{name}:-…}}` for a positional parameter)"), line));
+            return Err(self.err(
+                &format!("`${{{name}-…}}` (use `${{{name}:-…}}` for a positional parameter)"),
+                line,
+            ));
         }
         let rest: String = cs[k..].iter().collect();
         if rest.is_empty() {
@@ -2970,9 +3496,18 @@ impl Lw {
         }
         if let Some((_, sub)) = split_subscript(&rest).filter(|_| rest.starts_with('[')) {
             if sub == "@" || sub == "*" {
-                return Ok(Seg::ArrAll { name, star: sub == "*", quoted });
+                return Ok(Seg::ArrAll {
+                    name,
+                    star: sub == "*",
+                    quoted,
+                });
             }
-            return Ok(Seg::ArrElem { name, index: w(sub), len: false, quoted });
+            return Ok(Seg::ArrElem {
+                name,
+                index: w(sub),
+                len: false,
+                quoted,
+            });
         }
         // ${name:-word} and friends, then ${name:off:len}.
         if let Some(r) = rest.strip_prefix(':') {
@@ -2984,19 +3519,39 @@ impl Lw {
                     '+' => ":+",
                     _ => ":?",
                 };
-                return Ok(Seg::Default { name, op, word: w(chars.as_str()), quoted });
+                return Ok(Seg::Default {
+                    name,
+                    op,
+                    word: w(chars.as_str()),
+                    quoted,
+                });
             }
             let (off, len) = split_top_colon(r);
-            return Ok(Seg::Substr { name, off: w(off), len: len.map(w), quoted });
+            return Ok(Seg::Substr {
+                name,
+                off: w(off),
+                len: len.map(w),
+                quoted,
+            });
         }
         for (prefix, op) in [("-", "-"), ("=", "="), ("+", "+"), ("?", "?")] {
             if let Some(tail) = rest.strip_prefix(prefix) {
-                return Ok(Seg::Default { name, op, word: w(tail), quoted });
+                return Ok(Seg::Default {
+                    name,
+                    op,
+                    word: w(tail),
+                    quoted,
+                });
             }
         }
         for (prefix, op) in [("##", "##"), ("#", "#"), ("%%", "%%"), ("%", "%")] {
             if let Some(tail) = rest.strip_prefix(prefix) {
-                return Ok(Seg::Trim { name, op, pat: w(tail), quoted });
+                return Ok(Seg::Trim {
+                    name,
+                    op,
+                    pat: w(tail),
+                    quoted,
+                });
             }
         }
         if let Some(tail) = rest.strip_prefix("//").or_else(|| rest.strip_prefix('/')) {
@@ -3010,11 +3565,26 @@ impl Lw {
                 },
             };
             let (pat, rep) = split_top_slash(tail);
-            return Ok(Seg::Subst { name, all, anchor, pat: w(&pat), rep: w(&rep), quoted });
+            return Ok(Seg::Subst {
+                name,
+                all,
+                anchor,
+                pat: w(&pat),
+                rep: w(&rep),
+                quoted,
+            });
         }
         match rest.as_str() {
-            "^^" => Ok(Seg::Case { name, upper: true, quoted }),
-            ",," => Ok(Seg::Case { name, upper: false, quoted }),
+            "^^" => Ok(Seg::Case {
+                name,
+                upper: true,
+                quoted,
+            }),
+            ",," => Ok(Seg::Case {
+                name,
+                upper: false,
+                quoted,
+            }),
             _ => Err(bad()),
         }
     }
@@ -3056,13 +3626,19 @@ impl Lw {
                 debug_assert!(pre.is_empty());
                 to_str(v)
             }
-            Seg::Default { name, op, word: w, .. } => {
+            Seg::Default {
+                name, op, word: w, ..
+            } => {
                 let colon = op.starts_with(':');
                 let raw = self.read_var_raw(name);
                 let cur = self.stringify(name, raw.clone());
                 // With a colon, empty and unset are the same; without one only
                 // a variable that was never set (or was `unset`) triggers it.
-                let has = if colon { bin("!=", cur.clone(), s("")) } else { bin("!=", raw, null()) };
+                let has = if colon {
+                    bin("!=", cur.clone(), s(""))
+                } else {
+                    bin("!=", raw, null())
+                };
                 match *op {
                     ":-" | "-" => {
                         let dflt = self.word_str(w)?;
@@ -3074,10 +3650,16 @@ impl Lw {
                     }
                     ":=" | "=" => {
                         if is_positional(name) {
-                            return Err(self.err(&format!("assignment to positional parameter `${{{name}}}" ), line));
+                            return Err(self.err(
+                                &format!("assignment to positional parameter `${{{name}}}"),
+                                line,
+                            ));
                         }
                         if self.arrays.contains(name) || self.locals.contains(name) {
-                            return Err(self.err(&format!("`${{{name}{op}…}}` on a local or array variable"), line));
+                            return Err(self.err(
+                                &format!("`${{{name}{op}…}}` on a local or array variable"),
+                                line,
+                            ));
                         }
                         let dflt = self.word_str(w)?;
                         self.helper("__sh_assign_default", vec![var("__g"), s(name), dflt, has])
@@ -3088,14 +3670,26 @@ impl Lw {
                     }
                 }
             }
-            Seg::Trim { name, op, pat, quoted: _ } => {
+            Seg::Trim {
+                name,
+                op,
+                pat,
+                quoted: _,
+            } => {
                 let v = self.read_var(name, line);
                 let pat = self.pattern_of(pat)?;
                 let longest = boolean(op.len() == 2);
                 let prefix = boolean(op.starts_with('#'));
                 self.helper("__sh_trim", vec![v, pat, longest, prefix])
             }
-            Seg::Subst { name, all, anchor, pat, rep, .. } => {
+            Seg::Subst {
+                name,
+                all,
+                anchor,
+                pat,
+                rep,
+                ..
+            } => {
                 let v = self.read_var(name, line);
                 let pat = self.pattern_of(pat)?;
                 let at = self.at("`${…/pat/rep}`", line);
@@ -3106,7 +3700,9 @@ impl Lw {
                     vec![v, pat, rep, boolean(*all), int(*anchor as i64), zsh, at],
                 )
             }
-            Seg::Substr { name, off, len: n, .. } => {
+            Seg::Substr {
+                name, off, len: n, ..
+            } => {
                 let v = self.read_var(name, line);
                 let (pre, off) = self.arith(&off.raw, line, false)?;
                 debug_assert!(pre.is_empty());
@@ -3122,18 +3718,37 @@ impl Lw {
             }
             Seg::Case { name, upper, .. } => {
                 if self.d == Dialect::Zsh {
-                    return Err(self.err("`${x^^}` / `${x,,}` (zsh writes `${(U)x}` / `${(L)x}`)", line));
+                    return Err(self.err(
+                        "`${x^^}` / `${x,,}` (zsh writes `${(U)x}` / `${(L)x}`)",
+                        line,
+                    ));
                 }
                 let v = self.read_var(name, line);
-                call(if *upper { "str.to_upper" } else { "str.to_lower" }, vec![v])
+                call(
+                    if *upper {
+                        "str.to_upper"
+                    } else {
+                        "str.to_lower"
+                    },
+                    vec![v],
+                )
             }
-            Seg::ArrElem { name, index, len: is_len, .. } => {
+            Seg::ArrElem {
+                name,
+                index,
+                len: is_len,
+                ..
+            } => {
                 self.read_arr(name, line);
                 let arr = self.arr_value(name);
                 let one = boolean(self.d == Dialect::Zsh);
                 let (_, i) = self.arith(&index.raw, line, false)?;
                 let e = self.helper("__sh_arr_get", vec![arr, i, one]);
-                if *is_len { to_str(len(chars(e))) } else { e }
+                if *is_len {
+                    to_str(len(chars(e)))
+                } else {
+                    e
+                }
             }
             Seg::ArrCount { name, .. } => {
                 self.read_arr(name, line);
@@ -3181,14 +3796,19 @@ impl Lw {
         // bash also globs the text an expansion contributes (`x='*'; echo $x`);
         // zsh needs `GLOB_SUBST` for that, so it expands only what was written.
         let exp_glob = self.d == Dialect::Bash
-            && segs.iter().any(|sg| sg.is_expansion() && !sg.quoted() && !sg.is_numeric());
+            && segs
+                .iter()
+                .any(|sg| sg.is_expansion() && !sg.quoted() && !sg.is_numeric());
         if !lit_glob && !exp_glob {
             return self.fields_plain(&segs, w);
         }
         // Quoted text inside a glob word must not act as a pattern: escape its
         // metacharacters here, and `__sh_globexp` drops the escapes again for a
         // pattern that matches nothing (`echo a"*"b*` prints `a*b*`).
-        if segs.iter().any(|sg| sg.is_expansion() && sg.quoted() && !sg.is_numeric()) {
+        if segs
+            .iter()
+            .any(|sg| sg.is_expansion() && sg.quoted() && !sg.is_numeric())
+        {
             return Err(self.err(
                 &format!(
                     "a quoted expansion mixed with an unquoted glob (`{}`; quote the whole word)",
@@ -3216,14 +3836,25 @@ impl Lw {
             self.stream(FAILGLOB),
             self.stream(NOMATCH),
         ];
-        Ok(Fields::Many(self.helper("__sh_globmap", vec![arr, at].into_iter().chain(opts).collect())))
+        Ok(Fields::Many(self.helper(
+            "__sh_globmap",
+            vec![arr, at].into_iter().chain(opts).collect(),
+        )))
     }
 
     /// The fields of a word before pathname expansion.
     fn fields_plain(&mut self, segs: &[Seg], w: &Word) -> Result<Fields> {
         let line = w.line;
-        let real: Vec<&Seg> = segs.iter().filter(|sg| !matches!(sg, Seg::Lit(t, _) if t.is_empty())).collect();
-        if let [Seg::ArrAll { name, star: false, quoted }] = real.as_slice() {
+        let real: Vec<&Seg> = segs
+            .iter()
+            .filter(|sg| !matches!(sg, Seg::Lit(t, _) if t.is_empty()))
+            .collect();
+        if let [Seg::ArrAll {
+            name,
+            star: false,
+            quoted,
+        }] = real.as_slice()
+        {
             let (name, quoted) = (name.clone(), *quoted);
             let arr = self.arr_value(&name);
             return Ok(if quoted {
@@ -3239,28 +3870,57 @@ impl Lw {
         // A quoted `"${a[@]}"` mixed with other text is just the joined array
         // (both shells print `"[${a[@]}]"` as `[one two]`); unquoted it would
         // need bash's prefix-on-first / suffix-on-last rule, so refuse.
-        if segs.iter().any(|sg| matches!(sg, Seg::ArrAll { star: false, quoted: false, .. })) {
+        if segs.iter().any(|sg| {
+            matches!(
+                sg,
+                Seg::ArrAll {
+                    star: false,
+                    quoted: false,
+                    ..
+                }
+            )
+        }) {
             let name = segs.iter().find_map(|s| s.var_name()).unwrap_or("?");
             return Err(self.err(
-                &format!("`${{{name}[@]}}` combined with other text in one word (`{}`)", w.raw),
+                &format!(
+                    "`${{{name}[@]}}` combined with other text in one word (`{}`)",
+                    w.raw
+                ),
                 line,
             ));
         }
         if segs.iter().any(|sg| matches!(sg, Seg::All { .. })) {
             return match real.as_slice() {
-                [Seg::All { star: false, quoted: true }] => Ok(Fields::Many(var("__a"))),
-                [Seg::All { star: true, quoted: true }] => Ok(Fields::One(call("str.join", vec![var("__a"), s(" ")]))),
+                [Seg::All {
+                    star: false,
+                    quoted: true,
+                }] => Ok(Fields::Many(var("__a"))),
+                [Seg::All {
+                    star: true,
+                    quoted: true,
+                }] => Ok(Fields::One(call("str.join", vec![var("__a"), s(" ")]))),
                 [Seg::All { quoted: false, .. }] => Ok(Fields::Many(match self.d {
                     Dialect::Bash => {
                         let at = self.at("unquoted `$@`", line);
-                        self.helper("__sh_split", vec![call("str.join", vec![var("__a"), s(" ")]), at])
+                        self.helper(
+                            "__sh_split",
+                            vec![call("str.join", vec![var("__a"), s(" ")]), at],
+                        )
                     }
                     Dialect::Zsh => self.helper("__sh_drop_empty", vec![var("__a")]),
                 })),
-                _ => Err(self.err(&format!("`$@`/`$*` combined with other text in one word (`{}`)", w.raw), line)),
+                _ => Err(self.err(
+                    &format!(
+                        "`$@`/`$*` combined with other text in one word (`{}`)",
+                        w.raw
+                    ),
+                    line,
+                )),
             };
         }
-        let splits = segs.iter().any(|sg| sg.is_expansion() && !sg.quoted() && !sg.is_numeric());
+        let splits = segs
+            .iter()
+            .any(|sg| sg.is_expansion() && !sg.quoted() && !sg.is_numeric());
         if !splits {
             return Ok(Fields::One(self.concat_segs(segs, line)?));
         }
@@ -3359,7 +4019,15 @@ impl Lw {
 // ── Run-time helpers (CAST functions added to programs that use them) ────────
 
 fn is_ws(c: E) -> E {
-    bin("or", bin("or", bin("==", c.clone(), s(" ")), bin("==", c.clone(), s("\t"))), bin("==", c, s("\n")))
+    bin(
+        "or",
+        bin(
+            "or",
+            bin("==", c.clone(), s(" ")),
+            bin("==", c.clone(), s("\t")),
+        ),
+        bin("==", c, s("\n")),
+    )
 }
 
 /// Every runtime helper, so a helper's references to other helpers can be
@@ -3466,22 +4134,32 @@ fn helper_deps(f: &Function) -> Vec<&'static str> {
                 expr(target, out);
                 expr(index, out);
             }
-            E::ObjectLiteral { properties, .. } => properties.iter().for_each(|(_, v)| expr(v, out)),
+            E::ObjectLiteral { properties, .. } => {
+                properties.iter().for_each(|(_, v)| expr(v, out))
+            }
             _ => {}
         }
     }
     fn stmt(s: &S, out: &mut Vec<&'static str>) {
         match s {
-            S::VarDecl { value, .. } | S::Assign { value, .. } | S::ExprStmt { expr: value, .. } | S::Throw { value, .. } => {
-                expr(value, out)
-            }
+            S::VarDecl { value, .. }
+            | S::Assign { value, .. }
+            | S::ExprStmt { expr: value, .. }
+            | S::Throw { value, .. } => expr(value, out),
             S::Return { value: Some(v), .. } => expr(v, out),
-            S::If { condition, then_body, else_body, .. } => {
+            S::If {
+                condition,
+                then_body,
+                else_body,
+                ..
+            } => {
                 expr(condition, out);
                 then_body.iter().for_each(|s| stmt(s, out));
                 else_body.iter().flatten().for_each(|s| stmt(s, out));
             }
-            S::While { condition, body, .. } => {
+            S::While {
+                condition, body, ..
+            } => {
                 expr(condition, out);
                 body.iter().for_each(|s| stmt(s, out));
             }
@@ -3506,22 +4184,47 @@ fn helper_fn(name: &str) -> Function {
         "__sh_arg" => func(
             &["a", "n"],
             vec![
-                if_(bin("<=", var("n"), len(var("a"))), vec![ret(index(var("a"), bin("-", var("n"), int(1))))], None),
+                if_(
+                    bin("<=", var("n"), len(var("a"))),
+                    vec![ret(index(var("a"), bin("-", var("n"), int(1))))],
+                    None,
+                ),
                 ret(s("")),
             ],
         ),
         // __sh_class(name, ch): a POSIX character class inside `[…]`.
         "__sh_class" => {
             let o = || cap("conv.ord", vec![var("ch")]);
-            let range = |lo: i64, hi: i64| bin("and", bin(">=", o(), int(lo)), bin("<=", o(), int(hi)));
+            let range =
+                |lo: i64, hi: i64| bin("and", bin(">=", o(), int(lo)), bin("<=", o(), int(hi)));
             let alpha = bin("or", range(65, 90), range(97, 122));
             let digit = range(48, 57);
             let mut body = vec![
-                if_(bin("==", var("name"), s("alpha")), vec![ret(alpha.clone())], None),
-                if_(bin("==", var("name"), s("digit")), vec![ret(digit.clone())], None),
-                if_(bin("==", var("name"), s("alnum")), vec![ret(bin("or", alpha, digit.clone()))], None),
-                if_(bin("==", var("name"), s("upper")), vec![ret(range(65, 90))], None),
-                if_(bin("==", var("name"), s("lower")), vec![ret(range(97, 122))], None),
+                if_(
+                    bin("==", var("name"), s("alpha")),
+                    vec![ret(alpha.clone())],
+                    None,
+                ),
+                if_(
+                    bin("==", var("name"), s("digit")),
+                    vec![ret(digit.clone())],
+                    None,
+                ),
+                if_(
+                    bin("==", var("name"), s("alnum")),
+                    vec![ret(bin("or", alpha, digit.clone()))],
+                    None,
+                ),
+                if_(
+                    bin("==", var("name"), s("upper")),
+                    vec![ret(range(65, 90))],
+                    None,
+                ),
+                if_(
+                    bin("==", var("name"), s("lower")),
+                    vec![ret(range(97, 122))],
+                    None,
+                ),
                 if_(
                     bin("==", var("name"), s("space")),
                     vec![ret(bin("or", bin("==", o(), int(32)), range(9, 13)))],
@@ -3529,7 +4232,11 @@ fn helper_fn(name: &str) -> Function {
                 ),
                 if_(
                     bin("==", var("name"), s("blank")),
-                    vec![ret(bin("or", bin("==", o(), int(32)), bin("==", o(), int(9))))],
+                    vec![ret(bin(
+                        "or",
+                        bin("==", o(), int(32)),
+                        bin("==", o(), int(9)),
+                    ))],
                     None,
                 ),
                 if_(
@@ -3541,8 +4248,16 @@ fn helper_fn(name: &str) -> Function {
                     ))],
                     None,
                 ),
-                if_(bin("==", var("name"), s("print")), vec![ret(range(32, 126))], None),
-                if_(bin("==", var("name"), s("graph")), vec![ret(range(33, 126))], None),
+                if_(
+                    bin("==", var("name"), s("print")),
+                    vec![ret(range(32, 126))],
+                    None,
+                ),
+                if_(
+                    bin("==", var("name"), s("graph")),
+                    vec![ret(range(33, 126))],
+                    None,
+                ),
                 if_(
                     bin("==", var("name"), s("cntrl")),
                     vec![ret(bin("or", range(0, 31), bin("==", o(), int(127))))],
@@ -3550,7 +4265,11 @@ fn helper_fn(name: &str) -> Function {
                 ),
                 if_(
                     bin("==", var("name"), s("xdigit")),
-                    vec![ret(bin("or", digit, bin("or", range(65, 70), range(97, 102))))],
+                    vec![ret(bin(
+                        "or",
+                        digit,
+                        bin("or", range(65, 70), range(97, 102)),
+                    ))],
                     None,
                 ),
             ];
@@ -3563,18 +4282,34 @@ fn helper_fn(name: &str) -> Function {
             &["s"],
             vec![
                 decl("out", s("")),
-                for_("c", chars(var("s")), vec![
-                    if_(
-                        bin(
-                            "or",
-                            bin("or", bin("==", var("c"), s("*")), bin("==", var("c"), s("?"))),
-                            bin("or", bin("or", bin("==", var("c"), s("[")), bin("==", var("c"), s("]"))), bin("==", var("c"), s("\\"))),
+                for_(
+                    "c",
+                    chars(var("s")),
+                    vec![
+                        if_(
+                            bin(
+                                "or",
+                                bin(
+                                    "or",
+                                    bin("==", var("c"), s("*")),
+                                    bin("==", var("c"), s("?")),
+                                ),
+                                bin(
+                                    "or",
+                                    bin(
+                                        "or",
+                                        bin("==", var("c"), s("[")),
+                                        bin("==", var("c"), s("]")),
+                                    ),
+                                    bin("==", var("c"), s("\\")),
+                                ),
+                            ),
+                            vec![set("out", bin("+", var("out"), s("\\")))],
+                            None,
                         ),
-                        vec![set("out", bin("+", var("out"), s("\\")))],
-                        None,
-                    ),
-                    set("out", bin("+", var("out"), var("c"))),
-                ]),
+                        set("out", bin("+", var("out"), var("c"))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -3587,23 +4322,31 @@ fn helper_fn(name: &str) -> Function {
                 decl("n", len(var("cs"))),
                 decl("i", int(0)),
                 decl("out", s("")),
-                while_(bin("<", var("i"), var("n")), vec![
-                    if_(
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![if_(
                         bin(
                             "and",
                             bin("==", index(var("cs"), var("i")), s("\\")),
                             bin("<", bin("+", var("i"), int(1)), var("n")),
                         ),
                         vec![
-                            set("out", bin("+", var("out"), index(var("cs"), bin("+", var("i"), int(1))))),
+                            set(
+                                "out",
+                                bin(
+                                    "+",
+                                    var("out"),
+                                    index(var("cs"), bin("+", var("i"), int(1))),
+                                ),
+                            ),
                             set("i", bin("+", var("i"), int(2))),
                         ],
                         Some(vec![
                             set("out", bin("+", var("out"), index(var("cs"), var("i")))),
                             set("i", bin("+", var("i"), int(1))),
                         ]),
-                    ),
-                ]),
+                    )],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -3613,23 +4356,27 @@ fn helper_fn(name: &str) -> Function {
             &["arr", "at", "nullglob", "failglob", "nomatch"],
             vec![
                 decl("out", array(vec![])),
-                for_("f", var("arr"), vec![set(
-                    "out",
-                    bin(
-                        "+",
-                        var("out"),
-                        call(
-                            "__sh_globexp",
-                            vec![
-                                var("f"),
-                                var("at"),
-                                var("nullglob"),
-                                var("failglob"),
-                                var("nomatch"),
-                            ],
+                for_(
+                    "f",
+                    var("arr"),
+                    vec![set(
+                        "out",
+                        bin(
+                            "+",
+                            var("out"),
+                            call(
+                                "__sh_globexp",
+                                vec![
+                                    var("f"),
+                                    var("at"),
+                                    var("nullglob"),
+                                    var("failglob"),
+                                    var("nomatch"),
+                                ],
+                            ),
                         ),
-                    ),
-                )]),
+                    )],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -3640,25 +4387,32 @@ fn helper_fn(name: &str) -> Function {
                 decl("cs", chars(var("s"))),
                 decl("n", len(var("cs"))),
                 decl("i", int(0)),
-                while_(bin("<", var("i"), var("n")), vec![
-                    decl("c", index(var("cs"), var("i"))),
-                    if_(
-                        bin("==", var("c"), s("\\")),
-                        vec![set("i", bin("+", var("i"), int(2)))],
-                        Some(vec![
-                            if_(
-                                bin(
-                                    "or",
-                                    bin("or", bin("==", var("c"), s("*")), bin("==", var("c"), s("?"))),
-                                    bin("==", var("c"), s("[")),
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![
+                        decl("c", index(var("cs"), var("i"))),
+                        if_(
+                            bin("==", var("c"), s("\\")),
+                            vec![set("i", bin("+", var("i"), int(2)))],
+                            Some(vec![
+                                if_(
+                                    bin(
+                                        "or",
+                                        bin(
+                                            "or",
+                                            bin("==", var("c"), s("*")),
+                                            bin("==", var("c"), s("?")),
+                                        ),
+                                        bin("==", var("c"), s("[")),
+                                    ),
+                                    vec![ret(boolean(true))],
+                                    None,
                                 ),
-                                vec![ret(boolean(true))],
-                                None,
-                            ),
-                            set("i", bin("+", var("i"), int(1))),
-                        ]),
-                    ),
-                ]),
+                                set("i", bin("+", var("i"), int(1))),
+                            ]),
+                        ),
+                    ],
+                ),
                 ret(boolean(false)),
             ],
         ),
@@ -3671,29 +4425,36 @@ fn helper_fn(name: &str) -> Function {
                 decl("cs", chars(var("s"))),
                 decl("n", len(var("cs"))),
                 decl("i", int(0)),
-                while_(bin("<", var("i"), var("n")), vec![
-                    decl("c", index(var("cs"), var("i"))),
-                    if_(
-                        bin("==", var("c"), s("\\")),
-                        vec![set("i", bin("+", var("i"), int(2)))],
-                        Some(vec![
-                            if_(
-                                bin(
-                                    "and",
-                                    bin("==", var("c"), s("*")),
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![
+                        decl("c", index(var("cs"), var("i"))),
+                        if_(
+                            bin("==", var("c"), s("\\")),
+                            vec![set("i", bin("+", var("i"), int(2)))],
+                            Some(vec![
+                                if_(
                                     bin(
                                         "and",
-                                        bin("<", bin("+", var("i"), int(1)), var("n")),
-                                        bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("*")),
+                                        bin("==", var("c"), s("*")),
+                                        bin(
+                                            "and",
+                                            bin("<", bin("+", var("i"), int(1)), var("n")),
+                                            bin(
+                                                "==",
+                                                index(var("cs"), bin("+", var("i"), int(1))),
+                                                s("*"),
+                                            ),
+                                        ),
                                     ),
+                                    vec![ret(boolean(true))],
+                                    None,
                                 ),
-                                vec![ret(boolean(true))],
-                                None,
-                            ),
-                            set("i", bin("+", var("i"), int(1))),
-                        ]),
-                    ),
-                ]),
+                                set("i", bin("+", var("i"), int(1))),
+                            ]),
+                        ),
+                    ],
+                ),
                 ret(boolean(false)),
             ],
         ),
@@ -3703,7 +4464,11 @@ fn helper_fn(name: &str) -> Function {
             &["dir", "name"],
             vec![
                 if_(bin("==", var("dir"), s("")), vec![ret(var("name"))], None),
-                if_(bin("==", var("dir"), s("/")), vec![ret(bin("+", s("/"), var("name")))], None),
+                if_(
+                    bin("==", var("dir"), s("/")),
+                    vec![ret(bin("+", s("/"), var("name")))],
+                    None,
+                ),
                 ret(bin("+", bin("+", var("dir"), s("/")), var("name"))),
             ],
         ),
@@ -3724,25 +4489,41 @@ fn helper_fn(name: &str) -> Function {
                 decl("left", array(vec![])),
                 decl("right", array(vec![])),
                 decl("i", int(0)),
-                while_(bin("<", var("i"), var("n")), vec![
-                    if_(
-                        bin("<", var("i"), var("mid")),
-                        vec![expr_stmt(cap("append", vec![var("left"), index(var("a"), var("i"))]))],
-                        Some(vec![expr_stmt(cap("append", vec![var("right"), index(var("a"), var("i"))]))]),
-                    ),
-                    set("i", bin("+", var("i"), int(1))),
-                ]),
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![
+                        if_(
+                            bin("<", var("i"), var("mid")),
+                            vec![expr_stmt(cap(
+                                "append",
+                                vec![var("left"), index(var("a"), var("i"))],
+                            ))],
+                            Some(vec![expr_stmt(cap(
+                                "append",
+                                vec![var("right"), index(var("a"), var("i"))],
+                            ))]),
+                        ),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
                 decl("l", call("__sh_sort", vec![var("left")])),
                 decl("r", call("__sh_sort", vec![var("right")])),
                 decl("out", array(vec![])),
                 set("i", int(0)),
                 decl("j", int(0)),
                 while_(
-                    bin("and", bin("<", var("i"), len(var("l"))), bin("<", var("j"), len(var("r")))),
+                    bin(
+                        "and",
+                        bin("<", var("i"), len(var("l"))),
+                        bin("<", var("j"), len(var("r"))),
+                    ),
                     vec![if_(
                         bin(
                             "<=",
-                            call("__sh_strcmp", vec![index(var("l"), var("i")), index(var("r"), var("j"))]),
+                            call(
+                                "__sh_strcmp",
+                                vec![index(var("l"), var("i")), index(var("r"), var("j"))],
+                            ),
                             int(0),
                         ),
                         vec![
@@ -3755,14 +4536,20 @@ fn helper_fn(name: &str) -> Function {
                         ]),
                     )],
                 ),
-                while_(bin("<", var("i"), len(var("l"))), vec![
-                    expr_stmt(cap("append", vec![var("out"), index(var("l"), var("i"))])),
-                    set("i", bin("+", var("i"), int(1))),
-                ]),
-                while_(bin("<", var("j"), len(var("r"))), vec![
-                    expr_stmt(cap("append", vec![var("out"), index(var("r"), var("j"))])),
-                    set("j", bin("+", var("j"), int(1))),
-                ]),
+                while_(
+                    bin("<", var("i"), len(var("l"))),
+                    vec![
+                        expr_stmt(cap("append", vec![var("out"), index(var("l"), var("i"))])),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
+                while_(
+                    bin("<", var("j"), len(var("r"))),
+                    vec![
+                        expr_stmt(cap("append", vec![var("out"), index(var("r"), var("j"))])),
+                        set("j", bin("+", var("j"), int(1))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -3772,13 +4559,18 @@ fn helper_fn(name: &str) -> Function {
             &["a"],
             vec![
                 decl("out", array(vec![])),
-                for_("p", var("a"), vec![
-                    if_(
+                for_(
+                    "p",
+                    var("a"),
+                    vec![if_(
                         bin("==", cap("fs.is_dir", vec![var("p")]), int(1)),
-                        vec![set("out", bin("+", var("out"), array(vec![bin("+", var("p"), s("/"))])))],
+                        vec![set(
+                            "out",
+                            bin("+", var("out"), array(vec![bin("+", var("p"), s("/"))])),
+                        )],
                         None,
-                    ),
-                ]),
+                    )],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -3829,13 +4621,22 @@ fn helper_fn(name: &str) -> Function {
                     "slash",
                     bin(
                         "==",
-                        call("__sh_substr", vec![var("field"), int(-1), int(1), boolean(true)]),
+                        call(
+                            "__sh_substr",
+                            vec![var("field"), int(-1), int(1), boolean(true)],
+                        ),
                         s("/"),
                     ),
                 ),
                 if_(
                     var("slash"),
-                    vec![set("w", call("__sh_substr", vec![var("field"), int(0), int(-1), boolean(true)]))],
+                    vec![set(
+                        "w",
+                        call(
+                            "__sh_substr",
+                            vec![var("field"), int(0), int(-1), boolean(true)],
+                        ),
+                    )],
                     None,
                 ),
                 // Split into components on unescaped `/`, keeping the escapes.
@@ -3845,42 +4646,56 @@ fn helper_fn(name: &str) -> Function {
                 decl("cur", s("")),
                 decl("i", int(0)),
                 decl("rooted", boolean(false)),
-                while_(bin("<", var("i"), var("n")), vec![
-                    decl("c", index(var("cs"), var("i"))),
-                    if_(
-                        bin("==", var("c"), s("\\")),
-                        vec![
-                            set("cur", bin("+", var("cur"), var("c"))),
-                            if_(
-                                bin("<", bin("+", var("i"), int(1)), var("n")),
-                                vec![
-                                    set(
-                                        "cur",
-                                        bin("+", var("cur"), index(var("cs"), bin("+", var("i"), int(1)))),
-                                    ),
-                                    set("i", bin("+", var("i"), int(1))),
-                                ],
-                                None,
-                            ),
-                            set("i", bin("+", var("i"), int(1))),
-                        ],
-                        Some(vec![
-                            if_(
-                                bin("==", var("c"), s("/")),
-                                vec![if_(
-                                    bin("and", bin("==", var("i"), int(0)), bin("==", var("cur"), s(""))),
-                                    vec![set("rooted", boolean(true))],
-                                    Some(vec![
-                                        set("comps", bin("+", var("comps"), array(vec![var("cur")]))),
-                                        set("cur", s("")),
-                                    ]),
-                                )],
-                                Some(vec![set("cur", bin("+", var("cur"), var("c")))]),
-                            ),
-                            set("i", bin("+", var("i"), int(1))),
-                        ]),
-                    ),
-                ]),
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![
+                        decl("c", index(var("cs"), var("i"))),
+                        if_(
+                            bin("==", var("c"), s("\\")),
+                            vec![
+                                set("cur", bin("+", var("cur"), var("c"))),
+                                if_(
+                                    bin("<", bin("+", var("i"), int(1)), var("n")),
+                                    vec![
+                                        set(
+                                            "cur",
+                                            bin(
+                                                "+",
+                                                var("cur"),
+                                                index(var("cs"), bin("+", var("i"), int(1))),
+                                            ),
+                                        ),
+                                        set("i", bin("+", var("i"), int(1))),
+                                    ],
+                                    None,
+                                ),
+                                set("i", bin("+", var("i"), int(1))),
+                            ],
+                            Some(vec![
+                                if_(
+                                    bin("==", var("c"), s("/")),
+                                    vec![if_(
+                                        bin(
+                                            "and",
+                                            bin("==", var("i"), int(0)),
+                                            bin("==", var("cur"), s("")),
+                                        ),
+                                        vec![set("rooted", boolean(true))],
+                                        Some(vec![
+                                            set(
+                                                "comps",
+                                                bin("+", var("comps"), array(vec![var("cur")])),
+                                            ),
+                                            set("cur", s("")),
+                                        ]),
+                                    )],
+                                    Some(vec![set("cur", bin("+", var("cur"), var("c")))]),
+                                ),
+                                set("i", bin("+", var("i"), int(1))),
+                            ]),
+                        ),
+                    ],
+                ),
                 set("comps", bin("+", var("comps"), array(vec![var("cur")]))),
                 if_(
                     var("rooted"),
@@ -3898,131 +4713,198 @@ fn helper_fn(name: &str) -> Function {
                 // rooted pattern (refused above).
                 decl("cands", array(vec![s("")])),
                 decl("j", int(0)),
-                while_(bin("<", var("j"), len(var("comps"))), vec![
-                    decl("comp", index(var("comps"), var("j"))),
-                    decl("next", array(vec![])),
-                    for_("cand", var("cands"), vec![
-                        if_(
-                            bin("==", var("comp"), s("")),
-                            // `a//b`, or the empty component a trailing `/` leaves.
-                            vec![expr_stmt(cap("append", vec![var("next"), var("cand")]))],
-                            Some(vec![if_(
-                                not(call("__sh_meta", vec![var("comp")])),
-                                vec![
-                                    decl(
-                                        "q",
-                                        call(
-                                            "__sh_join",
-                                            vec![var("cand"), call("__sh_unglob", vec![var("comp")])],
+                while_(
+                    bin("<", var("j"), len(var("comps"))),
+                    vec![
+                        decl("comp", index(var("comps"), var("j"))),
+                        decl("next", array(vec![])),
+                        for_(
+                            "cand",
+                            var("cands"),
+                            vec![if_(
+                                bin("==", var("comp"), s("")),
+                                // `a//b`, or the empty component a trailing `/` leaves.
+                                vec![expr_stmt(cap("append", vec![var("next"), var("cand")]))],
+                                Some(vec![if_(
+                                    not(call("__sh_meta", vec![var("comp")])),
+                                    vec![
+                                        decl(
+                                            "q",
+                                            call(
+                                                "__sh_join",
+                                                vec![
+                                                    var("cand"),
+                                                    call("__sh_unglob", vec![var("comp")]),
+                                                ],
+                                            ),
                                         ),
-                                    ),
-                                    if_(
-                                        bin("==", cap("fs.exists", vec![var("q")]), int(1)),
-                                        vec![expr_stmt(cap("append", vec![var("next"), var("q")]))],
-                                        None,
-                                    ),
-                                ],
-                                Some(vec![
-                                    decl(
-                                        "dirp",
-                                        tern(bin("==", var("cand"), s("")), s("."), var("cand")),
-                                    ),
-                                    if_(
-                                        bin(
-                                            "and",
-                                            bin("==", cap("fs.exists", vec![var("dirp")]), int(1)),
-                                            bin("==", cap("fs.is_dir", vec![var("dirp")]), int(1)),
+                                        if_(
+                                            bin("==", cap("fs.exists", vec![var("q")]), int(1)),
+                                            vec![expr_stmt(cap(
+                                                "append",
+                                                vec![var("next"), var("q")],
+                                            ))],
+                                            None,
                                         ),
-                                        vec![
-                                            // A leading `.` in the pattern is what lets
-                                            // `.`-names match; otherwise they are skipped.
-                                            decl(
-                                                "hidden",
+                                    ],
+                                    Some(vec![
+                                        decl(
+                                            "dirp",
+                                            tern(
+                                                bin("==", var("cand"), s("")),
+                                                s("."),
+                                                var("cand"),
+                                            ),
+                                        ),
+                                        if_(
+                                            bin(
+                                                "and",
                                                 bin(
-                                                    "or",
-                                                    bin(
-                                                        "==",
-                                                        call(
-                                                            "__sh_substr",
-                                                            vec![var("comp"), int(0), int(1), boolean(true)],
-                                                        ),
-                                                        s("."),
-                                                    ),
-                                                    bin(
-                                                        "==",
-                                                        call(
-                                                            "__sh_substr",
-                                                            vec![var("comp"), int(0), int(2), boolean(true)],
-                                                        ),
-                                                        s("\\."),
-                                                    ),
+                                                    "==",
+                                                    cap("fs.exists", vec![var("dirp")]),
+                                                    int(1),
+                                                ),
+                                                bin(
+                                                    "==",
+                                                    cap("fs.is_dir", vec![var("dirp")]),
+                                                    int(1),
                                                 ),
                                             ),
-                                            for_("nm", cap("fs.list", vec![var("dirp")]), vec![
-                                                if_(
+                                            vec![
+                                                // A leading `.` in the pattern is what lets
+                                                // `.`-names match; otherwise they are skipped.
+                                                decl(
+                                                    "hidden",
                                                     bin(
-                                                        "and",
+                                                        "or",
                                                         bin(
                                                             "==",
                                                             call(
                                                                 "__sh_substr",
-                                                                vec![var("nm"), int(0), int(1), boolean(true)],
+                                                                vec![
+                                                                    var("comp"),
+                                                                    int(0),
+                                                                    int(1),
+                                                                    boolean(true),
+                                                                ],
                                                             ),
                                                             s("."),
                                                         ),
-                                                        not(var("hidden")),
+                                                        bin(
+                                                            "==",
+                                                            call(
+                                                                "__sh_substr",
+                                                                vec![
+                                                                    var("comp"),
+                                                                    int(0),
+                                                                    int(2),
+                                                                    boolean(true),
+                                                                ],
+                                                            ),
+                                                            s("\\."),
+                                                        ),
                                                     ),
-                                                    vec![S::Continue { meta: m() }],
-                                                    None,
                                                 ),
-                                                if_(
-                                                    bin(
-                                                        "==",
-                                                        call("__sh_glob", vec![var("comp"), var("nm")]),
-                                                        boolean(true),
-                                                    ),
-                                                    vec![expr_stmt(cap(
-                                                        "append",
-                                                        vec![
-                                                            var("next"),
-                                                            call("__sh_join", vec![var("cand"), var("nm")]),
-                                                        ],
-                                                    ))],
-                                                    None,
+                                                for_(
+                                                    "nm",
+                                                    cap("fs.list", vec![var("dirp")]),
+                                                    vec![
+                                                        if_(
+                                                            bin(
+                                                                "and",
+                                                                bin(
+                                                                    "==",
+                                                                    call(
+                                                                        "__sh_substr",
+                                                                        vec![
+                                                                            var("nm"),
+                                                                            int(0),
+                                                                            int(1),
+                                                                            boolean(true),
+                                                                        ],
+                                                                    ),
+                                                                    s("."),
+                                                                ),
+                                                                not(var("hidden")),
+                                                            ),
+                                                            vec![S::Continue { meta: m() }],
+                                                            None,
+                                                        ),
+                                                        if_(
+                                                            bin(
+                                                                "==",
+                                                                call(
+                                                                    "__sh_glob",
+                                                                    vec![var("comp"), var("nm")],
+                                                                ),
+                                                                boolean(true),
+                                                            ),
+                                                            vec![expr_stmt(cap(
+                                                                "append",
+                                                                vec![
+                                                                    var("next"),
+                                                                    call(
+                                                                        "__sh_join",
+                                                                        vec![
+                                                                            var("cand"),
+                                                                            var("nm"),
+                                                                        ],
+                                                                    ),
+                                                                ],
+                                                            ))],
+                                                            None,
+                                                        ),
+                                                    ],
                                                 ),
-                                            ]),
-                                        ],
-                                        None,
-                                    ),
-                                ]),
-                            )]),
+                                            ],
+                                            None,
+                                        ),
+                                    ]),
+                                )]),
+                            )],
                         ),
-                    ]),
-                    set("cands", var("next")),
-                    set("j", bin("+", var("j"), int(1))),
-                ]),
+                        set("cands", var("next")),
+                        set("j", bin("+", var("j"), int(1))),
+                    ],
+                ),
                 decl(
                     "shown",
-                    tern(var("slash"), call("__sh_dironly", vec![var("cands")]), var("cands")),
+                    tern(
+                        var("slash"),
+                        call("__sh_dironly", vec![var("cands")]),
+                        var("cands"),
+                    ),
                 ),
                 // Nothing matched. `failglob` is checked first: with both set,
                 // bash reports the error rather than dropping the word.
-                if_(bin("==", len(var("shown")), int(0)), vec![
-                    if_(var("failglob"), vec![throw(concat(vec![
-                        s(FAILGLOB_SENTINEL),
-                        s("no match: "),
-                        var("field"),
-                    ]))], None),
-                    if_(var("nullglob"), vec![ret(array(vec![]))], None),
-                    if_(var("nomatch"), vec![throw(concat(vec![
-                        s("no matches found: "),
-                        var("field"),
-                        s(" (at "),
-                        var("at"),
-                        s(")"),
-                    ]))], None),
-                    ret(array(vec![var("lit")])),
-                ], None),
+                if_(
+                    bin("==", len(var("shown")), int(0)),
+                    vec![
+                        if_(
+                            var("failglob"),
+                            vec![throw(concat(vec![
+                                s(FAILGLOB_SENTINEL),
+                                s("no match: "),
+                                var("field"),
+                            ]))],
+                            None,
+                        ),
+                        if_(var("nullglob"), vec![ret(array(vec![]))], None),
+                        if_(
+                            var("nomatch"),
+                            vec![throw(concat(vec![
+                                s("no matches found: "),
+                                var("field"),
+                                s(" (at "),
+                                var("at"),
+                                s(")"),
+                            ]))],
+                            None,
+                        ),
+                        ret(array(vec![var("lit")])),
+                    ],
+                    None,
+                ),
                 ret(call("__sh_sort", vec![var("shown")])),
             ],
         ),
@@ -4036,13 +4918,24 @@ fn helper_fn(name: &str) -> Function {
         "__sh_slurp" => func(
             &["avail", "isset"],
             vec![
-                if_(bin("==", var("isset"), int(1)), vec![ret(var("avail"))], None),
+                if_(
+                    bin("==", var("isset"), int(1)),
+                    vec![ret(var("avail"))],
+                    None,
+                ),
                 decl("out", s("")),
-                while_(boolean(true), vec![
-                    decl("line", call("__sh_read_line", vec![boolean(true)])),
-                    if_(bin("==", var("line"), s("")), vec![S::Break { meta: m() }], None),
-                    set("out", bin("+", bin("+", var("out"), var("line")), s("\n"))),
-                ]),
+                while_(
+                    boolean(true),
+                    vec![
+                        decl("line", call("__sh_read_line", vec![boolean(true)])),
+                        if_(
+                            bin("==", var("line"), s("")),
+                            vec![S::Break { meta: m() }],
+                            None,
+                        ),
+                        set("out", bin("+", bin("+", var("out"), var("line")), s("\n"))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4051,12 +4944,11 @@ fn helper_fn(name: &str) -> Function {
             &["avail"],
             vec![
                 decl("i", call("__sh_find", vec![var("avail"), s("\n")])),
-                if_(
-                    bin("<", var("i"), int(0)),
-                    vec![ret(var("avail"))],
-                    None,
-                ),
-                ret(call("__sh_substr", vec![var("avail"), int(0), var("i"), boolean(true)])),
+                if_(bin("<", var("i"), int(0)), vec![ret(var("avail"))], None),
+                ret(call(
+                    "__sh_substr",
+                    vec![var("avail"), int(0), var("i"), boolean(true)],
+                )),
             ],
         ),
         // __sh_in_rest(avail): what is left after that first line.
@@ -4067,7 +4959,12 @@ fn helper_fn(name: &str) -> Function {
                 if_(bin("<", var("i"), int(0)), vec![ret(s(""))], None),
                 ret(call(
                     "__sh_substr",
-                    vec![var("avail"), bin("+", var("i"), int(1)), int(0), boolean(false)],
+                    vec![
+                        var("avail"),
+                        bin("+", var("i"), int(1)),
+                        int(0),
+                        boolean(false),
+                    ],
                 )),
             ],
         ),
@@ -4076,15 +4973,19 @@ fn helper_fn(name: &str) -> Function {
         "__sh_read_from" => func(
             &["avail", "isset", "raw"],
             vec![
-                if_(bin("==", var("isset"), int(1)), vec![
-                    decl("line", call("__sh_in_line", vec![var("avail")])),
-                    if_(
-                        not(var("raw")),
-                        vec![ret(call("__sh_unbackslash", vec![var("line")]))],
-                        None,
-                    ),
-                    ret(var("line")),
-                ], None),
+                if_(
+                    bin("==", var("isset"), int(1)),
+                    vec![
+                        decl("line", call("__sh_in_line", vec![var("avail")])),
+                        if_(
+                            not(var("raw")),
+                            vec![ret(call("__sh_unbackslash", vec![var("line")]))],
+                            None,
+                        ),
+                        ret(var("line")),
+                    ],
+                    None,
+                ),
                 ret(call("__sh_read_line", vec![var("raw")])),
             ],
         ),
@@ -4097,15 +4998,20 @@ fn helper_fn(name: &str) -> Function {
                 decl("n", len(var("cs"))),
                 decl("i", int(0)),
                 decl("out", s("")),
-                while_(bin("<", var("i"), var("n")), vec![
-                    if_(
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![if_(
                         bin("==", index(var("cs"), var("i")), s("\\")),
                         vec![if_(
                             bin("<", bin("+", var("i"), int(1)), var("n")),
                             vec![
                                 set(
                                     "out",
-                                    bin("+", var("out"), index(var("cs"), bin("+", var("i"), int(1)))),
+                                    bin(
+                                        "+",
+                                        var("out"),
+                                        index(var("cs"), bin("+", var("i"), int(1))),
+                                    ),
                                 ),
                                 set("i", bin("+", var("i"), int(2))),
                             ],
@@ -4115,8 +5021,8 @@ fn helper_fn(name: &str) -> Function {
                             set("out", bin("+", var("out"), index(var("cs"), var("i")))),
                             set("i", bin("+", var("i"), int(1))),
                         ]),
-                    ),
-                ]),
+                    )],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4130,14 +5036,18 @@ fn helper_fn(name: &str) -> Function {
             vec![
                 decl("out", array(vec![])),
                 decl("cur", s("")),
-                for_("c", chars(var("s")), vec![if_(
-                    bin("==", var("c"), s("\n")),
-                    vec![
-                        set("out", bin("+", var("out"), array(vec![var("cur")]))),
-                        set("cur", s("")),
-                    ],
-                    Some(vec![set("cur", bin("+", var("cur"), var("c")))]),
-                )]),
+                for_(
+                    "c",
+                    chars(var("s")),
+                    vec![if_(
+                        bin("==", var("c"), s("\n")),
+                        vec![
+                            set("out", bin("+", var("out"), array(vec![var("cur")]))),
+                            set("cur", s("")),
+                        ],
+                        Some(vec![set("cur", bin("+", var("cur"), var("c")))]),
+                    )],
+                ),
                 if_(
                     bin("!=", var("cur"), s("")),
                     vec![set("out", bin("+", var("out"), array(vec![var("cur")])))],
@@ -4151,10 +5061,14 @@ fn helper_fn(name: &str) -> Function {
             &["a"],
             vec![
                 decl("out", s("")),
-                for_("l", var("a"), vec![set(
-                    "out",
-                    bin("+", bin("+", var("out"), var("l")), s("\n")),
-                )]),
+                for_(
+                    "l",
+                    var("a"),
+                    vec![set(
+                        "out",
+                        bin("+", bin("+", var("out"), var("l")), s("\n")),
+                    )],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4163,15 +5077,19 @@ fn helper_fn(name: &str) -> Function {
             &["a"],
             vec![
                 decl("out", array(vec![])),
-                for_("n", var("a"), vec![if_(
-                    bin(
-                        "!=",
-                        call("__sh_substr", vec![var("n"), int(0), int(1), boolean(true)]),
-                        s("."),
-                    ),
-                    vec![expr_stmt(cap("append", vec![var("out"), var("n")]))],
-                    None,
-                )]),
+                for_(
+                    "n",
+                    var("a"),
+                    vec![if_(
+                        bin(
+                            "!=",
+                            call("__sh_substr", vec![var("n"), int(0), int(1), boolean(true)]),
+                            s("."),
+                        ),
+                        vec![expr_stmt(cap("append", vec![var("out"), var("n")]))],
+                        None,
+                    )],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4202,10 +5120,13 @@ fn helper_fn(name: &str) -> Function {
                 decl("out", array(vec![])),
                 decl("i", bin("-", len(var("a")), var("n"))),
                 if_(bin("<", var("i"), int(0)), vec![set("i", int(0))], None),
-                while_(bin("<", var("i"), len(var("a"))), vec![
-                    expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))])),
-                    set("i", bin("+", var("i"), int(1))),
-                ]),
+                while_(
+                    bin("<", var("i"), len(var("a"))),
+                    vec![
+                        expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))])),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4215,10 +5136,13 @@ fn helper_fn(name: &str) -> Function {
             vec![
                 decl("out", array(vec![])),
                 decl("i", bin("-", len(var("a")), int(1))),
-                while_(bin(">=", var("i"), int(0)), vec![
-                    expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))])),
-                    set("i", bin("-", var("i"), int(1))),
-                ]),
+                while_(
+                    bin(">=", var("i"), int(0)),
+                    vec![
+                        expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))])),
+                        set("i", bin("-", var("i"), int(1))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4228,23 +5152,39 @@ fn helper_fn(name: &str) -> Function {
             &["a"],
             vec![
                 decl("out", array(vec![])),
-                if_(bin(">", len(var("a")), int(0)), vec![expr_stmt(cap("append", vec![var("out"), index(var("a"), int(0))]))], None),
+                if_(
+                    bin(">", len(var("a")), int(0)),
+                    vec![expr_stmt(cap(
+                        "append",
+                        vec![var("out"), index(var("a"), int(0))],
+                    ))],
+                    None,
+                ),
                 decl("i", int(1)),
-                while_(bin("<", var("i"), len(var("a"))), vec![
-                    if_(
-                        bin(
-                            "!=",
-                            call(
-                                "__sh_strcmp",
-                                vec![index(var("a"), bin("-", var("i"), int(1))), index(var("a"), var("i"))],
+                while_(
+                    bin("<", var("i"), len(var("a"))),
+                    vec![
+                        if_(
+                            bin(
+                                "!=",
+                                call(
+                                    "__sh_strcmp",
+                                    vec![
+                                        index(var("a"), bin("-", var("i"), int(1))),
+                                        index(var("a"), var("i")),
+                                    ],
+                                ),
+                                int(0),
                             ),
-                            int(0),
+                            vec![expr_stmt(cap(
+                                "append",
+                                vec![var("out"), index(var("a"), var("i"))],
+                            ))],
+                            None,
                         ),
-                        vec![expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))]))],
-                        None,
-                    ),
-                    set("i", bin("+", var("i"), int(1))),
-                ]),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4254,8 +5194,16 @@ fn helper_fn(name: &str) -> Function {
             &["a", "rev", "uniq"],
             vec![
                 decl("s", call("__sh_sort", vec![var("a")])),
-                if_(var("uniq"), vec![set("s", call("__sh_dedupe", vec![var("s")]))], None),
-                if_(var("rev"), vec![set("s", call("__sh_rev", vec![var("s")]))], None),
+                if_(
+                    var("uniq"),
+                    vec![set("s", call("__sh_dedupe", vec![var("s")]))],
+                    None,
+                ),
+                if_(
+                    var("rev"),
+                    vec![set("s", call("__sh_rev", vec![var("s")]))],
+                    None,
+                ),
                 ret(var("s")),
             ],
         ),
@@ -4267,49 +5215,76 @@ fn helper_fn(name: &str) -> Function {
             vec![
                 decl("out", array(vec![])),
                 decl("i", int(0)),
-                while_(bin("<", var("i"), len(var("a"))), vec![
-                    decl("n", int(1)),
-                    while_(
-                        bin("and", bin("<", bin("+", var("i"), var("n")), len(var("a"))),
+                while_(
+                    bin("<", var("i"), len(var("a"))),
+                    vec![
+                        decl("n", int(1)),
+                        while_(
                             bin(
-                                "==",
-                                call(
-                                    "__sh_strcmp",
-                                    vec![index(var("a"), var("i")), index(var("a"), bin("+", var("i"), var("n")))],
-                                ),
-                                int(0),
-                            )),
-                        vec![set("n", bin("+", var("n"), int(1)))],
-                    ),
-                    if_(
-                        bin("==", var("mode"), int(1)),
-                        vec![expr_stmt(cap(
-                            "append",
-                            vec![
-                                var("out"),
+                                "and",
+                                bin("<", bin("+", var("i"), var("n")), len(var("a"))),
                                 bin(
-                                    "+",
-                                    bin("+", call("__sh_pad", vec![to_str(var("n")), int(7)]), s(" ")),
-                                    index(var("a"), var("i")),
+                                    "==",
+                                    call(
+                                        "__sh_strcmp",
+                                        vec![
+                                            index(var("a"), var("i")),
+                                            index(var("a"), bin("+", var("i"), var("n"))),
+                                        ],
+                                    ),
+                                    int(0),
                                 ),
-                            ],
-                        ))],
-                        Some(vec![if_(
-                            bin(
-                                "or",
-                                bin("and", bin("==", var("mode"), int(2)), bin(">", var("n"), int(1))),
-                                bin("and", bin("==", var("mode"), int(3)), bin("==", var("n"), int(1))),
                             ),
-                            vec![expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))]))],
+                            vec![set("n", bin("+", var("n"), int(1)))],
+                        ),
+                        if_(
+                            bin("==", var("mode"), int(1)),
+                            vec![expr_stmt(cap(
+                                "append",
+                                vec![
+                                    var("out"),
+                                    bin(
+                                        "+",
+                                        bin(
+                                            "+",
+                                            call("__sh_pad", vec![to_str(var("n")), int(7)]),
+                                            s(" "),
+                                        ),
+                                        index(var("a"), var("i")),
+                                    ),
+                                ],
+                            ))],
                             Some(vec![if_(
-                                bin("==", var("mode"), int(0)),
-                                vec![expr_stmt(cap("append", vec![var("out"), index(var("a"), var("i"))]))],
-                                None,
+                                bin(
+                                    "or",
+                                    bin(
+                                        "and",
+                                        bin("==", var("mode"), int(2)),
+                                        bin(">", var("n"), int(1)),
+                                    ),
+                                    bin(
+                                        "and",
+                                        bin("==", var("mode"), int(3)),
+                                        bin("==", var("n"), int(1)),
+                                    ),
+                                ),
+                                vec![expr_stmt(cap(
+                                    "append",
+                                    vec![var("out"), index(var("a"), var("i"))],
+                                ))],
+                                Some(vec![if_(
+                                    bin("==", var("mode"), int(0)),
+                                    vec![expr_stmt(cap(
+                                        "append",
+                                        vec![var("out"), index(var("a"), var("i"))],
+                                    ))],
+                                    None,
+                                )]),
                             )]),
-                        )]),
-                    ),
-                    set("i", bin("+", var("i"), var("n"))),
-                ]),
+                        ),
+                        set("i", bin("+", var("i"), var("n"))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4319,8 +5294,10 @@ fn helper_fn(name: &str) -> Function {
             &["a", "delim", "field"],
             vec![
                 decl("out", array(vec![])),
-                for_("l", var("a"), vec![
-                    if_(
+                for_(
+                    "l",
+                    var("a"),
+                    vec![if_(
                         bin("<", call("__sh_find", vec![var("l"), var("delim")]), int(0)),
                         vec![expr_stmt(cap("append", vec![var("out"), var("l")]))],
                         Some(vec![
@@ -4329,13 +5306,16 @@ fn helper_fn(name: &str) -> Function {
                                 bin("<=", var("field"), len(var("parts"))),
                                 vec![expr_stmt(cap(
                                     "append",
-                                    vec![var("out"), index(var("parts"), bin("-", var("field"), int(1)))],
+                                    vec![
+                                        var("out"),
+                                        index(var("parts"), bin("-", var("field"), int(1))),
+                                    ],
                                 ))],
                                 Some(vec![expr_stmt(cap("append", vec![var("out"), s("")]))]),
                             ),
                         ]),
-                    ),
-                ]),
+                    )],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4356,21 +5336,57 @@ fn helper_fn(name: &str) -> Function {
                 // fresh slot the VM can load from later in the same branch.
                 decl("a", int(0)),
                 decl("b", int(0)),
-                while_(bin("<", var("i"), len(var("cs"))), vec![
-                    if_(
+                while_(
+                    bin("<", var("i"), len(var("cs"))),
+                    vec![if_(
                         bin(
                             "and",
-                            bin("and", bin("<", bin("+", var("i"), int(2)), len(var("cs"))),
-                                bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("-"))),
                             bin(
                                 "and",
-                                bin(">=", call("__sh_find", vec![s(RANGE_ALPHA), index(var("cs"), var("i"))]), int(0)),
-                                bin(">=", call("__sh_find", vec![s(RANGE_ALPHA), index(var("cs"), bin("+", var("i"), int(2)))]), int(0)),
+                                bin("<", bin("+", var("i"), int(2)), len(var("cs"))),
+                                bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("-")),
+                            ),
+                            bin(
+                                "and",
+                                bin(
+                                    ">=",
+                                    call(
+                                        "__sh_find",
+                                        vec![s(RANGE_ALPHA), index(var("cs"), var("i"))],
+                                    ),
+                                    int(0),
+                                ),
+                                bin(
+                                    ">=",
+                                    call(
+                                        "__sh_find",
+                                        vec![
+                                            s(RANGE_ALPHA),
+                                            index(var("cs"), bin("+", var("i"), int(2))),
+                                        ],
+                                    ),
+                                    int(0),
+                                ),
                             ),
                         ),
                         vec![
-                            set("a", call("__sh_find", vec![s(RANGE_ALPHA), index(var("cs"), var("i"))])),
-                            set("b", call("__sh_find", vec![s(RANGE_ALPHA), index(var("cs"), bin("+", var("i"), int(2)))])),
+                            set(
+                                "a",
+                                call(
+                                    "__sh_find",
+                                    vec![s(RANGE_ALPHA), index(var("cs"), var("i"))],
+                                ),
+                            ),
+                            set(
+                                "b",
+                                call(
+                                    "__sh_find",
+                                    vec![
+                                        s(RANGE_ALPHA),
+                                        index(var("cs"), bin("+", var("i"), int(2))),
+                                    ],
+                                ),
+                            ),
                             if_(
                                 bin("<", var("b"), var("a")),
                                 vec![throw(concat(vec![
@@ -4404,8 +5420,8 @@ fn helper_fn(name: &str) -> Function {
                             set("out", bin("+", var("out"), index(var("cs"), var("i")))),
                             set("i", bin("+", var("i"), int(1))),
                         ]),
-                    ),
-                ]),
+                    )],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4419,26 +5435,35 @@ fn helper_fn(name: &str) -> Function {
                 decl("ts", chars(var("to"))),
                 decl("out", s("")),
                 decl("i", int(0)),
-                while_(bin("<", var("i"), len(var("cs"))), vec![
-                    decl("k", call("__sh_find", vec![var("from"), index(var("cs"), var("i"))])),
-                    if_(
-                        bin(">=", var("k"), int(0)),
-                        vec![set(
-                            "out",
-                            bin(
-                                "+",
-                                var("out"),
-                                tern(
-                                    bin("<", var("k"), len(var("ts"))),
-                                    index(var("ts"), var("k")),
-                                    index(var("ts"), bin("-", len(var("ts")), int(1))),
+                while_(
+                    bin("<", var("i"), len(var("cs"))),
+                    vec![
+                        decl(
+                            "k",
+                            call("__sh_find", vec![var("from"), index(var("cs"), var("i"))]),
+                        ),
+                        if_(
+                            bin(">=", var("k"), int(0)),
+                            vec![set(
+                                "out",
+                                bin(
+                                    "+",
+                                    var("out"),
+                                    tern(
+                                        bin("<", var("k"), len(var("ts"))),
+                                        index(var("ts"), var("k")),
+                                        index(var("ts"), bin("-", len(var("ts")), int(1))),
+                                    ),
                                 ),
-                            ),
-                        )],
-                        Some(vec![set("out", bin("+", var("out"), index(var("cs"), var("i"))))]),
-                    ),
-                    set("i", bin("+", var("i"), int(1))),
-                ]),
+                            )],
+                            Some(vec![set(
+                                "out",
+                                bin("+", var("out"), index(var("cs"), var("i"))),
+                            )]),
+                        ),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4449,14 +5474,21 @@ fn helper_fn(name: &str) -> Function {
                 decl("cs", chars(var("text"))),
                 decl("out", s("")),
                 decl("i", int(0)),
-                while_(bin("<", var("i"), len(var("cs"))), vec![
-                    if_(
-                        bin("<", call("__sh_find", vec![var("set"), index(var("cs"), var("i"))]), int(0)),
-                        vec![set("out", bin("+", var("out"), index(var("cs"), var("i"))))],
-                        None,
-                    ),
-                    set("i", bin("+", var("i"), int(1))),
-                ]),
+                while_(
+                    bin("<", var("i"), len(var("cs"))),
+                    vec![
+                        if_(
+                            bin(
+                                "<",
+                                call("__sh_find", vec![var("set"), index(var("cs"), var("i"))]),
+                                int(0),
+                            ),
+                            vec![set("out", bin("+", var("out"), index(var("cs"), var("i"))))],
+                            None,
+                        ),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4472,18 +5504,21 @@ fn helper_fn(name: &str) -> Function {
                     vec![
                         decl("ok", boolean(true)),
                         decl("j", int(0)),
-                        while_(bin("<", var("j"), len(var("nd"))), vec![
-                            if_(
-                                bin(
-                                    "!=",
-                                    index(var("h"), bin("+", var("i"), var("j"))),
-                                    index(var("nd"), var("j")),
+                        while_(
+                            bin("<", var("j"), len(var("nd"))),
+                            vec![
+                                if_(
+                                    bin(
+                                        "!=",
+                                        index(var("h"), bin("+", var("i"), var("j"))),
+                                        index(var("nd"), var("j")),
+                                    ),
+                                    vec![set("ok", boolean(false)), S::Break { meta: m() }],
+                                    None,
                                 ),
-                                vec![set("ok", boolean(false)), S::Break { meta: m() }],
-                                None,
-                            ),
-                            set("j", bin("+", var("j"), int(1))),
-                        ]),
+                                set("j", bin("+", var("j"), int(1))),
+                            ],
+                        ),
                         if_(var("ok"), vec![ret(var("i"))], None),
                         set("i", bin("+", var("i"), int(1))),
                     ],
@@ -4496,17 +5531,21 @@ fn helper_fn(name: &str) -> Function {
             &["a", "pat", "invert"],
             vec![
                 decl("out", array(vec![])),
-                for_("l", var("a"), vec![
-                    decl(
-                        "hit",
-                        bin(">=", call("__sh_find", vec![var("l"), var("pat")]), int(0)),
-                    ),
-                    if_(
-                        bin("!=", var("hit"), var("invert")),
-                        vec![expr_stmt(cap("append", vec![var("out"), var("l")]))],
-                        None,
-                    ),
-                ]),
+                for_(
+                    "l",
+                    var("a"),
+                    vec![
+                        decl(
+                            "hit",
+                            bin(">=", call("__sh_find", vec![var("l"), var("pat")]), int(0)),
+                        ),
+                        if_(
+                            bin("!=", var("hit"), var("invert")),
+                            vec![expr_stmt(cap("append", vec![var("out"), var("l")]))],
+                            None,
+                        ),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -4518,27 +5557,42 @@ fn helper_fn(name: &str) -> Function {
             vec![
                 decl("cs", chars(var("pat"))),
                 decl("i", int(0)),
-                while_(bin("<", var("i"), len(var("cs"))), vec![
-                    decl("c", index(var("cs"), var("i"))),
-                    if_(
-                        bin(
-                            "or",
+                while_(
+                    bin("<", var("i"), len(var("cs"))),
+                    vec![
+                        decl("c", index(var("cs"), var("i"))),
+                        if_(
                             bin(
                                 "or",
-                                bin("or", bin("==", var("c"), s("\\")), bin("==", var("c"), s("."))),
-                                bin("or", bin("==", var("c"), s("*")), bin("==", var("c"), s("["))),
+                                bin(
+                                    "or",
+                                    bin(
+                                        "or",
+                                        bin("==", var("c"), s("\\")),
+                                        bin("==", var("c"), s(".")),
+                                    ),
+                                    bin(
+                                        "or",
+                                        bin("==", var("c"), s("*")),
+                                        bin("==", var("c"), s("[")),
+                                    ),
+                                ),
+                                bin(
+                                    "or",
+                                    bin(
+                                        "or",
+                                        bin("==", var("c"), s("]")),
+                                        bin("==", var("c"), s("^")),
+                                    ),
+                                    bin("==", var("c"), s("$")),
+                                ),
                             ),
-                            bin(
-                                "or",
-                                bin("or", bin("==", var("c"), s("]")), bin("==", var("c"), s("^"))),
-                                bin("==", var("c"), s("$")),
-                            ),
+                            vec![ret(boolean(true))],
+                            None,
                         ),
-                        vec![ret(boolean(true))],
-                        None,
-                    ),
-                    set("i", bin("+", var("i"), int(1))),
-                ]),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
                 ret(boolean(false)),
             ],
         ),
@@ -4547,11 +5601,15 @@ fn helper_fn(name: &str) -> Function {
             &["s", "ch"],
             vec![
                 decl("n", int(0)),
-                for_("c", chars(var("s")), vec![if_(
-                    bin("==", var("c"), var("ch")),
-                    vec![set("n", bin("+", var("n"), int(1)))],
-                    None,
-                )]),
+                for_(
+                    "c",
+                    chars(var("s")),
+                    vec![if_(
+                        bin("==", var("c"), var("ch")),
+                        vec![set("n", bin("+", var("n"), int(1)))],
+                        None,
+                    )],
+                ),
                 ret(var("n")),
             ],
         ),
@@ -4564,7 +5622,10 @@ fn helper_fn(name: &str) -> Function {
                     bin("<", len(var("s")), var("n")),
                     vec![ret(bin(
                         "+",
-                        call("__sh_repeat", vec![s(" "), bin("-", var("n"), len(var("s")))]),
+                        call(
+                            "__sh_repeat",
+                            vec![s(" "), bin("-", var("n"), len(var("s")))],
+                        ),
                         var("s"),
                     ))],
                     None,
@@ -4586,117 +5647,154 @@ fn helper_fn(name: &str) -> Function {
                 decl("p", int(0)),
                 decl("star", int(-1)),
                 decl("mark", int(0)),
-                while_(bin("<", var("i"), var("n")), vec![
-                    decl("ok", boolean(false)),
-                    if_(bin("<", var("p"), var("m")), vec![
-                        decl("c", index(var("ps"), var("p"))),
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![
+                        decl("ok", boolean(false)),
                         if_(
-                            bin("==", var("c"), s("*")),
+                            bin("<", var("p"), var("m")),
                             vec![
-                                set("star", var("p")),
-                                set("p", bin("+", var("p"), int(1))),
-                                set("mark", var("i")),
-                                set("ok", boolean(true)),
-                            ],
-                            Some(vec![
+                                decl("c", index(var("ps"), var("p"))),
                                 if_(
-                                    bin("==", var("c"), s("?")),
+                                    bin("==", var("c"), s("*")),
                                     vec![
+                                        set("star", var("p")),
                                         set("p", bin("+", var("p"), int(1))),
-                                        set("i", bin("+", var("i"), int(1))),
+                                        set("mark", var("i")),
                                         set("ok", boolean(true)),
                                     ],
-                                    Some(vec![
-                                        if_(
+                                    Some(vec![if_(
+                                        bin("==", var("c"), s("?")),
+                                        vec![
+                                            set("p", bin("+", var("p"), int(1))),
+                                            set("i", bin("+", var("i"), int(1))),
+                                            set("ok", boolean(true)),
+                                        ],
+                                        Some(vec![if_(
                                             bin("==", var("c"), s("\\")),
-                                            vec![
-                                                if_(
-                                                    bin("<", bin("+", var("p"), int(1)), var("m")),
-                                                    vec![if_(
-                                                        bin("==", index(var("ps"), bin("+", var("p"), int(1))), index(var("cs"), var("i"))),
-                                                        vec![
-                                                            set("p", bin("+", var("p"), int(2))),
-                                                            set("i", bin("+", var("i"), int(1))),
-                                                            set("ok", boolean(true)),
-                                                        ],
-                                                        None,
-                                                    )],
-                                                    Some(vec![if_(
-                                                        bin("==", var("c"), index(var("cs"), var("i"))),
-                                                        vec![
-                                                            set("p", bin("+", var("p"), int(1))),
-                                                            set("i", bin("+", var("i"), int(1))),
-                                                            set("ok", boolean(true)),
-                                                        ],
-                                                        None,
-                                                    )]),
-                                                ),
-                                            ],
-                                            Some(vec![
-                                                if_(
-                                                    bin("==", var("c"), s("[")),
+                                            vec![if_(
+                                                bin("<", bin("+", var("p"), int(1)), var("m")),
+                                                vec![if_(
+                                                    bin(
+                                                        "==",
+                                                        index(
+                                                            var("ps"),
+                                                            bin("+", var("p"), int(1)),
+                                                        ),
+                                                        index(var("cs"), var("i")),
+                                                    ),
                                                     vec![
-                                                        decl(
-                                                            "r",
-                                                            call("__sh_bracket", vec![var("ps"), var("p"), index(var("cs"), var("i"))]),
-                                                        ),
-                                                        if_(
-                                                            bin("==", var("r"), int(-1)),
-                                                            vec![if_(
-                                                                bin("==", var("c"), index(var("cs"), var("i"))),
-                                                                vec![
-                                                                    set("p", bin("+", var("p"), int(1))),
-                                                                    set("i", bin("+", var("i"), int(1))),
-                                                                    set("ok", boolean(true)),
-                                                                ],
-                                                                None,
-                                                            )],
-                                                            Some(vec![if_(
-                                                                bin(">=", var("r"), int(0)),
-                                                                vec![
-                                                                    set("p", var("r")),
-                                                                    set("i", bin("+", var("i"), int(1))),
-                                                                    set("ok", boolean(true)),
-                                                                ],
-                                                                None,
-                                                            )]),
-                                                        ),
+                                                        set("p", bin("+", var("p"), int(2))),
+                                                        set("i", bin("+", var("i"), int(1))),
+                                                        set("ok", boolean(true)),
                                                     ],
-                                                    Some(vec![if_(
-                                                        bin("==", var("c"), index(var("cs"), var("i"))),
-                                                        vec![
-                                                            set("p", bin("+", var("p"), int(1))),
-                                                            set("i", bin("+", var("i"), int(1))),
-                                                            set("ok", boolean(true)),
-                                                        ],
-                                                        None,
-                                                    )]),
-                                                ),
-                                            ]),
-                                        ),
-                                    ]),
+                                                    None,
+                                                )],
+                                                Some(vec![if_(
+                                                    bin("==", var("c"), index(var("cs"), var("i"))),
+                                                    vec![
+                                                        set("p", bin("+", var("p"), int(1))),
+                                                        set("i", bin("+", var("i"), int(1))),
+                                                        set("ok", boolean(true)),
+                                                    ],
+                                                    None,
+                                                )]),
+                                            )],
+                                            Some(vec![if_(
+                                                bin("==", var("c"), s("[")),
+                                                vec![
+                                                    decl(
+                                                        "r",
+                                                        call(
+                                                            "__sh_bracket",
+                                                            vec![
+                                                                var("ps"),
+                                                                var("p"),
+                                                                index(var("cs"), var("i")),
+                                                            ],
+                                                        ),
+                                                    ),
+                                                    if_(
+                                                        bin("==", var("r"), int(-1)),
+                                                        vec![if_(
+                                                            bin(
+                                                                "==",
+                                                                var("c"),
+                                                                index(var("cs"), var("i")),
+                                                            ),
+                                                            vec![
+                                                                set(
+                                                                    "p",
+                                                                    bin("+", var("p"), int(1)),
+                                                                ),
+                                                                set(
+                                                                    "i",
+                                                                    bin("+", var("i"), int(1)),
+                                                                ),
+                                                                set("ok", boolean(true)),
+                                                            ],
+                                                            None,
+                                                        )],
+                                                        Some(vec![if_(
+                                                            bin(">=", var("r"), int(0)),
+                                                            vec![
+                                                                set("p", var("r")),
+                                                                set(
+                                                                    "i",
+                                                                    bin("+", var("i"), int(1)),
+                                                                ),
+                                                                set("ok", boolean(true)),
+                                                            ],
+                                                            None,
+                                                        )]),
+                                                    ),
+                                                ],
+                                                Some(vec![if_(
+                                                    bin("==", var("c"), index(var("cs"), var("i"))),
+                                                    vec![
+                                                        set("p", bin("+", var("p"), int(1))),
+                                                        set("i", bin("+", var("i"), int(1))),
+                                                        set("ok", boolean(true)),
+                                                    ],
+                                                    None,
+                                                )]),
+                                            )]),
+                                        )]),
+                                    )]),
                                 ),
-                            ]),
+                            ],
+                            None,
                         ),
-                    ], None),
-                    // No pattern element matched here: retry with the last `*`
-                    // consuming one more character, or fail.
-                    if_(
-                        not(var("ok")),
-                        vec![
-                            if_(bin("<", var("star"), int(0)), vec![ret(boolean(false))], None),
-                            set("mark", bin("+", var("mark"), int(1))),
-                            set("i", var("mark")),
-                            set("p", bin("+", var("star"), int(1))),
-                        ],
-                        None,
-                    ),
-                ]),
+                        // No pattern element matched here: retry with the last `*`
+                        // consuming one more character, or fail.
+                        if_(
+                            not(var("ok")),
+                            vec![
+                                if_(
+                                    bin("<", var("star"), int(0)),
+                                    vec![ret(boolean(false))],
+                                    None,
+                                ),
+                                set("mark", bin("+", var("mark"), int(1))),
+                                set("i", var("mark")),
+                                set("p", bin("+", var("star"), int(1))),
+                            ],
+                            None,
+                        ),
+                    ],
+                ),
                 // Trailing `*`s match the empty tail.
-                while_(bin("<", var("p"), var("m")), vec![
-                    if_(bin("!=", index(var("ps"), var("p")), s("*")), vec![S::Break { meta: m() }], None),
-                    set("p", bin("+", var("p"), int(1))),
-                ]),
+                while_(
+                    bin("<", var("p"), var("m")),
+                    vec![
+                        if_(
+                            bin("!=", index(var("ps"), var("p")), s("*")),
+                            vec![S::Break { meta: m() }],
+                            None,
+                        ),
+                        set("p", bin("+", var("p"), int(1))),
+                    ],
+                ),
                 ret(bin("==", var("p"), var("m"))),
             ],
         ),
@@ -4722,97 +5820,165 @@ fn helper_fn(name: &str) -> Function {
                             bin("==", index(var("ps"), var("j")), s("^")),
                         ),
                     ),
-                    vec![set("neg", boolean(true)), set("j", bin("+", var("j"), int(1)))],
+                    vec![
+                        set("neg", boolean(true)),
+                        set("j", bin("+", var("j"), int(1))),
+                    ],
                     None,
                 ),
-                while_(bin("<", var("j"), var("m")), vec![
-                    decl("d", index(var("ps"), var("j"))),
-                    if_(
-                        bin("and", bin("==", var("d"), s("]")), not(var("first"))),
-                        vec![set("closed", boolean(true)), S::Break { meta: m() }],
-                        Some(vec![
-                            // [:name:]
-                            if_(
-                                bin(
-                                    "and",
-                                    bin("and", bin("==", var("d"), s("[")), bin("<", bin("+", var("j"), int(1)), var("m"))),
-                                    bin("==", index(var("ps"), bin("+", var("j"), int(1))), s(":")),
-                                ),
-                                vec![
-                                    decl("k", bin("+", var("j"), int(2))),
-                                    decl("name", s("", )),
-                                    while_(
+                while_(
+                    bin("<", var("j"), var("m")),
+                    vec![
+                        decl("d", index(var("ps"), var("j"))),
+                        if_(
+                            bin("and", bin("==", var("d"), s("]")), not(var("first"))),
+                            vec![set("closed", boolean(true)), S::Break { meta: m() }],
+                            Some(vec![
+                                // [:name:]
+                                if_(
+                                    bin(
+                                        "and",
                                         bin(
                                             "and",
-                                            bin("<", bin("+", var("k"), int(1)), var("m")),
-                                            not(bin(
-                                                "and",
-                                                bin("==", index(var("ps"), var("k")), s(":")),
-                                                bin("==", index(var("ps"), bin("+", var("k"), int(1))), s("]")),
-                                            )),
+                                            bin("==", var("d"), s("[")),
+                                            bin("<", bin("+", var("j"), int(1)), var("m")),
                                         ),
-                                        vec![
-                                            set("name", bin("+", var("name"), index(var("ps"), var("k")))),
-                                            set("k", bin("+", var("k"), int(1))),
-                                        ],
-                                    ),
-                                    if_(
-                                        bin("<", bin("+", var("k"), int(1)), var("m")),
-                                        vec![
-                                            if_(
-                                                call("__sh_class", vec![var("name"), var("ch")]),
-                                                vec![set("hit", boolean(true))],
-                                                None,
-                                            ),
-                                            set("j", bin("+", var("k"), int(2))),
-                                            set("first", boolean(false)),
-                                        ],
-                                        Some(vec![
-                                            if_(bin("==", var("d"), var("ch")), vec![set("hit", boolean(true))], None),
-                                            set("j", bin("+", var("j"), int(1))),
-                                            set("first", boolean(false)),
-                                        ]),
-                                    ),
-                                ],
-                                Some(vec![
-                                    // a-z
-                                    if_(
                                         bin(
-                                            "and",
+                                            "==",
+                                            index(var("ps"), bin("+", var("j"), int(1))),
+                                            s(":"),
+                                        ),
+                                    ),
+                                    vec![
+                                        decl("k", bin("+", var("j"), int(2))),
+                                        decl("name", s("")),
+                                        while_(
                                             bin(
                                                 "and",
-                                                bin("<", bin("+", var("j"), int(2)), var("m")),
-                                                bin("==", index(var("ps"), bin("+", var("j"), int(1))), s("-")),
+                                                bin("<", bin("+", var("k"), int(1)), var("m")),
+                                                not(bin(
+                                                    "and",
+                                                    bin("==", index(var("ps"), var("k")), s(":")),
+                                                    bin(
+                                                        "==",
+                                                        index(
+                                                            var("ps"),
+                                                            bin("+", var("k"), int(1)),
+                                                        ),
+                                                        s("]"),
+                                                    ),
+                                                )),
                                             ),
-                                            bin("!=", index(var("ps"), bin("+", var("j"), int(2))), s("]")),
+                                            vec![
+                                                set(
+                                                    "name",
+                                                    bin(
+                                                        "+",
+                                                        var("name"),
+                                                        index(var("ps"), var("k")),
+                                                    ),
+                                                ),
+                                                set("k", bin("+", var("k"), int(1))),
+                                            ],
                                         ),
-                                        vec![
-                                            decl("o", cap("conv.ord", vec![var("ch")])),
-                                            if_(
+                                        if_(
+                                            bin("<", bin("+", var("k"), int(1)), var("m")),
+                                            vec![
+                                                if_(
+                                                    call(
+                                                        "__sh_class",
+                                                        vec![var("name"), var("ch")],
+                                                    ),
+                                                    vec![set("hit", boolean(true))],
+                                                    None,
+                                                ),
+                                                set("j", bin("+", var("k"), int(2))),
+                                                set("first", boolean(false)),
+                                            ],
+                                            Some(vec![
+                                                if_(
+                                                    bin("==", var("d"), var("ch")),
+                                                    vec![set("hit", boolean(true))],
+                                                    None,
+                                                ),
+                                                set("j", bin("+", var("j"), int(1))),
+                                                set("first", boolean(false)),
+                                            ]),
+                                        ),
+                                    ],
+                                    Some(vec![
+                                        // a-z
+                                        if_(
+                                            bin(
+                                                "and",
                                                 bin(
                                                     "and",
-                                                    bin(">=", var("o"), cap("conv.ord", vec![var("d")])),
-                                                    bin("<=", var("o"), cap("conv.ord", vec![index(var("ps"), bin("+", var("j"), int(2)))])),
+                                                    bin("<", bin("+", var("j"), int(2)), var("m")),
+                                                    bin(
+                                                        "==",
+                                                        index(
+                                                            var("ps"),
+                                                            bin("+", var("j"), int(1)),
+                                                        ),
+                                                        s("-"),
+                                                    ),
                                                 ),
-                                                vec![set("hit", boolean(true))],
-                                                None,
+                                                bin(
+                                                    "!=",
+                                                    index(var("ps"), bin("+", var("j"), int(2))),
+                                                    s("]"),
+                                                ),
                                             ),
-                                            set("j", bin("+", var("j"), int(3))),
-                                            set("first", boolean(false)),
-                                        ],
-                                        Some(vec![
-                                            if_(bin("==", var("d"), var("ch")), vec![set("hit", boolean(true))], None),
-                                            set("j", bin("+", var("j"), int(1))),
-                                            set("first", boolean(false)),
-                                        ]),
-                                    ),
-                                ]),
-                            ),
-                        ]),
-                    ),
-                ]),
+                                            vec![
+                                                decl("o", cap("conv.ord", vec![var("ch")])),
+                                                if_(
+                                                    bin(
+                                                        "and",
+                                                        bin(
+                                                            ">=",
+                                                            var("o"),
+                                                            cap("conv.ord", vec![var("d")]),
+                                                        ),
+                                                        bin(
+                                                            "<=",
+                                                            var("o"),
+                                                            cap(
+                                                                "conv.ord",
+                                                                vec![index(
+                                                                    var("ps"),
+                                                                    bin("+", var("j"), int(2)),
+                                                                )],
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    vec![set("hit", boolean(true))],
+                                                    None,
+                                                ),
+                                                set("j", bin("+", var("j"), int(3))),
+                                                set("first", boolean(false)),
+                                            ],
+                                            Some(vec![
+                                                if_(
+                                                    bin("==", var("d"), var("ch")),
+                                                    vec![set("hit", boolean(true))],
+                                                    None,
+                                                ),
+                                                set("j", bin("+", var("j"), int(1))),
+                                                set("first", boolean(false)),
+                                            ]),
+                                        ),
+                                    ]),
+                                ),
+                            ]),
+                        ),
+                    ],
+                ),
                 if_(not(var("closed")), vec![ret(int(-1))], None),
-                if_(bin("!=", var("hit"), var("neg")), vec![ret(bin("+", var("j"), int(1)))], None),
+                if_(
+                    bin("!=", var("hit"), var("neg")),
+                    vec![ret(bin("+", var("j"), int(1)))],
+                    None,
+                ),
                 ret(int(-2)),
             ],
         ),
@@ -4822,16 +5988,51 @@ fn helper_fn(name: &str) -> Function {
             &["c"],
             vec![
                 decl("o", cap("conv.ord", vec![var("c")])),
-                if_(bin("and", bin(">=", var("o"), int(48)), bin("<=", var("o"), int(57))), vec![ret(bin("-", var("o"), int(48)))], None),
-                if_(bin("and", bin(">=", var("o"), int(97)), bin("<=", var("o"), int(102))), vec![ret(bin("-", var("o"), int(87)))], None),
-                if_(bin("and", bin(">=", var("o"), int(65)), bin("<=", var("o"), int(70))), vec![ret(bin("-", var("o"), int(55)))], None),
+                if_(
+                    bin(
+                        "and",
+                        bin(">=", var("o"), int(48)),
+                        bin("<=", var("o"), int(57)),
+                    ),
+                    vec![ret(bin("-", var("o"), int(48)))],
+                    None,
+                ),
+                if_(
+                    bin(
+                        "and",
+                        bin(">=", var("o"), int(97)),
+                        bin("<=", var("o"), int(102)),
+                    ),
+                    vec![ret(bin("-", var("o"), int(87)))],
+                    None,
+                ),
+                if_(
+                    bin(
+                        "and",
+                        bin(">=", var("o"), int(65)),
+                        bin("<=", var("o"), int(70)),
+                    ),
+                    vec![ret(bin("-", var("o"), int(55)))],
+                    None,
+                ),
                 ret(int(-1)),
             ],
         ),
         // __sh_esc_simple(e): the one-character escape `\e` (after the
         // backslash); anything unrecognised keeps its backslash, as in bash.
         "__sh_esc_simple" => {
-            let map: &[(&str, i64)] = &[("a", 7), ("b", 8), ("e", 27), ("E", 27), ("f", 12), ("n", 10), ("r", 13), ("t", 9), ("v", 11), ("\\\\", 92)];
+            let map: &[(&str, i64)] = &[
+                ("a", 7),
+                ("b", 8),
+                ("e", 27),
+                ("E", 27),
+                ("f", 12),
+                ("n", 10),
+                ("r", 13),
+                ("t", 9),
+                ("v", 11),
+                ("\\\\", 92),
+            ];
             let mut body = Vec::new();
             for (ch, code) in map {
                 body.push(if_(
@@ -4861,97 +6062,168 @@ fn helper_fn(name: &str) -> Function {
                                 set("out", bin("+", var("out"), var("c"))),
                                 set("i", bin("+", var("i"), int(1))),
                             ],
-                            Some(vec![
-                                if_(
-                                    bin(">=", bin("+", var("i"), int(1)), var("n")),
-                                    vec![
-                                        set("out", bin("+", var("out"), s("\\"))),
-                                        set("i", bin("+", var("i"), int(1))),
-                                    ],
-                                    Some(vec![
-                                        decl("e", index(var("cs"), bin("+", var("i"), int(1)))),
-                                        if_(
-                                            bin("==", var("e"), s("c")),
-                                            vec![S::Break { meta: m() }],
-                                            Some(vec![
-                                                if_(
-                                                    bin("==", var("e"), s("0")),
+                            Some(vec![if_(
+                                bin(">=", bin("+", var("i"), int(1)), var("n")),
+                                vec![
+                                    set("out", bin("+", var("out"), s("\\"))),
+                                    set("i", bin("+", var("i"), int(1))),
+                                ],
+                                Some(vec![
+                                    decl("e", index(var("cs"), bin("+", var("i"), int(1)))),
+                                    if_(
+                                        bin("==", var("e"), s("c")),
+                                        vec![S::Break { meta: m() }],
+                                        Some(vec![if_(
+                                            bin("==", var("e"), s("0")),
+                                            vec![
+                                                decl("j", bin("+", var("i"), int(2))),
+                                                decl("v", int(0)),
+                                                decl("k", int(0)),
+                                                while_(
+                                                    bin(
+                                                        "and",
+                                                        bin("<", var("k"), int(3)),
+                                                        bin("<", var("j"), var("n")),
+                                                    ),
                                                     vec![
-                                                        decl("j", bin("+", var("i"), int(2))),
-                                                        decl("v", int(0)),
-                                                        decl("k", int(0)),
-                                                        while_(
+                                                        decl(
+                                                            "d",
+                                                            call(
+                                                                "__sh_dval",
+                                                                vec![index(var("cs"), var("j"))],
+                                                            ),
+                                                        ),
+                                                        if_(
                                                             bin(
                                                                 "and",
-                                                                bin("<", var("k"), int(3)),
-                                                                bin("<", var("j"), var("n")),
+                                                                bin(">=", var("d"), int(0)),
+                                                                bin("<=", var("d"), int(7)),
                                                             ),
                                                             vec![
-                                                                decl("d", call("__sh_dval", vec![index(var("cs"), var("j"))])),
-                                                                if_(
-                                                                    bin("and", bin(">=", var("d"), int(0)), bin("<=", var("d"), int(7))),
-                                                                    vec![
-                                                                        set("v", bin("+", bin("*", var("v"), int(8)), var("d"))),
-                                                                        set("j", bin("+", var("j"), int(1))),
-                                                                        set("k", bin("+", var("k"), int(1))),
-                                                                    ],
-                                                                    Some(vec![S::Break { meta: m() }]),
-                                                                ),
-                                                            ],
-                                                        ),
-                                                        set("out", bin("+", var("out"), cap("conv.chr", vec![var("v")]))),
-                                                        set("i", var("j")),
-                                                    ],
-                                                    Some(vec![
-                                                        if_(
-                                                            bin("==", var("e"), s("x")),
-                                                            vec![
-                                                                decl("j", bin("+", var("i"), int(2))),
-                                                                decl("v", int(0)),
-                                                                decl("k", int(0)),
-                                                                while_(
+                                                                set(
+                                                                    "v",
                                                                     bin(
-                                                                        "and",
-                                                                        bin("<", var("k"), int(2)),
-                                                                        bin("<", var("j"), var("n")),
+                                                                        "+",
+                                                                        bin("*", var("v"), int(8)),
+                                                                        var("d"),
                                                                     ),
-                                                                    vec![
-                                                                        decl("d", call("__sh_dval", vec![index(var("cs"), var("j"))])),
-                                                                        if_(
-                                                                            bin("and", bin(">=", var("d"), int(0)), bin("<=", var("d"), int(15))),
-                                                                            vec![
-                                                                                set("v", bin("+", bin("*", var("v"), int(16)), var("d"))),
-                                                                                set("j", bin("+", var("j"), int(1))),
-                                                                                set("k", bin("+", var("k"), int(1))),
-                                                                            ],
-                                                                            Some(vec![S::Break { meta: m() }]),
-                                                                        ),
-                                                                    ],
                                                                 ),
-                                                                if_(
-                                                                    bin("==", var("k"), int(0)),
-                                                                    vec![
-                                                                        set("out", bin("+", var("out"), s("\\x"))),
-                                                                        set("i", bin("+", var("i"), int(2))),
-                                                                    ],
-                                                                    Some(vec![
-                                                                        set("out", bin("+", var("out"), cap("conv.chr", vec![var("v")]))),
-                                                                        set("i", var("j")),
-                                                                    ]),
+                                                                set(
+                                                                    "j",
+                                                                    bin("+", var("j"), int(1)),
+                                                                ),
+                                                                set(
+                                                                    "k",
+                                                                    bin("+", var("k"), int(1)),
                                                                 ),
                                                             ],
-                                                            Some(vec![
-                                                                set("out", bin("+", var("out"), call("__sh_esc_simple", vec![var("e")]))),
-                                                                set("i", bin("+", var("i"), int(2))),
-                                                            ]),
+                                                            Some(vec![S::Break { meta: m() }]),
                                                         ),
-                                                    ]),
+                                                    ],
                                                 ),
-                                            ]),
-                                        ),
-                                    ]),
-                                ),
-                            ]),
+                                                set(
+                                                    "out",
+                                                    bin(
+                                                        "+",
+                                                        var("out"),
+                                                        cap("conv.chr", vec![var("v")]),
+                                                    ),
+                                                ),
+                                                set("i", var("j")),
+                                            ],
+                                            Some(vec![if_(
+                                                bin("==", var("e"), s("x")),
+                                                vec![
+                                                    decl("j", bin("+", var("i"), int(2))),
+                                                    decl("v", int(0)),
+                                                    decl("k", int(0)),
+                                                    while_(
+                                                        bin(
+                                                            "and",
+                                                            bin("<", var("k"), int(2)),
+                                                            bin("<", var("j"), var("n")),
+                                                        ),
+                                                        vec![
+                                                            decl(
+                                                                "d",
+                                                                call(
+                                                                    "__sh_dval",
+                                                                    vec![index(
+                                                                        var("cs"),
+                                                                        var("j"),
+                                                                    )],
+                                                                ),
+                                                            ),
+                                                            if_(
+                                                                bin(
+                                                                    "and",
+                                                                    bin(">=", var("d"), int(0)),
+                                                                    bin("<=", var("d"), int(15)),
+                                                                ),
+                                                                vec![
+                                                                    set(
+                                                                        "v",
+                                                                        bin(
+                                                                            "+",
+                                                                            bin(
+                                                                                "*",
+                                                                                var("v"),
+                                                                                int(16),
+                                                                            ),
+                                                                            var("d"),
+                                                                        ),
+                                                                    ),
+                                                                    set(
+                                                                        "j",
+                                                                        bin("+", var("j"), int(1)),
+                                                                    ),
+                                                                    set(
+                                                                        "k",
+                                                                        bin("+", var("k"), int(1)),
+                                                                    ),
+                                                                ],
+                                                                Some(vec![S::Break { meta: m() }]),
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    if_(
+                                                        bin("==", var("k"), int(0)),
+                                                        vec![
+                                                            set(
+                                                                "out",
+                                                                bin("+", var("out"), s("\\x")),
+                                                            ),
+                                                            set("i", bin("+", var("i"), int(2))),
+                                                        ],
+                                                        Some(vec![
+                                                            set(
+                                                                "out",
+                                                                bin(
+                                                                    "+",
+                                                                    var("out"),
+                                                                    cap("conv.chr", vec![var("v")]),
+                                                                ),
+                                                            ),
+                                                            set("i", var("j")),
+                                                        ]),
+                                                    ),
+                                                ],
+                                                Some(vec![
+                                                    set(
+                                                        "out",
+                                                        bin(
+                                                            "+",
+                                                            var("out"),
+                                                            call("__sh_esc_simple", vec![var("e")]),
+                                                        ),
+                                                    ),
+                                                    set("i", bin("+", var("i"), int(2))),
+                                                ]),
+                                            )]),
+                                        )]),
+                                    ),
+                                ]),
+                            )]),
                         ),
                     ],
                 ),
@@ -4965,27 +6237,35 @@ fn helper_fn(name: &str) -> Function {
                 decl("cs", chars(var("s"))),
                 decl("n", len(var("cs"))),
                 decl("i", int(0)),
-                while_(bin("<", var("i"), var("n")), vec![
-                    if_(
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![if_(
                         bin("==", index(var("cs"), var("i")), s("\\")),
                         vec![
                             if_(
-                                bin("and", bin("<", bin("+", var("i"), int(1)), var("n")), bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("c"))),
+                                bin(
+                                    "and",
+                                    bin("<", bin("+", var("i"), int(1)), var("n")),
+                                    bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("c")),
+                                ),
                                 vec![ret(boolean(true))],
                                 None,
                             ),
                             set("i", bin("+", var("i"), int(2))),
                         ],
                         Some(vec![set("i", bin("+", var("i"), int(1)))]),
-                    ),
-                ]),
+                    )],
+                ),
                 ret(boolean(false)),
             ],
         ),
         // __sh_arr_or_empty(a): an array value, with unset reading as empty.
         "__sh_arr_or_empty" => func(
             &["a"],
-            vec![if_(bin("==", var("a"), null()), vec![ret(array(vec![]))], None), ret(var("a"))],
+            vec![
+                if_(bin("==", var("a"), null()), vec![ret(array(vec![]))], None),
+                ret(var("a")),
+            ],
         ),
         // __sh_arr_set(a, i, one_based, v): `a[i]=v`. bash appends past the end
         // (indices stay dense); zsh grows with empty slots.
@@ -4993,19 +6273,29 @@ fn helper_fn(name: &str) -> Function {
             &["a", "i", "one", "v"],
             vec![
                 decl("arr", var("a")),
-                if_(bin("==", var("arr"), null()), vec![set("arr", array(vec![]))], None),
+                if_(
+                    bin("==", var("arr"), null()),
+                    vec![set("arr", array(vec![]))],
+                    None,
+                ),
                 decl("n", len(var("arr"))),
                 decl("k", int(0)),
                 if_(
                     bin("<", var("i"), int(0)),
                     vec![set("k", bin("+", bin("+", var("n"), var("i")), int(1)))],
-                    Some(vec![
-                        if_(var("one"), vec![set("k", var("i"))], Some(vec![set("k", bin("+", var("i"), int(1)))])),
-                    ]),
+                    Some(vec![if_(
+                        var("one"),
+                        vec![set("k", var("i"))],
+                        Some(vec![set("k", bin("+", var("i"), int(1)))]),
+                    )]),
                 ),
                 if_(
                     bin("<", var("k"), int(1)),
-                    vec![throw(concat(vec![s("unsupported: array index `"), var("i"), s("` out of range")]))],
+                    vec![throw(concat(vec![
+                        s("unsupported: array index `"),
+                        var("i"),
+                        s("` out of range"),
+                    ]))],
                     None,
                 ),
                 if_(
@@ -5021,7 +6311,10 @@ fn helper_fn(name: &str) -> Function {
                         ),
                         ret(bin("+", var("arr"), array(vec![var("v")]))),
                     ],
-                    Some(vec![ret(cap("arr_set", vec![var("arr"), bin("-", var("k"), int(1)), var("v")]))]),
+                    Some(vec![ret(cap(
+                        "arr_set",
+                        vec![var("arr"), bin("-", var("k"), int(1)), var("v")],
+                    ))]),
                 ),
             ],
         ),
@@ -5033,12 +6326,26 @@ fn helper_fn(name: &str) -> Function {
                 decl("line", cap("io.read", vec![])),
                 if_(var("raw"), vec![ret(var("line"))], None),
                 while_(
-                    bin("and", bin(">", len(chars(var("line"))), int(0)), bin("==", index(chars(var("line")), bin("-", len(chars(var("line"))), int(1))), s("\\"))),
+                    bin(
+                        "and",
+                        bin(">", len(chars(var("line"))), int(0)),
+                        bin(
+                            "==",
+                            index(
+                                chars(var("line")),
+                                bin("-", len(chars(var("line"))), int(1)),
+                            ),
+                            s("\\"),
+                        ),
+                    ),
                     vec![set(
                         "line",
                         bin(
                             "+",
-                            call("__sh_substr", vec![var("line"), int(0), int(-1), boolean(true)]),
+                            call(
+                                "__sh_substr",
+                                vec![var("line"), int(0), int(-1), boolean(true)],
+                            ),
                             cap("io.read", vec![]),
                         ),
                     )],
@@ -5048,25 +6355,31 @@ fn helper_fn(name: &str) -> Function {
                 decl("n", len(var("cs"))),
                 decl("i", int(0)),
                 decl("out", s("")),
-                while_(bin("<", var("i"), var("n")), vec![
-                    if_(
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![if_(
                         bin("==", index(var("cs"), var("i")), s("\\")),
-                        vec![
-                            if_(
-                                bin("<", bin("+", var("i"), int(1)), var("n")),
-                                vec![
-                                    set("out", bin("+", var("out"), index(var("cs"), bin("+", var("i"), int(1))))),
-                                    set("i", bin("+", var("i"), int(2))),
-                                ],
-                                Some(vec![set("i", bin("+", var("i"), int(1)))]),
-                            ),
-                        ],
+                        vec![if_(
+                            bin("<", bin("+", var("i"), int(1)), var("n")),
+                            vec![
+                                set(
+                                    "out",
+                                    bin(
+                                        "+",
+                                        var("out"),
+                                        index(var("cs"), bin("+", var("i"), int(1))),
+                                    ),
+                                ),
+                                set("i", bin("+", var("i"), int(2))),
+                            ],
+                            Some(vec![set("i", bin("+", var("i"), int(1)))]),
+                        )],
                         Some(vec![
                             set("out", bin("+", var("out"), index(var("cs"), var("i")))),
                             set("i", bin("+", var("i"), int(1))),
                         ]),
-                    ),
-                ]),
+                    )],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -5080,36 +6393,81 @@ fn helper_fn(name: &str) -> Function {
                 decl("i", int(0)),
                 decl("out", array(vec![])),
                 decl("k", int(1)),
-                while_(bin("<", var("k"), var("n")), vec![
-                    while_(
-                        bin("and", bin("<", var("i"), var("m")), call("__sh_isws", vec![index(var("cs"), var("i"))])),
-                        vec![set("i", bin("+", var("i"), int(1)))],
-                    ),
-                    decl("start", var("i")),
-                    while_(
-                        bin("and", bin("<", var("i"), var("m")), not(call("__sh_isws", vec![index(var("cs"), var("i"))]))),
-                        vec![set("i", bin("+", var("i"), int(1)))],
-                    ),
-                    set("out", bin("+", var("out"), array(vec![call("__sh_join_range", vec![var("cs"), var("start"), var("i")])]))),
-                    set("k", bin("+", var("k"), int(1))),
-                ]),
                 while_(
-                    bin("and", bin("<", var("i"), var("m")), call("__sh_isws", vec![index(var("cs"), var("i"))])),
+                    bin("<", var("k"), var("n")),
+                    vec![
+                        while_(
+                            bin(
+                                "and",
+                                bin("<", var("i"), var("m")),
+                                call("__sh_isws", vec![index(var("cs"), var("i"))]),
+                            ),
+                            vec![set("i", bin("+", var("i"), int(1)))],
+                        ),
+                        decl("start", var("i")),
+                        while_(
+                            bin(
+                                "and",
+                                bin("<", var("i"), var("m")),
+                                not(call("__sh_isws", vec![index(var("cs"), var("i"))])),
+                            ),
+                            vec![set("i", bin("+", var("i"), int(1)))],
+                        ),
+                        set(
+                            "out",
+                            bin(
+                                "+",
+                                var("out"),
+                                array(vec![call(
+                                    "__sh_join_range",
+                                    vec![var("cs"), var("start"), var("i")],
+                                )]),
+                            ),
+                        ),
+                        set("k", bin("+", var("k"), int(1))),
+                    ],
+                ),
+                while_(
+                    bin(
+                        "and",
+                        bin("<", var("i"), var("m")),
+                        call("__sh_isws", vec![index(var("cs"), var("i"))]),
+                    ),
                     vec![set("i", bin("+", var("i"), int(1)))],
                 ),
                 decl("end", var("m")),
                 while_(
-                    bin("and", bin(">", var("end"), var("i")), call("__sh_isws", vec![index(var("cs"), bin("-", var("end"), int(1)))])),
+                    bin(
+                        "and",
+                        bin(">", var("end"), var("i")),
+                        call(
+                            "__sh_isws",
+                            vec![index(var("cs"), bin("-", var("end"), int(1)))],
+                        ),
+                    ),
                     vec![set("end", bin("-", var("end"), int(1)))],
                 ),
-                set("out", bin("+", var("out"), array(vec![call("__sh_join_range", vec![var("cs"), var("i"), var("end")])]))),
+                set(
+                    "out",
+                    bin(
+                        "+",
+                        var("out"),
+                        array(vec![call(
+                            "__sh_join_range",
+                            vec![var("cs"), var("i"), var("end")],
+                        )]),
+                    ),
+                ),
                 ret(var("out")),
             ],
         ),
         // __sh_str(v): a shell string, with an unset (null) variable reading as "".
         "__sh_str" => func(
             &["v"],
-            vec![if_(bin("==", var("v"), null()), vec![ret(s(""))], None), ret(var("v"))],
+            vec![
+                if_(bin("==", var("v"), null()), vec![ret(s(""))], None),
+                ret(var("v")),
+            ],
         ),
         // __sh_arr_str(a, one_based): an array as one string: element 0 in
         // bash, every element joined in zsh.
@@ -5117,8 +6475,16 @@ fn helper_fn(name: &str) -> Function {
             &["a", "one"],
             vec![
                 if_(bin("==", var("a"), null()), vec![ret(s(""))], None),
-                if_(var("one"), vec![ret(call("str.join", vec![var("a"), s(" ")]))], None),
-                if_(bin(">", len(var("a")), int(0)), vec![ret(index(var("a"), int(0)))], None),
+                if_(
+                    var("one"),
+                    vec![ret(call("str.join", vec![var("a"), s(" ")]))],
+                    None,
+                ),
+                if_(
+                    bin(">", len(var("a")), int(0)),
+                    vec![ret(index(var("a"), int(0)))],
+                    None,
+                ),
                 ret(s("")),
             ],
         ),
@@ -5134,18 +6500,31 @@ fn helper_fn(name: &str) -> Function {
                 if_(
                     bin("<", var("i"), int(0)),
                     vec![set("k", bin("+", bin("+", var("n"), var("i")), int(1)))],
-                    Some(vec![
-                        if_(var("one"), vec![set("k", var("i"))], Some(vec![set("k", bin("+", var("i"), int(1)))])),
-                    ]),
+                    Some(vec![if_(
+                        var("one"),
+                        vec![set("k", var("i"))],
+                        Some(vec![set("k", bin("+", var("i"), int(1)))]),
+                    )]),
                 ),
-                if_(bin("or", bin("<", var("k"), int(1)), bin(">", var("k"), var("n"))), vec![ret(s(""))], None),
+                if_(
+                    bin(
+                        "or",
+                        bin("<", var("k"), int(1)),
+                        bin(">", var("k"), var("n")),
+                    ),
+                    vec![ret(s(""))],
+                    None,
+                ),
                 ret(index(var("a"), bin("-", var("k"), int(1)))),
             ],
         ),
         // __sh_arr_len(a, one_based): the number of elements.
         "__sh_arr_len" => func(
             &["a", "one"],
-            vec![if_(bin("==", var("a"), null()), vec![ret(int(0))], None), ret(len(var("a")))],
+            vec![
+                if_(bin("==", var("a"), null()), vec![ret(int(0))], None),
+                ret(len(var("a"))),
+            ],
         ),
         // __sh_split_arr(a, at): bash's unquoted `${a[@]}` — every element is
         // itself field-split.
@@ -5154,10 +6533,18 @@ fn helper_fn(name: &str) -> Function {
             vec![
                 decl("out", array(vec![])),
                 if_(bin("==", var("a"), null()), vec![ret(var("out"))], None),
-                for_("e", var("a"), vec![set(
-                    "out",
-                    bin("+", var("out"), call("__sh_split", vec![var("e"), var("at")])),
-                )]),
+                for_(
+                    "e",
+                    var("a"),
+                    vec![set(
+                        "out",
+                        bin(
+                            "+",
+                            var("out"),
+                            call("__sh_split", vec![var("e"), var("at")]),
+                        ),
+                    )],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -5167,10 +6554,13 @@ fn helper_fn(name: &str) -> Function {
             vec![
                 decl("out", s("")),
                 decl("i", var("from")),
-                while_(bin("<", var("i"), var("to")), vec![
-                    set("out", bin("+", var("out"), index(var("cs"), var("i")))),
-                    set("i", bin("+", var("i"), int(1))),
-                ]),
+                while_(
+                    bin("<", var("i"), var("to")),
+                    vec![
+                        set("out", bin("+", var("out"), index(var("cs"), var("i")))),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -5189,8 +6579,16 @@ fn helper_fn(name: &str) -> Function {
                     vec![
                         // An empty pattern with an anchor inserts the
                         // replacement at that end (`${x/#/pre}`, `${x/%/post}`).
-                        if_(bin("==", var("anchor"), int(1)), vec![ret(bin("+", var("rep"), var("s")))], None),
-                        if_(bin("==", var("anchor"), int(2)), vec![ret(bin("+", var("s"), var("rep")))], None),
+                        if_(
+                            bin("==", var("anchor"), int(1)),
+                            vec![ret(bin("+", var("rep"), var("s")))],
+                            None,
+                        ),
+                        if_(
+                            bin("==", var("anchor"), int(2)),
+                            vec![ret(bin("+", var("s"), var("rep")))],
+                            None,
+                        ),
                         // bash: an empty pattern leaves the value alone. zsh
                         // instead inserts the replacement around every
                         // character, which is not lowered here.
@@ -5211,87 +6609,106 @@ fn helper_fn(name: &str) -> Function {
                 decl("out", s("")),
                 decl("i", int(0)),
                 decl("done", boolean(false)),
-                while_(bin("<=", var("i"), var("n")), vec![
-                    // `advance`: copy `cs[i]` and move on by one character.
-                    decl("advance", boolean(true)),
-                    decl("mj", int(-1)),
-                    if_(
-                        not(var("done")),
-                        vec![
-                            // Longest match starting at `i`.
-                            decl("j", var("n")),
-                            while_(bin(">=", var("j"), var("i")), vec![
+                while_(
+                    bin("<=", var("i"), var("n")),
+                    vec![
+                        // `advance`: copy `cs[i]` and move on by one character.
+                        decl("advance", boolean(true)),
+                        decl("mj", int(-1)),
+                        if_(
+                            not(var("done")),
+                            vec![
+                                // Longest match starting at `i`.
+                                decl("j", var("n")),
+                                while_(
+                                    bin(">=", var("j"), var("i")),
+                                    vec![
+                                        if_(
+                                            bin(
+                                                "==",
+                                                call(
+                                                    "__sh_glob",
+                                                    vec![
+                                                        var("pat"),
+                                                        call(
+                                                            "__sh_join_range",
+                                                            vec![var("cs"), var("i"), var("j")],
+                                                        ),
+                                                    ],
+                                                ),
+                                                boolean(true),
+                                            ),
+                                            vec![set("mj", var("j")), S::Break { meta: m() }],
+                                            None,
+                                        ),
+                                        set("j", bin("-", var("j"), int(1))),
+                                    ],
+                                ),
                                 if_(
                                     bin(
-                                        "==",
-                                        call(
-                                            "__sh_glob",
-                                            vec![var("pat"), call("__sh_join_range", vec![var("cs"), var("i"), var("j")])],
-                                        ),
-                                        boolean(true),
+                                        "and",
+                                        bin(">=", var("mj"), int(0)),
+                                        not(bin(
+                                            "or",
+                                            bin(
+                                                "or",
+                                                // A start-anchored pattern only at 0.
+                                                bin(
+                                                    "and",
+                                                    bin("==", var("anchor"), int(1)),
+                                                    bin("!=", var("i"), int(0)),
+                                                ),
+                                                // An end-anchored one only at the end.
+                                                bin(
+                                                    "and",
+                                                    bin("==", var("anchor"), int(2)),
+                                                    bin("!=", var("mj"), var("n")),
+                                                ),
+                                            ),
+                                            // An empty match is never replaced.
+                                            bin("==", var("mj"), var("i")),
+                                        )),
                                     ),
-                                    vec![set("mj", var("j")), S::Break { meta: m() }],
+                                    vec![
+                                        set("out", bin("+", var("out"), var("rep"))),
+                                        set("i", var("mj")),
+                                        set("advance", boolean(false)),
+                                        // A single replacement, and an anchored one,
+                                        // end the scan.
+                                        if_(
+                                            bin(
+                                                "or",
+                                                not(var("all")),
+                                                bin("!=", var("anchor"), int(0)),
+                                            ),
+                                            vec![set("done", boolean(true))],
+                                            None,
+                                        ),
+                                    ],
                                     None,
                                 ),
-                                set("j", bin("-", var("j"), int(1))),
-                            ]),
-                            if_(
-                                bin(
-                                    "and",
-                                    bin(">=", var("mj"), int(0)),
-                                    not(bin(
-                                        "or",
-                                        bin(
-                                            "or",
-                                            // A start-anchored pattern only at 0.
-                                            bin(
-                                                "and",
-                                                bin("==", var("anchor"), int(1)),
-                                                bin("!=", var("i"), int(0)),
-                                            ),
-                                            // An end-anchored one only at the end.
-                                            bin(
-                                                "and",
-                                                bin("==", var("anchor"), int(2)),
-                                                bin("!=", var("mj"), var("n")),
-                                            ),
-                                        ),
-                                        // An empty match is never replaced.
-                                        bin("==", var("mj"), var("i")),
-                                    )),
+                            ],
+                            None,
+                        ),
+                        if_(
+                            var("advance"),
+                            vec![
+                                // At the end there is no character left to copy:
+                                // only a `/%pat` anchor looks for a match there.
+                                if_(
+                                    bin("<", var("i"), var("n")),
+                                    vec![set(
+                                        "out",
+                                        bin("+", var("out"), index(var("cs"), var("i"))),
+                                    )],
+                                    None,
                                 ),
-                                vec![
-                                    set("out", bin("+", var("out"), var("rep"))),
-                                    set("i", var("mj")),
-                                    set("advance", boolean(false)),
-                                    // A single replacement, and an anchored one,
-                                    // end the scan.
-                                    if_(
-                                        bin("or", not(var("all")), bin("!=", var("anchor"), int(0))),
-                                        vec![set("done", boolean(true))],
-                                        None,
-                                    ),
-                                ],
-                                None,
-                            ),
-                        ],
-                        None,
-                    ),
-                    if_(
-                        var("advance"),
-                        vec![
-                            // At the end there is no character left to copy:
-                            // only a `/%pat` anchor looks for a match there.
-                            if_(
-                                bin("<", var("i"), var("n")),
-                                vec![set("out", bin("+", var("out"), index(var("cs"), var("i"))))],
-                                None,
-                            ),
-                            set("i", bin("+", var("i"), int(1))),
-                        ],
-                        None,
-                    ),
-                ]),
+                                set("i", bin("+", var("i"), int(1))),
+                            ],
+                            None,
+                        ),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -5302,15 +6719,37 @@ fn helper_fn(name: &str) -> Function {
                 decl("cs", chars(var("s"))),
                 decl("n", len(var("cs"))),
                 decl("o", var("off")),
-                if_(bin("<", var("o"), int(0)), vec![set("o", bin("+", var("n"), var("o")))], None),
+                if_(
+                    bin("<", var("o"), int(0)),
+                    vec![set("o", bin("+", var("n"), var("o")))],
+                    None,
+                ),
                 if_(bin("<", var("o"), int(0)), vec![set("o", int(0))], None),
                 if_(bin(">", var("o"), var("n")), vec![ret(s(""))], None),
-                if_(not(var("has_len")), vec![ret(call("__sh_join_range", vec![var("cs"), var("o"), var("n")]))], None),
+                if_(
+                    not(var("has_len")),
+                    vec![ret(call(
+                        "__sh_join_range",
+                        vec![var("cs"), var("o"), var("n")],
+                    ))],
+                    None,
+                ),
                 decl("e", var("ln")),
-                if_(bin("<", var("e"), int(0)), vec![set("e", bin("-", bin("+", var("n"), var("e")), var("o")))], None),
+                if_(
+                    bin("<", var("e"), int(0)),
+                    vec![set("e", bin("-", bin("+", var("n"), var("e")), var("o")))],
+                    None,
+                ),
                 if_(bin("<=", var("e"), int(0)), vec![ret(s(""))], None),
-                if_(bin(">", bin("+", var("o"), var("e")), var("n")), vec![set("e", bin("-", var("n"), var("o")))], None),
-                ret(call("__sh_join_range", vec![var("cs"), var("o"), bin("+", var("o"), var("e"))])),
+                if_(
+                    bin(">", bin("+", var("o"), var("e")), var("n")),
+                    vec![set("e", bin("-", var("n"), var("o")))],
+                    None,
+                ),
+                ret(call(
+                    "__sh_join_range",
+                    vec![var("cs"), var("o"), bin("+", var("o"), var("e"))],
+                )),
             ],
         ),
         // __sh_trim(s, pat, longest, prefix): `${s#pat}` and friends.
@@ -5322,39 +6761,81 @@ fn helper_fn(name: &str) -> Function {
             // matching prefix and drop it.
             let prefix_long = vec![
                 decl("i", var("n")),
-                while_(bin(">=", var("i"), int(0)), vec![
-                    if_(bin("==", call("__sh_glob", vec![var("pat"), cand(int(0), var("i"))]), boolean(true)), vec![ret(cand(var("i"), n()))], None),
-                    set("i", bin("-", var("i"), int(1))),
-                ]),
+                while_(
+                    bin(">=", var("i"), int(0)),
+                    vec![
+                        if_(
+                            bin(
+                                "==",
+                                call("__sh_glob", vec![var("pat"), cand(int(0), var("i"))]),
+                                boolean(true),
+                            ),
+                            vec![ret(cand(var("i"), n()))],
+                            None,
+                        ),
+                        set("i", bin("-", var("i"), int(1))),
+                    ],
+                ),
             ];
             let prefix_short = vec![
                 decl("i", int(0)),
-                while_(bin("<=", var("i"), var("n")), vec![
-                    if_(bin("==", call("__sh_glob", vec![var("pat"), cand(int(0), var("i"))]), boolean(true)), vec![ret(cand(var("i"), n()))], None),
-                    set("i", bin("+", var("i"), int(1))),
-                ]),
+                while_(
+                    bin("<=", var("i"), var("n")),
+                    vec![
+                        if_(
+                            bin(
+                                "==",
+                                call("__sh_glob", vec![var("pat"), cand(int(0), var("i"))]),
+                                boolean(true),
+                            ),
+                            vec![ret(cand(var("i"), n()))],
+                            None,
+                        ),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
             ];
             let suffix_long = vec![
                 decl("k", var("n")),
-                while_(bin(">=", var("k"), int(0)), vec![
-                    if_(
-                        bin("==", call("__sh_glob", vec![var("pat"), cand(bin("-", n(), var("k")), n())]), boolean(true)),
-                        vec![ret(cand(int(0), bin("-", n(), var("k"))))],
-                        None,
-                    ),
-                    set("k", bin("-", var("k"), int(1))),
-                ]),
+                while_(
+                    bin(">=", var("k"), int(0)),
+                    vec![
+                        if_(
+                            bin(
+                                "==",
+                                call(
+                                    "__sh_glob",
+                                    vec![var("pat"), cand(bin("-", n(), var("k")), n())],
+                                ),
+                                boolean(true),
+                            ),
+                            vec![ret(cand(int(0), bin("-", n(), var("k"))))],
+                            None,
+                        ),
+                        set("k", bin("-", var("k"), int(1))),
+                    ],
+                ),
             ];
             let suffix_short = vec![
                 decl("k", int(0)),
-                while_(bin("<=", var("k"), var("n")), vec![
-                    if_(
-                        bin("==", call("__sh_glob", vec![var("pat"), cand(bin("-", n(), var("k")), n())]), boolean(true)),
-                        vec![ret(cand(int(0), bin("-", n(), var("k"))))],
-                        None,
-                    ),
-                    set("k", bin("+", var("k"), int(1))),
-                ]),
+                while_(
+                    bin("<=", var("k"), var("n")),
+                    vec![
+                        if_(
+                            bin(
+                                "==",
+                                call(
+                                    "__sh_glob",
+                                    vec![var("pat"), cand(bin("-", n(), var("k")), n())],
+                                ),
+                                boolean(true),
+                            ),
+                            vec![ret(cand(int(0), bin("-", n(), var("k"))))],
+                            None,
+                        ),
+                        set("k", bin("+", var("k"), int(1))),
+                    ],
+                ),
             ];
             func(
                 &["s", "pat", "longest", "prefix"],
@@ -5374,8 +6855,15 @@ fn helper_fn(name: &str) -> Function {
         "__sh_assign_default" => func(
             &["g", "name", "val", "has"],
             vec![
-                if_(var("has"), vec![ret(call("__sh_str", vec![index(var("g"), var("name"))]))], None),
-                expr_stmt(call("__crush_setindex__", vec![var("g"), var("name"), var("val")])),
+                if_(
+                    var("has"),
+                    vec![ret(call("__sh_str", vec![index(var("g"), var("name"))]))],
+                    None,
+                ),
+                expr_stmt(call(
+                    "__crush_setindex__",
+                    vec![var("g"), var("name"), var("val")],
+                )),
                 ret(var("val")),
             ],
         ),
@@ -5385,7 +6873,12 @@ fn helper_fn(name: &str) -> Function {
             vec![
                 if_(
                     not(var("has")),
-                    vec![throw(concat(vec![s("unsupported: `"), var("name"), s("` is needed here (`${…?}`): "), var("msg")]))],
+                    vec![throw(concat(vec![
+                        s("unsupported: `"),
+                        var("name"),
+                        s("` is needed here (`${…?}`): "),
+                        var("msg"),
+                    ]))],
                     None,
                 ),
                 ret(var("val")),
@@ -5401,26 +6894,55 @@ fn helper_fn(name: &str) -> Function {
                 decl("n", len(var("cs"))),
                 decl("i", int(0)),
                 while_(
-                    bin("and", bin("<", var("i"), var("n")), call("__sh_isws", vec![index(var("cs"), var("i"))])),
+                    bin(
+                        "and",
+                        bin("<", var("i"), var("n")),
+                        call("__sh_isws", vec![index(var("cs"), var("i"))]),
+                    ),
                     vec![set("i", bin("+", var("i"), int(1)))],
                 ),
                 decl("neg", boolean(false)),
                 if_(
-                    bin("and", bin("<", var("i"), var("n")), bin("==", index(var("cs"), var("i")), s("-"))),
-                    vec![set("neg", boolean(true)), set("i", bin("+", var("i"), int(1)))],
+                    bin(
+                        "and",
+                        bin("<", var("i"), var("n")),
+                        bin("==", index(var("cs"), var("i")), s("-")),
+                    ),
+                    vec![
+                        set("neg", boolean(true)),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
                     Some(vec![if_(
-                        bin("and", bin("<", var("i"), var("n")), bin("==", index(var("cs"), var("i")), s("+"))),
+                        bin(
+                            "and",
+                            bin("<", var("i"), var("n")),
+                            bin("==", index(var("cs"), var("i")), s("+")),
+                        ),
                         vec![set("i", bin("+", var("i"), int(1)))],
                         None,
                     )]),
                 ),
                 // 'c: the character code of the next character.
                 if_(
-                    bin("and", bin("<", bin("+", var("i"), int(1)), var("n")), bin("==", index(var("cs"), var("i")), s("'"))),
+                    bin(
+                        "and",
+                        bin("<", bin("+", var("i"), int(1)), var("n")),
+                        bin("==", index(var("cs"), var("i")), s("'")),
+                    ),
                     vec![ret(tern(
                         var("neg"),
-                        bin("-", int(0), cap("conv.ord", vec![index(var("cs"), bin("+", var("i"), int(1)))])),
-                        cap("conv.ord", vec![index(var("cs"), bin("+", var("i"), int(1)))]),
+                        bin(
+                            "-",
+                            int(0),
+                            cap(
+                                "conv.ord",
+                                vec![index(var("cs"), bin("+", var("i"), int(1)))],
+                            ),
+                        ),
+                        cap(
+                            "conv.ord",
+                            vec![index(var("cs"), bin("+", var("i"), int(1)))],
+                        ),
                     ))],
                     None,
                 ),
@@ -5430,34 +6952,58 @@ fn helper_fn(name: &str) -> Function {
                     bin(
                         "and",
                         bin("<", bin("+", var("i"), int(1)), var("n")),
-                        bin("and", bin("==", index(var("cs"), var("i")), s("0")), bin(
-                            "or",
-                            bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("x")),
-                            bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("X")),
-                        )),
+                        bin(
+                            "and",
+                            bin("==", index(var("cs"), var("i")), s("0")),
+                            bin(
+                                "or",
+                                bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("x")),
+                                bin("==", index(var("cs"), bin("+", var("i"), int(1))), s("X")),
+                            ),
+                        ),
                     ),
                     vec![set("base", int(16)), set("i", bin("+", var("i"), int(2)))],
                     None,
                 ),
                 decl("start", var("i")),
                 decl("val", int(0)),
-                while_(bin("<", var("i"), var("n")), vec![
-                    decl("d", call("__sh_dval", vec![index(var("cs"), var("i"))])),
-                    if_(
-                        bin("or", bin("<", var("d"), int(0)), bin(">=", var("d"), var("base"))),
-                        vec![S::Break { meta: m() }],
-                        None,
-                    ),
-                    set("val", bin("+", bin("*", var("val"), var("base")), var("d"))),
-                    set("i", bin("+", var("i"), int(1))),
-                ]),
                 while_(
-                    bin("and", bin("<", var("i"), var("n")), call("__sh_isws", vec![index(var("cs"), var("i"))])),
+                    bin("<", var("i"), var("n")),
+                    vec![
+                        decl("d", call("__sh_dval", vec![index(var("cs"), var("i"))])),
+                        if_(
+                            bin(
+                                "or",
+                                bin("<", var("d"), int(0)),
+                                bin(">=", var("d"), var("base")),
+                            ),
+                            vec![S::Break { meta: m() }],
+                            None,
+                        ),
+                        set("val", bin("+", bin("*", var("val"), var("base")), var("d"))),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
+                while_(
+                    bin(
+                        "and",
+                        bin("<", var("i"), var("n")),
+                        call("__sh_isws", vec![index(var("cs"), var("i"))]),
+                    ),
                     vec![set("i", bin("+", var("i"), int(1)))],
                 ),
                 if_(
-                    bin("or", bin("==", var("i"), var("start")), bin("!=", var("i"), var("n"))),
-                    vec![throw(concat(vec![s("unsupported: printf needs a whole number, got `"), var("v"), s("` at "), var("at")]))],
+                    bin(
+                        "or",
+                        bin("==", var("i"), var("start")),
+                        bin("!=", var("i"), var("n")),
+                    ),
+                    vec![throw(concat(vec![
+                        s("unsupported: printf needs a whole number, got `"),
+                        var("v"),
+                        s("` at "),
+                        var("at"),
+                    ]))],
                     None,
                 ),
                 if_(var("neg"), vec![ret(bin("-", int(0), var("val")))], None),
@@ -5471,8 +7017,16 @@ fn helper_fn(name: &str) -> Function {
                 decl("o", cap("conv.ord", vec![var("c")])),
                 ret(bin(
                     "or",
-                    bin("or", bin("==", var("o"), int(32)), bin("==", var("o"), int(9))),
-                    bin("or", bin("==", var("o"), int(10)), bin("==", var("o"), int(13))),
+                    bin(
+                        "or",
+                        bin("==", var("o"), int(32)),
+                        bin("==", var("o"), int(9)),
+                    ),
+                    bin(
+                        "or",
+                        bin("==", var("o"), int(10)),
+                        bin("==", var("o"), int(13)),
+                    ),
                 )),
             ],
         ),
@@ -5481,21 +7035,28 @@ fn helper_fn(name: &str) -> Function {
             &["n", "base", "upper"],
             vec![
                 decl("cs", chars(s("0123456789abcdefghijklmnopqrstuvwxyz"))),
-                if_(var("upper"), vec![set("cs", chars(s("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")))], None),
+                if_(
+                    var("upper"),
+                    vec![set("cs", chars(s("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")))],
+                    None,
+                ),
                 decl("v", var("n")),
                 if_(bin("==", var("v"), int(0)), vec![ret(s("0"))], None),
                 decl("out", s("")),
-                while_(bin(">", var("v"), int(0)), vec![
-                    set(
-                        "out",
-                        bin(
-                            "+",
-                            index(var("cs"), bin("%", var("v"), var("base"))),
-                            var("out"),
+                while_(
+                    bin(">", var("v"), int(0)),
+                    vec![
+                        set(
+                            "out",
+                            bin(
+                                "+",
+                                index(var("cs"), bin("%", var("v"), var("base"))),
+                                var("out"),
+                            ),
                         ),
-                    ),
-                    set("v", bin("/", var("v"), var("base"))),
-                ]),
+                        set("v", bin("/", var("v"), var("base"))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -5505,10 +7066,13 @@ fn helper_fn(name: &str) -> Function {
             vec![
                 decl("out", s("")),
                 decl("i", int(0)),
-                while_(bin("<", var("i"), var("n")), vec![
-                    set("out", bin("+", var("out"), var("c"))),
-                    set("i", bin("+", var("i"), int(1))),
-                ]),
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![
+                        set("out", bin("+", var("out"), var("c"))),
+                        set("i", bin("+", var("i"), int(1))),
+                    ],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -5517,7 +7081,11 @@ fn helper_fn(name: &str) -> Function {
             &["c"],
             vec![
                 decl("o", cap("conv.ord", vec![var("c")])),
-                ret(bin("and", bin(">=", var("o"), int(48)), bin("<=", var("o"), int(57)))),
+                ret(bin(
+                    "and",
+                    bin(">=", var("o"), int(48)),
+                    bin("<=", var("o"), int(57)),
+                )),
             ],
         ),
         // __sh_fparse(v, at): the number printf reads for a float conversion, as
@@ -5539,16 +7107,18 @@ fn helper_fn(name: &str) -> Function {
                 decl("cs", chars(var("text"))),
                 decl("n", len(var("cs"))),
                 decl("i", int(0)),
-                while_(bin("<", var("i"), var("n")), vec![
-                    if_(
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![if_(
                         call("__sh_isws", vec![index(var("cs"), var("i"))]),
                         vec![set("i", bin("+", var("i"), int(1)))],
                         Some(vec![S::Break { meta: m() }]),
-                    ),
-                ]),
+                    )],
+                ),
                 decl("neg", boolean(false)),
-                if_(bin("<", var("i"), var("n")), vec![
-                    if_(
+                if_(
+                    bin("<", var("i"), var("n")),
+                    vec![if_(
                         bin(
                             "or",
                             bin("==", index(var("cs"), var("i")), s("-")),
@@ -5559,13 +7129,15 @@ fn helper_fn(name: &str) -> Function {
                             set("i", bin("+", var("i"), int(1))),
                         ],
                         None,
-                    ),
-                ], None),
+                    )],
+                    None,
+                ),
                 decl("d", s("")),
                 decl("ints", int(0)),
                 decl("seen", boolean(false)),
-                while_(bin("<", var("i"), var("n")), vec![
-                    if_(
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![if_(
                         call("__sh_isdigit", vec![index(var("cs"), var("i"))]),
                         vec![
                             set("d", bin("+", var("d"), index(var("cs"), var("i")))),
@@ -5574,14 +7146,19 @@ fn helper_fn(name: &str) -> Function {
                             set("i", bin("+", var("i"), int(1))),
                         ],
                         Some(vec![S::Break { meta: m() }]),
-                    ),
-                ]),
+                    )],
+                ),
                 if_(
-                    bin("and", bin("<", var("i"), var("n")), bin("==", index(var("cs"), var("i")), s("."))),
+                    bin(
+                        "and",
+                        bin("<", var("i"), var("n")),
+                        bin("==", index(var("cs"), var("i")), s(".")),
+                    ),
                     vec![
                         set("i", bin("+", var("i"), int(1))),
-                        while_(bin("<", var("i"), var("n")), vec![
-                            if_(
+                        while_(
+                            bin("<", var("i"), var("n")),
+                            vec![if_(
                                 call("__sh_isdigit", vec![index(var("cs"), var("i"))]),
                                 vec![
                                     set("d", bin("+", var("d"), index(var("cs"), var("i")))),
@@ -5589,16 +7166,17 @@ fn helper_fn(name: &str) -> Function {
                                     set("i", bin("+", var("i"), int(1))),
                                 ],
                                 Some(vec![S::Break { meta: m() }]),
-                            ),
-                        ]),
+                            )],
+                        ),
                     ],
                     None,
                 ),
                 // `p` is the number of digits before the decimal point; the
                 // exponent is added to it.
                 decl("p", var("ints")),
-                if_(bin("<", var("i"), var("n")), vec![
-                    if_(
+                if_(
+                    bin("<", var("i"), var("n")),
+                    vec![if_(
                         bin(
                             "or",
                             bin("==", index(var("cs"), var("i")), s("e")),
@@ -5607,25 +7185,30 @@ fn helper_fn(name: &str) -> Function {
                         vec![
                             set("i", bin("+", var("i"), int(1))),
                             decl("esign", int(1)),
-                            if_(bin("<", var("i"), var("n")), vec![
-                                if_(
-                                    bin("==", index(var("cs"), var("i")), s("-")),
-                                    vec![
-                                        set("esign", int(-1)),
-                                        set("i", bin("+", var("i"), int(1))),
-                                    ],
-                                    None,
-                                ),
-                                if_(
-                                    bin("==", index(var("cs"), var("i")), s("+")),
-                                    vec![set("i", bin("+", var("i"), int(1)))],
-                                    None,
-                                ),
-                            ], None),
+                            if_(
+                                bin("<", var("i"), var("n")),
+                                vec![
+                                    if_(
+                                        bin("==", index(var("cs"), var("i")), s("-")),
+                                        vec![
+                                            set("esign", int(-1)),
+                                            set("i", bin("+", var("i"), int(1))),
+                                        ],
+                                        None,
+                                    ),
+                                    if_(
+                                        bin("==", index(var("cs"), var("i")), s("+")),
+                                        vec![set("i", bin("+", var("i"), int(1)))],
+                                        None,
+                                    ),
+                                ],
+                                None,
+                            ),
                             decl("ex", int(0)),
                             decl("any", boolean(false)),
-                            while_(bin("<", var("i"), var("n")), vec![
-                                if_(
+                            while_(
+                                bin("<", var("i"), var("n")),
+                                vec![if_(
                                     call("__sh_isdigit", vec![index(var("cs"), var("i"))]),
                                     vec![
                                         set(
@@ -5635,7 +7218,10 @@ fn helper_fn(name: &str) -> Function {
                                                 bin("*", var("ex"), int(10)),
                                                 bin(
                                                     "-",
-                                                    cap("conv.ord", vec![index(var("cs"), var("i"))]),
+                                                    cap(
+                                                        "conv.ord",
+                                                        vec![index(var("cs"), var("i"))],
+                                                    ),
                                                     int(48),
                                                 ),
                                             ),
@@ -5644,8 +7230,8 @@ fn helper_fn(name: &str) -> Function {
                                         set("i", bin("+", var("i"), int(1))),
                                     ],
                                     Some(vec![S::Break { meta: m() }]),
-                                ),
-                            ]),
+                                )],
+                            ),
                             if_(
                                 not(var("any")),
                                 vec![throw(concat(vec![
@@ -5659,15 +7245,17 @@ fn helper_fn(name: &str) -> Function {
                             set("p", bin("+", var("p"), bin("*", var("esign"), var("ex")))),
                         ],
                         None,
-                    ),
-                ], None),
-                while_(bin("<", var("i"), var("n")), vec![
-                    if_(
+                    )],
+                    None,
+                ),
+                while_(
+                    bin("<", var("i"), var("n")),
+                    vec![if_(
                         call("__sh_isws", vec![index(var("cs"), var("i"))]),
                         vec![set("i", bin("+", var("i"), int(1)))],
                         Some(vec![S::Break { meta: m() }]),
-                    ),
-                ]),
+                    )],
+                ),
                 if_(
                     bin("or", not(var("seen")), bin("<", var("i"), var("n"))),
                     vec![throw(concat(vec![
@@ -5681,16 +7269,17 @@ fn helper_fn(name: &str) -> Function {
                 // Leading zeros carry no significance: drop them and lower the
                 // exponent by one for each.
                 decl("k", int(0)),
-                while_(bin("<", var("k"), len(chars(var("d")))), vec![
-                    if_(
+                while_(
+                    bin("<", var("k"), len(chars(var("d")))),
+                    vec![if_(
                         bin("==", index(chars(var("d")), var("k")), s("0")),
                         vec![
                             set("k", bin("+", var("k"), int(1))),
                             set("p", bin("-", var("p"), int(1))),
                         ],
                         Some(vec![S::Break { meta: m() }]),
-                    ),
-                ]),
+                    )],
+                ),
                 set(
                     "d",
                     call(
@@ -5727,21 +7316,27 @@ fn helper_fn(name: &str) -> Function {
                 decl("n", len(var("cs"))),
                 if_(bin("==", var("n"), int(0)), vec![ret(s("1"))], None),
                 decl("i", bin("-", var("n"), int(1))),
-                while_(bin(">=", var("i"), int(0)), vec![
-                    if_(
+                while_(
+                    bin(">=", var("i"), int(0)),
+                    vec![if_(
                         bin("==", index(var("cs"), var("i")), s("9")),
                         vec![set("i", bin("-", var("i"), int(1)))],
                         Some(vec![S::Break { meta: m() }]),
-                    ),
-                ]),
-                if_(bin("<", var("i"), int(0)), vec![
-                    ret(concat(vec![
+                    )],
+                ),
+                if_(
+                    bin("<", var("i"), int(0)),
+                    vec![ret(concat(vec![
                         s("1"),
                         call("__sh_repeat", vec![s("0"), var("n")]),
-                    ])),
-                ], None),
+                    ]))],
+                    None,
+                ),
                 ret(concat(vec![
-                    call("__sh_substr", vec![var("s"), int(0), var("i"), boolean(true)]),
+                    call(
+                        "__sh_substr",
+                        vec![var("s"), int(0), var("i"), boolean(true)],
+                    ),
                     cap(
                         "conv.chr",
                         vec![bin(
@@ -5766,18 +7361,28 @@ fn helper_fn(name: &str) -> Function {
                 decl("n", len(chars(var("d")))),
                 // The digit after the kept ones must exist to round on.
                 decl("s", var("d")),
-                if_(bin("<", var("n"), bin("+", var("keep"), int(1))), vec![set(
-                    "s",
-                    bin(
-                        "+",
-                        var("d"),
-                        call(
-                            "__sh_repeat",
-                            vec![s("0"), bin("-", bin("+", var("keep"), int(1)), var("n"))],
+                if_(
+                    bin("<", var("n"), bin("+", var("keep"), int(1))),
+                    vec![set(
+                        "s",
+                        bin(
+                            "+",
+                            var("d"),
+                            call(
+                                "__sh_repeat",
+                                vec![s("0"), bin("-", bin("+", var("keep"), int(1)), var("n"))],
+                            ),
                         ),
+                    )],
+                    None,
+                ),
+                decl(
+                    "kept",
+                    call(
+                        "__sh_substr",
+                        vec![var("s"), int(0), var("keep"), boolean(true)],
                     ),
-                )], None),
-                decl("kept", call("__sh_substr", vec![var("s"), int(0), var("keep"), boolean(true)])),
+                ),
                 decl(
                     "rd",
                     bin(
@@ -5788,44 +7393,62 @@ fn helper_fn(name: &str) -> Function {
                 ),
                 decl("tailnz", boolean(false)),
                 decl("k", bin("+", var("keep"), int(1))),
-                while_(bin("<", var("k"), len(chars(var("s")))), vec![
-                    if_(
-                        bin("!=", index(chars(var("s")), var("k")), s("0")),
-                        vec![set("tailnz", boolean(true))],
-                        None,
-                    ),
-                    set("k", bin("+", var("k"), int(1))),
-                ]),
+                while_(
+                    bin("<", var("k"), len(chars(var("s")))),
+                    vec![
+                        if_(
+                            bin("!=", index(chars(var("s")), var("k")), s("0")),
+                            vec![set("tailnz", boolean(true))],
+                            None,
+                        ),
+                        set("k", bin("+", var("k"), int(1))),
+                    ],
+                ),
                 decl("up", boolean(false)),
-                if_(bin(">", var("rd"), int(5)), vec![set("up", boolean(true))], Some(vec![
-                    if_(bin("==", var("rd"), int(5)), vec![
-                        if_(var("tailnz"), vec![set("up", boolean(true))], Some(vec![
-                            // Exactly half: keep the last digit even.
-                            decl("last", int(0)),
-                            if_(
-                                bin(">", var("keep"), int(0)),
-                                vec![set(
-                                    "last",
-                                    bin(
-                                        "-",
-                                        cap(
-                                            "conv.ord",
-                                            vec![index(chars(var("kept")), bin("-", var("keep"), int(1)))],
+                if_(
+                    bin(">", var("rd"), int(5)),
+                    vec![set("up", boolean(true))],
+                    Some(vec![if_(
+                        bin("==", var("rd"), int(5)),
+                        vec![if_(
+                            var("tailnz"),
+                            vec![set("up", boolean(true))],
+                            Some(vec![
+                                // Exactly half: keep the last digit even.
+                                decl("last", int(0)),
+                                if_(
+                                    bin(">", var("keep"), int(0)),
+                                    vec![set(
+                                        "last",
+                                        bin(
+                                            "-",
+                                            cap(
+                                                "conv.ord",
+                                                vec![index(
+                                                    chars(var("kept")),
+                                                    bin("-", var("keep"), int(1)),
+                                                )],
+                                            ),
+                                            int(48),
                                         ),
-                                        int(48),
-                                    ),
-                                )],
-                                None,
-                            ),
-                            if_(
-                                bin("==", bin("%", var("last"), int(2)), int(1)),
-                                vec![set("up", boolean(true))],
-                                None,
-                            ),
-                        ])),
-                    ], None),
-                ])),
-                if_(var("up"), vec![ret(call("__sh_finc", vec![var("kept")]))], None),
+                                    )],
+                                    None,
+                                ),
+                                if_(
+                                    bin("==", bin("%", var("last"), int(2)), int(1)),
+                                    vec![set("up", boolean(true))],
+                                    None,
+                                ),
+                            ]),
+                        )],
+                        None,
+                    )]),
+                ),
+                if_(
+                    var("up"),
+                    vec![ret(call("__sh_finc", vec![var("kept")]))],
+                    None,
+                ),
                 ret(var("kept")),
             ],
         ),
@@ -5837,24 +7460,38 @@ fn helper_fn(name: &str) -> Function {
             vec![
                 decl("cs", chars(var("s"))),
                 decl("dot", boolean(false)),
-                for_("c", var("cs"), vec![
-                    if_(bin("==", var("c"), s(".")), vec![set("dot", boolean(true))], None),
-                ]),
+                for_(
+                    "c",
+                    var("cs"),
+                    vec![if_(
+                        bin("==", var("c"), s(".")),
+                        vec![set("dot", boolean(true))],
+                        None,
+                    )],
+                ),
                 if_(not(var("dot")), vec![ret(var("s"))], None),
                 decl("k", len(var("cs"))),
-                while_(bin(">", var("k"), int(0)), vec![
-                    if_(
+                while_(
+                    bin(">", var("k"), int(0)),
+                    vec![if_(
                         bin("==", index(var("cs"), bin("-", var("k"), int(1))), s("0")),
                         vec![set("k", bin("-", var("k"), int(1)))],
                         Some(vec![S::Break { meta: m() }]),
-                    ),
-                ]),
+                    )],
+                ),
                 if_(
-                    bin("and", bin(">", var("k"), int(0)), bin("==", index(var("cs"), bin("-", var("k"), int(1))), s("."))),
+                    bin(
+                        "and",
+                        bin(">", var("k"), int(0)),
+                        bin("==", index(var("cs"), bin("-", var("k"), int(1))), s(".")),
+                    ),
                     vec![set("k", bin("-", var("k"), int(1)))],
                     None,
                 ),
-                ret(call("__sh_substr", vec![var("s"), int(0), var("k"), boolean(true)])),
+                ret(call(
+                    "__sh_substr",
+                    vec![var("s"), int(0), var("k"), boolean(true)],
+                )),
             ],
         ),
         // __sh_ffix(d, p, prec): the `%f` body (no sign) for 0.d × 10^p.
@@ -5862,32 +7499,49 @@ fn helper_fn(name: &str) -> Function {
             &["d", "p", "prec"],
             vec![
                 decl("keep", bin("+", var("p"), var("prec"))),
-                if_(bin("<", var("keep"), int(0)), vec![
-                    // Below half of the last place printed: zero.
-                    if_(bin("==", var("prec"), int(0)), vec![ret(s("0"))], None),
-                    ret(bin("+", s("0."), call("__sh_repeat", vec![s("0"), var("prec")]))),
-                ], None),
+                if_(
+                    bin("<", var("keep"), int(0)),
+                    vec![
+                        // Below half of the last place printed: zero.
+                        if_(bin("==", var("prec"), int(0)), vec![ret(s("0"))], None),
+                        ret(bin(
+                            "+",
+                            s("0."),
+                            call("__sh_repeat", vec![s("0"), var("prec")]),
+                        )),
+                    ],
+                    None,
+                ),
                 decl("s", call("__sh_fround", vec![var("d"), var("keep")])),
                 decl("m", len(chars(var("s")))),
-                if_(bin("<", var("m"), bin("+", var("prec"), int(1))), vec![
-                    set(
-                        "s",
-                        bin(
-                            "+",
-                            call(
-                                "__sh_repeat",
-                                vec![s("0"), bin("-", bin("+", var("prec"), int(1)), var("m"))],
+                if_(
+                    bin("<", var("m"), bin("+", var("prec"), int(1))),
+                    vec![
+                        set(
+                            "s",
+                            bin(
+                                "+",
+                                call(
+                                    "__sh_repeat",
+                                    vec![s("0"), bin("-", bin("+", var("prec"), int(1)), var("m"))],
+                                ),
+                                var("s"),
                             ),
-                            var("s"),
                         ),
-                    ),
-                    set("m", bin("+", var("prec"), int(1))),
-                ], None),
+                        set("m", bin("+", var("prec"), int(1))),
+                    ],
+                    None,
+                ),
                 decl(
                     "ip",
                     call(
                         "__sh_substr",
-                        vec![var("s"), int(0), bin("-", var("m"), var("prec")), boolean(true)],
+                        vec![
+                            var("s"),
+                            int(0),
+                            bin("-", var("m"), var("prec")),
+                            boolean(true),
+                        ],
                     ),
                 ),
                 if_(bin("==", var("prec"), int(0)), vec![ret(var("ip"))], None),
@@ -5917,23 +7571,40 @@ fn helper_fn(name: &str) -> Function {
                 decl("s", call("__sh_fround", vec![var("d"), var("keep")])),
                 decl("e", bin("-", var("p"), int(1))),
                 // A carry that grows the mantissa moves the point: 9.99 → 1.00e+01.
-                if_(bin(">", len(chars(var("s"))), var("keep")), vec![
-                    set(
-                        "s",
-                        call("__sh_substr", vec![var("s"), int(0), var("keep"), boolean(true)]),
-                    ),
-                    set("e", bin("+", var("e"), int(1))),
-                ], None),
+                if_(
+                    bin(">", len(chars(var("s"))), var("keep")),
+                    vec![
+                        set(
+                            "s",
+                            call(
+                                "__sh_substr",
+                                vec![var("s"), int(0), var("keep"), boolean(true)],
+                            ),
+                        ),
+                        set("e", bin("+", var("e"), int(1))),
+                    ],
+                    None,
+                ),
                 decl("m", len(chars(var("s")))),
-                if_(bin("<", var("m"), var("keep")), vec![
-                    set(
+                if_(
+                    bin("<", var("m"), var("keep")),
+                    vec![set(
                         "s",
-                        bin("+", var("s"), call("__sh_repeat", vec![s("0"), bin("-", var("keep"), var("m"))])),
-                    ),
-                ], None),
-                decl("mant", call("__sh_substr", vec![var("s"), int(0), int(1), boolean(true)])),
-                if_(bin(">", var("prec"), int(0)), vec![
-                    set(
+                        bin(
+                            "+",
+                            var("s"),
+                            call("__sh_repeat", vec![s("0"), bin("-", var("keep"), var("m"))]),
+                        ),
+                    )],
+                    None,
+                ),
+                decl(
+                    "mant",
+                    call("__sh_substr", vec![var("s"), int(0), int(1), boolean(true)]),
+                ),
+                if_(
+                    bin(">", var("prec"), int(0)),
+                    vec![set(
                         "mant",
                         bin(
                             "+",
@@ -5943,27 +7614,44 @@ fn helper_fn(name: &str) -> Function {
                                 vec![var("s"), int(1), var("prec"), boolean(true)],
                             ),
                         ),
+                    )],
+                    None,
+                ),
+                if_(
+                    var("trim"),
+                    vec![set("mant", call("__sh_fztrim", vec![var("mant")]))],
+                    None,
+                ),
+                decl(
+                    "ex",
+                    call(
+                        "__sh_base",
+                        vec![
+                            tern(
+                                bin("<", var("e"), int(0)),
+                                bin("-", int(0), var("e")),
+                                var("e"),
+                            ),
+                            int(10),
+                            boolean(false),
+                        ],
                     ),
-                ], None),
-                if_(var("trim"), vec![set("mant", call("__sh_fztrim", vec![var("mant")]))], None),
-                decl("ex", call(
-                    "__sh_base",
-                    vec![
-                        tern(bin("<", var("e"), int(0)), bin("-", int(0), var("e")), var("e")),
-                        int(10),
-                        boolean(false),
-                    ],
-                )),
-                if_(bin("<", len(chars(var("ex"))), int(2)), vec![
-                    set(
+                ),
+                if_(
+                    bin("<", len(chars(var("ex"))), int(2)),
+                    vec![set(
                         "ex",
                         bin(
                             "+",
-                            call("__sh_repeat", vec![s("0"), bin("-", int(2), len(chars(var("ex"))))]),
+                            call(
+                                "__sh_repeat",
+                                vec![s("0"), bin("-", int(2), len(chars(var("ex"))))],
+                            ),
                             var("ex"),
                         ),
-                    ),
-                ], None),
+                    )],
+                    None,
+                ),
                 ret(concat(vec![
                     var("mant"),
                     tern(var("upper"), s("E"), s("e")),
@@ -5975,23 +7663,39 @@ fn helper_fn(name: &str) -> Function {
         // __sh_float(v, conv, left, zero, plus, space, w, prec, has_prec, at):
         // one float conversion, sign and width padding included.
         "__sh_float" => func(
-            &["v", "conv", "left", "zero", "plus", "space", "w", "prec", "has_prec", "at"],
+            &[
+                "v", "conv", "left", "zero", "plus", "space", "w", "prec", "has_prec", "at",
+            ],
             vec![
                 decl("f", call("__sh_fparse", vec![var("v"), var("at")])),
                 decl("d", index(var("f"), s("d"))),
                 decl("p", index(var("f"), s("p"))),
                 decl("pr", tern(var("has_prec"), var("prec"), int(6))),
-                decl("upper", bin("or", bin("==", var("conv"), s("E")), bin("==", var("conv"), s("G")))),
+                decl(
+                    "upper",
+                    bin(
+                        "or",
+                        bin("==", var("conv"), s("E")),
+                        bin("==", var("conv"), s("G")),
+                    ),
+                ),
                 decl("body", s("")),
                 if_(
                     bin(
                         "or",
-                        bin("or", bin("==", var("conv"), s("f")), bin("==", var("conv"), s("e"))),
+                        bin(
+                            "or",
+                            bin("==", var("conv"), s("f")),
+                            bin("==", var("conv"), s("e")),
+                        ),
                         bin("==", var("conv"), s("E")),
                     ),
                     vec![if_(
                         bin("==", var("conv"), s("f")),
-                        vec![set("body", call("__sh_ffix", vec![var("d"), var("p"), var("pr")]))],
+                        vec![set(
+                            "body",
+                            call("__sh_ffix", vec![var("d"), var("p"), var("pr")]),
+                        )],
                         Some(vec![set(
                             "body",
                             call(
@@ -6008,7 +7712,11 @@ fn helper_fn(name: &str) -> Function {
                         decl("gp", var("pr")),
                         if_(bin("==", var("gp"), int(0)), vec![set("gp", int(1))], None),
                         if_(
-                            bin("or", bin("<", var("x"), int(-4)), bin(">=", var("x"), var("gp"))),
+                            bin(
+                                "or",
+                                bin("<", var("x"), int(-4)),
+                                bin(">=", var("x"), var("gp")),
+                            ),
                             vec![set(
                                 "body",
                                 call(
@@ -6043,51 +7751,45 @@ fn helper_fn(name: &str) -> Function {
                 if_(
                     index(var("f"), s("neg")),
                     vec![set("sign", s("-"))],
-                    Some(vec![
-                        if_(
-                            var("plus"),
-                            vec![set("sign", s("+"))],
-                            Some(vec![if_(var("space"), vec![set("sign", s(" "))], None)]),
-                        ),
-                    ]),
+                    Some(vec![if_(
+                        var("plus"),
+                        vec![set("sign", s("+"))],
+                        Some(vec![if_(var("space"), vec![set("sign", s(" "))], None)]),
+                    )]),
                 ),
                 decl("s", bin("+", var("sign"), var("body"))),
                 decl("pad", bin("-", var("w"), len(chars(var("s"))))),
-                if_(bin(">", var("pad"), int(0)), vec![
-                    if_(
+                if_(
+                    bin(">", var("pad"), int(0)),
+                    vec![if_(
                         var("left"),
                         vec![set(
                             "s",
                             bin("+", var("s"), call("__sh_repeat", vec![s(" "), var("pad")])),
                         )],
-                        Some(vec![
-                            if_(
-                                // Zeros go after the sign (`%08.2f` → `-0003.50`).
-                                var("zero"),
-                                vec![set(
-                                    "s",
+                        Some(vec![if_(
+                            // Zeros go after the sign (`%08.2f` → `-0003.50`).
+                            var("zero"),
+                            vec![set(
+                                "s",
+                                bin(
+                                    "+",
                                     bin(
                                         "+",
-                                        bin(
-                                            "+",
-                                            var("sign"),
-                                            call("__sh_repeat", vec![s("0"), var("pad")]),
-                                        ),
-                                        var("body"),
+                                        var("sign"),
+                                        call("__sh_repeat", vec![s("0"), var("pad")]),
                                     ),
-                                )],
-                                Some(vec![set(
-                                    "s",
-                                    bin(
-                                        "+",
-                                        call("__sh_repeat", vec![s(" "), var("pad")]),
-                                        var("s"),
-                                    ),
-                                )]),
-                            ),
-                        ]),
-                    ),
-                ], None),
+                                    var("body"),
+                                ),
+                            )],
+                            Some(vec![set(
+                                "s",
+                                bin("+", call("__sh_repeat", vec![s(" "), var("pad")]), var("s")),
+                            )]),
+                        )]),
+                    )],
+                    None,
+                ),
                 ret(var("s")),
             ],
         ),
@@ -6095,7 +7797,9 @@ fn helper_fn(name: &str) -> Function {
         // one printf conversion.
         "__sh_fmt" => {
             func(
-                &["v", "conv", "left", "zero", "plus", "space", "w", "prec", "has_prec", "at"],
+                &[
+                    "v", "conv", "left", "zero", "plus", "space", "w", "prec", "has_prec", "at",
+                ],
                 vec![
                     decl("s", s("")),
                     if_(
@@ -6104,109 +7808,168 @@ fn helper_fn(name: &str) -> Function {
                             set("s", call("__sh_str", vec![var("v")])),
                             if_(
                                 var("has_prec"),
-                                vec![set("s", call("__sh_substr", vec![var("s"), int(0), var("prec"), boolean(true)]))],
+                                vec![set(
+                                    "s",
+                                    call(
+                                        "__sh_substr",
+                                        vec![var("s"), int(0), var("prec"), boolean(true)],
+                                    ),
+                                )],
                                 None,
                             ),
                         ],
-                        Some(vec![
-                            if_(
-                                bin("==", var("conv"), s("c")),
-                                vec![
-                                    decl("cc", chars(call("__sh_str", vec![var("v")]))),
-                                    if_(
-                                        bin("==", len(var("cc")), int(0)),
-                                        vec![set("s", cap("conv.chr", vec![int(0)]))],
-                                        Some(vec![set("s", index(var("cc"), int(0)))]),
-                                    ),
-                                ],
-                                Some(vec![
-                                    // d, i, u, x, X, o
-                                    decl("n", call("__sh_number", vec![var("v"), var("at")])),
-                                    if_(
+                        Some(vec![if_(
+                            bin("==", var("conv"), s("c")),
+                            vec![
+                                decl("cc", chars(call("__sh_str", vec![var("v")]))),
+                                if_(
+                                    bin("==", len(var("cc")), int(0)),
+                                    vec![set("s", cap("conv.chr", vec![int(0)]))],
+                                    Some(vec![set("s", index(var("cc"), int(0)))]),
+                                ),
+                            ],
+                            Some(vec![
+                                // d, i, u, x, X, o
+                                decl("n", call("__sh_number", vec![var("v"), var("at")])),
+                                if_(
+                                    bin(
+                                        "and",
+                                        bin("<", var("n"), int(0)),
                                         bin(
-                                            "and",
-                                            bin("<", var("n"), int(0)),
+                                            "or",
                                             bin(
                                                 "or",
-                                                bin("or", bin("==", var("conv"), s("x")), bin("==", var("conv"), s("X")) ),
-                                                bin("or", bin("==", var("conv"), s("o")), bin("==", var("conv"), s("u"))),
+                                                bin("==", var("conv"), s("x")),
+                                                bin("==", var("conv"), s("X")),
+                                            ),
+                                            bin(
+                                                "or",
+                                                bin("==", var("conv"), s("o")),
+                                                bin("==", var("conv"), s("u")),
                                             ),
                                         ),
-                                        vec![throw(concat(vec![
-                                            s("unsupported: a negative value for `%"), var("conv"), s("` at "), var("at"),
-                                        ]))],
-                                        None,
                                     ),
-                                    decl("neg", bin("<", var("n"), int(0))),
-                                    decl(
-                                        "mag",
-                                        tern(bin("<", var("n"), int(0)), bin("-", int(0), var("n")), var("n")),
+                                    vec![throw(concat(vec![
+                                        s("unsupported: a negative value for `%"),
+                                        var("conv"),
+                                        s("` at "),
+                                        var("at"),
+                                    ]))],
+                                    None,
+                                ),
+                                decl("neg", bin("<", var("n"), int(0))),
+                                decl(
+                                    "mag",
+                                    tern(
+                                        bin("<", var("n"), int(0)),
+                                        bin("-", int(0), var("n")),
+                                        var("n"),
                                     ),
-                                    decl("digits", s("")),
-                                    if_(
-                                        bin("==", var("conv"), s("x")),
-                                        vec![set("digits", call("__sh_base", vec![var("mag"), int(16), boolean(false)]))],
-                                        Some(vec![if_(
-                                            bin("==", var("conv"), s("X")),
-                                            vec![set("digits", call("__sh_base", vec![var("mag"), int(16), boolean(true)]))],
-                                            Some(vec![if_(
-                                                bin("==", var("conv"), s("o")),
-                                                vec![set("digits", call("__sh_base", vec![var("mag"), int(8), boolean(false)]))],
-                                                Some(vec![set("digits", bin("+", s(""), var("mag")))]),
-                                            )]),
-                                        )]),
-                                    ),
-                                    // A precision sets the minimum number of digits
-                                    // (and `%.0d` of 0 prints nothing).
-                                    if_(
-                                        var("has_prec"),
-                                        vec![
-                                            if_(
-                                                bin("and", bin("==", var("prec"), int(0)), bin("==", var("n"), int(0))),
-                                                vec![set("digits", s(""))],
-                                                Some(vec![while_(
-                                                    bin("<", len(chars(var("digits"))), var("prec")),
-                                                    vec![set("digits", bin("+", s("0"), var("digits")))],
-                                                )]),
+                                ),
+                                decl("digits", s("")),
+                                if_(
+                                    bin("==", var("conv"), s("x")),
+                                    vec![set(
+                                        "digits",
+                                        call(
+                                            "__sh_base",
+                                            vec![var("mag"), int(16), boolean(false)],
+                                        ),
+                                    )],
+                                    Some(vec![if_(
+                                        bin("==", var("conv"), s("X")),
+                                        vec![set(
+                                            "digits",
+                                            call(
+                                                "__sh_base",
+                                                vec![var("mag"), int(16), boolean(true)],
                                             ),
-                                        ],
-                                        None,
-                                    ),
-                                    // Sign, then width padding (zeros after the sign
-                                    // unless a precision was given).
-                                    decl("sign", s("")),
-                                    if_(var("neg"), vec![set("sign", s("-"))], Some(vec![
-                                        if_(var("plus"), vec![set("sign", s("+"))], None),
-                                    ])),
-                                    set("s", bin("+", bin("+", var("sign"), var("digits")), s(""))),
-                                    if_(
-                                        bin("<", len(chars(var("s"))), var("w")),
-                                        vec![
-                                            decl("pad", bin("-", var("w"), len(chars(var("s"))))),
-                                            if_(
-                                                var("left"),
-                                                vec![while_(bin(">", var("pad"), int(0)), vec![
+                                        )],
+                                        Some(vec![if_(
+                                            bin("==", var("conv"), s("o")),
+                                            vec![set(
+                                                "digits",
+                                                call(
+                                                    "__sh_base",
+                                                    vec![var("mag"), int(8), boolean(false)],
+                                                ),
+                                            )],
+                                            Some(vec![set("digits", bin("+", s(""), var("mag")))]),
+                                        )]),
+                                    )]),
+                                ),
+                                // A precision sets the minimum number of digits
+                                // (and `%.0d` of 0 prints nothing).
+                                if_(
+                                    var("has_prec"),
+                                    vec![if_(
+                                        bin(
+                                            "and",
+                                            bin("==", var("prec"), int(0)),
+                                            bin("==", var("n"), int(0)),
+                                        ),
+                                        vec![set("digits", s(""))],
+                                        Some(vec![while_(
+                                            bin("<", len(chars(var("digits"))), var("prec")),
+                                            vec![set("digits", bin("+", s("0"), var("digits")))],
+                                        )]),
+                                    )],
+                                    None,
+                                ),
+                                // Sign, then width padding (zeros after the sign
+                                // unless a precision was given).
+                                decl("sign", s("")),
+                                if_(
+                                    var("neg"),
+                                    vec![set("sign", s("-"))],
+                                    Some(vec![if_(var("plus"), vec![set("sign", s("+"))], None)]),
+                                ),
+                                set("s", bin("+", bin("+", var("sign"), var("digits")), s(""))),
+                                if_(
+                                    bin("<", len(chars(var("s"))), var("w")),
+                                    vec![
+                                        decl("pad", bin("-", var("w"), len(chars(var("s"))))),
+                                        if_(
+                                            var("left"),
+                                            vec![while_(
+                                                bin(">", var("pad"), int(0)),
+                                                vec![
                                                     set("s", bin("+", var("s"), s(" "))),
                                                     set("pad", bin("-", var("pad"), int(1))),
-                                                ])],
-                                                Some(vec![if_(
-                                                    bin("and", var("zero"), not(var("has_prec"))),
-                                                    vec![while_(bin(">", var("pad"), int(0)), vec![
-                                                        set("digits", bin("+", s("0"), var("digits"))),
-                                                        set("pad", bin("-", var("pad"), int(1))),
-                                                    ]), set("s", bin("+", var("sign"), var("digits")))],
-                                                    Some(vec![while_(bin(">", var("pad"), int(0)), vec![
+                                                ],
+                                            )],
+                                            Some(vec![if_(
+                                                bin("and", var("zero"), not(var("has_prec"))),
+                                                vec![
+                                                    while_(
+                                                        bin(">", var("pad"), int(0)),
+                                                        vec![
+                                                            set(
+                                                                "digits",
+                                                                bin("+", s("0"), var("digits")),
+                                                            ),
+                                                            set(
+                                                                "pad",
+                                                                bin("-", var("pad"), int(1)),
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    set("s", bin("+", var("sign"), var("digits"))),
+                                                ],
+                                                Some(vec![while_(
+                                                    bin(">", var("pad"), int(0)),
+                                                    vec![
                                                         set("s", bin("+", s(" "), var("s"))),
                                                         set("pad", bin("-", var("pad"), int(1))),
-                                                    ])]),
+                                                    ],
                                                 )]),
-                                            ),
-                                        ],
-                                        None,
-                                    ),
-                                ]),
-                            ),
-                        ]),
+                                            )]),
+                                        ),
+                                    ],
+                                    None,
+                                ),
+                            ]),
+                        )]),
                     ),
                     // %s: width padding with spaces only.
                     if_(
@@ -6215,14 +7978,20 @@ fn helper_fn(name: &str) -> Function {
                             decl("pad", bin("-", var("w"), len(chars(var("s"))))),
                             if_(
                                 var("left"),
-                                vec![while_(bin(">", var("pad"), int(0)), vec![
-                                    set("s", bin("+", var("s"), s(" "))),
-                                    set("pad", bin("-", var("pad"), int(1))),
-                                ])],
-                                Some(vec![while_(bin(">", var("pad"), int(0)), vec![
-                                    set("s", bin("+", s(" "), var("s"))),
-                                    set("pad", bin("-", var("pad"), int(1))),
-                                ])]),
+                                vec![while_(
+                                    bin(">", var("pad"), int(0)),
+                                    vec![
+                                        set("s", bin("+", var("s"), s(" "))),
+                                        set("pad", bin("-", var("pad"), int(1))),
+                                    ],
+                                )],
+                                Some(vec![while_(
+                                    bin(">", var("pad"), int(0)),
+                                    vec![
+                                        set("s", bin("+", s(" "), var("s"))),
+                                        set("pad", bin("-", var("pad"), int(1))),
+                                    ],
+                                )]),
                             ),
                         ],
                         None,
@@ -6240,7 +8009,11 @@ fn helper_fn(name: &str) -> Function {
                 decl("cb", chars(var("b"))),
                 decl("i", int(0)),
                 while_(
-                    bin("and", bin("<", var("i"), len(var("ca"))), bin("<", var("i"), len(var("cb")))),
+                    bin(
+                        "and",
+                        bin("<", var("i"), len(var("ca"))),
+                        bin("<", var("i"), len(var("cb"))),
+                    ),
                     vec![
                         if_(
                             bin("!=", index(var("ca"), var("i")), index(var("cb"), var("i"))),
@@ -6264,7 +8037,12 @@ fn helper_fn(name: &str) -> Function {
             vec![
                 if_(
                     bin("<", var("e"), int(0)),
-                    vec![throw(concat(vec![s("unsupported: negative exponent `"), var("e"), s("` in `**` at "), var("at")]))],
+                    vec![throw(concat(vec![
+                        s("unsupported: negative exponent `"),
+                        var("e"),
+                        s("` in `**` at "),
+                        var("at"),
+                    ]))],
                     None,
                 ),
                 decl("r", int(1)),
@@ -6273,9 +8051,17 @@ fn helper_fn(name: &str) -> Function {
                 while_(
                     bin(">", var("n"), int(0)),
                     vec![
-                        if_(bin("==", bin("%", var("n"), int(2)), int(1)), vec![set("r", bin("*", var("r"), var("base")))], None),
+                        if_(
+                            bin("==", bin("%", var("n"), int(2)), int(1)),
+                            vec![set("r", bin("*", var("r"), var("base")))],
+                            None,
+                        ),
                         set("n", bin("/", var("n"), int(2))),
-                        if_(bin(">", var("n"), int(0)), vec![set("base", bin("*", var("base"), var("base")))], None),
+                        if_(
+                            bin(">", var("n"), int(0)),
+                            vec![set("base", bin("*", var("base"), var("base")))],
+                            None,
+                        ),
                     ],
                 ),
                 ret(var("r")),
@@ -6295,7 +8081,10 @@ fn helper_fn(name: &str) -> Function {
                         is_ws(var("c")),
                         vec![if_(
                             bin("!=", var("cur"), s("")),
-                            vec![set("fields", bin("+", var("fields"), array(vec![var("cur")]))), set("cur", s(""))],
+                            vec![
+                                set("fields", bin("+", var("fields"), array(vec![var("cur")]))),
+                                set("cur", s("")),
+                            ],
                             None,
                         )],
                         Some(vec![
@@ -6305,20 +8094,38 @@ fn helper_fn(name: &str) -> Function {
                         ]),
                     )],
                 ),
-                if_(bin("!=", var("cur"), s("")), vec![set("fields", bin("+", var("fields"), array(vec![var("cur")])))], None),
+                if_(
+                    bin("!=", var("cur"), s("")),
+                    vec![set(
+                        "fields",
+                        bin("+", var("fields"), array(vec![var("cur")])),
+                    )],
+                    None,
+                ),
                 ret(var("fields")),
             ],
         ),
         // __sh_nonempty(v): zsh drops an empty unquoted expansion.
         "__sh_nonempty" => func(
             &["v"],
-            vec![if_(bin("==", var("v"), s("")), vec![ret(array(vec![]))], None), ret(array(vec![var("v")]))],
+            vec![
+                if_(bin("==", var("v"), s("")), vec![ret(array(vec![]))], None),
+                ret(array(vec![var("v")])),
+            ],
         ),
         "__sh_drop_empty" => func(
             &["a"],
             vec![
                 decl("out", array(vec![])),
-                for_("x", var("a"), vec![if_(bin("!=", var("x"), s("")), vec![set("out", bin("+", var("out"), array(vec![var("x")])))], None)]),
+                for_(
+                    "x",
+                    var("a"),
+                    vec![if_(
+                        bin("!=", var("x"), s("")),
+                        vec![set("out", bin("+", var("out"), array(vec![var("x")])))],
+                        None,
+                    )],
+                ),
                 ret(var("out")),
             ],
         ),
@@ -6330,7 +8137,11 @@ fn helper_fn(name: &str) -> Function {
                     bin("!=", len(var("arr")), int(1)),
                     vec![throw(bin(
                         "+",
-                        bin("+", s("unsupported: an unquoted expansion that became "), to_str(len(var("arr")))),
+                        bin(
+                            "+",
+                            s("unsupported: an unquoted expansion that became "),
+                            to_str(len(var("arr"))),
+                        ),
                         bin("+", s(" words where one is needed: "), var("at")),
                     ))],
                     None,
@@ -6353,7 +8164,11 @@ fn helper_fn(name: &str) -> Function {
             let bad = |what: &str| {
                 throw(bin(
                     "+",
-                    bin("+", bin("+", s(&format!("unsupported: {what} `")), var("v")), s("` for ")),
+                    bin(
+                        "+",
+                        bin("+", s(&format!("unsupported: {what} `")), var("v")),
+                        s("` for "),
+                    ),
                     var("at"),
                 ))
             };
@@ -6366,14 +8181,28 @@ fn helper_fn(name: &str) -> Function {
                     skip_ws(),
                     if_(
                         bin("==", var("i"), var("n")),
-                        vec![if_(var("test"), vec![bad("empty value instead of an integer")], None), ret(int(0))],
+                        vec![
+                            if_(
+                                var("test"),
+                                vec![bad("empty value instead of an integer")],
+                                None,
+                            ),
+                            ret(int(0)),
+                        ],
                         None,
                     ),
                     decl("neg", boolean(false)),
                     if_(
                         bin("==", c_at(var("i")), s("-")),
-                        vec![set("neg", boolean(true)), set("i", bin("+", var("i"), int(1)))],
-                        Some(vec![if_(bin("==", c_at(var("i")), s("+")), vec![set("i", bin("+", var("i"), int(1)))], None)]),
+                        vec![
+                            set("neg", boolean(true)),
+                            set("i", bin("+", var("i"), int(1))),
+                        ],
+                        Some(vec![if_(
+                            bin("==", c_at(var("i")), s("+")),
+                            vec![set("i", bin("+", var("i"), int(1)))],
+                            None,
+                        )]),
                     ),
                     decl("start", var("i")),
                     decl("val", int(0)),
@@ -6381,21 +8210,45 @@ fn helper_fn(name: &str) -> Function {
                         bin(
                             "and",
                             bin("<", var("i"), var("n")),
-                            bin("and", bin(">=", c_at(var("i")), s("0")), bin("<=", c_at(var("i")), s("9"))),
+                            bin(
+                                "and",
+                                bin(">=", c_at(var("i")), s("0")),
+                                bin("<=", c_at(var("i")), s("9")),
+                            ),
                         ),
                         vec![
                             set(
                                 "val",
-                                bin("+", bin("*", var("val"), int(10)), bin("-", cap("conv.ord", vec![c_at(var("i"))]), int(48))),
+                                bin(
+                                    "+",
+                                    bin("*", var("val"), int(10)),
+                                    bin("-", cap("conv.ord", vec![c_at(var("i"))]), int(48)),
+                                ),
                             ),
                             set("i", bin("+", var("i"), int(1))),
                         ],
                     ),
                     decl("digits", bin("-", var("i"), var("start"))),
                     skip_ws(),
-                    if_(bin("or", bin("==", var("digits"), int(0)), bin("!=", var("i"), var("n"))), vec![bad("non-integer value")], None),
                     if_(
-                        bin("and", not(var("test")), bin("and", bin(">", var("digits"), int(1)), bin("==", c_at(var("start")), s("0")))),
+                        bin(
+                            "or",
+                            bin("==", var("digits"), int(0)),
+                            bin("!=", var("i"), var("n")),
+                        ),
+                        vec![bad("non-integer value")],
+                        None,
+                    ),
+                    if_(
+                        bin(
+                            "and",
+                            not(var("test")),
+                            bin(
+                                "and",
+                                bin(">", var("digits"), int(1)),
+                                bin("==", c_at(var("start")), s("0")),
+                            ),
+                        ),
                         vec![bad("leading-zero (octal) number")],
                         None,
                     ),
@@ -6409,14 +8262,14 @@ fn helper_fn(name: &str) -> Function {
         "__sh_echo_guard" => func(
             &["arr", "at"],
             vec![
-                if_(
-                    bin("==", len(var("arr")), int(0)),
-                    vec![ret(int(0))],
-                    None,
-                ),
+                if_(bin("==", len(var("arr")), int(0)), vec![ret(int(0))], None),
                 decl("cs", chars(index(var("arr"), int(0)))),
                 if_(
-                    bin("and", bin(">", len(var("cs")), int(1)), bin("==", index(var("cs"), int(0)), s("-"))),
+                    bin(
+                        "and",
+                        bin(">", len(var("cs")), int(1)),
+                        bin("==", index(var("cs"), int(0)), s("-")),
+                    ),
                     vec![
                         decl("opt", boolean(true)),
                         decl("i", int(1)),
@@ -6425,7 +8278,15 @@ fn helper_fn(name: &str) -> Function {
                             vec![
                                 decl("c", index(var("cs"), var("i"))),
                                 if_(
-                                    bin("and", bin("and", bin("!=", var("c"), s("n")), bin("!=", var("c"), s("e"))), bin("!=", var("c"), s("E"))),
+                                    bin(
+                                        "and",
+                                        bin(
+                                            "and",
+                                            bin("!=", var("c"), s("n")),
+                                            bin("!=", var("c"), s("e")),
+                                        ),
+                                        bin("!=", var("c"), s("E")),
+                                    ),
                                     vec![set("opt", boolean(false))],
                                     None,
                                 ),
@@ -6436,7 +8297,11 @@ fn helper_fn(name: &str) -> Function {
                             var("opt"),
                             vec![throw(bin(
                                 "+",
-                                bin("+", s("unsupported: an expansion that is an echo option `"), index(var("arr"), int(0))),
+                                bin(
+                                    "+",
+                                    s("unsupported: an expansion that is an echo option `"),
+                                    index(var("arr"), int(0)),
+                                ),
                                 bin("+", s("` in "), var("at")),
                             ))],
                             None,

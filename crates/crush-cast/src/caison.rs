@@ -6,10 +6,4 @@
 //! module re-exports them for backward compatibility and convenience
 //! within the crush-cast crate.
 
-pub use crush_caison::{
-    CaisonKey,
-    CaisonValue,
-    CaisonNode,
-    CaisonDocument,
-    CaisonAnnotation,
-};
+pub use crush_caison::{CaisonAnnotation, CaisonDocument, CaisonKey, CaisonNode, CaisonValue};

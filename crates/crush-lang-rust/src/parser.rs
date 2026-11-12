@@ -6,6 +6,10 @@ use syn::parse_file;
 pub fn parse_source(source: &str) -> anyhow::Result<syn::File> {
     parse_file(source).map_err(|error| {
         let start = error.span().start();
-        anyhow::anyhow!("Rust parse error at {}:{}: {error}", start.line, start.column + 1)
+        anyhow::anyhow!(
+            "Rust parse error at {}:{}: {error}",
+            start.line,
+            start.column + 1
+        )
     })
 }

@@ -55,8 +55,10 @@ fn run(args: &[String]) -> anyhow::Result<i32> {
         }
         "format" => {
             let in_place = rest.iter().any(|a| a == "--in-place" || a == "-i");
-            let files: Vec<&String> =
-                rest.iter().filter(|a| *a != "--in-place" && *a != "-i").collect();
+            let files: Vec<&String> = rest
+                .iter()
+                .filter(|a| *a != "--in-place" && *a != "-i")
+                .collect();
             match files.as_slice() {
                 [file] => format(Path::new(file.as_str()), in_place),
                 _ => anyhow::bail!("usage: crushc cast format FILE [--in-place]"),
@@ -94,14 +96,18 @@ fn file_and_output(rest: &[String], cmd: &str) -> anyhow::Result<(PathBuf, Optio
         match a.as_str() {
             "-o" | "--output" => {
                 out = Some(PathBuf::from(
-                    it.next().ok_or_else(|| anyhow::anyhow!("{a} needs a file"))?,
+                    it.next()
+                        .ok_or_else(|| anyhow::anyhow!("{a} needs a file"))?,
                 ))
             }
             _ if file.is_none() => file = Some(PathBuf::from(a)),
             _ => anyhow::bail!("usage: crushc cast {cmd} FILE [-o OUT]"),
         }
     }
-    Ok((file.ok_or_else(|| anyhow::anyhow!("usage: crushc cast {cmd} FILE [-o OUT]"))?, out))
+    Ok((
+        file.ok_or_else(|| anyhow::anyhow!("usage: crushc cast {cmd} FILE [-o OUT]"))?,
+        out,
+    ))
 }
 
 fn read(path: &Path) -> anyhow::Result<Vec<u8>> {
@@ -130,7 +136,11 @@ fn validate(path: &Path) -> anyhow::Result<i32> {
     // Binary: decoding enforces the schema; both: the cast_version gate.
     match Program::deserialize(&data, Format::from_path(path)) {
         Ok(p) => {
-            let kind = if Format::from_path(path) == Format::Binary { "binary" } else { "JSON" };
+            let kind = if Format::from_path(path) == Format::Binary {
+                "binary"
+            } else {
+                "JSON"
+            };
             println!(
                 "{}: valid CAST {kind} (cast_version {}, {} function(s))",
                 path.display(),
@@ -155,22 +165,40 @@ fn pack(file: &Path, output: Option<&Path>) -> anyhow::Result<i32> {
     let data = read(file)?;
     let program = Program::deserialize(&data, Format::Json)
         .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
-    let cbor = program.serialize(Format::Binary).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let out = output.map(Path::to_path_buf).unwrap_or_else(|| default_pack_output(file));
-    std::fs::write(&out, &cbor).map_err(|e| anyhow::anyhow!("cannot write '{}': {e}", out.display()))?;
-    println!("{} ({} bytes) → {} ({} bytes)", file.display(), data.len(), out.display(), cbor.len());
+    let cbor = program
+        .serialize(Format::Binary)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let out = output
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| default_pack_output(file));
+    std::fs::write(&out, &cbor)
+        .map_err(|e| anyhow::anyhow!("cannot write '{}': {e}", out.display()))?;
+    println!(
+        "{} ({} bytes) → {} ({} bytes)",
+        file.display(),
+        data.len(),
+        out.display(),
+        cbor.len()
+    );
     Ok(0)
 }
 
 fn unpack(file: &Path, output: Option<&Path>) -> anyhow::Result<i32> {
     let program = Program::deserialize(&read(file)?, Format::Binary)
         .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
-    let json = program.serialize(Format::Json).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let json = program
+        .serialize(Format::Json)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     match output {
         Some(out) if out.as_os_str() != "-" => {
             std::fs::write(out, &json)
                 .map_err(|e| anyhow::anyhow!("cannot write '{}': {e}", out.display()))?;
-            println!("{} → {} ({} bytes)", file.display(), out.display(), json.len());
+            println!(
+                "{} → {} ({} bytes)",
+                file.display(),
+                out.display(),
+                json.len()
+            );
         }
         _ => println!("{}", String::from_utf8_lossy(&json)),
     }

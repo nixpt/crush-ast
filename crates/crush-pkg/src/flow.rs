@@ -104,8 +104,14 @@ mod tests {
             let m = manifest("main.x", lang);
             let err = require_crush_buildable(&m, dir.path(), "check").unwrap_err();
             let msg = err.to_string();
-            assert!(msg.contains("`crush-pkg check` only applies"), "{lang}: {msg}");
-            assert!(msg.contains(&format!("language = \"{lang}\"")), "{lang}: {msg}");
+            assert!(
+                msg.contains("`crush-pkg check` only applies"),
+                "{lang}: {msg}"
+            );
+            assert!(
+                msg.contains(&format!("language = \"{lang}\"")),
+                "{lang}: {msg}"
+            );
         }
     }
 

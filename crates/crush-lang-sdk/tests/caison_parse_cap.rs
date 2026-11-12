@@ -10,7 +10,9 @@ fn default_registry_has_both_names_and_they_agree() {
     let src = Value::Str("port: 8080\n".to_string());
     let mut out = Vec::new();
     for name in ["caison.parse", "cson.parse"] {
-        let cap = caps.get(name).unwrap_or_else(|| panic!("{name} not registered"));
+        let cap = caps
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} not registered"));
         let v = cap.call(vec![src.clone()]).unwrap().unwrap();
         match v {
             Value::Map(m) => out.push(format!("{:?}", m.borrow().get("port"))),

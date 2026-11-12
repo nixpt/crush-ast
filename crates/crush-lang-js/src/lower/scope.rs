@@ -50,7 +50,7 @@ pub(super) struct FnScope {
 
 /// How a `function` declaration's parameter is passed (CRUSH-zorro-18).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Param {
+pub(crate) enum Param {
     /// `x`: the argument, which must be given (a missing one is `undefined`).
     Plain,
     /// `x = …`: the argument or a placeholder, plus a hidden "given" flag
@@ -62,7 +62,7 @@ pub(super) enum Param {
 }
 
 /// A `function` declaration's parameters.
-pub(super) type Sig = Rc<Vec<Param>>;
+pub(crate) type Sig = Rc<Vec<Param>>;
 
 /// The parameter kinds of `params`.
 pub(super) fn sig_of(params: &FormalParameterList) -> Sig {

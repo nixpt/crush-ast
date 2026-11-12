@@ -8,18 +8,30 @@ use crush_lang_sdk::{HostCapsBuilder, Runtime};
 
 fn run(src: &str, caps: HostCapsBuilder) -> String {
     let program = compile_crush_source(src).expect("compile");
-    Runtime::new().with_host_caps(caps.build()).run(&program).expect("run").output
+    Runtime::new()
+        .with_host_caps(caps.build())
+        .run(&program)
+        .expect("run")
+        .output
 }
 
 #[test]
 fn void_host_caps_as_statements_and_values() {
     let dir = tempfile::tempdir().unwrap();
-    let fs = HostCapsBuilder::new().fs(true).fs_root(dir.path().to_string_lossy());
+    let fs = HostCapsBuilder::new()
+        .fs(true)
+        .fs_root(dir.path().to_string_lossy());
     assert_eq!(
-        run("fn main() { fs.write(\"w.txt\", \"x\")\n let r = fs.write(\"v.txt\", \"y\")\n io.print(r)\n return 0 }", fs),
+        run(
+            "fn main() { fs.write(\"w.txt\", \"x\")\n let r = fs.write(\"v.txt\", \"y\")\n io.print(r)\n return 0 }",
+            fs
+        ),
         "null\n"
     );
-    assert_eq!(std::fs::read_to_string(dir.path().join("w.txt")).unwrap(), "x");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("w.txt")).unwrap(),
+        "x"
+    );
 
     let src = "fn main() { akg.write(\"k\", \"1\")\n io.print(\"ok\")\n return 0 }";
     assert_eq!(run(src, HostCapsBuilder::new().akg(true)), "ok\n");

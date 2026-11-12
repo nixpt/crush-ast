@@ -41,7 +41,11 @@ fn walk<'a>(body: &'a [Statement], out: &mut Vec<&'a Statement>) {
     for s in body {
         out.push(s);
         match s {
-            Statement::If { then_body, else_body, .. } => {
+            Statement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 walk(then_body, out);
                 if let Some(e) = else_body {
                     walk(e, out);
@@ -58,7 +62,10 @@ fn caps_in(program: &crush_cast::Program, func: &str) -> Vec<String> {
     walk(&program.functions[func].body, &mut all);
     all.iter()
         .filter_map(|s| match s {
-            Statement::ExprStmt { expr: Expression::CapabilityCall { name, .. }, .. } => Some(name.clone()),
+            Statement::ExprStmt {
+                expr: Expression::CapabilityCall { name, .. },
+                ..
+            } => Some(name.clone()),
             _ => None,
         })
         .collect()
@@ -91,8 +98,20 @@ fn test_bash_function_def() {
 #[test]
 fn test_bash_until_is_not_while() {
     // `until` used to be lowered exactly like `while` (bash) — the two must differ.
-    let w = serde_json::to_string(&crush_lang_bash::bash_to_cast("while false; do echo x; done\n").unwrap().functions["main"].body).unwrap();
-    let u = serde_json::to_string(&crush_lang_bash::bash_to_cast("until false; do echo x; done\n").unwrap().functions["main"].body).unwrap();
+    let w = serde_json::to_string(
+        &crush_lang_bash::bash_to_cast("while false; do echo x; done\n")
+            .unwrap()
+            .functions["main"]
+            .body,
+    )
+    .unwrap();
+    let u = serde_json::to_string(
+        &crush_lang_bash::bash_to_cast("until false; do echo x; done\n")
+            .unwrap()
+            .functions["main"]
+            .body,
+    )
+    .unwrap();
     assert_ne!(w, u);
 }
 
@@ -140,7 +159,10 @@ fn test_bash_pipeline_lowers() {
 #[test]
 fn test_bash_error_names_the_line() {
     let e = lower_err("echo ok\necho ok\ndate\n");
-    assert!(e.contains("command `date`") && e.contains("at line 3"), "{e}");
+    assert!(
+        e.contains("command `date`") && e.contains("at line 3"),
+        "{e}"
+    );
 }
 
 #[test]
