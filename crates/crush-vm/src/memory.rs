@@ -351,7 +351,10 @@ impl Arena {
                 tag: "__pooled_int".to_string(),
                 value: Box::new(RuntimeValue::Int(i)),
             });
-            debug_assert_eq!(idx, self.small_int_pool_start + (i - SMALL_INT_MIN) as usize);
+            debug_assert_eq!(
+                idx,
+                self.small_int_pool_start + (i - SMALL_INT_MIN) as usize
+            );
         }
         self.bool_false_idx = self.push_permanent(Object::Tagged {
             tag: "__pooled_bool".to_string(),
@@ -390,10 +393,7 @@ impl Arena {
         let base = core::mem::size_of::<Object>();
         base + match obj {
             Object::Str(s) => s.len(),
-            Object::Array(arr)
-            | Object::Tuple(arr)
-            | Object::Vector(arr)
-            | Object::Set(arr) => arr
+            Object::Array(arr) | Object::Tuple(arr) | Object::Vector(arr) | Object::Set(arr) => arr
                 .iter()
                 .map(Self::estimate_runtime_value_size)
                 .sum::<usize>(),
@@ -550,10 +550,10 @@ impl Arena {
                 }
             }
             Object::Tagged { tag, value } if tag == "__pooled_int" => {
-                if let RuntimeValue::Int(v) = &**value {
-                    if let Some(offset) = Self::pool_idx_for_small_int(*v) {
-                        return self.small_int_pool_start + offset;
-                    }
+                if let RuntimeValue::Int(v) = &**value
+                    && let Some(offset) = Self::pool_idx_for_small_int(*v)
+                {
+                    return self.small_int_pool_start + offset;
                 }
             }
             _ => {}
@@ -620,11 +620,12 @@ impl Arena {
     }
 
     pub fn mark(&mut self, idx: usize) -> bool {
-        if let Some(slot) = self.slots.get_mut(idx) {
-            if slot.allocated && !slot.marked {
-                slot.marked = true;
-                return true;
-            }
+        if let Some(slot) = self.slots.get_mut(idx)
+            && slot.allocated
+            && !slot.marked
+        {
+            slot.marked = true;
+            return true;
         }
         false
     }
@@ -632,45 +633,46 @@ impl Arena {
     pub fn trace(&mut self, roots: Vec<usize>) {
         let mut worklist = roots;
         while let Some(idx) = worklist.pop() {
-            if let Some(slot) = self.slots.get_mut(idx) {
-                if slot.allocated && !slot.marked {
-                    slot.marked = true;
-                    // Extract refs
-                    match &slot.object {
-                        Object::Array(arr) => {
-                            for v in arr {
-                                if let RuntimeValue::Ref(c) = v {
-                                    worklist.push(*c);
-                                }
-                            }
-                        }
-                        Object::Map(map) => {
-                            for v in map.values() {
-                                if let RuntimeValue::Ref(c) = v {
-                                    worklist.push(*c);
-                                }
-                            }
-                        }
-                        Object::Tagged { value, .. } => {
-                            if let RuntimeValue::Ref(c) = &**value {
+            if let Some(slot) = self.slots.get_mut(idx)
+                && slot.allocated
+                && !slot.marked
+            {
+                slot.marked = true;
+                // Extract refs
+                match &slot.object {
+                    Object::Array(arr) => {
+                        for v in arr {
+                            if let RuntimeValue::Ref(c) = v {
                                 worklist.push(*c);
                             }
                         }
-                        Object::Object { fields, .. } => {
-                            for v in fields.values() {
-                                if let RuntimeValue::Ref(c) = v {
-                                    worklist.push(*c);
-                                }
-                            }
-                        }
-                        Object::Result { value, .. } => {
-                            if let RuntimeValue::Ref(c) = &**value {
-                                worklist.push(*c);
-                            }
-                        }
-                        Object::InterfaceHandle(_) => {} // No internal refs to trace
-                        _ => {}
                     }
+                    Object::Map(map) => {
+                        for v in map.values() {
+                            if let RuntimeValue::Ref(c) = v {
+                                worklist.push(*c);
+                            }
+                        }
+                    }
+                    Object::Tagged { value, .. } => {
+                        if let RuntimeValue::Ref(c) = &**value {
+                            worklist.push(*c);
+                        }
+                    }
+                    Object::Object { fields, .. } => {
+                        for v in fields.values() {
+                            if let RuntimeValue::Ref(c) = v {
+                                worklist.push(*c);
+                            }
+                        }
+                    }
+                    Object::Result { value, .. } => {
+                        if let RuntimeValue::Ref(c) = &**value {
+                            worklist.push(*c);
+                        }
+                    }
+                    Object::InterfaceHandle(_) => {} // No internal refs to trace
+                    _ => {}
                 }
             }
         }
@@ -698,7 +700,8 @@ impl Arena {
                 slot.object = Object::Str(String::new());
                 to_free.push(idx);
                 freed += 1;
-                self.current_allocated_bytes = self.current_allocated_bytes.saturating_sub(freed_size);
+                self.current_allocated_bytes =
+                    self.current_allocated_bytes.saturating_sub(freed_size);
                 self.total_freed_bytes += freed_size;
             }
         }
@@ -721,10 +724,10 @@ impl Arena {
     }
 
     pub fn release(&mut self, idx: usize) {
-        if let Some(slot) = self.slots.get_mut(idx) {
-            if slot.borrow.immutable_refs > 0 {
-                slot.borrow.immutable_refs -= 1;
-            }
+        if let Some(slot) = self.slots.get_mut(idx)
+            && slot.borrow.immutable_refs > 0
+        {
+            slot.borrow.immutable_refs -= 1;
         }
     }
 

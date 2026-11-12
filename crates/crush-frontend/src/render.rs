@@ -188,13 +188,6 @@ impl Renderer {
                 self.render_expression(value, 0);
                 self.newline();
             }
-            Statement::Assign { target, value, .. } => {
-                self.write_indent();
-                self.push_str(target);
-                self.push_str(" = ");
-                self.render_expression(value, 0);
-                self.newline();
-            }
             Statement::Export { name, value, .. } => {
                 self.write_indent();
                 self.push_str("export ");
@@ -388,7 +381,12 @@ impl Renderer {
                 self.render_import_inline(import);
                 self.newline();
             }
-            Statement::ImplBlock { type_name, trait_name, methods, .. } => {
+            Statement::ImplBlock {
+                type_name,
+                trait_name,
+                methods,
+                ..
+            } => {
                 self.write_indent();
                 self.push_str("impl ");
                 if let Some(t) = trait_name {
@@ -404,12 +402,17 @@ impl Renderer {
                 self.push_str(name);
                 self.render_method_list(methods);
             }
-            Statement::StructDef { name, fields, kind, .. } => {
+            Statement::StructDef {
+                name, fields, kind, ..
+            } => {
                 if let Some(kind) = kind {
                     self.write_indent();
                     self.push_str("@kind(");
-                    let args: Vec<String> =
-                        kind.args.iter().map(|a| format!("{}: {}", a.key, a.value)).collect();
+                    let args: Vec<String> = kind
+                        .args
+                        .iter()
+                        .map(|a| format!("{}: {}", a.key, a.value))
+                        .collect();
                     self.push_str(&args.join(", "));
                     self.push_str(")\n");
                 }
@@ -723,7 +726,12 @@ impl Renderer {
                 }
                 self.push_str(")");
             }
-            Expression::MethodCall { target, method, args, .. } => {
+            Expression::MethodCall {
+                target,
+                method,
+                args,
+                ..
+            } => {
                 self.render_expression(target, 90);
                 self.push_str(".");
                 self.push_str(method);
@@ -1250,7 +1258,11 @@ impl Renderer {
             } => {
                 self.push_str("ai_semantic_match(");
                 self.render_expression(target, 0);
-                self.push_str(&format!(", \"{}\", {})", escape_string(concept), confidence_threshold));
+                self.push_str(&format!(
+                    ", \"{}\", {})",
+                    escape_string(concept),
+                    confidence_threshold
+                ));
             }
             AIExpression::Synthesize {
                 output_type,
@@ -1259,10 +1271,18 @@ impl Renderer {
                 examples: _,
             } => {
                 self.push_str(&format!("ai_synthesize({:?}, constraints=[", output_type));
-                self.push_str(&constraints.iter().map(|c| format!("\"{}\"", escape_string(c))).collect::<Vec<_>>().join(", "));
+                self.push_str(
+                    &constraints
+                        .iter()
+                        .map(|c| format!("\"{}\"", escape_string(c)))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
                 self.push_str("], ctx=[");
                 for (i, expr) in context_refs.iter().enumerate() {
-                    if i > 0 { self.push_str(", "); }
+                    if i > 0 {
+                        self.push_str(", ");
+                    }
                     self.render_expression(expr, 0);
                 }
                 self.push_str("])");

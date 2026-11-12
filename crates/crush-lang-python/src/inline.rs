@@ -45,7 +45,10 @@ pub fn lower_block_function(
         value: Some(Expression::ArrayLiteral {
             elements: outputs
                 .iter()
-                .map(|name| Expression::Var { name: name.clone(), meta: meta.clone() })
+                .map(|name| Expression::Var {
+                    name: name.clone(),
+                    meta: meta.clone(),
+                })
                 .collect(),
             meta: meta.clone(),
         }),
@@ -65,7 +68,9 @@ fn drop_builtin_module_imports(stmts: &mut Vec<py_ast::Stmt>) -> anyhow::Result<
     let mut kept = Vec::with_capacity(stmts.len());
     for stmt in stmts.drain(..) {
         if let py_ast::Stmt::Import(py_ast::StmtImport { names, .. }) = &stmt
-            && names.iter().all(|a| a.asname.is_none() && MODULES.contains(&a.name.as_str()))
+            && names
+                .iter()
+                .all(|a| a.asname.is_none() && MODULES.contains(&a.name.as_str()))
         {
             continue;
         }
@@ -137,12 +142,17 @@ fn for_each_body(
 fn refuse_module_illegal(stmts: &[py_ast::Stmt]) -> anyhow::Result<()> {
     for stmt in stmts {
         match stmt {
-            py_ast::Stmt::Return(_) => anyhow::bail!("`return` outside a function (a SyntaxError in Python)"),
+            py_ast::Stmt::Return(_) => {
+                anyhow::bail!("`return` outside a function (a SyntaxError in Python)")
+            }
             py_ast::Stmt::Nonlocal(_) => {
                 anyhow::bail!("`nonlocal` at module level (a SyntaxError in Python)")
             }
             py_ast::Stmt::Expr(py_ast::StmtExpr { value, .. })
-                if matches!(value.as_ref(), py_ast::Expr::Yield(_) | py_ast::Expr::YieldFrom(_)) =>
+                if matches!(
+                    value.as_ref(),
+                    py_ast::Expr::Yield(_) | py_ast::Expr::YieldFrom(_)
+                ) =>
             {
                 anyhow::bail!("`yield` outside a function (a SyntaxError in Python)")
             }

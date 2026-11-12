@@ -77,7 +77,14 @@ pub fn try_decode_frame(buf: &[u8]) -> Result<Option<(Frame, usize)>, NetError> 
     let typ = buf[4];
     let flags = buf[5];
     let payload = buf[6..total].to_vec();
-    Ok(Some((Frame { typ, flags, payload }, total)))
+    Ok(Some((
+        Frame {
+            typ,
+            flags,
+            payload,
+        },
+        total,
+    )))
 }
 
 pub fn encode_request(req: &crate::mesh_request::MeshRequest) -> Result<Vec<u8>, NetError> {
@@ -110,7 +117,11 @@ mod tests {
 
     #[test]
     fn round_trip_empty_payload() {
-        let frame = Frame { typ: 0, flags: 0, payload: vec![] };
+        let frame = Frame {
+            typ: 0,
+            flags: 0,
+            payload: vec![],
+        };
         let mut buf = Vec::new();
         encode_frame(&frame, &mut buf).unwrap();
         assert_eq!(buf.len(), 6);

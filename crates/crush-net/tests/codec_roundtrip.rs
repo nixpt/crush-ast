@@ -72,8 +72,5 @@ fn partial_frame_reports_none_not_err() {
     crush_net::encode_frame(&frame, &mut buf).unwrap();
     // Header is 6 bytes; payload starts at offset 6. Truncate below payload end.
     let partial = &buf[..9];
-    assert!(matches!(
-        crush_net::try_decode_frame(partial),
-        Ok(None)
-    ));
+    assert!(matches!(crush_net::try_decode_frame(partial), Ok(None)));
 }

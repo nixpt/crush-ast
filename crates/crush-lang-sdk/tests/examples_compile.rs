@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crush_lang_sdk::{compile::CompileOptions, effects::used_by, Quotas, Runtime};
+use crush_lang_sdk::{Quotas, Runtime, compile::CompileOptions, effects::used_by};
 
 /// Compile an example as a file, so its imports resolve from its own
 /// directory (CRUSH-110: `examples/crush/imports/`). No `-L`, no `CRUSH_PATH`.
@@ -95,10 +95,16 @@ fn first_error_line(err: &str) -> String {
 /// `None` when it can't be compared here (reads input, needs an ungranted
 /// capability, or fails at run time).
 fn vm_output(program: &crush_vm::Program) -> Option<String> {
-    if used_by(program).ok().is_some_and(|used| used.contains("io.read")) {
+    if used_by(program)
+        .ok()
+        .is_some_and(|used| used.contains("io.read"))
+    {
         return None;
     }
-    let quotas = Quotas { max_steps: 20_000_000, ..Quotas::default() };
+    let quotas = Quotas {
+        max_steps: 20_000_000,
+        ..Quotas::default()
+    };
     match Runtime::with_quotas(quotas).run(program) {
         Ok(result) if result.halted => Some(result.output),
         _ => None,
@@ -111,9 +117,8 @@ fn every_example_compiles_or_has_valid_expect_error_marker() {
     let mut checked = 0usize;
 
     for path in crush_files() {
-        let source = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!("read {}: {e}", path.display())
-        });
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
         let name = path
             .strip_prefix(examples_root())
             .map(|p| p.to_string_lossy().into_owned())
@@ -155,7 +160,10 @@ fn every_example_compiles_or_has_valid_expect_error_marker() {
                         // Fails at run time: the error must contain the marker.
                         None => {
                             // Re-run to capture the error text for the mismatch message.
-                            let quotas = Quotas { max_steps: 20_000_000, ..Quotas::default() };
+                            let quotas = Quotas {
+                                max_steps: 20_000_000,
+                                ..Quotas::default()
+                            };
                             let text = match Runtime::with_quotas(quotas).run(&program) {
                                 Err(e) => e.to_string(),
                                 Ok(_) => "program did not halt but produced no output".to_string(),

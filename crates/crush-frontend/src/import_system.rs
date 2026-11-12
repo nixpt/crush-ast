@@ -119,7 +119,10 @@ impl Default for ImportOptions {
 impl ImportOptions {
     /// Search `lib_paths` (the `-L` directories) and nothing else.
     pub fn new(lib_paths: impl IntoIterator<Item = PathBuf>) -> Self {
-        Self { search_paths: lib_paths.into_iter().collect(), ..Self::default() }
+        Self {
+            search_paths: lib_paths.into_iter().collect(),
+            ..Self::default()
+        }
     }
 
     /// Search `lib_paths`, then every directory of the `CRUSH_PATH`
@@ -128,9 +131,8 @@ impl ImportOptions {
     pub fn with_crush_path(lib_paths: impl IntoIterator<Item = PathBuf>) -> Self {
         let mut opts = Self::new(lib_paths);
         if let Some(var) = std::env::var_os("CRUSH_PATH") {
-            opts.search_paths.extend(
-                std::env::split_paths(&var).filter(|p| !p.as_os_str().is_empty()),
-            );
+            opts.search_paths
+                .extend(std::env::split_paths(&var).filter(|p| !p.as_os_str().is_empty()));
         }
         opts
     }
@@ -175,7 +177,9 @@ pub fn unsupported_import(import: &ImportStatement) -> Option<String> {
              `crush_frontend::parse_file` / `parse_source_with_imports`; an `import` inside \
              a block or a function is not supported — imports go at the top level of a file)"
         )),
-        ImportStatement::External { uri, resource_type, .. } => {
+        ImportStatement::External {
+            uri, resource_type, ..
+        } => {
             let form = match resource_type {
                 crush_cast::ExternalResourceType::Http => "@http",
                 crush_cast::ExternalResourceType::Git => "@git",
@@ -222,7 +226,10 @@ pub fn refuse_unsupported_imports(program: &Program) -> Result<()> {
 
 /// The file an imported function came from (`meta["source_file"]`).
 pub(crate) fn source_file(func: &Function) -> Option<String> {
-    func.meta.get("source_file").and_then(Value::as_str).map(str::to_string)
+    func.meta
+        .get("source_file")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// Resolve every `import a.b [as x] [{ f, … }]` at the top level of `program`
@@ -239,7 +246,10 @@ pub fn resolve_imports(program: &mut Program, origin: &Path, opts: &ImportOption
             continue;
         }
         if let Some(meta) = func.body.iter().find_map(|s| match s {
-            Statement::Import { import: ImportStatement::CrushModule { .. }, meta } => Some(meta),
+            Statement::Import {
+                import: ImportStatement::CrushModule { .. },
+                meta,
+            } => Some(meta),
             _ => None,
         }) {
             return Err(import_error(
@@ -249,10 +259,15 @@ pub fn resolve_imports(program: &mut Program, origin: &Path, opts: &ImportOption
             ));
         }
     }
-    let Some(main) = program.functions.get_mut("main") else { return Ok(()) };
+    let Some(main) = program.functions.get_mut("main") else {
+        return Ok(());
+    };
     let mut imports = Vec::new();
     main.body.retain(|stmt| match stmt {
-        Statement::Import { import: ImportStatement::CrushModule { .. }, .. } => {
+        Statement::Import {
+            import: ImportStatement::CrushModule { .. },
+            ..
+        } => {
             imports.push(stmt.clone());
             false
         }
@@ -273,12 +288,18 @@ pub fn resolve_imports(program: &mut Program, origin: &Path, opts: &ImportOption
     };
     let root_dir = parent_dir(origin);
     let root_names: BTreeSet<String> = program.functions.keys().cloned().collect();
-    let root_fn_lines: HashMap<String, Option<(usize, usize)>> =
-        program.functions.iter().map(|(n, f)| (n.clone(), span(&f.meta))).collect();
+    let root_fn_lines: HashMap<String, Option<(usize, usize)>> = program
+        .functions
+        .iter()
+        .map(|(n, f)| (n.clone(), span(&f.meta)))
+        .collect();
     let scope = resolver.bind_imports(&root_dir, &origin_display, &imports, None, &|name| {
         root_names.contains(name).then(|| {
             let at = root_fn_lines.get(name).copied().flatten();
-            format!("`fn {name}`{}", at.map(|(l, _)| format!(" (line {l})")).unwrap_or_default())
+            format!(
+                "`fn {name}`{}",
+                at.map(|(l, _)| format!(" (line {l})")).unwrap_or_default()
+            )
         })
     })?;
 
@@ -292,7 +313,10 @@ pub fn resolve_imports(program: &mut Program, origin: &Path, opts: &ImportOption
         program.functions.insert(name, func);
     }
     if !resolver.defs.is_empty() {
-        let main = program.functions.get_mut("main").expect("main held the imports");
+        let main = program
+            .functions
+            .get_mut("main")
+            .expect("main held the imports");
         let mut body = resolver.defs;
         body.append(&mut main.body);
         main.body = body;
@@ -403,7 +427,10 @@ impl Resolver<'_> {
         if let Some(found) = searched.iter().map(|d| d.join(&rel)).find(|p| p.is_file()) {
             return Ok(found);
         }
-        let dirs: Vec<String> = searched.iter().map(|d| format!("  {}", display_dir(d))).collect();
+        let dirs: Vec<String> = searched
+            .iter()
+            .map(|d| format!("  {}", display_dir(d)))
+            .collect();
         let pkgs = if self.opts.packages.is_empty() {
             String::new()
         } else {
@@ -432,13 +459,21 @@ impl Resolver<'_> {
         own: Option<usize>,
         local: &dyn Fn(&str) -> Option<String>,
     ) -> Result<Scope> {
-        let mut scope = Scope { own, ..Scope::default() };
+        let mut scope = Scope {
+            own,
+            ..Scope::default()
+        };
         // Where each binding came from, for collision messages.
         let mut selective_from: HashMap<String, (String, usize)> = HashMap::new();
         let mut qualifier_from: HashMap<String, (String, usize)> = HashMap::new();
         for stmt in imports {
             let Statement::Import {
-                import: ImportStatement::CrushModule { module_path, alias, selective },
+                import:
+                    ImportStatement::CrushModule {
+                        module_path,
+                        alias,
+                        selective,
+                    },
                 meta,
             } = stmt
             else {
@@ -534,7 +569,10 @@ impl Resolver<'_> {
             return Err(import_error(
                 file,
                 at,
-                format!("`import {module_path}`: import cycle: {}", chain.join(" → ")),
+                format!(
+                    "`import {module_path}`: import cycle: {}",
+                    chain.join(" → ")
+                ),
             ));
         }
         if self.stack.len() >= self.opts.max_depth {
@@ -549,12 +587,17 @@ impl Resolver<'_> {
         }
 
         let source = std::fs::read_to_string(&found).map_err(|e| {
-            import_error(file, at, format!("`import {module_path}`: cannot read {display}: {e}"))
+            import_error(
+                file,
+                at,
+                format!("`import {module_path}`: cannot read {display}: {e}"),
+            )
         })?;
-        let (mut parsed, toplevel) = crate::parser::Parser::parse_module(&source).map_err(|errs| {
-            let pos = errs.first().and_then(parse_error_pos);
-            import_error(&display, pos, crate::ParseErrors(errs).to_string())
-        })?;
+        let (mut parsed, toplevel) =
+            crate::parser::Parser::parse_module(&source).map_err(|errs| {
+                let pos = errs.first().and_then(parse_error_pos);
+                import_error(&display, pos, crate::ParseErrors(errs).to_string())
+            })?;
         parsed.functions.remove("main");
 
         // `.` is not allowed in a function name: the compiler reads
@@ -579,9 +622,10 @@ impl Resolver<'_> {
         let mut defs = Vec::new();
         for stmt in toplevel {
             match &stmt {
-                Statement::Import { import: ImportStatement::CrushModule { .. }, .. } => {
-                    imports.push(stmt)
-                }
+                Statement::Import {
+                    import: ImportStatement::CrushModule { .. },
+                    ..
+                } => imports.push(stmt),
                 Statement::StructDef { .. }
                 | Statement::ImplBlock { .. }
                 | Statement::TraitDef { .. } => defs.push(stmt),
@@ -617,9 +661,12 @@ impl Resolver<'_> {
         for name in names {
             let mut func = parsed.functions.remove(&name).expect("listed above");
             rewrite_function(&mut func, &scope, &self.modules, &display)?;
-            func.meta.insert("source_file".to_string(), Value::String(display.clone()));
-            func.meta.insert("module".to_string(), Value::String(module_path.to_string()));
-            self.functions.push((self.modules[idx].mangled(&name), func));
+            func.meta
+                .insert("source_file".to_string(), Value::String(display.clone()));
+            func.meta
+                .insert("module".to_string(), Value::String(module_path.to_string()));
+            self.functions
+                .push((self.modules[idx].mangled(&name), func));
         }
         for mut def in defs {
             rewrite_statement(&mut def, &scope, &self.modules, &display)?;
@@ -632,7 +679,12 @@ impl Resolver<'_> {
 
 /// Rewrite the calls in `func` that name module functions (see
 /// [`rewrite_value`]).
-fn rewrite_function(func: &mut Function, scope: &Scope, modules: &[Module], file: &str) -> Result<()> {
+fn rewrite_function(
+    func: &mut Function,
+    scope: &Scope,
+    modules: &[Module],
+    file: &str,
+) -> Result<()> {
     if scope.qualifiers.is_empty() && scope.selective.is_empty() && scope.own.is_none() {
         return Ok(());
     }
@@ -646,7 +698,12 @@ fn rewrite_function(func: &mut Function, scope: &Scope, modules: &[Module], file
 
 /// [`rewrite_function`] for one top-level declaration (an `impl` / `trait`'s
 /// method bodies).
-fn rewrite_statement(stmt: &mut Statement, scope: &Scope, modules: &[Module], file: &str) -> Result<()> {
+fn rewrite_statement(
+    stmt: &mut Statement,
+    scope: &Scope,
+    modules: &[Module],
+    file: &str,
+) -> Result<()> {
     let mut v = serde_json::to_value(&*stmt)?;
     let mut locals = HashSet::new();
     collect_locals(&v, &mut locals);
@@ -670,9 +727,11 @@ fn collect_locals(v: &Value, out: &mut HashSet<String>) {
                 Some("TryCatch") => out.extend(field("error_var")),
                 Some("Lambda") | Some("FunctionDef") => {
                     if let Some(ps) = obj.get("params").and_then(Value::as_array) {
-                        out.extend(ps.iter().filter_map(|p| {
-                            p.get(0).and_then(Value::as_str).map(str::to_string)
-                        }));
+                        out.extend(
+                            ps.iter().filter_map(|p| {
+                                p.get(0).and_then(Value::as_str).map(str::to_string)
+                            }),
+                        );
                     }
                 }
                 _ => {}
@@ -725,7 +784,11 @@ fn rewrite_value(
                         .and_then(|m| m.get("resolved_capability"))
                         .and_then(Value::as_bool)
                         .unwrap_or(false);
-                    let name = obj.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                    let name = obj
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
                     if !resolved
                         && let Some((q, f)) = name.split_once('.')
                         && !f.contains('.')
@@ -749,9 +812,16 @@ fn rewrite_value(
                         && !locals.contains(&q)
                         && let Some(&idx) = scope.qualifiers.get(&q)
                     {
-                        let f = obj.get("field").and_then(Value::as_str).unwrap_or("").to_string();
+                        let f = obj
+                            .get("field")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
                         let target = qualified(&modules[idx], &q, &f, obj.get("meta"), file)?;
-                        let meta = obj.get("meta").cloned().unwrap_or_else(|| Value::Object(Default::default()));
+                        let meta = obj
+                            .get("meta")
+                            .cloned()
+                            .unwrap_or_else(|| Value::Object(Default::default()));
                         *v = serde_json::json!({"type": "Var", "name": target, "meta": meta});
                         return Ok(());
                     }
@@ -775,7 +845,13 @@ fn rewrite_value(
 }
 
 /// The mangled name of `q.f`, or the error for a name `q`'s module lacks.
-fn qualified(module: &Module, q: &str, f: &str, meta: Option<&Value>, file: &str) -> Result<String> {
+fn qualified(
+    module: &Module,
+    q: &str,
+    f: &str,
+    meta: Option<&Value>,
+    file: &str,
+) -> Result<String> {
     if module.functions.contains(f) {
         return Ok(module.mangled(f));
     }
@@ -798,8 +874,11 @@ fn qualified(module: &Module, q: &str, f: &str, meta: Option<&Value>, file: &str
 
 /// `" (it defines: a, b, c)"`, for not-found messages.
 fn available(functions: &BTreeSet<String>) -> String {
-    let public: Vec<&str> =
-        functions.iter().map(String::as_str).filter(|n| !n.starts_with("__")).collect();
+    let public: Vec<&str> = functions
+        .iter()
+        .map(String::as_str)
+        .filter(|n| !n.starts_with("__"))
+        .collect();
     if public.is_empty() {
         String::new()
     } else {
@@ -808,7 +887,11 @@ fn available(functions: &BTreeSet<String>) -> String {
 }
 
 fn import_error(file: &str, pos: Option<(usize, usize)>, message: String) -> anyhow::Error {
-    anyhow::Error::new(ImportError { file: file.to_string(), pos, message })
+    anyhow::Error::new(ImportError {
+        file: file.to_string(),
+        pos,
+        message,
+    })
 }
 
 fn span(meta: &HashMap<String, Value>) -> Option<(usize, usize)> {
@@ -843,7 +926,11 @@ fn parent_dir(path: &Path) -> PathBuf {
 }
 
 fn display_dir(dir: &Path) -> String {
-    let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    };
     let shown = dir.display().to_string();
     match std::fs::canonicalize(dir) {
         Ok(abs) if abs != dir => format!("{shown} ({})", abs.display()),

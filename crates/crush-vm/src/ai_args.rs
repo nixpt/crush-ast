@@ -195,7 +195,10 @@ mod tests {
         .unwrap_err();
         let msg = err.to_string();
         assert!(matches!(err, VmError::CapDenied(_)), "{msg}");
-        assert!(msg.contains("ai_native.query") && msg.contains("not granted"), "{msg}");
+        assert!(
+            msg.contains("ai_native.query") && msg.contains("not granted"),
+            "{msg}"
+        );
         let none = dispatch("query", &serde_json::json!({}), vec![], None, 1000).unwrap_err();
         assert_eq!(none.to_string(), msg);
     }

@@ -41,7 +41,11 @@ fn scheduler_stack_stays_flat() {
     let (_, vm) = prog();
     let caps = HostCapsBuilder::new().ai_native(true).build();
     let r = crush_vm::run_with_caps(&vm, &Quotas::default(), Some(&caps)).expect("scheduler");
-    assert!(r.stack.len() <= 1, "stack leaked: {} entries", r.stack.len());
+    assert!(
+        r.stack.len() <= 1,
+        "stack leaked: {} entries",
+        r.stack.len()
+    );
 }
 
 #[test]
@@ -50,7 +54,11 @@ fn portable_vm_stack_stays_flat() {
     let mut pvm = PortableVm::new(vm);
     pvm.set_host_caps(HostCapsBuilder::new().ai_native(true).build());
     let r = pvm.run().expect("portable");
-    assert!(r.stack.len() <= 1, "stack leaked: {} entries", r.stack.len());
+    assert!(
+        r.stack.len() <= 1,
+        "stack leaked: {} entries",
+        r.stack.len()
+    );
 }
 
 #[test]

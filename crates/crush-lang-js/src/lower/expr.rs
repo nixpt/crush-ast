@@ -2,7 +2,6 @@
 
 use boa_ast::expression::Expression;
 use boa_ast::expression::access::{PropertyAccess, PropertyAccessField, SimplePropertyAccess};
-use boa_ast::expression::{OptionalOperation, OptionalOperationKind};
 use boa_ast::expression::literal::{LiteralKind, PropertyDefinition, TemplateElement};
 use boa_ast::expression::operator::assign::{AssignOp, AssignTarget};
 use boa_ast::expression::operator::binary::{
@@ -10,6 +9,7 @@ use boa_ast::expression::operator::binary::{
 };
 use boa_ast::expression::operator::unary::UnaryOp;
 use boa_ast::expression::operator::update::{UpdateOp, UpdateTarget};
+use boa_ast::expression::{OptionalOperation, OptionalOperationKind};
 use boa_ast::function::{FormalParameterList, FunctionBody};
 use boa_ast::property::{MethodDefinitionKind, PropertyName};
 use boa_ast::{Span, Spanned};
@@ -309,7 +309,11 @@ impl Lower<'_> {
         })
     }
 
-    pub(super) fn property_name(&mut self, key: &PropertyName, span: Option<Span>) -> anyhow::Result<String> {
+    pub(super) fn property_name(
+        &mut self,
+        key: &PropertyName,
+        span: Option<Span>,
+    ) -> anyhow::Result<String> {
         match key {
             PropertyName::Literal(id) => Ok(self.name(id.sym())),
             PropertyName::Computed(Expression::Literal(l)) => match l.kind() {
@@ -496,10 +500,7 @@ impl Lower<'_> {
         // `pure` is the same value unwrapped, for the check above.
         let cond = js_cap(
             "js.loose_eq",
-            vec![
-                self.expr(base)?,
-                CastExpr::NullLiteral { meta: m.clone() },
-            ],
+            vec![self.expr(base)?, CastExpr::NullLiteral { meta: m.clone() }],
             m.clone(),
         );
         // The branch applies the operation to the tested value. A
@@ -517,18 +518,16 @@ impl Lower<'_> {
                     && !self.host_kinds.contains_key(&self.resolve(id.sym())) =>
             {
                 let span_of = pure.span();
-                Expression::PropertyAccess(PropertyAccess::Simple(
-                    SimplePropertyAccess::new(
-                        Expression::ArrayLiteral(boa_ast::expression::literal::ArrayLiteral::new(
-                            vec![Some(pure.clone())],
-                            false,
-                            span_of,
-                        )),
-                        PropertyAccessField::Expr(Box::new(Expression::Literal(
-                            boa_ast::expression::literal::Literal::new(0i32, span_of),
-                        ))),
-                    ),
-                ))
+                Expression::PropertyAccess(PropertyAccess::Simple(SimplePropertyAccess::new(
+                    Expression::ArrayLiteral(boa_ast::expression::literal::ArrayLiteral::new(
+                        vec![Some(pure.clone())],
+                        false,
+                        span_of,
+                    )),
+                    PropertyAccessField::Expr(Box::new(Expression::Literal(
+                        boa_ast::expression::literal::Literal::new(0i32, span_of),
+                    ))),
+                )))
             }
             _ => base.clone(),
         };
@@ -537,11 +536,7 @@ impl Lower<'_> {
         let rest = self.optional_chain2(&applied, &applied_pure, rest, span, m.clone())?;
         Ok(CastExpr::Call {
             function: "__crush_ternary__".to_string(),
-            args: vec![
-                cond,
-                CastExpr::NullLiteral { meta: m.clone() },
-                rest,
-            ],
+            args: vec![cond, CastExpr::NullLiteral { meta: m.clone() }, rest],
             meta: m,
         })
     }
@@ -555,24 +550,15 @@ impl Lower<'_> {
         span: Option<Span>,
     ) -> anyhow::Result<Expression> {
         Ok(match op.kind() {
-            OptionalOperationKind::SimplePropertyAccess { field } => {
-                Expression::PropertyAccess(PropertyAccess::Simple(
-                    SimplePropertyAccess::new(base.clone(), field.clone()),
-                ))
-            }
+            OptionalOperationKind::SimplePropertyAccess { field } => Expression::PropertyAccess(
+                PropertyAccess::Simple(SimplePropertyAccess::new(base.clone(), field.clone())),
+            ),
             OptionalOperationKind::PrivatePropertyAccess { .. } => {
-                return Err(self.unsupported(
-                    "a private field in an optional chain (`?.#x`)",
-                    span,
-                ));
+                return Err(self.unsupported("a private field in an optional chain (`?.#x`)", span));
             }
-            OptionalOperationKind::Call { args } => {
-                Expression::Call(boa_ast::expression::Call::new(
-                    base.clone(),
-                    args.clone(),
-                    op.span(),
-                ))
-            }
+            OptionalOperationKind::Call { args } => Expression::Call(
+                boa_ast::expression::Call::new(base.clone(), args.clone(), op.span()),
+            ),
         })
     }
 
@@ -600,9 +586,7 @@ impl Lower<'_> {
                 // value, a subscript into the pair array — refuses.
                 if let Some(kind) = self.host_proof(s.target(), span) {
                     return match s.field() {
-                        PropertyAccessField::Const(id)
-                            if self.name(id.sym()) == "size" =>
-                        {
+                        PropertyAccessField::Const(id) if self.name(id.sym()) == "size" => {
                             let target = self.expr(s.target())?;
                             Ok(length_of(target, m))
                         }
@@ -614,10 +598,8 @@ impl Lower<'_> {
                             ),
                             span,
                         )),
-                        PropertyAccessField::Expr(_) => Err(self.unsupported(
-                            "subscripting a Map/Set (use .get() and .set())",
-                            span,
-                        )),
+                        PropertyAccessField::Expr(_) => Err(self
+                            .unsupported("subscripting a Map/Set (use .get() and .set())", span)),
                     };
                 }
                 let target = self.expr(s.target())?;
@@ -885,10 +867,7 @@ impl Lower<'_> {
                 // the value it is.
                 if self.class_ref(id.sym()).is_some() {
                     return Err(self.unsupported(
-                        format!(
-                            "calling the class `{}` without `new`",
-                            self.name(id.sym())
-                        ),
+                        format!("calling the class `{}` without `new`", self.name(id.sym())),
                         span,
                     ));
                 }
@@ -896,7 +875,9 @@ impl Lower<'_> {
                     if self.binding_sig(id.sym()).is_none()
                         && args.iter().any(|a| matches!(a, Expression::Spread(_)))
                     {
-                        let spread_indices: Vec<_> = args.iter().enumerate()
+                        let spread_indices: Vec<_> = args
+                            .iter()
+                            .enumerate()
                             .filter_map(|(i, a)| matches!(a, Expression::Spread(_)).then_some(i))
                             .collect();
                         if spread_indices.len() != 1 || spread_indices[0] != args.len() - 1 {
@@ -911,11 +892,19 @@ impl Lower<'_> {
                                 span,
                             ));
                         }
-                        let Expression::Spread(spread) = &args[0] else { unreachable!() };
+                        let Expression::Spread(spread) = &args[0] else {
+                            unreachable!()
+                        };
                         let args_array = self.expr(spread.target())?;
                         return Ok(CastExpr::Call {
                             function: "__crush_apply__".to_string(),
-                            args: vec![CastExpr::Var { name, meta: m.clone() }, args_array],
+                            args: vec![
+                                CastExpr::Var {
+                                    name,
+                                    meta: m.clone(),
+                                },
+                                args_array,
+                            ],
                             meta: m,
                         });
                     }
@@ -1048,21 +1037,15 @@ impl Lower<'_> {
                     // so it lowers to a direct call (CRUSH-286 review
                     // #4) — also an exact target, so it isn't recorded
                     // for the dispatch checks.
-                    let is_static = self.in_static
-                        && matches!(unparen(s.target()), Expression::This(_));
+                    let is_static =
+                        self.in_static && matches!(unparen(s.target()), Expression::This(_));
                     if is_static
                         && let Some(kind) = &recv_kind
-                        && let Some((func, sig)) =
-                            self.chain_target(kind, &method, true)
+                        && let Some((func, sig)) = self.chain_target(kind, &method, true)
                     {
                         return Ok(CastExpr::Call {
                             function: func,
-                            args: self.adapt_args(
-                                &sig,
-                                args,
-                                &format!("this.{method}"),
-                                span,
-                            )?,
+                            args: self.adapt_args(&sig, args, &format!("this.{method}"), span)?,
                             meta: m,
                         });
                     }
@@ -1081,12 +1064,9 @@ impl Lower<'_> {
                             .and_then(|kind| self.method_sig(kind, &method))
                     };
                     let args = match &sig {
-                        Some(sig) => self.adapt_args(
-                            sig,
-                            args,
-                            &format!("{recv}.{method}"),
-                            span,
-                        )?,
+                        Some(sig) => {
+                            self.adapt_args(sig, args, &format!("{recv}.{method}"), span)?
+                        }
                         None => self.args(args)?,
                     };
                     // Recorded for the end-of-module checks: the
@@ -1375,7 +1355,9 @@ impl Lower<'_> {
                 if i >= sig.len() {
                     if has_side_effects(e) {
                         return Err(self.unsupported(
-                            format!("calling `{fname}` with an extra argument that has side effects"),
+                            format!(
+                                "calling `{fname}` with an extra argument that has side effects"
+                            ),
                             Some(e.span()),
                         ));
                     }

@@ -16,7 +16,10 @@ fn point_module() -> CosmModule {
 fn program(cosm: Option<CosmModule>) -> Program {
     let mut p = Program::new();
     p.lang = Some("crush".to_string());
-    p.manifest = Manifest { permissions: vec!["io.print".to_string()], ..Default::default() };
+    p.manifest = Manifest {
+        permissions: vec!["io.print".to_string()],
+        ..Default::default()
+    };
     let push = Instruction {
         op: "push_int".to_string(),
         lang: None,
@@ -25,7 +28,12 @@ fn program(cosm: Option<CosmModule>) -> Program {
     };
     p.functions.insert(
         "main".to_string(),
-        Function { params: vec![], locals: vec![], type_hints: None, body: vec![push] },
+        Function {
+            params: vec![],
+            locals: vec![],
+            type_hints: None,
+            body: vec![push],
+        },
     );
     p.cosm = cosm;
     p
@@ -153,7 +161,10 @@ fn old_binary_casm_still_loads() {
 #[test]
 fn engines_refuse_only_kinds_maps_cant_represent() {
     assert_eq!(program(None).refuse_cosm("X"), Ok(()));
-    assert_eq!(program(Some(CosmModule::default())).refuse_cosm("X"), Ok(()));
+    assert_eq!(
+        program(Some(CosmModule::default())).refuse_cosm("X"),
+        Ok(())
+    );
     assert!(program(Some(CosmModule::default())).kind_table().is_none());
     // Point/Shape uses Crush's defaults: it runs as maps everywhere.
     assert_eq!(program(Some(point_module())).refuse_cosm("X"), Ok(()));
@@ -170,14 +181,25 @@ fn engines_refuse_only_kinds_maps_cant_represent() {
 
     // Every strategy a map can't honour is named.
     let mut m = point_module();
-    m.kinds[0].construct = crush_cosm::Construct::Ctor { func: "Point::new".into() };
+    m.kinds[0].construct = crush_cosm::Construct::Ctor {
+        func: "Point::new".into(),
+    };
     m.kinds[0].hooks.str = Some(crush_cosm::HookImpl::Fn("Point::show".into()));
-    m.kinds[0].members.push(crush_cosm::MemberDecl::accessor("len", Some("Point::len".into()), None));
+    m.kinds[0].members.push(crush_cosm::MemberDecl::accessor(
+        "len",
+        Some("Point::len".into()),
+        None,
+    ));
     if let crush_cosm::Storage::Sealed { fields } = &mut m.kinds[0].storage {
         fields[0].default = Some(crush_cosm::Const::Int(0));
     }
     let e = program(Some(m)).refuse_cosm("X").unwrap_err();
-    for want in ["construct: ctor", "protocol hooks", "accessor `len`", "a default for field `x`"] {
+    for want in [
+        "construct: ctor",
+        "protocol hooks",
+        "accessor `len`",
+        "a default for field `x`",
+    ] {
         assert!(e.contains(want), "missing {want:?}: {e}");
     }
 }

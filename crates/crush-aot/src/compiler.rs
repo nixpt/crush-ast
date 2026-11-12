@@ -253,7 +253,9 @@ impl AotCompiler {
 
     fn rust_artifact_path(&self, rust_source: &str, module_name: &str) -> PathBuf {
         let hash = cache_key("rust", self.optimize, rustc_identity(), rust_source);
-        self.cache_dir.join(format!("{module_name}_{}", &hash[..16])).with_extension(so_ext())
+        self.cache_dir
+            .join(format!("{module_name}_{}", &hash[..16]))
+            .with_extension(so_ext())
     }
 
     /// Compile a `casm::Program` to a shared library.

@@ -248,7 +248,10 @@ pub fn diagnostics_for_error(
     }
     if let Some(sema) = err.downcast_ref::<crush_frontend::SemanticError>() {
         // An error inside an imported module names that module's file.
-        return vec![JsonDiagnostic::semantic_error(sema, sema.file.as_deref().or(file))];
+        return vec![JsonDiagnostic::semantic_error(
+            sema,
+            sema.file.as_deref().or(file),
+        )];
     }
     if let Some(imp) = err.downcast_ref::<crush_frontend::import_system::ImportError>() {
         return vec![JsonDiagnostic::import_error(imp)];
@@ -435,9 +438,7 @@ pub fn render_source_snippet(source: &str, line: usize, col: usize, file: Option
 /// of error without grepping message substrings.
 pub fn parse_error_triple(err: &ParseError) -> (usize, usize, String, &'static str) {
     match err {
-        ParseError::UnexpectedToken { line, col, msg } => {
-            (*line, *col, msg.clone(), "E-PP01")
-        }
+        ParseError::UnexpectedToken { line, col, msg } => (*line, *col, msg.clone(), "E-PP01"),
         ParseError::Expected {
             line,
             col,
@@ -449,12 +450,9 @@ pub fn parse_error_triple(err: &ParseError) -> (usize, usize, String, &'static s
             format!("expected {expected}, found {found}"),
             "E-PP02",
         ),
-        ParseError::UnexpectedEOF { line, col } => (
-            *line,
-            *col,
-            "unexpected end of input".to_string(),
-            "E-PP03",
-        ),
+        ParseError::UnexpectedEOF { line, col } => {
+            (*line, *col, "unexpected end of input".to_string(), "E-PP03")
+        }
         ParseError::InvalidNumber { line, col, value } => (
             *line,
             *col,
@@ -475,12 +473,9 @@ pub fn parse_error_triple(err: &ParseError) -> (usize, usize, String, &'static s
         // code-table comment at the top of `theme.rs` (and extend
         // `parse_error_triple_canonical_codes` tests below) when more
         // variants land.
-        ParseError::UnknownAnnotation { name, line, col } => (
-            *line,
-            *col,
-            format!("unknown annotation @{name}"),
-            "E-PP06",
-        ),
+        ParseError::UnknownAnnotation { name, line, col } => {
+            (*line, *col, format!("unknown annotation @{name}"), "E-PP06")
+        }
     }
 }
 
@@ -684,7 +679,10 @@ mod tests {
     #[test]
     fn parse_error_triple_canonical_codes() {
         let cases = [
-            (ParseError::UnexpectedEOF { line: 3, col: 5 }, ("E-PP03", 3, 5)),
+            (
+                ParseError::UnexpectedEOF { line: 3, col: 5 },
+                ("E-PP03", 3, 5),
+            ),
             (
                 ParseError::UnterminatedString { line: 7, col: 2 },
                 ("E-PP05", 7, 2),
@@ -717,10 +715,8 @@ mod tests {
         // `crush_compile_test::crush_compile_emits_json_diagnostic_for_assembler_error`
         // end-to-end test (which locks the conductor + stash plumbing).
         // This test covers only the constructor's data shape.
-        let d = JsonDiagnostic::assembler_error(
-            "line 3: duplicate label \"foo\"",
-            Some("hello.casm"),
-        );
+        let d =
+            JsonDiagnostic::assembler_error("line 3: duplicate label \"foo\"", Some("hello.casm"));
         assert_eq!(d.code, JsonDiagnostic::CODE_ASSEMBLER);
         assert_eq!(
             d.code, "E-ASM",
@@ -798,7 +794,7 @@ mod tests {
         let wrapped = anyhow::Error::new(root).context("building program");
         // unwrap the box, then introspect the chain.
         let msg = format!("{wrapped:#}");
-        let out = render_caused(&*wrapped.source().unwrap());
+        let out = render_caused(wrapped.source().unwrap());
         assert!(out.contains("[crush]"));
         // The chain walk should surface at least the immediate error text.
         assert!(out.contains("file missing") || out.contains("building program"));

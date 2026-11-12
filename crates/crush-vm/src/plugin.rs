@@ -77,7 +77,7 @@ fn value_to_ffi(val: Value, owned_strings: &mut Vec<CString>) -> Result<FfiValue
             return Err(format!(
                 "FFI MVP accepts null, bool, int, float, and string arguments; got {}",
                 other.type_name()
-            ))
+            ));
         }
     })
 }
@@ -99,10 +99,10 @@ fn ffi_to_value(ffi: FfiValue) -> Result<Value, String> {
             }
         }
         FfiType::Array => {
-            return Err("FFI array results are not supported by the scalar MVP".to_string())
+            return Err("FFI array results are not supported by the scalar MVP".to_string());
         }
         FfiType::Object => {
-            return Err("FFI object results are not supported by the scalar MVP".to_string())
+            return Err("FFI object results are not supported by the scalar MVP".to_string());
         }
     })
 }
@@ -157,7 +157,7 @@ impl HostCap for FfiGatewayCap {
                 return Err(format!(
                     "__crush_ffi__ second argument must be cap_name (String), got {:?}",
                     other
-                ))
+                ));
             }
         };
         let lib_path = match args.remove(0) {
@@ -166,7 +166,7 @@ impl HostCap for FfiGatewayCap {
                 return Err(format!(
                     "__crush_ffi__ first argument must be lib_path (String), got {:?}",
                     other
-                ))
+                ));
             }
         };
 
@@ -195,8 +195,7 @@ impl HostCap for FfiGatewayCap {
             let export = exports_slice
                 .iter()
                 .find(|exp| {
-                    !exp.name.is_null()
-                        && CStr::from_ptr(exp.name).to_string_lossy() == cap_name
+                    !exp.name.is_null() && CStr::from_ptr(exp.name).to_string_lossy() == cap_name
                 })
                 .ok_or_else(|| {
                     format!(
@@ -404,11 +403,7 @@ mod tests {
     #[test]
     fn filtered_loader_rejects_selected_builtin_collision() {
         let error = unsafe {
-            register_plugin_exports(
-                &COLLIDING_PLUGIN,
-                Some(&["io.print"]),
-                &mut HostCaps::new(),
-            )
+            register_plugin_exports(&COLLIDING_PLUGIN, Some(&["io.print"]), &mut HostCaps::new())
         }
         .unwrap_err();
 

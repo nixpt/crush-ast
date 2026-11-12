@@ -179,22 +179,27 @@ impl Dependency {
     pub fn validate(&self) -> anyhow::Result<()> {
         let n = &self.name;
         match (&self.path, &self.git) {
-            (Some(_), Some(_)) => anyhow::bail!(
-                "dependency '{n}': set either `path` or `git`, not both"
-            ),
+            (Some(_), Some(_)) => {
+                anyhow::bail!("dependency '{n}': set either `path` or `git`, not both")
+            }
             // Neither source: legal to *parse* (`crush-pkg lint` reads such
             // rows); `Dependency::require_source` rejects it when building.
             (None, None) => {}
             (Some(_), None) => {
                 if self.tag.is_some() || self.rev.is_some() || self.branch.is_some() {
-                    anyhow::bail!("dependency '{n}': `tag`/`rev`/`branch` only apply to a `git` dependency");
+                    anyhow::bail!(
+                        "dependency '{n}': `tag`/`rev`/`branch` only apply to a `git` dependency"
+                    );
                 }
             }
             (None, Some(url)) => {
                 if url.trim().is_empty() {
                     anyhow::bail!("dependency '{n}': `git` url is empty");
                 }
-                let refs = [&self.tag, &self.rev, &self.branch].iter().filter(|r| r.is_some()).count();
+                let refs = [&self.tag, &self.rev, &self.branch]
+                    .iter()
+                    .filter(|r| r.is_some())
+                    .count();
                 if refs != 1 {
                     anyhow::bail!(
                         "dependency '{n}': a git dependency needs exactly one of `tag`, `rev` or `branch` (found {refs})"
@@ -376,12 +381,18 @@ pub fn language_to_capsule_type(language: &str) -> CapsuleType {
 /// Known `[capsule] category` values and what each one is for (CRUSH-171).
 pub const CATEGORIES: &[(&str, &str)] = &[
     ("cli", "command-line tool"),
-    ("library", "reusable package, mainly consumed as a dependency"),
+    (
+        "library",
+        "reusable package, mainly consumed as a dependency",
+    ),
     ("app", "end-user application (TUI, GUI or web UI)"),
     ("service", "long-running or background capsule"),
     ("game", "game"),
     ("dev-tool", "tool for writing, building or debugging code"),
-    ("language", "language support: a walker, front end or plugin"),
+    (
+        "language",
+        "language support: a walker, front end or plugin",
+    ),
     ("example", "demo, tutorial or teaching material"),
 ];
 
@@ -756,14 +767,23 @@ pub enum FacetSource {
 /// `main.crush` whose spec has a flag, a typed option with a default, a
 /// positional and the automatic `--help`.
 pub fn scaffold_cli_package(dir: &Path, name: &str, facet: &FacetSource) -> anyhow::Result<()> {
-    if name.is_empty() || name.chars().any(|c| c == '"' || c == '\\' || c.is_control()) {
-        anyhow::bail!("invalid package name {name:?}: no quotes, backslashes or control characters");
+    if name.is_empty()
+        || name
+            .chars()
+            .any(|c| c == '"' || c == '\\' || c.is_control())
+    {
+        anyhow::bail!(
+            "invalid package name {name:?}: no quotes, backslashes or control characters"
+        );
     }
     let dep = match facet {
         FacetSource::Published => format!("git = \"{FACET_GIT_URL}\"\ntag = \"{FACET_TAG}\""),
         FacetSource::Path(p) => {
             if !p.join("capsule.toml").is_file() {
-                anyhow::bail!("--facet-path {}: no capsule.toml there (expected a facet checkout)", p.display());
+                anyhow::bail!(
+                    "--facet-path {}: no capsule.toml there (expected a facet checkout)",
+                    p.display()
+                );
             }
             let abs = std::fs::canonicalize(p)?;
             format!("path = \"{}\"", abs.display())
@@ -1085,7 +1105,10 @@ language = "rust-script"
         assert_eq!(m.capsule.category, None);
         assert!(m.capsule.platforms.is_empty());
         let toml = m.to_toml_string().unwrap();
-        assert!(!toml.contains("category") && !toml.contains("platforms"), "{toml}");
+        assert!(
+            !toml.contains("category") && !toml.contains("platforms"),
+            "{toml}"
+        );
     }
 
     #[test]
@@ -1105,30 +1128,43 @@ language = "rust-script"
         for (name, _) in CATEGORIES {
             parse(&format!("category = \"{name}\"\n")).unwrap();
         }
-        let all = PLATFORMS.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
+        let all = PLATFORMS
+            .iter()
+            .map(|p| format!("\"{p}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         parse(&format!("platforms = [{all}]\n")).unwrap();
     }
 
     #[test]
     fn unknown_category_is_a_clear_error() {
         let err = parse("category = \"utility\"\n").unwrap_err().to_string();
-        assert!(err.contains("unknown [capsule] category \"utility\""), "{err}");
+        assert!(
+            err.contains("unknown [capsule] category \"utility\""),
+            "{err}"
+        );
         assert!(err.contains("cli, library, app"), "{err}");
     }
 
     #[test]
     fn unknown_or_duplicate_platform_is_a_clear_error() {
-        let err = parse("platforms = [\"linux\", \"beos\"]\n").unwrap_err().to_string();
+        let err = parse("platforms = [\"linux\", \"beos\"]\n")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("unknown [capsule] platform \"beos\""), "{err}");
         assert!(err.contains("linux, macos, windows, web"), "{err}");
-        let err = parse("platforms = [\"linux\", \"linux\"]\n").unwrap_err().to_string();
+        let err = parse("platforms = [\"linux\", \"linux\"]\n")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("\"linux\" more than once"), "{err}");
     }
 
     #[test]
     fn web_platform_is_crush_only() {
         let content = "[capsule]\nname = \"x\"\nentry = \"main.py\"\nlanguage = \"python\"\nplatforms = [\"web\"]\n";
-        let err = Manifest::from_str(content, Path::new("capsule.toml")).unwrap_err().to_string();
+        let err = Manifest::from_str(content, Path::new("capsule.toml"))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("browser only runs Crush"), "{err}");
         assert!(err.contains("\"python\""), "{err}");
         // A Python capsule may still claim the desktop platforms.

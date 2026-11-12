@@ -6,7 +6,10 @@ use crate::vm::{Quotas, Value, VmError, run_with_caps};
 use std::time::{Duration, Instant};
 
 fn q(entries: &[&str]) -> Quotas {
-    Quotas { allowed_caps: Some(entries.iter().map(|s| s.to_string()).collect()), ..Quotas::default() }
+    Quotas {
+        allowed_caps: Some(entries.iter().map(|s| s.to_string()).collect()),
+        ..Quotas::default()
+    }
 }
 
 #[test]
@@ -50,18 +53,26 @@ fn bare_star_is_inert_without_opt_in() {
 
 #[test]
 fn bare_star_matches_all_with_opt_in() {
-    let quotas = Quotas { allow_any_cap: true, ..q(&["*"]) };
+    let quotas = Quotas {
+        allow_any_cap: true,
+        ..q(&["*"])
+    };
     assert!(quotas.cap_allowed("fs.read"));
     assert!(quotas.cap_allowed("io.print"));
     // The opt-in alone, with no `*` entry, widens nothing.
-    let quotas = Quotas { allow_any_cap: true, ..q(&["io.print"]) };
+    let quotas = Quotas {
+        allow_any_cap: true,
+        ..q(&["io.print"])
+    };
     assert!(!quotas.cap_allowed("fs.read"));
 }
 
 #[test]
 fn expired_entries_match_nothing() {
     let past = Instant::now() - Duration::from_secs(1);
-    let quotas = Quotas::default().allow_cap_until("fs.*", past).allow_cap_until("io.print", past);
+    let quotas = Quotas::default()
+        .allow_cap_until("fs.*", past)
+        .allow_cap_until("io.print", past);
     assert!(!quotas.cap_allowed("fs.read"));
     assert!(!quotas.cap_allowed("io.print"));
 }
@@ -70,7 +81,9 @@ fn expired_entries_match_nothing() {
 fn unexpired_entries_match_and_expiry_is_per_entry() {
     let future = Instant::now() + Duration::from_secs(3600);
     let past = Instant::now() - Duration::from_secs(1);
-    let mut quotas = Quotas::default().allow_cap_until("fs.*", future).allow_cap_until("net.*", past);
+    let mut quotas = Quotas::default()
+        .allow_cap_until("fs.*", future)
+        .allow_cap_until("net.*", past);
     assert!(quotas.cap_allowed("fs.read"));
     assert!(!quotas.cap_allowed("net.get"));
     // A second, non-expiring entry still covers what an expired one dropped.
@@ -82,7 +95,11 @@ struct FsRead;
 
 impl HostCap for FsRead {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "fs.read".into(), argc: Some(0), returns: true }
+        HostCapSpec {
+            name: "fs.read".into(),
+            argc: Some(0),
+            returns: true,
+        }
     }
     fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
         Ok(Some(Value::Int(7)))

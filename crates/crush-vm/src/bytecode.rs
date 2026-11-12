@@ -310,14 +310,14 @@ pub fn concurrency_native_kind_for_opcode(opcode: u8) -> Option<&'static str> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperandKind {
     None,
-    I64,   // 8B signed big-endian
-    F64,   // 8B IEEE-754 big-endian
-    Str,   // 2B const-pool index
-    Slot,  // 2B memory slot
-    Addr,  // 4B byte offset
-    Cap,   // 2B const-pool idx + 1B argc
-    Func,  // 2B const-pool index
-    Count, // 2B element count
+    I64,     // 8B signed big-endian
+    F64,     // 8B IEEE-754 big-endian
+    Str,     // 2B const-pool index
+    Slot,    // 2B memory slot
+    Addr,    // 4B byte offset
+    Cap,     // 2B const-pool idx + 1B argc
+    Func,    // 2B const-pool index
+    Count,   // 2B element count
     Closure, // 2B const-pool idx (function) + 1B arity + 1B captured count
     /// A member or Kind name + argc (`CALL_MEMBER`, `CONSTRUCT`): encoded like
     /// [`OperandKind::Cap`] — 2B const-pool idx + 1B argc — but the name is not
@@ -341,14 +341,13 @@ impl OperandKind {
 
 pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
     match opcode {
-        NOP | POP | DUP | SWAP | ROT | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW | STR_CONTAINS
-        | STR_SPLIT | STR_REPLACE | STR_JOIN | MAKE_RANGE
-        | YIELD | AWAIT | HALT
-        | TYPEOF
-        | ADD | SUB | MUL | DIV | MOD
-        | NEG | EQ | LT | GT | NOT | NE | LE | GE | AND | OR | BITAND | BITOR | BITXOR | BITNOT
-        | SHL | SHR | ARR_GET | ARR_SET | ARR_LEN | ARR_PUSH | ARR_POP
-        | TUPLE_PUSH | LIST_PUSH | VECTOR_PUSH | SET_PUSH | MAP_KEYS => Some(OperandKind::None),
+        NOP | POP | DUP | SWAP | ROT | PUSH_NULL | PRINT | RET | EXIT_TRY | THROW
+        | STR_CONTAINS | STR_SPLIT | STR_REPLACE | STR_JOIN | MAKE_RANGE | YIELD | AWAIT | HALT
+        | TYPEOF | ADD | SUB | MUL | DIV | MOD | NEG | EQ | LT | GT | NOT | NE | LE | GE | AND
+        | OR | BITAND | BITOR | BITXOR | BITNOT | SHL | SHR | ARR_GET | ARR_SET | ARR_LEN
+        | ARR_PUSH | ARR_POP | TUPLE_PUSH | LIST_PUSH | VECTOR_PUSH | SET_PUSH | MAP_KEYS => {
+            Some(OperandKind::None)
+        }
         SPAWN => Some(OperandKind::Count),
         PUSH | PUSH_BOOL => Some(OperandKind::I64),
         PUSH_F64 => Some(OperandKind::F64),
@@ -360,12 +359,20 @@ pub fn operand_kind(opcode: u8) -> Option<OperandKind> {
         MAKE_CLOSURE => Some(OperandKind::Closure),
         CALL_VALUE => Some(OperandKind::Count),
         CELL_NEW | CELL_GET | CELL_SET | CALL_VALUE_APPLY => Some(OperandKind::None),
-        GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | IS_KIND | NEW_RECORD | LOAD_KIND => Some(OperandKind::Str),
+        GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | IS_KIND | NEW_RECORD | LOAD_KIND => {
+            Some(OperandKind::Str)
+        }
         CALL_MEMBER | CONSTRUCT => Some(OperandKind::Member),
         GET_SLOT | SET_SLOT => Some(OperandKind::Count),
         COPY => Some(OperandKind::None),
-        EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING | DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => Some(OperandKind::Str),
-        NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL | VEC_ADD | VEC_DOT | MAT_MUL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
+        EXEC_LANG | GET_FIELD | SET_FIELD | CAST | AI_QUERY | AI_SYNTHESIZE
+        | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE
+        | AI_TOOLCHAIN | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING
+        | DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT
+        | DOM_ATTR | DOM_TEXT | DOM_EVENT => Some(OperandKind::Str),
+        NEW_OBJ | MATH_POW | MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL
+        | VEC_ADD | VEC_DOT | MAT_MUL | STR_STARTS_WITH | STR_ENDS_WITH | STR_TO_UPPER
+        | STR_TO_LOWER | STR_TRIM => Some(OperandKind::None),
         PICK | ROLL => Some(OperandKind::Count),
         NEW_ARRAY | NEW_TUPLE | NEW_LIST | NEW_VECTOR | NEW_SET => Some(OperandKind::Count),
         _ => None,
@@ -403,7 +410,11 @@ pub struct Manifest {
     /// Serialized in name order (`sorted_functions`), so the same program
     /// writes the same `.cvm1` bytes every time (#365: `HashMap` order made
     /// two compiles of one file differ).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty", serialize_with = "sorted_functions")]
+    #[serde(
+        default,
+        skip_serializing_if = "HashMap::is_empty",
+        serialize_with = "sorted_functions"
+    )]
     pub functions: HashMap<String, FunctionEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<String>,
@@ -476,7 +487,11 @@ impl Program {
     /// a plain map yet — the rule every engine shares
     /// ([`casm::cosm_unsupported_reason`], see [`casm::Program::refuse_cosm`]).
     pub fn refuse_cosm(&self, engine: &str) -> Result<(), String> {
-        match self.cosm.as_ref().and_then(|m| casm::cosm_unsupported_reason(m, engine)) {
+        match self
+            .cosm
+            .as_ref()
+            .and_then(|m| casm::cosm_unsupported_reason(m, engine))
+        {
             Some(reason) => Err(reason),
             None => Ok(()),
         }
@@ -488,7 +503,11 @@ impl Program {
         let kind_table = self.kind_table().map(crush_cosm::CosmModule::to_json);
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
-        out.push(if kind_table.is_some() { VERSION_KIND_TABLE } else { VERSION_NO_KIND_TABLE });
+        out.push(if kind_table.is_some() {
+            VERSION_KIND_TABLE
+        } else {
+            VERSION_NO_KIND_TABLE
+        });
         out.extend_from_slice(&(mb.len() as u16).to_be_bytes());
         out.extend_from_slice(mb);
         out.extend_from_slice(&(self.consts.len() as u16).to_be_bytes());
@@ -551,8 +570,8 @@ impl Program {
         {
             let mut pc = 0usize;
             while pc < code.len() {
-                let size = instruction_size(code[pc])
-                    .ok_or(crate::Error::UnknownOpcode(code[pc], pc))?;
+                let size =
+                    instruction_size(code[pc]).ok_or(crate::Error::UnknownOpcode(code[pc], pc))?;
                 pc += size;
             }
             if pc != code.len() {
