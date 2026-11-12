@@ -254,7 +254,8 @@ impl FastVM {
 /// serviced here and returns `None`. The cap's result comes back as a
 /// `RuntimeValue`: scalars map directly; arrays/maps (which `RuntimeValue`
 /// cannot model) as their JSON text, keys sorted. A cap error is also `None`.
-/// DOM requests still drop their args (CRUSH-33 follow-up).
+/// DOM requests still drop their args (CRUSH-33 follow-up); their ungranted
+/// side is named by [`dom_request_denied`] (GitHub issue #378).
 /// CRUSH-234: the fail-closed counterpart of [`resolve_host_request`]. If `req`
 /// is one of the ten AI requests and `host_caps` has no `ai_native.<kind>`
 /// handler, returns the same named `CapDenied` error the scheduler and
@@ -280,6 +281,44 @@ pub fn ai_request_denied(
     };
     let granted = host_caps.is_some_and(|h| h.get(&format!("ai_native.{kind}")).is_some());
     (!granted).then(|| crate::ai_args::not_granted(kind))
+}
+
+/// GitHub issue #378: the DOM twin of [`ai_request_denied`]. If `req` is one
+/// of the ten DOM requests and `host_caps` has no `dom_native.<kind>`
+/// handler, returns the same named `CapDenied` error the scheduler and
+/// PortableVm raise (`crate::dom_args::not_granted`); otherwise `None`.
+pub fn dom_request_denied(
+    req: &HostRequest,
+    host_caps: Option<&crate::HostCaps>,
+) -> Option<crate::vm::VmError> {
+    let kind = match req {
+        HostRequest::DomQuery { .. } => "query",
+        HostRequest::DomGet { .. } => "get",
+        HostRequest::DomSet { .. } => "set",
+        HostRequest::DomCreate { .. } => "create",
+        HostRequest::DomRemove { .. } => "remove",
+        HostRequest::DomChild { .. } => "child",
+        HostRequest::DomParent { .. } => "parent",
+        HostRequest::DomAttr { .. } => "attr",
+        HostRequest::DomText { .. } => "text",
+        HostRequest::DomEvent { .. } => "event",
+        _ => return None,
+    };
+    let granted = host_caps.is_some_and(|h| h.get(&format!("dom_native.{kind}")).is_some());
+    (!granted).then(|| crate::dom_args::not_granted(kind))
+}
+
+/// A VM value in fastvm's flat value layer, which has no Map or Array: those
+/// come back as their JSON text.
+fn flat_value(value: crate::vm::Value) -> Option<RuntimeValue> {
+    Some(match value {
+        crate::vm::Value::Null => RuntimeValue::Null,
+        crate::vm::Value::Bool(b) => RuntimeValue::Bool(b),
+        crate::vm::Value::Int(i) => RuntimeValue::Int(i),
+        crate::vm::Value::Float(f) => RuntimeValue::Float(f),
+        crate::vm::Value::Str(s) => RuntimeValue::String(s),
+        other => RuntimeValue::String(serde_json::to_value(&other).ok()?.to_string()),
+    })
 }
 
 pub fn resolve_host_request(
@@ -331,24 +370,26 @@ pub fn resolve_host_request(
             return None;
         }
         let deadline = crate::vm::Quotas::default().max_wall_time_ms;
-        let value =
-            crate::ai_args::dispatch(kind, payload, Vec::new(), Some(caps), deadline).ok()?;
-        return Some(match value {
-            crate::vm::Value::Null => RuntimeValue::Null,
-            crate::vm::Value::Bool(b) => RuntimeValue::Bool(b),
-            crate::vm::Value::Int(i) => RuntimeValue::Int(i),
-            crate::vm::Value::Float(f) => RuntimeValue::Float(f),
-            crate::vm::Value::Str(s) => RuntimeValue::String(s),
-            other => RuntimeValue::String(serde_json::to_value(&other).ok()?.to_string()),
-        });
+        let value = crate::ai_args::dispatch(
+            kind,
+            payload,
+            Vec::new(),
+            Some(caps),
+            &crate::vm::Quotas::default(),
+            deadline,
+        )
+        .ok()?;
+        return flat_value(value);
     }
-    // DOM: `crate::value::RuntimeValue` (the flat value layer used by fastvm
-    // dispatch) has no Map variant, so mirror the {ok: true, kind, echo: []}
-    // stub shape from `crush_lang_sdk::dom_native` as a deterministic String.
-    Some(RuntimeValue::String(format!(
-        "{{ok:true,kind:{},echo:[]}}",
-        kind
-    )))
+    // DOM: call the granted handler, as the scheduler and PortableVm do (it used
+    // to return a fixed `{ok:true,...}` string without calling it, so a failing
+    // handler looked like success). A handler error is `None`: this seam has no
+    // error channel, and `dom_request_denied` names the ungranted case.
+    let deadline = crate::vm::Quotas::default().max_wall_time_ms;
+    let value =
+        crate::dom_args::dispatch(kind, Some(caps), &crate::vm::Quotas::default(), deadline)
+            .ok()?;
+    flat_value(value)
 }
 
 #[cfg(test)]
