@@ -24,6 +24,21 @@ pub(crate) fn handler_frame(call_stack: &[FastFrame]) -> Option<(usize, (usize, 
     Some((index, *call_stack[index].handlers.last()?))
 }
 
+/// Pop every frame above the handler's frame `frame_index`, dropping the
+/// popped frames' locals with them — CVM1 frames own their locals, so a
+/// caught throw or fault must not leave the callee's slots visible to the
+/// handler (nor grow `locals` on every iteration of a `try { f() }` loop).
+pub(crate) fn unwind_to_frame(
+    frame_index: usize,
+    call_stack: &mut Vec<FastFrame>,
+    locals: &mut Vec<RuntimeValue>,
+) {
+    if let Some(popped) = call_stack.get(frame_index + 1) {
+        locals.truncate(popped.locals_base);
+    }
+    call_stack.truncate(frame_index + 1);
+}
+
 /// Whether a `try` handler may catch this FastVM fault (CRUSH-369).
 ///
 /// Catchable — the program-level faults FastVM actually raises with real
@@ -1098,7 +1113,7 @@ pub fn execute_one(
             let err_val = stack.pop().ok_or(FastError::StackUnderflow)?;
             match handler_frame(call_stack) {
                 Some((frame_index, (target_pc, stack_len))) => {
-                    call_stack.truncate(frame_index + 1);
+                    unwind_to_frame(frame_index, call_stack, locals);
                     let frame = call_stack.last_mut().expect("frame just matched");
                     frame.handlers.pop();
                     *pc = target_pc;

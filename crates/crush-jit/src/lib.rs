@@ -61,7 +61,11 @@ impl JitEngine {
         };
         // Only faults the CVM1 engines would catch get the prefix: COSM/UNINIT
         // errors are fatal there too, and flag 4 can be a capability refusal.
-        let cvm1_catches = ctx.error == ERR_DIV_ZERO || ctx.error == ERR_ARITH_OVERFLOW;
+        // Flag 1 is the runtime helpers' type error / checked-add overflow
+        // (array push/pop, non-numeric operands, comparisons) — a TypeError or
+        // ArithmeticOverflow on CVM1, which a try catches.
+        let cvm1_catches =
+            ctx.error == 1 || ctx.error == ERR_DIV_ZERO || ctx.error == ERR_ARITH_OVERFLOW;
         if ctx.handler_stack_top > 0 && cvm1_catches {
             format!(
                 "try/catch around VM faults is not supported on this backend yet (CRUSH-369): {msg}"
@@ -2238,6 +2242,38 @@ mod tests {
                     if m.starts_with("try/catch around VM faults is not supported on this backend yet (CRUSH-369)")
             ),
             "the JIT should refuse loudly when a fault lands inside try, got {jit:?}"
+        );
+    }
+
+    #[test]
+    fn test_type_error_inside_try_jit_refuses_loudly() {
+        // CRUSH-369 review: flag 1 (a runtime helper's type error, here
+        // `null + 1`) is a TypeError the CVM1 engines and FastVM catch, so
+        // the JIT must name its limitation for it too — not a bare
+        // "JIT execution error (flag=1)".
+        let prog = make_prog(vec![
+            (FastOp::EnterTry, 7, 0),
+            (FastOp::PushNull, 0, 0),
+            (FastOp::PushInt, 1, 0),
+            (FastOp::Add, 0, 0),
+            (FastOp::Halt, 0, 0),
+            (FastOp::Halt, 0, 0),
+            (FastOp::Halt, 0, 0),
+            (FastOp::Halt, 0, 0),
+        ]);
+        let fastvm = run_fastvm(&prog);
+        assert!(
+            matches!(&fastvm, FastYield::Finished(Some(RuntimeValue::String(_)))),
+            "FastVM should catch the type error, got {fastvm:?}"
+        );
+        let jit = run_jit(&prog);
+        assert!(
+            matches!(
+                &jit,
+                FastYield::Error(crush_vm::fastvm::FastError::ExecutionError(m))
+                    if m.starts_with("try/catch around VM faults is not supported on this backend yet (CRUSH-369)")
+            ),
+            "the JIT should refuse loudly when a type error lands inside try, got {jit:?}"
         );
     }
 

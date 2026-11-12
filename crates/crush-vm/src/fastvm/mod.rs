@@ -167,7 +167,11 @@ impl FastVM {
                         && let Some((frame_index, (target_pc, stack_len))) =
                             execution::handler_frame(&self.call_stack)
                     {
-                        self.call_stack.truncate(frame_index + 1);
+                        execution::unwind_to_frame(
+                            frame_index,
+                            &mut self.call_stack,
+                            &mut self.locals,
+                        );
                         let frame = self.call_stack.last_mut().expect("frame just matched");
                         frame.handlers.pop();
                         self.pc = target_pc;
@@ -455,6 +459,53 @@ mod tests {
             FastInstr::simple(FastOp::Halt),
         ]);
         assert_eq!(make_vm(throw).run(10_000), FastYield::Finished(None));
+    }
+
+    #[test]
+    fn a_cross_function_catch_drops_the_callee_locals() {
+        // CRUSH-369 review: unwinding to a caller's handler must drop the
+        // callee's locals with its frame. main: try { c() } catch, then the
+        // handler reads its own (never assigned) slot 0 — which must be the
+        // uninitialised-slot error, not the 99 the callee stored there.
+        // c either faults (1/0) or throws.
+        for raise in [
+            vec![
+                FastInstr::new(FastOp::PushInt, 1, 0),
+                FastInstr::new(FastOp::PushInt, 0, 0),
+                FastInstr::simple(FastOp::Div),
+            ],
+            vec![
+                FastInstr::new(FastOp::PushInt, 7, 0),
+                FastInstr::simple(FastOp::Throw),
+                FastInstr::simple(FastOp::Halt),
+            ],
+        ] {
+            let mut instrs = vec![
+                FastInstr::new(FastOp::EnterTry, 3, 0),         // 0
+                FastInstr::new(FastOp::Call, 0, 0),             // 1: call "c"
+                FastInstr::simple(FastOp::Halt),                // 2: (not reached)
+                FastInstr::simple(FastOp::Pop),                 // 3: handler drops the error
+                FastInstr::new(FastOp::LoadLocalChecked, 0, 0), // 4
+                FastInstr::simple(FastOp::Halt),                // 5
+                FastInstr::new(FastOp::PushInt, 99, 0),         // 6: c
+                FastInstr::new(FastOp::StoreLocal, 0, 0),       // 7
+            ];
+            instrs.extend(raise);
+            let end = instrs.len();
+            let program = make_multi_fn(instrs, vec!["c"], vec![("c", 6, end, 0)], 0);
+            let mut vm = make_vm(program);
+            match vm.run(10_000) {
+                FastYield::Error(FastError::ExecutionError(msg)) => {
+                    assert!(msg.contains("uninitialised slot 0"), "{msg}")
+                }
+                other => panic!("handler saw the callee's locals: {other:?}"),
+            }
+            assert!(
+                vm.locals.is_empty(),
+                "callee locals leaked: {:?}",
+                vm.locals
+            );
+        }
     }
 
     #[test]
