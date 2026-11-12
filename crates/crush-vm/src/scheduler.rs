@@ -536,7 +536,8 @@ fn run_from(
     let _wall_guard = wall_deadline.map(|d| crate::wall::enter(d, quotas.max_wall_time_ms));
     // An enclosing run's earlier deadline wins (`enter` keeps it): a
     // parallel_map item checks the caller's deadline, not a fresh one (#422).
-    let wall_deadline = crate::wall::current().map(|(d, _)| d).or(wall_deadline);
+    // The pair keeps the limit that deadline came from, so an expiry names it.
+    let wall = crate::wall::current().or(wall_deadline.map(|d| (d, quotas.max_wall_time_ms)));
     let mut wall_ticks: usize = 0;
     let code = &program.code;
     let n = code.len();
@@ -672,10 +673,10 @@ fn run_from(
             return Err(VmError::StepQuota(quotas.max_steps));
         }
         wall_ticks += 1;
-        if let Some(deadline) = wall_deadline
+        if let Some((deadline, limit_ms)) = wall
             && wall_ticks.is_multiple_of(crate::wall::CHECK_EVERY)
         {
-            crate::wall::check(deadline, quotas.max_wall_time_ms)?;
+            crate::wall::check(deadline, limit_ms)?;
         }
         // CRUSH-165 hook: the scheduler's one instruction-dispatch point.
         #[cfg(feature = "transcript")]
@@ -1614,7 +1615,8 @@ fn execute_one(
                 // it fails the call, and this also catches a deadline that
                 // passed just as the last item finished.
                 if crate::wall::remaining().is_some_and(|r| r.is_zero()) {
-                    return Err(crate::wall::expired(quotas.max_wall_time_ms));
+                    let limit_ms = crate::wall::limit_ms().unwrap_or(quotas.max_wall_time_ms);
+                    return Err(crate::wall::expired(limit_ms));
                 }
                 if !output.is_empty() {
                     *out_len += output.len();

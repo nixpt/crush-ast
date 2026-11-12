@@ -215,3 +215,22 @@ fn parallel_map_items_share_the_callers_wall_deadline() {
         "portable parallel_map ran {took:?} for a {LIMIT_MS} ms limit"
     );
 }
+
+// #430 review: a run nested in another run (an embedder's host cap calling
+// `run()`) stops at the enclosing run's earlier deadline, and the error must
+// name that run's limit, not the nested run's own.
+#[test]
+fn a_nested_run_names_the_enclosing_wall_limit() {
+    let prog = assemble(".func main\nloop:\n    JMP loop\n", None, None).expect("assembly");
+    let quotas = Quotas {
+        max_steps: usize::MAX,
+        max_wall_time_ms: 5_000,
+        ..Quotas::default()
+    };
+    let outer = crate::wall::deadline_in(50).expect("deadline");
+    let _guard = crate::wall::enter(outer, 50);
+    let start = std::time::Instant::now();
+    let e = run(&prog, &quotas).unwrap_err();
+    assert!(start.elapsed() < std::time::Duration::from_millis(1_000));
+    assert!(matches!(e, crate::vm::VmError::WallTimeQuota(50)), "{e:?}");
+}
