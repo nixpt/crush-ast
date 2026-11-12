@@ -15,20 +15,18 @@ use crush_frontend::compile_crush_source;
 /// treats it as a receiver capability. Reading the list from behavior (not
 /// reflection) keeps this test honest about what the compiler actually does.
 fn known_receiver_capabilities() -> Vec<String> {
-    let candidates = [
-        "parallel_map",
-        "append",
-        "push",
-        "arr_set",
-        "arr_get",
-        "arr_slice",
-        "make_range",
-        "io_print",
-        "fs_read",
-        "name_method",
-    ];
+    // Every dot-less registry name is probed (so a capability added to the
+    // registry without the compiler list fails here), plus names that must
+    // stay member calls.
+    let mut candidates: Vec<String> = crush_vm::caps::capabilities()
+        .keys()
+        .filter(|n| !n.contains('.'))
+        .map(|n| n.to_string())
+        .collect();
+    candidates.extend(["io_print", "fs_read", "name_method"].map(String::from));
     let mut out = Vec::new();
-    for name in candidates {
+    for name in &candidates {
+        let name = name.as_str();
         let src = format!("fn main() {{ let xs = [0]; xs.{name}(1); }}");
         let p = match compile_crush_source(&src) {
             Ok(p) => p,

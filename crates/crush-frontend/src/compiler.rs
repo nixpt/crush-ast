@@ -38,6 +38,9 @@ const RECEIVER_CAPABILITIES: &[&str] = &[
     "arr_get",
     "arr_slice",
     "make_range",
+    // CRUSH-391's method form `xs.pop()` (cap_call "pop", lowered to the
+    // element-only POP op).
+    "pop",
 ];
 
 pub type CompileError = anyhow::Error;
