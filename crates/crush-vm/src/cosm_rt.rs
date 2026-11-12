@@ -938,12 +938,31 @@ pub enum MemberCall {
 /// `CALL_MEMBER name argc` on `recv`: resolve the method through the Kind and
 /// apply its receiver strategy. Never falls back to a global capability.
 pub fn call_member(recv: &Value, name: &str, argc: usize) -> Result<MemberCall, VmError> {
+    if let Value::Map(m) = recv {
+        // CRUSH-362: method-call syntax on a map calls the function
+        // stored under the key (`h.add(41)` on
+        // `{ add: |a| => a + 1 }`), with the captured values as the
+        // leading parameters — the same convention CALL_VALUE uses.
+        let v = m.borrow().get(name).cloned();
+        return match v {
+            Some(v) => {
+                let f = crate::vm::callable(&v, argc)?;
+                Ok(MemberCall::Call(Callee {
+                    func: f.name.clone(),
+                    leading: f.captured.clone(),
+                }))
+            }
+            None => Err(VmError::Cosm(format!(
+                "map has no member `{name}`: a member call on a map calls the value stored under the key"
+            ))),
+        };
+    }
     let (kind, instance) = match recv {
         Value::Record(r) => (r.kind.clone(), true),
         Value::Kind(k) => (k.clone(), false),
         other => {
             return Err(VmError::Cosm(format!(
-                "`.{name}(…)` on a {}: methods resolve on struct instances (COSM Records)",
+                "`.{name}(…)` on a {}: member calls resolve on struct instances (COSM Records) and maps",
                 other.type_name()
             )));
         }

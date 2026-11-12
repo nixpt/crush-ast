@@ -583,6 +583,41 @@ fn calling_an_impl_method_through_the_receiver_is_call_member() {
 }
 
 #[test]
+fn a_dotted_call_on_a_declared_local_resolves_at_run_time() {
+    // CRUSH-362: `h.add(41)` on a local map calls the function stored under
+    // the key. The receiver's type isn't statically known (a local can hold a
+    // struct instance or a map), so every unmarked dotted call on a declared
+    // variable lowers to CALL_MEMBER — never to a host capability named after
+    // the field (which is what made the issue refuse with "not available in
+    // this host: add").
+    let main = |src: &str| {
+        let p = crush_frontend::compile_crush_source(src).unwrap_or_else(|e| panic!("{e:#}"));
+        p.functions["main"].body.clone()
+    };
+    let body = main("fn main() {\n    let h = { add: |a| => a + 1 }\n    print(h.add(41))\n}\n");
+    let call = body
+        .iter()
+        .find(|i| i.op == "call_member")
+        .expect("a call_member");
+    assert_eq!(call.args["name"], "add");
+    assert_eq!(call.args["argc"], 1);
+    assert!(
+        !body
+            .iter()
+            .any(|i| i.op == "cap_call" && i.args["name"] == "add"),
+        "{body:?}"
+    );
+    // Namespaced capabilities are untouched: the receiver isn't a declared
+    // variable, so `fs.read(x)` is still a capability call.
+    let body = main("fn main() { let s = fs.read(\"x\") }");
+    let call = body
+        .iter()
+        .find(|i| i.op == "cap_call")
+        .expect("a cap_call");
+    assert_eq!(call.args["name"], "fs.read");
+}
+
+#[test]
 fn strategies_no_engine_runs_are_refused_at_compile_time() {
     // The VMs run Kinds since K1.4; what even they can't run is the shared
     // rule at `casm::CosmSupport::Kinds`.
