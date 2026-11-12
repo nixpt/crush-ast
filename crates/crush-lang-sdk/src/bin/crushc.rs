@@ -440,7 +440,9 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
                 Dest::File(p) => casm::Format::from_path(p),
                 Dest::Stdout => casm::Format::Json,
             };
-            let bytes = casm_prog.serialize(codec).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let bytes = casm_prog
+                .serialize(codec)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             write_artifact(cli, &dest, &bytes, "")
         }
         EmitKind::Cvms => {

@@ -158,7 +158,14 @@ fn emit_casm_is_casm_json_that_crush_run_runs() {
 #[test]
 fn binary_casm_round_trips_and_runs() {
     let d = hi();
-    let out = ok(&run("crushc", d.path(), &["hi.crush", "--emit", "casm", "-o", "hi.casmb"]), "hi.casmb");
+    let out = ok(
+        &run(
+            "crushc",
+            d.path(),
+            &["hi.crush", "--emit", "casm", "-o", "hi.casmb"],
+        ),
+        "hi.casmb",
+    );
     assert!(d.path().join("hi.casmb").is_file(), "written: {out}");
     // It loads through the gated casm loader.
     casm::Program::load(&d.path().join("hi.casmb")).unwrap();
