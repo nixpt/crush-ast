@@ -14,10 +14,15 @@ use crush_vm::{InputSource, PortableVm, Quotas};
 
 fn run_with_input(src: &str, input: &str) -> (String, i32) {
     let cast = crush_lang_bash::bash_to_cast(src).expect("bash → CAST");
-    let casm = crush_frontend::compiler::Compiler::new().compile(cast).expect("CAST → CASM");
+    let casm = crush_frontend::compiler::Compiler::new()
+        .compile(cast)
+        .expect("CAST → CASM");
     let prog = crush_lang_sdk::compile::casm_to_vm(&casm).expect("CASM → CVM1");
     let mut vm = PortableVm::new(prog);
-    vm.set_quotas(Quotas { max_steps: 2_000_000, ..Default::default() });
+    vm.set_quotas(Quotas {
+        max_steps: 2_000_000,
+        ..Default::default()
+    });
     vm.set_input(InputSource::supplied(input));
     match vm.run() {
         Ok(_) => (vm.take_output(), 0),

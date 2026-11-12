@@ -61,7 +61,12 @@ pub fn trait_default_fn_name(trait_name: &str, method: &str) -> String {
 }
 
 /// An `impl` node taken out of the CAST: type, trait, methods, meta.
-type ImplNode = (String, Option<String>, Vec<MethodDef>, HashMap<String, Value>);
+type ImplNode = (
+    String,
+    Option<String>,
+    Vec<MethodDef>,
+    HashMap<String, Value>,
+);
 
 /// A struct as declared, plus everything its impls add.
 #[derive(Debug, Clone)]
@@ -187,13 +192,19 @@ fn validate_module(module: &crush_cosm::CosmModule) -> Result<()> {
             format!("{at}{}: {} ({})", d.subject, d.message, d.code)
         })
         .collect();
-    if errors.is_empty() { Ok(()) } else { bail!("{}", errors.join("\n")) }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        bail!("{}", errors.join("\n"))
+    }
 }
 
 /// Whether `program` still has `impl` / `trait` nodes to lower.
 pub fn has_impl_or_trait(program: &Program) -> bool {
     program.functions.values().any(|f| {
-        f.body.iter().any(|s| matches!(s, Statement::ImplBlock { .. } | Statement::TraitDef { .. }))
+        f.body
+            .iter()
+            .any(|s| matches!(s, Statement::ImplBlock { .. } | Statement::TraitDef { .. }))
     })
 }
 
@@ -204,7 +215,9 @@ pub(crate) fn plan(program: &mut Program) -> Result<Option<Plan>> {
         f.body.iter().any(|s| {
             matches!(
                 s,
-                Statement::StructDef { .. } | Statement::ImplBlock { .. } | Statement::TraitDef { .. }
+                Statement::StructDef { .. }
+                    | Statement::ImplBlock { .. }
+                    | Statement::TraitDef { .. }
             )
         })
     });
@@ -228,13 +241,31 @@ pub(crate) fn plan(program: &mut Program) -> Result<Option<Plan>> {
         let body = std::mem::take(&mut func.body);
         for stmt in body {
             match stmt {
-                Statement::ImplBlock { type_name, trait_name, methods, meta } => {
+                Statement::ImplBlock {
+                    type_name,
+                    trait_name,
+                    methods,
+                    meta,
+                } => {
                     impls.push((type_name, trait_name, methods, meta));
                 }
-                Statement::TraitDef { name, methods, meta } => {
-                    traits.push(TraitPlan { name, methods, meta });
+                Statement::TraitDef {
+                    name,
+                    methods,
+                    meta,
+                } => {
+                    traits.push(TraitPlan {
+                        name,
+                        methods,
+                        meta,
+                    });
                 }
-                Statement::StructDef { ref name, ref fields, ref kind, ref meta } => {
+                Statement::StructDef {
+                    ref name,
+                    ref fields,
+                    ref kind,
+                    ref meta,
+                } => {
                     if let Some(prev) = types.iter_mut().find(|t| &t.name == name) {
                         // Two `struct P` declarations: the parser's struct table
                         // keeps the last one, so the Kind does too — but a type
@@ -352,7 +383,11 @@ pub(crate) fn plan(program: &mut Program) -> Result<Option<Plan>> {
                     ));
                     continue;
                 };
-                if types[ty_idx].trait_impls.iter().any(|ti| &ti.trait_name == trait_name) {
+                if types[ty_idx]
+                    .trait_impls
+                    .iter()
+                    .any(|ti| &ti.trait_name == trait_name)
+                {
                     errors.push(format!(
                         "{}`{what}` is written twice; implement a trait once per type",
                         span_prefix(meta)
@@ -374,7 +409,11 @@ pub(crate) fn plan(program: &mut Program) -> Result<Option<Plan>> {
                                     "{}`{}` {} `self` in trait `{trait_name}` but {} in `{what}`",
                                     span_prefix(&m.meta),
                                     m.name,
-                                    if tm.has_self() { "takes" } else { "does not take" },
+                                    if tm.has_self() {
+                                        "takes"
+                                    } else {
+                                        "does not take"
+                                    },
                                     if m.has_self() { "does" } else { "does not" }
                                 ));
                             } else if tm.params.len() != m.params.len() {
@@ -415,12 +454,16 @@ pub(crate) fn plan(program: &mut Program) -> Result<Option<Plan>> {
                         name: format!("{trait_name}::{}", tm.name),
                         function,
                         has_self: tm.has_self(),
-                        meta: own.map(|m| m.meta.clone()).unwrap_or_else(|| tm.meta.clone()),
+                        meta: own
+                            .map(|m| m.meta.clone())
+                            .unwrap_or_else(|| tm.meta.clone()),
                     });
                 }
-                types[ty_idx]
-                    .trait_impls
-                    .push(TraitImplPlan { trait_name: trait_name.clone(), meta: meta.clone(), members });
+                types[ty_idx].trait_impls.push(TraitImplPlan {
+                    trait_name: trait_name.clone(),
+                    meta: meta.clone(),
+                    members,
+                });
             }
         }
     }
@@ -454,7 +497,11 @@ pub(crate) fn plan(program: &mut Program) -> Result<Option<Plan>> {
     // a struct named like an imported module — is an error, not an overwrite.
     for (name, func) in &lifted {
         if let Some(existing) = program.functions.get(name) {
-            let module = existing.meta.get("module").and_then(Value::as_str).unwrap_or("?");
+            let module = existing
+                .meta
+                .get("module")
+                .and_then(Value::as_str)
+                .unwrap_or("?");
             bail!(
                 "{}method `{name}` has the same name as function `{name}` of imported module                  `{module}`; rename the struct or import the module `as` another name",
                 span_prefix(&func.meta)
@@ -521,7 +568,11 @@ fn describe_pos(meta: &HashMap<String, Value>) -> String {
 
 fn list_or_none<'a>(items: impl Iterator<Item = &'a str>) -> String {
     let v: Vec<String> = items.map(|s| format!("`{s}`")).collect();
-    if v.is_empty() { "nothing".to_string() } else { v.join(", ") }
+    if v.is_empty() {
+        "nothing".to_string()
+    } else {
+        v.join(", ")
+    }
 }
 
 /// The first use of `self` in `body` that `body` itself doesn't bind, with
@@ -566,9 +617,13 @@ fn binds_self(json: &Value) -> bool {
         match ty {
             "VarDecl" => binds |= obj.get("name").and_then(Value::as_str) == Some("self"),
             "Lambda" | "FunctionDef" => {
-                binds |= obj.get("params").and_then(Value::as_array).is_some_and(|ps| {
-                    ps.iter().any(|p| p.get(0).and_then(Value::as_str) == Some("self"))
-                })
+                binds |= obj
+                    .get("params")
+                    .and_then(Value::as_array)
+                    .is_some_and(|ps| {
+                        ps.iter()
+                            .any(|p| p.get(0).and_then(Value::as_str) == Some("self"))
+                    })
             }
             _ => {}
         }
@@ -616,7 +671,11 @@ pub fn refuse_unimplemented_strategies(module: &crush_cosm::CosmModule) -> Resul
         if chosen.is_empty() {
             continue;
         }
-        let at = k.span.as_ref().map(|s| format!("line {}, col {}: ", s.line, s.col)).unwrap_or_default();
+        let at = k
+            .span
+            .as_ref()
+            .map(|s| format!("line {}, col {}: ", s.line, s.col))
+            .unwrap_or_default();
         errors.push(format!(
             "{at}struct `{}` declares `@kind({})`, which no engine runs yet (the VMs implement \
              COSM K1.4, CRUSH-zorro-43). `crush_frontend::lower_to_cosm` produces its COSM",
@@ -624,5 +683,9 @@ pub fn refuse_unimplemented_strategies(module: &crush_cosm::CosmModule) -> Resul
             chosen.join(", ")
         ));
     }
-    if errors.is_empty() { Ok(()) } else { bail!("{}", errors.join("\n")) }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        bail!("{}", errors.join("\n"))
+    }
 }

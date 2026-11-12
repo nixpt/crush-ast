@@ -44,7 +44,11 @@ pub enum Moved {
     Map(Vec<(String, Moved)>),
     Error(String),
     Bytes(Vec<u8>),
-    Func { name: String, arity: u8, captured: Vec<Moved> },
+    Func {
+        name: String,
+        arity: u8,
+        captured: Vec<Moved>,
+    },
     /// A captured variable's cell, first time seen: its id and a copy of its value.
     Cell(usize, Box<Moved>),
     /// A cell already moved (by id).
@@ -76,7 +80,11 @@ impl Mover {
             ));
         }
         let d = depth + 1;
-        let mut seq = |m: &mut Self, xs: &[Value]| xs.iter().map(|x| m.out_at(x, d)).collect::<Result<Vec<_>, _>>();
+        let seq = |m: &mut Self, xs: &[Value]| {
+            xs.iter()
+                .map(|x| m.out_at(x, d))
+                .collect::<Result<Vec<_>, _>>()
+        };
         Ok(match v {
             Value::Null => Moved::Null,
             Value::Bool(b) => Moved::Bool(*b),
@@ -85,7 +93,12 @@ impl Mover {
             Value::Str(s) => Moved::Str(s.clone()),
             Value::Array(a) => Moved::Array(seq(self, &a.borrow())?),
             Value::Tuple(t) => Moved::Tuple(seq(self, t)?),
-            Value::List(l) => Moved::List(l.borrow().iter().map(|x| self.out_at(x, d)).collect::<Result<_, _>>()?),
+            Value::List(l) => Moved::List(
+                l.borrow()
+                    .iter()
+                    .map(|x| self.out_at(x, d))
+                    .collect::<Result<_, _>>()?,
+            ),
             Value::Vector(a) => Moved::Vector(seq(self, &a.borrow())?),
             Value::Set(a) => Moved::Set(seq(self, &a.borrow())?),
             Value::Map(m) => Moved::Map(
@@ -130,7 +143,9 @@ pub struct Unmover {
 impl Unmover {
     pub fn into_value(&mut self, m: Moved) -> Value {
         let shared = |u: &mut Self, xs: Vec<Moved>| {
-            std::rc::Rc::new(std::cell::RefCell::new(xs.into_iter().map(|x| u.into_value(x)).collect()))
+            std::rc::Rc::new(std::cell::RefCell::new(
+                xs.into_iter().map(|x| u.into_value(x)).collect(),
+            ))
         };
         match m {
             Moved::Null => Value::Null,
@@ -146,12 +161,19 @@ impl Unmover {
             Moved::Vector(xs) => Value::Vector(shared(self, xs)),
             Moved::Set(xs) => Value::Set(shared(self, xs)),
             Moved::Map(entries) => {
-                let entries: Vec<(String, Value)> = entries.into_iter().map(|(k, v)| (k, self.into_value(v))).collect();
+                let entries: Vec<(String, Value)> = entries
+                    .into_iter()
+                    .map(|(k, v)| (k, self.into_value(v)))
+                    .collect();
                 Value::new_map(entries)
             }
             Moved::Error(e) => Value::Error(e),
             Moved::Bytes(b) => Value::Bytes(b),
-            Moved::Func { name, arity, captured } => Value::Func(std::rc::Rc::new(FuncValue {
+            Moved::Func {
+                name,
+                arity,
+                captured,
+            } => Value::Func(std::rc::Rc::new(FuncValue {
                 name,
                 arity,
                 captured: captured.into_iter().map(|x| self.into_value(x)).collect(),
@@ -164,9 +186,12 @@ impl Unmover {
                 *cell.borrow_mut() = self.into_value(*value);
                 Value::Cell(cell)
             }
-            Moved::CellRef(id) => Value::Cell(self.cells.get(&id).cloned().unwrap_or_else(|| {
-                std::rc::Rc::new(std::cell::RefCell::new(Value::Null))
-            })),
+            Moved::CellRef(id) => Value::Cell(
+                self.cells
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| std::rc::Rc::new(std::cell::RefCell::new(Value::Null))),
+            ),
         }
     }
 }
@@ -199,18 +224,35 @@ pub type ItemResult = Result<(String, Moved), VmError>;
 /// Check `parallel_map`'s arguments and move the work out of the caller.
 pub fn jobs(args: &[Value]) -> Result<Jobs, VmError> {
     let [items, f] = args else {
-        return Err(VmError::CapArity { cap: "parallel_map".to_string(), expected: 2, got: args.len() });
+        return Err(VmError::CapArity {
+            cap: "parallel_map".to_string(),
+            expected: 2,
+            got: args.len(),
+        });
     };
     let items: Vec<Value> = match items {
         Value::Array(a) | Value::Vector(a) => a.borrow().clone(),
         Value::Tuple(t) => t.clone(),
-        other => return Err(VmError::TypeError { expected: "array", got: other.type_name() }),
+        other => {
+            return Err(VmError::TypeError {
+                expected: "array",
+                got: other.type_name(),
+            });
+        }
     };
     let func = crate::vm::callable(f, 1)?;
     let mut mover = Mover::default();
-    let captured = func.captured.iter().map(|c| mover.out(c)).collect::<Result<Vec<_>, _>>()?;
+    let captured = func
+        .captured
+        .iter()
+        .map(|c| mover.out(c))
+        .collect::<Result<Vec<_>, _>>()?;
     let items = items.iter().map(move_out).collect::<Result<Vec<_>, _>>()?;
-    Ok(Jobs { function: func.name.clone(), captured, items })
+    Ok(Jobs {
+        function: func.name.clone(),
+        captured,
+        items,
+    })
 }
 
 /// One worker thread's side of a `parallel_map`: the captured values, rebuilt
@@ -227,14 +269,24 @@ pub struct Worker<'a> {
 
 impl<'a> Worker<'a> {
     pub fn new(jobs: &'a Jobs) -> Self {
-        let mut worker = Worker { jobs, captured: Vec::new(), rebuilds: 0 };
+        let mut worker = Worker {
+            jobs,
+            captured: Vec::new(),
+            rebuilds: 0,
+        };
         worker.rebuild();
         worker
     }
 
     fn rebuild(&mut self) {
         let mut unmover = Unmover::default();
-        self.captured = self.jobs.captured.iter().cloned().map(|c| unmover.into_value(c)).collect();
+        self.captured = self
+            .jobs
+            .captured
+            .iter()
+            .cloned()
+            .map(|c| unmover.into_value(c))
+            .collect();
         self.rebuilds += 1;
     }
 
@@ -254,7 +306,11 @@ impl<'a> Worker<'a> {
     pub fn check(&mut self) -> Result<(), VmError> {
         let mut cells = std::collections::HashMap::new();
         let unchanged = self.captured.len() == self.jobs.captured.len()
-            && self.captured.iter().zip(&self.jobs.captured).all(|(v, m)| same(v, m, &mut cells, 0));
+            && self
+                .captured
+                .iter()
+                .zip(&self.jobs.captured)
+                .all(|(v, m)| same(v, m, &mut cells, 0));
         if unchanged {
             return Ok(());
         }
@@ -289,9 +345,9 @@ fn same(
         (Value::Int(a), Moved::Int(b)) => a == b,
         (Value::Float(a), Moved::Float(b)) => a.to_bits() == b.to_bits(),
         (Value::Str(a), Moved::Str(b)) => a == b,
-        (Value::Array(a), Moved::Array(b)) | (Value::Vector(a), Moved::Vector(b)) | (Value::Set(a), Moved::Set(b)) => {
-            seq(&a.borrow(), b, cells)
-        }
+        (Value::Array(a), Moved::Array(b))
+        | (Value::Vector(a), Moved::Vector(b))
+        | (Value::Set(a), Moved::Set(b)) => seq(&a.borrow(), b, cells),
         (Value::Tuple(a), Moved::Tuple(b)) => seq(a, b, cells),
         (Value::List(a), Moved::List(b)) => {
             let a = a.borrow();
@@ -299,13 +355,21 @@ fn same(
         }
         (Value::Map(a), Moved::Map(b)) => {
             let a = a.borrow();
-            a.len() == b.len() && a.iter().zip(b).all(|((ka, va), (kb, vb))| ka == kb && same(va, vb, cells, d))
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b)
+                    .all(|((ka, va), (kb, vb))| ka == kb && same(va, vb, cells, d))
         }
         (Value::Error(a), Moved::Error(b)) => a == b,
         (Value::Bytes(a), Moved::Bytes(b)) => a == b,
-        (Value::Func(f), Moved::Func { name, arity, captured }) => {
-            &f.name == name && f.arity == *arity && seq(&f.captured, captured, cells)
-        }
+        (
+            Value::Func(f),
+            Moved::Func {
+                name,
+                arity,
+                captured,
+            },
+        ) => &f.name == name && f.arity == *arity && seq(&f.captured, captured, cells),
         (Value::Cell(c), Moved::Cell(id, inner)) => match cells.get(&std::rc::Rc::as_ptr(c)) {
             Some(seen) => seen == id,
             None => {
@@ -329,10 +393,12 @@ pub fn worker_error(error: VmError) -> VmError {
              capabilities run there; host capabilities such as fs, net and process run only on \
              the main VM)"
         )),
-        VmError::CapNotDeclared(cap) if crate::caps::is_privileged(&cap) => VmError::Parallel(format!(
-            "`{cap}` isn't available inside parallel_map workers (privileged capabilities run \
+        VmError::CapNotDeclared(cap) if crate::caps::is_privileged(&cap) => {
+            VmError::Parallel(format!(
+                "`{cap}` isn't available inside parallel_map workers (privileged capabilities run \
              only on the main VM)"
-        )),
+            ))
+        }
         other => other,
     }
 }
@@ -349,7 +415,10 @@ pub fn collect(results: Vec<ItemResult>) -> Result<(String, Value), VmError> {
                 values.push(move_in(value));
             }
             Err(error) => {
-                return Err(VmError::Parallel(format!("item {index}: {}", worker_error(error))));
+                return Err(VmError::Parallel(format!(
+                    "item {index}: {}",
+                    worker_error(error)
+                )));
             }
         }
     }
@@ -360,7 +429,10 @@ pub fn collect(results: Vec<ItemResult>) -> Result<(String, Value), VmError> {
 /// capabilities declared (no fs / net / process inside a worker yet).
 pub fn worker_program(program: &crate::bytecode::Program) -> crate::bytecode::Program {
     let mut program = program.clone();
-    program.manifest.permissions.retain(|cap| !crate::caps::is_privileged(cap));
+    program
+        .manifest
+        .permissions
+        .retain(|cap| !crate::caps::is_privileged(cap));
     program
 }
 
@@ -377,7 +449,10 @@ mod tests {
     #[test]
     fn a_privileged_capability_in_a_worker_says_why() {
         let e = worker_error(VmError::UnknownCap("fs.cat".to_string())).to_string();
-        assert!(e.contains("`fs.cat` isn't available inside parallel_map workers"), "{e}");
+        assert!(
+            e.contains("`fs.cat` isn't available inside parallel_map workers"),
+            "{e}"
+        );
         let e = worker_error(VmError::DivByZero).to_string();
         assert_eq!(e, "division by zero");
     }
@@ -392,11 +467,21 @@ mod tests {
         }));
         *cell.borrow_mut() = f.clone(); // f captures a cell holding f
         let mut mover = Mover::default();
-        let moved = vec![mover.out(&f).unwrap(), mover.out(&Value::Cell(cell)).unwrap()];
+        let moved = vec![
+            mover.out(&f).unwrap(),
+            mover.out(&Value::Cell(cell)).unwrap(),
+        ];
         let mut unmover = Unmover::default();
         let back: Vec<Value> = moved.into_iter().map(|m| unmover.into_value(m)).collect();
-        let (Value::Func(f2), Value::Cell(c2)) = (&back[0], &back[1]) else { panic!("{back:?}") };
-        let Value::Cell(inner) = &f2.captured[0] else { panic!() };
-        assert!(std::rc::Rc::ptr_eq(inner, c2), "the shared cell must stay shared");
+        let (Value::Func(f2), Value::Cell(c2)) = (&back[0], &back[1]) else {
+            panic!("{back:?}")
+        };
+        let Value::Cell(inner) = &f2.captured[0] else {
+            panic!()
+        };
+        assert!(
+            std::rc::Rc::ptr_eq(inner, c2),
+            "the shared cell must stay shared"
+        );
     }
 }

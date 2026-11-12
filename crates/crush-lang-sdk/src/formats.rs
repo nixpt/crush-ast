@@ -65,7 +65,9 @@ pub const ACCEPTED: &str =
 
 /// The lower-cased file name of `path`.
 fn file_name(path: &Path) -> String {
-    path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default()
+    path.file_name()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default()
 }
 
 /// Whether `bytes` starts (after whitespace) with `{`: JSON, not assembly text.
@@ -142,7 +144,8 @@ pub fn detect_or_bail(path: &Path, show_note: bool) -> anyhow::Result<InputForma
 /// Load a CAST file through the gated [`crush_cast::Program::load`] (the
 /// `cast_version` major must match [`crush_cast::CAST_VERSION`]).
 pub fn load_cast(path: &Path, format: InputFormat) -> anyhow::Result<crush_cast::Program> {
-    let data = std::fs::read(path).map_err(|e| anyhow::anyhow!("cannot read '{}': {e}", path.display()))?;
+    let data = std::fs::read(path)
+        .map_err(|e| anyhow::anyhow!("cannot read '{}': {e}", path.display()))?;
     let codec = match format {
         InputFormat::CastBinary => crush_cast::Format::Binary,
         _ => crush_cast::Format::Json,
@@ -154,7 +157,8 @@ pub fn load_cast(path: &Path, format: InputFormat) -> anyhow::Result<crush_cast:
 /// Load a CASM file through the gated `casm::Program::deserialize` (the
 /// `version` major must match [`casm::CASM_VERSION`]).
 pub fn load_casm(path: &Path, format: InputFormat) -> anyhow::Result<casm::Program> {
-    let data = std::fs::read(path).map_err(|e| anyhow::anyhow!("cannot read '{}': {e}", path.display()))?;
+    let data = std::fs::read(path)
+        .map_err(|e| anyhow::anyhow!("cannot read '{}': {e}", path.display()))?;
     let codec = match format {
         InputFormat::CasmBinary => casm::Format::Binary,
         _ => casm::Format::Json,
@@ -164,7 +168,10 @@ pub fn load_casm(path: &Path, format: InputFormat) -> anyhow::Result<casm::Progr
 
 /// `path` without its format extension: `x.cast.json` → `x`, `x.crush` → `x`.
 pub fn artifact_stem(path: &Path) -> PathBuf {
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let lower = name.to_ascii_lowercase();
     for compound in [".cast.json", ".casm.json"] {
         if lower.ends_with(compound) {
@@ -178,7 +185,10 @@ pub fn artifact_stem(path: &Path) -> PathBuf {
 /// `ext` may itself be compound (`cast.json`).
 pub fn artifact_path(input: &Path, ext: &str) -> PathBuf {
     let stem = artifact_stem(input);
-    let name = stem.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = stem
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     stem.with_file_name(format!("{name}.{ext}"))
 }
 
@@ -218,7 +228,13 @@ mod tests {
     #[test]
     fn casm_is_json_and_a_text_casm_is_cvms_with_a_note() {
         let json = detect_named("a.casm", "  \n{\"version\":\"1.0\"}").unwrap();
-        assert_eq!(json, Detected { format: InputFormat::CasmJson, note: None });
+        assert_eq!(
+            json,
+            Detected {
+                format: InputFormat::CasmJson,
+                note: None
+            }
+        );
         let text = detect_named("a.casm", ".func main\nHALT\n").unwrap();
         assert_eq!(text.format, InputFormat::Cvms);
         assert!(text.note.unwrap().contains("rename it to `.cvms`"));
@@ -233,10 +249,25 @@ mod tests {
 
     #[test]
     fn artifact_paths_strip_compound_extensions() {
-        assert_eq!(artifact_path(Path::new("d/x.crush"), "cvm1"), Path::new("d/x.cvm1"));
-        assert_eq!(artifact_path(Path::new("d/x.cast.json"), "cvm1"), Path::new("d/x.cvm1"));
-        assert_eq!(artifact_path(Path::new("x.crush"), "cast.json"), Path::new("x.cast.json"));
-        assert_eq!(artifact_path(Path::new("x.casm.json"), "casm"), Path::new("x.casm"));
-        assert_eq!(artifact_path(Path::new("x.castb"), "cvms"), Path::new("x.cvms"));
+        assert_eq!(
+            artifact_path(Path::new("d/x.crush"), "cvm1"),
+            Path::new("d/x.cvm1")
+        );
+        assert_eq!(
+            artifact_path(Path::new("d/x.cast.json"), "cvm1"),
+            Path::new("d/x.cvm1")
+        );
+        assert_eq!(
+            artifact_path(Path::new("x.crush"), "cast.json"),
+            Path::new("x.cast.json")
+        );
+        assert_eq!(
+            artifact_path(Path::new("x.casm.json"), "casm"),
+            Path::new("x.casm")
+        );
+        assert_eq!(
+            artifact_path(Path::new("x.castb"), "cvms"),
+            Path::new("x.cvms")
+        );
     }
 }

@@ -183,9 +183,7 @@ impl Default for DejavueEvent {
 /// stable across the index's lifetime. Future SQLite migration will
 /// store `(text, event_id)` FK pairs instead of positions, but the
 /// public API doesn't change.
-pub fn build_annotation_links(
-    events: &[DejavueEvent],
-) -> HashMap<String, Vec<usize>> {
+pub fn build_annotation_links(events: &[DejavueEvent]) -> HashMap<String, Vec<usize>> {
     let mut links: HashMap<String, Vec<usize>> = HashMap::new();
     for (idx, ev) in events.iter().enumerate() {
         if ev.event != "decision" {

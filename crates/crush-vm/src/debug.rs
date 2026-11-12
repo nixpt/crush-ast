@@ -89,7 +89,10 @@ pub enum ValueView {
     /// can't be looked up or compared across sessions.
     Redacted { type_name: &'static str, hash: u64 },
     /// The value's text (strings quoted).
-    Plain { type_name: &'static str, text: String },
+    Plain {
+        type_name: &'static str,
+        text: String,
+    },
 }
 
 impl std::fmt::Display for ValueView {
@@ -582,7 +585,11 @@ mod tests {
         vm.run().unwrap(); // the STORE of the cell
         vm.run().unwrap(); // the CELL_SET
         match vm.last_stop() {
-            Some(DebugStop::Watch { old: Some(old), new, .. }) => {
+            Some(DebugStop::Watch {
+                old: Some(old),
+                new,
+                ..
+            }) => {
                 assert_eq!(old, &Value::Int(1));
                 assert_eq!(new, &Value::Int(2));
             }
@@ -720,10 +727,18 @@ mod tests {
             ValueView::Hidden
         );
         let redacted = Redactor::new(DebugVisibility::InspectRedacted).view(&secret);
-        assert!(matches!(redacted, ValueView::Redacted { type_name: "str", .. }));
+        assert!(matches!(
+            redacted,
+            ValueView::Redacted {
+                type_name: "str",
+                ..
+            }
+        ));
         assert!(!redacted.to_string().contains("hunter2"), "{redacted}");
         assert_eq!(
-            Redactor::new(DebugVisibility::Full).view(&secret).to_string(),
+            Redactor::new(DebugVisibility::Full)
+                .view(&secret)
+                .to_string(),
             "\"hunter2\""
         );
     }

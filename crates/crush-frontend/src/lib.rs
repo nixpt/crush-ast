@@ -7,14 +7,14 @@ pub mod exhaustive_check;
 pub mod import_system;
 pub mod lang_imports;
 pub mod language_walkers;
+pub mod mutation_check;
 pub mod optimizer;
 pub mod parser;
 pub mod render;
 pub mod semantics;
 pub mod types;
-pub mod mutation_check;
-pub mod wip_check;
 mod walker_intrinsics;
+pub mod wip_check;
 
 use anyhow::Result;
 
@@ -101,7 +101,10 @@ pub fn parse_source(source: &str) -> Result<crush_cast::Program> {
 /// (CRUSH-110): every `import a.b` is loaded from `a/b.crush` in the file's
 /// directory or a directory of `opts`, and merged into the returned program
 /// (see [`import_system`]). The entry point for compiling a file.
-pub fn parse_file(path: &std::path::Path, opts: &import_system::ImportOptions) -> Result<crush_cast::Program> {
+pub fn parse_file(
+    path: &std::path::Path,
+    opts: &import_system::ImportOptions,
+) -> Result<crush_cast::Program> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("cannot read '{}': {e}", path.display()))?;
     parse_source_with_imports(&source, path, opts)
@@ -311,5 +314,8 @@ pub fn extract_symbol(source: &str, name: &str) -> Result<String> {
 /// Returns `None` if no `@module` annotation was declared.
 pub fn extract_manifest(source: &str) -> Result<Option<String>> {
     let program = parse_source(source)?;
-    Ok(program.manifest.as_ref().map(render::render_module_manifest))
+    Ok(program
+        .manifest
+        .as_ref()
+        .map(render::render_module_manifest))
 }

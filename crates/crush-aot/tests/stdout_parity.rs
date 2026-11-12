@@ -14,12 +14,19 @@ fn aot_runner() -> PathBuf {
 }
 
 fn cc_available(cc: &str) -> bool {
-    Command::new(cc).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(cc)
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Program stdout, without the type-tagged result line the runner prints last.
 fn program_stdout(so: &Path) -> String {
-    let out = Command::new(aot_runner()).arg(so).output().expect("spawn crush-aot-runner");
+    let out = Command::new(aot_runner())
+        .arg(so)
+        .output()
+        .expect("spawn crush-aot-runner");
     assert!(
         out.status.success(),
         "crush-aot-runner failed: {}",
@@ -42,11 +49,15 @@ fn assert_prints(name: &str, source: &str, expected: &str) {
     let program = crush_frontend::compile_crush_source(source).expect("frontend");
     let compiler = AotCompiler::new();
 
-    let so = compiler.compile_casm(&program, &format!("{name}_rust")).expect("rust backend");
+    let so = compiler
+        .compile_casm(&program, &format!("{name}_rust"))
+        .expect("rust backend");
     assert_eq!(program_stdout(&so), expected, "rust backend: {name}");
 
     if cc_available("gcc") {
-        let so = compiler.compile_c(&program, &format!("{name}_c"), "gcc").expect("c backend");
+        let so = compiler
+            .compile_c(&program, &format!("{name}_c"), "gcc")
+            .expect("c backend");
         assert_eq!(program_stdout(&so), expected, "c backend: {name}");
     } else {
         eprintln!("gcc not found; skipping the C backend for {name}");
@@ -233,12 +244,18 @@ fn io_write_has_no_implicit_newline() {
         "t.c",
     )
     .expect("c walker");
-    let program = crush_frontend::compiler::Compiler::new().compile(cast).expect("compile");
+    let program = crush_frontend::compiler::Compiler::new()
+        .compile(cast)
+        .expect("compile");
     let compiler = AotCompiler::new();
-    let so = compiler.compile_casm(&program, "io_write_rust").expect("rust backend");
+    let so = compiler
+        .compile_casm(&program, "io_write_rust")
+        .expect("rust backend");
     assert_eq!(program_stdout(&so), "0 1 2 |x\n", "rust backend");
     if cc_available("gcc") {
-        let so = compiler.compile_c(&program, "io_write_c", "gcc").expect("c backend");
+        let so = compiler
+            .compile_c(&program, "io_write_c", "gcc")
+            .expect("c backend");
         assert_eq!(program_stdout(&so), "0 1 2 |x\n", "c backend");
     }
 }

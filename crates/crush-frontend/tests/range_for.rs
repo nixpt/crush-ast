@@ -20,7 +20,9 @@ fn range_for_loop_parses() {
 #[test]
 fn range_bounds_may_be_expressions() {
     // Precedence check: `..` must bind LOOSER than `+`, so this is `0..(n+1)`, not `(0..n)+1`.
-    assert!(compiles("fn main() { let n = 2; for i in 0..n+1 { print(i); } }"));
+    assert!(compiles(
+        "fn main() { let n = 2; for i in 0..n+1 { print(i); } }"
+    ));
 }
 
 #[test]
@@ -30,13 +32,17 @@ fn empty_range_is_legal() {
 
 #[test]
 fn break_and_continue_work_inside_a_range_loop() {
-    assert!(compiles("fn main() { for i in 0..9 { if i > 1 { break; } print(i); } }"));
+    assert!(compiles(
+        "fn main() { for i in 0..9 { if i > 1 { break; } print(i); } }"
+    ));
 }
 
 #[test]
 fn nested_ranges_do_not_collide() {
     // Each loop allocates its own __end_N temp; a shared one would break the outer loop.
-    assert!(compiles("fn main() { for i in 0..2 { for j in 0..2 { print(j); } } }"));
+    assert!(compiles(
+        "fn main() { for i in 0..2 { for j in 0..2 { print(j); } } }"
+    ));
 }
 
 #[test]
@@ -78,7 +84,9 @@ fn await_on_a_normal_call_still_parses() {
 
 #[test]
 fn field_assignment_parses() {
-    assert!(compiles("struct P { x } fn main() { let p = new P(); p.x = 10; }"));
+    assert!(compiles(
+        "struct P { x } fn main() { let p = new P(); p.x = 10; }"
+    ));
 }
 
 #[test]
@@ -92,7 +100,9 @@ fn nested_field_assignment_parses() {
 
 #[test]
 fn new_struct_instantiation_works() {
-    assert!(compiles("struct P { x } fn main() { let p = new P(); p.x = 1; }"));
+    assert!(compiles(
+        "struct P { x } fn main() { let p = new P(); p.x = 1; }"
+    ));
 }
 
 #[test]
@@ -138,7 +148,10 @@ fn top_level_statements_run_before_main() {
     // Ordering matters: top-level code is module-init and must come first.
     let p = crush_frontend::parse_source("let z = 1;\nfn main() { print(\"hi\"); }").unwrap();
     let body = &p.functions.get("main").unwrap().body;
-    assert!(matches!(body[0], crush_cast::Statement::VarDecl { .. }), "top-level must run first");
+    assert!(
+        matches!(body[0], crush_cast::Statement::VarDecl { .. }),
+        "top-level must run first"
+    );
 }
 
 #[test]

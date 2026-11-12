@@ -12,7 +12,10 @@ fn run(source: &str) -> String {
 }
 
 fn compile_err(source: &str) -> String {
-    format!("{:#}", crush_lang_sdk::compile::compile_crush_source(source).expect_err("should not compile"))
+    format!(
+        "{:#}",
+        crush_lang_sdk::compile::compile_crush_source(source).expect_err("should not compile")
+    )
 }
 
 /// The issue's repro: was `[type] type error: Undefined variable: Point`.

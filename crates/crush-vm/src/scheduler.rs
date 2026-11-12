@@ -86,7 +86,11 @@ pub fn polyglot_gate_name(lang: &str) -> String {
 /// allowlist, when set, names it (`CapDenied` otherwise). SHARED by
 /// `dispatch_cap` and the `EXEC_LANG` arm of both engines (CRUSH-226: the
 /// polyglot gate used to skip both checks).
-pub(crate) fn check_cap_permitted(cap: &str, declared: bool, quotas: &Quotas) -> Result<(), VmError> {
+pub(crate) fn check_cap_permitted(
+    cap: &str,
+    declared: bool,
+    quotas: &Quotas,
+) -> Result<(), VmError> {
     if !declared {
         return Err(VmError::CapNotDeclared(cap.to_string()));
     }
@@ -133,7 +137,12 @@ pub(crate) fn lang_runtime_error(lang: &str, stderr: &[u8], crush_line: Option<u
 /// failure (dependency resolve/fetch failed, or the sandboxed command itself
 /// could not be built/spawned) — distinct from [`lang_runtime_error`]'s guest
 /// exception: the guest program never got a chance to run at all here.
-pub(crate) fn sandbox_setup_error(lang: &str, message: impl Into<String>, crush_line: Option<u32>) -> VmError {
+#[cfg_attr(not(feature = "sandboxed-polyglot"), expect(dead_code))]
+pub(crate) fn sandbox_setup_error(
+    lang: &str,
+    message: impl Into<String>,
+    crush_line: Option<u32>,
+) -> VmError {
     VmError::LangRuntimeError {
         lang: lang.to_string(),
         message: message.into(),
@@ -266,7 +275,10 @@ pub(crate) struct ExecLangOutcome {
 pub(crate) fn parse_exec_lang_stdout(raw: &str) -> ExecLangOutcome {
     // Last one wins, matching "the block's final bound output" if it somehow
     // printed the sentinel more than once.
-    let result_payload = raw.lines().filter_map(|line| line.strip_prefix(CRUSH_RESULT_SENTINEL)).next_back();
+    let result_payload = raw
+        .lines()
+        .filter_map(|line| line.strip_prefix(CRUSH_RESULT_SENTINEL))
+        .next_back();
     // Shared with inline-lowered blocks (#312), so both modes print the same.
     let visible = crate::block_capture::visible_text(raw);
     let result_value = match result_payload {
@@ -274,7 +286,10 @@ pub(crate) fn parse_exec_lang_stdout(raw: &str) -> ExecLangOutcome {
             .unwrap_or_else(|_| Value::Str(payload.to_string())),
         None => Value::Str(visible.clone()),
     };
-    ExecLangOutcome { visible, result_value }
+    ExecLangOutcome {
+        visible,
+        result_value,
+    }
 }
 
 /// Extract an EXEC_LANG block's marshaled outputs from its parsed result (the
@@ -301,7 +316,7 @@ pub(crate) fn exec_lang_outputs(
         _ => {
             return Err(VmError::UnknownCap(format!(
                 "@{lang} block produced no marshaled outputs (expected {out_count})"
-            )))
+            )));
         }
     };
     let mut values = Vec::with_capacity(out_count);
@@ -313,7 +328,7 @@ pub(crate) fn exec_lang_outputs(
             None => {
                 return Err(VmError::UnknownCap(format!(
                     "@{lang} block did not produce its declared output `{name}`"
-                )))
+                )));
             }
         }
     }
@@ -360,7 +375,16 @@ pub(crate) fn run_exec_lang_stdout(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (binary, exec_flag, code_str, deps, env_vars, crush_line, gate, max_wall_time_ms);
+        let _ = (
+            binary,
+            exec_flag,
+            code_str,
+            deps,
+            env_vars,
+            crush_line,
+            gate,
+            max_wall_time_ms,
+        );
         return Err(VmError::UnknownCap(format!(
             "@{lang}: polyglot subprocess execution is not supported on wasm32 targets"
         )));
@@ -370,7 +394,13 @@ pub(crate) fn run_exec_lang_stdout(
     {
         #[cfg(feature = "sandboxed-polyglot")]
         let (cmd, remaining_ms) = crate::bucket_exec::build_sandboxed_command(
-            lang, binary, exec_flag, code_str, deps, env_vars, max_wall_time_ms,
+            lang,
+            binary,
+            exec_flag,
+            code_str,
+            deps,
+            env_vars,
+            max_wall_time_ms,
         )
         .map_err(|msg| sandbox_setup_error(lang, msg, crush_line))?;
 
@@ -474,10 +504,16 @@ pub fn run_scheduled_with_transcript(
     quotas: &Quotas,
     host_caps: Option<&HostCaps>,
     sink: Option<&mut dyn FnMut(&str)>,
-) -> (Result<VmResult, VmError>, crate::transcript::TranscriptDigest) {
-    let scope = crate::transcript::active::Scope::enter(Some(crate::transcript::Transcript::new(program)));
+) -> (
+    Result<VmResult, VmError>,
+    crate::transcript::TranscriptDigest,
+) {
+    let scope =
+        crate::transcript::active::Scope::enter(Some(crate::transcript::Transcript::new(program)));
     let result = run_from(program, quotas, host_caps, sink, None, None);
-    let transcript = scope.finish().expect("the run's transcript is still installed");
+    let transcript = scope
+        .finish()
+        .expect("the run's transcript is still installed");
     (result, transcript.digest())
 }
 
@@ -575,7 +611,10 @@ fn run_from(
             if let Some(target) = threads[current].waiting_for {
                 let target = target as usize;
                 if target >= threads.len() || threads[target].done {
-                    let rv = threads.get(target).and_then(|t| t.return_value.clone()).unwrap_or(Value::Null);
+                    let rv = threads
+                        .get(target)
+                        .and_then(|t| t.return_value.clone())
+                        .unwrap_or(Value::Null);
                     threads[current].waiting_for = None;
                     threads[current].stack.push(rv);
                 }
@@ -618,7 +657,8 @@ fn run_from(
         if ip >= n {
             return Err(VmError::TruncatedInstruction(ip));
         }
-        let isize = bytecode::instruction_size(code[ip]).ok_or(VmError::UnknownOpcode(code[ip], ip))?;
+        let isize =
+            bytecode::instruction_size(code[ip]).ok_or(VmError::UnknownOpcode(code[ip], ip))?;
         if ip + isize > n {
             return Err(VmError::TruncatedInstruction(ip));
         }
@@ -640,9 +680,20 @@ fn run_from(
 
         // Borrow ends when execute_one returns — index access is safe in the match below.
         let action = execute_one(
-            &mut threads[current], code, ip, next_ip, n, program, quotas,
-            &declared, host_caps, &func_entry, &mut shared_out_parts, &mut shared_out_len,
-            &mut shared_err_parts, &kinds,
+            &mut threads[current],
+            code,
+            ip,
+            next_ip,
+            n,
+            program,
+            quotas,
+            &declared,
+            host_caps,
+            &func_entry,
+            &mut shared_out_parts,
+            &mut shared_out_len,
+            &mut shared_err_parts,
+            &kinds,
         );
         // Before acting on an error: what the program printed so far still goes out.
         // Stream from the shared buffer so worker thread output appears live too.
@@ -688,7 +739,9 @@ fn run_from(
         // 2026-10-15): it finishes like RET, its top-of-stack is its result
         // and its waiters wake. Only main's HALT ends the program.
         let action = match action {
-            StepAction::Finish(result) if current != 0 => StepAction::Done(result.stack.last().cloned()),
+            StepAction::Finish(result) if current != 0 => {
+                StepAction::Done(result.stack.last().cloned())
+            }
             other => other,
         };
 
@@ -718,10 +771,10 @@ fn run_from(
                 threads[current].return_value = ret_val;
                 // Capture return value before iterating to avoid aliasing.
                 let rv = threads[current].return_value.clone().unwrap_or(Value::Null);
-                for i in 0..threads.len() {
-                    if i != current && threads[i].waiting_for == Some(current as u64) {
-                        threads[i].waiting_for = None;
-                        threads[i].stack.push(rv.clone());
+                for (i, thread) in threads.iter_mut().enumerate() {
+                    if i != current && thread.waiting_for == Some(current as u64) {
+                        thread.waiting_for = None;
+                        thread.stack.push(rv.clone());
                     }
                 }
                 // Go-style semantics (per #174 review): main returning ends the
@@ -839,7 +892,14 @@ fn execute_one(
                 None
             } else {
                 let mut hook = |f: &str, recv: Value| -> Result<Value, VmError> {
-                    let r = run_from(program, quotas, host_caps, None, None, Some((f, vec![recv])))?;
+                    let r = run_from(
+                        program,
+                        quotas,
+                        host_caps,
+                        None,
+                        None,
+                        Some((f, vec![recv])),
+                    )?;
                     if !r.output.is_empty() {
                         *out_len += r.output.len();
                         if *out_len > quotas.max_output {
@@ -913,7 +973,11 @@ fn execute_one(
     macro_rules! const_str {
         () => {{
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
-            program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone()
+            program
+                .consts
+                .get(idx)
+                .ok_or(VmError::ConstOutOfRange(idx))?
+                .clone()
         }};
     }
 
@@ -967,15 +1031,19 @@ fn execute_one(
             push!(a);
         }
         PICK => {
-            let n = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;
+            let n = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
             let len = stack.len();
-            if n >= len { return Err(VmError::StackUnderflow); }
+            if n >= len {
+                return Err(VmError::StackUnderflow);
+            }
             push!(stack[len - 1 - n].clone());
         }
         ROLL => {
-            let n = u16::from_be_bytes(code[ip+1..ip+3].try_into().unwrap()) as usize;
+            let n = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
             let len = stack.len();
-            if n >= len { return Err(VmError::StackUnderflow); }
+            if n >= len {
+                return Err(VmError::StackUnderflow);
+            }
             let idx = len - 1 - n;
             let v = stack.remove(idx);
             push!(v);
@@ -996,7 +1064,10 @@ fn execute_one(
         // is the single most common thing anyone writes, and it was a hard type error.
         // (`"a" + "b"` already worked; only the MIXED case failed.)
         ADD if matches!(stack.last(), Some(Value::Str(_)))
-            || matches!(stack.len().checked_sub(2).and_then(|k| stack.get(k)), Some(Value::Str(_))) =>
+            || matches!(
+                stack.len().checked_sub(2).and_then(|k| stack.get(k)),
+                Some(Value::Str(_))
+            ) =>
         {
             let b = pop!();
             let a = pop!();
@@ -1067,13 +1138,24 @@ fn execute_one(
                 let len = a_ref.len().min(b_ref.len());
                 let mut res = Vec::with_capacity(len);
                 for i in 0..len {
-                    let va = match &a_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
-                    let vb = match &b_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    let va = match &a_ref[i] {
+                        Value::Int(x) => *x as f64,
+                        Value::Float(x) => *x,
+                        _ => 0.0,
+                    };
+                    let vb = match &b_ref[i] {
+                        Value::Int(x) => *x as f64,
+                        Value::Float(x) => *x,
+                        _ => 0.0,
+                    };
                     res.push(Value::Float(va + vb));
                 }
                 push!(Value::new_array(res));
             } else {
-                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+                return Err(VmError::TypeError {
+                    expected: "array",
+                    got: "non-array",
+                });
             }
         }
         VEC_DOT => {
@@ -1085,13 +1167,24 @@ fn execute_one(
                 let len = a_ref.len().min(b_ref.len());
                 let mut sum = 0.0;
                 for i in 0..len {
-                    let va = match &a_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
-                    let vb = match &b_ref[i] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 };
+                    let va = match &a_ref[i] {
+                        Value::Int(x) => *x as f64,
+                        Value::Float(x) => *x,
+                        _ => 0.0,
+                    };
+                    let vb = match &b_ref[i] {
+                        Value::Int(x) => *x as f64,
+                        Value::Float(x) => *x,
+                        _ => 0.0,
+                    };
                     sum += va * vb;
                 }
                 push!(Value::Float(sum));
             } else {
-                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+                return Err(VmError::TypeError {
+                    expected: "array",
+                    got: "non-array",
+                });
             }
         }
         MAT_MUL => {
@@ -1105,15 +1198,39 @@ fn execute_one(
                     push!(Value::new_array(vec![]));
                 } else {
                     let rows_a = a_ref.len();
-                    let cols_a = if let Value::Array(first) = &a_ref[0] { first.borrow().len() } else { 0 };
-                    let cols_b = if let Value::Array(first) = &b_ref[0] { first.borrow().len() } else { 0 };
+                    let cols_a = if let Value::Array(first) = &a_ref[0] {
+                        first.borrow().len()
+                    } else {
+                        0
+                    };
+                    let cols_b = if let Value::Array(first) = &b_ref[0] {
+                        first.borrow().len()
+                    } else {
+                        0
+                    };
                     for i in 0..rows_a {
                         let mut row_res = Vec::new();
                         for j in 0..cols_b {
                             let mut sum = 0.0;
                             for k in 0..cols_a {
-                                let va = if let Value::Array(r) = &a_ref[i] { match &r.borrow()[k] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 } } else { 0.0 };
-                                let vb = if let Value::Array(r) = &b_ref[k] { match &r.borrow()[j] { Value::Int(x) => *x as f64, Value::Float(x) => *x, _ => 0.0 } } else { 0.0 };
+                                let va = if let Value::Array(r) = &a_ref[i] {
+                                    match &r.borrow()[k] {
+                                        Value::Int(x) => *x as f64,
+                                        Value::Float(x) => *x,
+                                        _ => 0.0,
+                                    }
+                                } else {
+                                    0.0
+                                };
+                                let vb = if let Value::Array(r) = &b_ref[k] {
+                                    match &r.borrow()[j] {
+                                        Value::Int(x) => *x as f64,
+                                        Value::Float(x) => *x,
+                                        _ => 0.0,
+                                    }
+                                } else {
+                                    0.0
+                                };
                                 sum += va * vb;
                             }
                             row_res.push(Value::Float(sum));
@@ -1123,7 +1240,10 @@ fn execute_one(
                     push!(Value::new_array(res));
                 }
             } else {
-                return Err(VmError::TypeError { expected: "array", got: "non-array".into() });
+                return Err(VmError::TypeError {
+                    expected: "array",
+                    got: "non-array",
+                });
             }
         }
         AND | OR => {
@@ -1142,10 +1262,16 @@ fn execute_one(
             let bi = to_i64(&b);
             let result = match opcode {
                 BITAND => Value::Int(ai & bi),
-                BITOR  => Value::Int(ai | bi),
+                BITOR => Value::Int(ai | bi),
                 BITXOR => Value::Int(ai ^ bi),
-                SHL    => Value::Int(ai.checked_shl(bi as u32).ok_or(VmError::ArithmeticOverflow)?),
-                SHR    => Value::Int(ai.checked_shr(bi as u32).ok_or(VmError::ArithmeticOverflow)?),
+                SHL => Value::Int(
+                    ai.checked_shl(bi as u32)
+                        .ok_or(VmError::ArithmeticOverflow)?,
+                ),
+                SHR => Value::Int(
+                    ai.checked_shr(bi as u32)
+                        .ok_or(VmError::ArithmeticOverflow)?,
+                ),
                 _ => unreachable!(),
             };
             push!(result);
@@ -1165,7 +1291,11 @@ fn execute_one(
         }
         CAST => {
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
-            let type_name = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+            let type_name = program
+                .consts
+                .get(idx)
+                .ok_or(VmError::ConstOutOfRange(idx))?
+                .clone();
             let v = pop!();
             match type_name.as_str() {
                 "str" | "string" => push!(Value::Str(v.as_text())),
@@ -1221,10 +1351,19 @@ fn execute_one(
                     let idx = need_array_index(&idx_v)?;
                     let len = s.chars().count();
                     let actual = wrap_index(idx, len)?;
-                    let ch = s.chars().nth(actual).map(|c| c.to_string()).unwrap_or_default();
+                    let ch = s
+                        .chars()
+                        .nth(actual)
+                        .map(|c| c.to_string())
+                        .unwrap_or_default();
                     push!(Value::Str(ch));
                 }
-                _ => return Err(VmError::TypeError { expected: "array, map, or string", got: arr_v.type_name() }),
+                _ => {
+                    return Err(VmError::TypeError {
+                        expected: "array, map, or string",
+                        got: arr_v.type_name(),
+                    });
+                }
             }
         }
         ARR_SET => {
@@ -1271,7 +1410,7 @@ fn execute_one(
                     return Err(VmError::TypeError {
                         expected: "array or string",
                         got: other.type_name(),
-                    })
+                    });
                 }
             }
         }
@@ -1427,11 +1566,19 @@ fn execute_one(
                     .and_then(|()| crate::cosm_rt::index_cap(&cap, &args));
                 // CRUSH-165 hook: an index cap's outcome.
                 #[cfg(feature = "transcript")]
-                crate::transcript::active::cap(&cap, &args, match &access {
-                    Ok(crate::cosm_rt::IndexAccess::Done(v)) => crate::transcript::CapOutcome::Value(v),
-                    Ok(crate::cosm_rt::IndexAccess::Call { .. }) => crate::transcript::CapOutcome::AccessorCall,
-                    Err(e) => crate::transcript::CapOutcome::Error(e),
-                });
+                crate::transcript::active::cap(
+                    &cap,
+                    &args,
+                    match &access {
+                        Ok(crate::cosm_rt::IndexAccess::Done(v)) => {
+                            crate::transcript::CapOutcome::Value(v)
+                        }
+                        Ok(crate::cosm_rt::IndexAccess::Call { .. }) => {
+                            crate::transcript::CapOutcome::AccessorCall
+                        }
+                        Err(e) => crate::transcript::CapOutcome::Error(e),
+                    },
+                );
                 match access? {
                     crate::cosm_rt::IndexAccess::Done(v) => push!(v),
                     crate::cosm_rt::IndexAccess::Call { call, after } => {
@@ -1451,10 +1598,14 @@ fn execute_one(
                     .and_then(|()| parallel_map(program, quotas, &args));
                 // CRUSH-165 hook: parallel_map's results (its workers aren't transcribed).
                 #[cfg(feature = "transcript")]
-                crate::transcript::active::cap(&cap, &args, match &mapped {
-                    Ok((_, results)) => crate::transcript::CapOutcome::Value(results),
-                    Err(e) => crate::transcript::CapOutcome::Error(e),
-                });
+                crate::transcript::active::cap(
+                    &cap,
+                    &args,
+                    match &mapped {
+                        Ok((_, results)) => crate::transcript::CapOutcome::Value(results),
+                        Err(e) => crate::transcript::CapOutcome::Error(e),
+                    },
+                );
                 let (output, results) = mapped?;
                 if !output.is_empty() {
                     *out_len += output.len();
@@ -1469,11 +1620,24 @@ fn execute_one(
                 #[cfg(feature = "transcript")]
                 let recorded_args = args.clone();
                 let result = dispatch_cap(
-                    &cap, args, declared, quotas, out_parts, out_len, err_parts, host_caps, captures, call_stack.len(),
+                    &cap,
+                    args,
+                    declared,
+                    quotas,
+                    out_parts,
+                    out_len,
+                    err_parts,
+                    host_caps,
+                    captures,
+                    call_stack.len(),
                 );
                 // CRUSH-165 hook: every other CAP_CALL (built-in and host caps).
                 #[cfg(feature = "transcript")]
-                crate::transcript::active::cap(&cap, &recorded_args, crate::transcript::CapOutcome::of(&result));
+                crate::transcript::active::cap(
+                    &cap,
+                    &recorded_args,
+                    crate::transcript::CapOutcome::of(&result),
+                );
                 if let Some(v) = result? {
                     push!(v);
                 }
@@ -1503,7 +1667,10 @@ fn execute_one(
         MAKE_CLOSURE => {
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
             let (arity, ncap) = (code[ip + 3], code[ip + 4] as usize);
-            let fname = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?;
+            let fname = program
+                .consts
+                .get(idx)
+                .ok_or(VmError::ConstOutOfRange(idx))?;
             if !func_entry.contains_key(fname.as_str()) {
                 return Err(VmError::UnknownFunction(fname.clone()));
             }
@@ -1623,7 +1790,10 @@ fn execute_one(
                 .map_err(|_| VmError::UnknownCap("exec_lang: invalid args JSON".to_string()))?;
             let lang = spec.get("lang").and_then(|v| v.as_str()).unwrap_or("?");
             let code_str = spec.get("code").and_then(|v| v.as_str()).unwrap_or("");
-            let crush_line = spec.get("crush_line").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let crush_line = spec
+                .get("crush_line")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
             let var_count = spec.get("var_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let mut var_names: Vec<String> = Vec::with_capacity(var_count);
             let mut var_values: Vec<Value> = Vec::with_capacity(var_count);
@@ -1638,7 +1808,11 @@ fn execute_one(
             let deps: Vec<String> = spec
                 .get("deps")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
             // Validate the language is registered BEFORE the capability gate below — an unknown
             // language should fail with "no executor registered", not a confusing "missing
@@ -1681,13 +1855,21 @@ fn execute_one(
                 deadline_ms: crate::wall::remaining_ms(quotas.max_wall_time_ms),
                 crush_line,
             };
-            let executor = host_caps.and_then(|h| h.polyglot_executor()).map(|e| e.as_ref());
+            let executor = host_caps
+                .and_then(|h| h.polyglot_executor())
+                .map(|e| e.as_ref());
             let outcome = crate::lang_exec::run_block(executor, &request);
             // CRUSH-165 hook: the polyglot block, as cap `polyglot.<lang>`.
             #[cfg(feature = "transcript")]
             crate::transcript::record_exec_lang(
                 &mut |name, args, outcome| crate::transcript::active::cap(name, args, outcome),
-                &gate, lang, code_str, &env_vars, outcome.as_ref().map(|o| (o.visible.as_str(), &o.result_value)),
+                &gate,
+                lang,
+                code_str,
+                &env_vars,
+                outcome
+                    .as_ref()
+                    .map(|o| (o.visible.as_str(), &o.result_value)),
             );
             let outcome = outcome?;
             *out_len += outcome.visible.len();
@@ -1703,8 +1885,9 @@ fn execute_one(
                 push!(value);
             }
         }
-        AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP | AI_CONTEXT_AWARE | AI_TOOLCHAIN
-        | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE | AI_KNOWLEDGE_SHARING => {
+        AI_QUERY | AI_SYNTHESIZE | AI_AGENT_DELEGATION | AI_SEMANTIC_MATCH | AI_LEARNING_LOOP
+        | AI_CONTEXT_AWARE | AI_TOOLCHAIN | AI_GOAL_DECLARATION | AI_PROGRESS_UPDATE
+        | AI_KNOWLEDGE_SHARING => {
             // CRUSH-32/156: gate the AI opcodes through `host_caps.get("ai_native.<kind>")`
             // with the compiled payload + stack operands (`crate::ai_args` is
             // the shared contract). Ungranted → `VmError::CapDenied` (CRUSH-234); operands are still
@@ -1723,8 +1906,9 @@ fn execute_one(
             }
             let operands = stack.split_off(stack.len() - n);
             #[cfg(feature = "transcript")]
-            let recorded_args: Vec<Value> =
-                std::iter::once(Value::Str(raw.clone())).chain(operands.iter().cloned()).collect();
+            let recorded_args: Vec<Value> = std::iter::once(Value::Str(raw.clone()))
+                .chain(operands.iter().cloned())
+                .collect();
             let value = crate::ai_args::dispatch(
                 kind,
                 &payload,
@@ -1735,7 +1919,9 @@ fn execute_one(
             // CRUSH-165 hook: an AI opcode, as cap `ai_native.<kind>`.
             #[cfg(feature = "transcript")]
             crate::transcript::active::cap(
-                &format!("ai_native.{kind}"), &recorded_args, crate::transcript::CapOutcome::of_value(&value),
+                &format!("ai_native.{kind}"),
+                &recorded_args,
+                crate::transcript::CapOutcome::of_value(&value),
             );
             push!(value?);
         }
@@ -1747,22 +1933,22 @@ fn execute_one(
         // `dom_native_kind_for_opcode` switch in `crush_vm/src/bytecode.rs`
         // maps slot -> kind, and `dom_native::KINDS` in `crush-lang-sdk`
         // is the single source of truth for both surfaces.
-        DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE
-        | DOM_CHILD | DOM_PARENT | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
+        DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT
+        | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
             let kind = bytecode::dom_native_kind_for_opcode(opcode)
                 .expect("DOM opcode byte in combined match arm must map to a known kind");
             let gate = format!("dom_native.{kind}");
             let value = match host_caps.and_then(|h| h.get(&gate)) {
-                Some(handler) => handler
-                    .call(vec![])
-                    .ok()
-                    .flatten()
-                    .unwrap_or(Value::Null),
+                Some(handler) => handler.call(vec![]).ok().flatten().unwrap_or(Value::Null),
                 None => Value::Null,
             };
             // CRUSH-165 hook: a DOM opcode, as cap `dom_native.<kind>`.
             #[cfg(feature = "transcript")]
-            crate::transcript::active::cap(&gate, &[], crate::transcript::CapOutcome::Value(&value));
+            crate::transcript::active::cap(
+                &gate,
+                &[],
+                crate::transcript::CapOutcome::Value(&value),
+            );
             push!(value);
         }
         ENTER_TRY => {
@@ -1784,7 +1970,9 @@ fn execute_one(
             // A throw out of an inline-lowered polyglot block fails the block,
             // as a failing EXEC_LANG does: fatal, its output dropped (#312).
             let handler_depth = try_stack.last().map(|h| h.call_depth);
-            if let Some(err) = crate::block_capture::escaping_throw(captures, handler_depth, &err_val) {
+            if let Some(err) =
+                crate::block_capture::escaping_throw(captures, handler_depth, &err_val)
+            {
                 return Err(err);
             }
             if let Some(handler) = try_stack.pop() {
@@ -1837,7 +2025,9 @@ fn execute_one(
             let to = pop!();
             let from = pop!();
             let s = pop!();
-            push!(Value::Str(s.as_text().replace(&from.as_text(), &to.as_text())));
+            push!(Value::Str(
+                s.as_text().replace(&from.as_text(), &to.as_text())
+            ));
         }
         STR_JOIN => {
             let delim = pop!();
@@ -1866,7 +2056,11 @@ fn execute_one(
         }
         SET_FIELD => {
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
-            let field = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+            let field = program
+                .consts
+                .get(idx)
+                .ok_or(VmError::ConstOutOfRange(idx))?
+                .clone();
             let val = pop!();
             let map_rc = match pop!() {
                 Value::Map(m) => m,
@@ -1876,14 +2070,23 @@ fn execute_one(
                     push!(rec);
                     return Ok(StepAction::Continue);
                 }
-                other => { return Err(VmError::TypeError { expected: "map", got: other.type_name() }); }
+                other => {
+                    return Err(VmError::TypeError {
+                        expected: "map",
+                        got: other.type_name(),
+                    });
+                }
             };
             map_rc.borrow_mut().insert(field, val);
             push!(Value::Map(map_rc));
         }
         GET_FIELD => {
             let idx = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
-            let field = program.consts.get(idx).ok_or(VmError::ConstOutOfRange(idx))?.clone();
+            let field = program
+                .consts
+                .get(idx)
+                .ok_or(VmError::ConstOutOfRange(idx))?
+                .clone();
             let map_rc = match pop!() {
                 Value::Map(m) => m,
                 // A struct instance (COSM K1.4): GET_MEMBER, but a name the
@@ -1892,7 +2095,12 @@ fn execute_one(
                     push!(get_member!(&target, &field, false));
                     return Ok(StepAction::Continue);
                 }
-                other => { return Err(VmError::TypeError { expected: "map", got: other.type_name() }); }
+                other => {
+                    return Err(VmError::TypeError {
+                        expected: "map",
+                        got: other.type_name(),
+                    });
+                }
             };
             let val = map_rc.borrow().get(&field).cloned().unwrap_or(Value::Null);
             push!(val);
@@ -1938,7 +2146,10 @@ fn execute_one(
         CONSTRUCT => {
             let kind = kinds.get(&const_str!())?.clone();
             let argc = code[ip + 3] as usize;
-            let base = stack.len().checked_sub(argc).ok_or(VmError::StackUnderflow)?;
+            let base = stack
+                .len()
+                .checked_sub(argc)
+                .ok_or(VmError::StackUnderflow)?;
             // First argument first (they were pushed last-first).
             let args: Vec<Value> = stack[base..].iter().rev().cloned().collect();
             match crate::cosm_rt::construct(&kind, &args)? {
@@ -1965,10 +2176,17 @@ fn execute_one(
         }
         GET_SLOT | SET_SLOT => {
             let slot = u16::from_be_bytes(code[ip + 1..ip + 3].try_into().unwrap()) as usize;
-            let val = if opcode == SET_SLOT { Some(pop!()) } else { None };
+            let val = if opcode == SET_SLOT {
+                Some(pop!())
+            } else {
+                None
+            };
             let target = pop!();
             let Value::Record(r) = &target else {
-                return Err(VmError::TypeError { expected: "record", got: target.type_name() });
+                return Err(VmError::TypeError {
+                    expected: "record",
+                    got: target.type_name(),
+                });
             };
             match val {
                 Some(v) => {
@@ -2031,15 +2249,6 @@ fn execute_one(
 // ---- helper functions (inlined from vm.rs for independence) ----
 
 #[inline]
-fn to_f64(v: &Value) -> f64 {
-    match v {
-        Value::Int(i) => *i as f64,
-        Value::Float(f) => *f,
-        _ => 0.0,
-    }
-}
-
-#[inline]
 fn to_i64(v: &Value) -> i64 {
     match v {
         Value::Int(i) => *i,
@@ -2048,43 +2257,55 @@ fn to_i64(v: &Value) -> i64 {
     }
 }
 
-#[inline]
-fn trunc_div(a: i64, b: i64) -> i64 {
-    a / b
-}
-
 fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Array(a) => Ok(a),
-        other => Err(VmError::TypeError { expected: "array", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "array",
+            got: other.type_name(),
+        }),
     }
 }
 
 fn need_tuple(v: Value) -> Result<Vec<Value>, VmError> {
     match v {
         Value::Tuple(t) => Ok(t),
-        other => Err(VmError::TypeError { expected: "tuple", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "tuple",
+            got: other.type_name(),
+        }),
     }
 }
 
-fn need_list(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<std::collections::LinkedList<Value>>>, VmError> {
+fn need_list(
+    v: Value,
+) -> Result<std::rc::Rc<std::cell::RefCell<std::collections::LinkedList<Value>>>, VmError> {
     match v {
         Value::List(l) => Ok(l),
-        other => Err(VmError::TypeError { expected: "list", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "list",
+            got: other.type_name(),
+        }),
     }
 }
 
 fn need_vector(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Vector(v_rc) => Ok(v_rc),
-        other => Err(VmError::TypeError { expected: "vector", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "vector",
+            got: other.type_name(),
+        }),
     }
 }
 
 fn need_set(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Set(s) => Ok(s),
-        other => Err(VmError::TypeError { expected: "set", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "set",
+            got: other.type_name(),
+        }),
     }
 }
 
@@ -2098,7 +2319,11 @@ fn need_array_index(v: &Value) -> Result<i64, VmError> {
 fn wrap_index(idx: i64, len: usize) -> Result<usize, VmError> {
     let ilen = len as i64;
     if idx >= -ilen && idx < ilen {
-        Ok(if idx < 0 { (ilen + idx) as usize } else { idx as usize })
+        Ok(if idx < 0 {
+            (ilen + idx) as usize
+        } else {
+            idx as usize
+        })
     } else {
         Err(VmError::ArrayBounds { index: idx, len })
     }
@@ -2108,7 +2333,11 @@ fn wrap_index(idx: i64, len: usize) -> Result<usize, VmError> {
 /// function value — whose captured values become the task's leading
 /// parameters (on top of `args`, which are bottom → top). Green tasks share
 /// this VM, so captured cells are shared with the task as they are.
-pub(crate) fn spawn_target(callee: Value, argc: usize, args: &mut Vec<Value>) -> Result<String, VmError> {
+pub(crate) fn spawn_target(
+    callee: Value,
+    argc: usize,
+    args: &mut Vec<Value>,
+) -> Result<String, VmError> {
     match callee {
         Value::Str(name) => Ok(name),
         func @ Value::Func(_) => {
@@ -2134,7 +2363,14 @@ fn run_item(
     // This matters on the sequential (same-thread) path.
     #[cfg(feature = "transcript")]
     let paused = crate::transcript::active::Scope::enter(None);
-    let result = run_from(program, quotas, None, None, None, Some((function, worker.stack(i))));
+    let result = run_from(
+        program,
+        quotas,
+        None,
+        None,
+        None,
+        Some((function, worker.stack(i))),
+    );
     #[cfg(feature = "transcript")]
     drop(paused);
     worker.check()?;
@@ -2166,18 +2402,24 @@ pub(crate) fn parallel_map_counted(
     let jobs = jobs(args)?;
     let n = jobs.items.len();
     let program = worker_program(program);
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(n);
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(n);
     let sequential = IN_WORKER.with(|w| w.get()) || threads < 2 || cfg!(target_arch = "wasm32");
     let (results, rebuilds): (Vec<ItemResult>, usize) = if sequential {
         let was = IN_WORKER.with(|w| w.replace(true));
         let mut worker = Worker::new(&jobs);
-        let results = (0..n).map(|i| run_item(&program, quotas, &mut worker, &jobs.function, i)).collect();
+        let results = (0..n)
+            .map(|i| run_item(&program, quotas, &mut worker, &jobs.function, i))
+            .collect();
         IN_WORKER.with(|w| w.set(was));
         (results, worker.rebuilds)
     } else {
         let next = std::sync::atomic::AtomicUsize::new(0);
         let rebuilds = std::sync::atomic::AtomicUsize::new(0);
-        let slots: Vec<std::sync::Mutex<Option<ItemResult>>> = (0..n).map(|_| std::sync::Mutex::new(None)).collect();
+        let slots: Vec<std::sync::Mutex<Option<ItemResult>>> =
+            (0..n).map(|_| std::sync::Mutex::new(None)).collect();
         std::thread::scope(|scope| {
             for _ in 0..threads {
                 scope.spawn(|| {
@@ -2202,9 +2444,9 @@ pub(crate) fn parallel_map_counted(
         let results = slots
             .into_iter()
             .map(|slot| {
-                slot.into_inner()
-                    .expect("slot")
-                    .unwrap_or_else(|| Err(VmError::Parallel("a worker thread panicked".to_string())))
+                slot.into_inner().expect("slot").unwrap_or_else(|| {
+                    Err(VmError::Parallel("a worker thread panicked".to_string()))
+                })
             })
             .collect();
         (results, rebuilds.into_inner())
@@ -2232,7 +2474,11 @@ fn dispatch_cap(
         if let Some(expected) = spec.argc
             && args.len() != expected
         {
-            return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
+            return Err(VmError::CapArity {
+                cap: cap.to_string(),
+                expected,
+                got: args.len(),
+            });
         }
         return match cap {
             "io.print" => {
@@ -2279,7 +2525,8 @@ fn dispatch_cap(
             }
             "py.print" => {
                 crate::vm::reject_func_print(&args)?;
-                let parts: Vec<String> = args.iter().map(crate::io_print::py_value_to_text).collect();
+                let parts: Vec<String> =
+                    args.iter().map(crate::io_print::py_value_to_text).collect();
                 let line = crate::io_print::format_py_print_line(&parts);
                 *out_len += line.len();
                 if *out_len > quotas.max_output {
@@ -2288,35 +2535,23 @@ fn dispatch_cap(
                 crate::block_capture::emit(captures, out_parts, line);
                 Ok(None)
             }
-            "math.truediv" => {
-                crate::arithmetic::true_div_values(&args[0], &args[1]).map(Some)
-            }
-            "js.div" => {
-                crate::arithmetic::js_div_values(&args[0], &args[1]).map(Some)
-            }
+            "math.truediv" => crate::arithmetic::true_div_values(&args[0], &args[1]).map(Some),
+            "js.div" => crate::arithmetic::js_div_values(&args[0], &args[1]).map(Some),
             "js.add" => crate::js_ops::add(&args[0], &args[1]).map(Some),
             "js.truthy" => Ok(Some(crate::js_ops::truthy(&args[0]))),
             "js.loose_eq" => crate::js_ops::loose_eq(&args[0], &args[1]).map(Some),
             "js.strict_eq" => crate::js_ops::strict_eq(&args[0], &args[1]).map(Some),
             "js.format" => crate::js_ops::format(&args).map(Some),
-            "conv.text" => {
-                crate::num_text::text_as(&args[0], &args[1]).map(Some)
-            }
+            "conv.text" => crate::num_text::text_as(&args[0], &args[1]).map(Some),
             "lang.marshal" => crate::marshal::marshal_cap(&args),
             "lang.capture_begin" => crate::block_capture::begin(captures, &args, call_depth),
             "lang.capture_end" => crate::block_capture::end(captures, out_parts),
             "seq.slice" => {
                 crate::seq::slice_values(&args[0], &args[1], &args[2], &args[3]).map(Some)
             }
-            "math.power" => {
-                crate::arithmetic::power_values(&args[0], &args[1]).map(Some)
-            }
-            "math.floordiv" => {
-                crate::arithmetic::floor_div_values(&args[0], &args[1]).map(Some)
-            }
-            "math.floormod" => {
-                crate::arithmetic::floor_mod_values(&args[0], &args[1]).map(Some)
-            }
+            "math.power" => crate::arithmetic::power_values(&args[0], &args[1]).map(Some),
+            "math.floordiv" => crate::arithmetic::floor_div_values(&args[0], &args[1]).map(Some),
+            "math.floormod" => crate::arithmetic::floor_mod_values(&args[0], &args[1]).map(Some),
             "io.read" => crate::io_read::read_io_line()
                 .map(|line| Some(Value::Str(line)))
                 .map_err(|error| VmError::Io(error.to_string())),
@@ -2324,7 +2559,11 @@ fn dispatch_cap(
                 .map(|line| Some(line.map_or(Value::Null, Value::Str)))
                 .map_err(|error| VmError::Io(error.to_string())),
             "str.concat" => {
-                let s: String = args.iter().map(|a| a.as_text()).collect::<Vec<_>>().concat();
+                let s: String = args
+                    .iter()
+                    .map(|a| a.as_text())
+                    .collect::<Vec<_>>()
+                    .concat();
                 Ok(Some(Value::Str(s)))
             }
             "str.len" => {
@@ -2356,18 +2595,27 @@ fn dispatch_cap(
                 let delim = args[1].as_text();
                 match &args[0] {
                     Value::Array(elems) => {
-                        let parts: Vec<String> = elems.borrow().iter().map(|v| v.as_text()).collect();
+                        let parts: Vec<String> =
+                            elems.borrow().iter().map(|v| v.as_text()).collect();
                         Ok(Some(Value::Str(parts.join(&delim))))
                     }
-                    other => Err(VmError::TypeError { expected: "array", got: other.type_name() }),
+                    other => Err(VmError::TypeError {
+                        expected: "array",
+                        got: other.type_name(),
+                    }),
                 }
             }
             "conv.chr" => {
                 let codepoint = match &args[0] {
                     Value::Int(value) => *value,
-                    other => return Err(VmError::TypeError { expected: "int", got: other.type_name() }),
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "int",
+                            got: other.type_name(),
+                        });
+                    }
                 };
-                let character = char::from_u32(codepoint as u32).ok_or_else(|| VmError::TypeError {
+                let character = char::from_u32(codepoint as u32).ok_or(VmError::TypeError {
                     expected: "valid Unicode codepoint",
                     got: "invalid codepoint",
                 })?;
@@ -2376,10 +2624,15 @@ fn dispatch_cap(
             "conv.ord" => {
                 let text = match &args[0] {
                     Value::Str(value) => value,
-                    other => return Err(VmError::TypeError { expected: "string", got: other.type_name() }),
+                    other => {
+                        return Err(VmError::TypeError {
+                            expected: "string",
+                            got: other.type_name(),
+                        });
+                    }
                 };
                 let mut chars = text.chars();
-                let character = chars.next().ok_or_else(|| VmError::TypeError {
+                let character = chars.next().ok_or(VmError::TypeError {
                     expected: "single Unicode character",
                     got: "empty string",
                 })?;
@@ -2394,19 +2647,42 @@ fn dispatch_cap(
             "arr_slice" => crate::seq::arr_slice_values(cap, &args).map(Some),
             "make_range" => crate::make_range::make_range_values(&args).map(Some),
             "append" | "push" => {
-                if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                if args.len() < 2 {
+                    return Err(VmError::CapArity {
+                        cap: cap.to_string(),
+                        expected: 2,
+                        got: args.len(),
+                    });
+                }
                 match &args[0] {
-                    Value::Array(elems) => { elems.borrow_mut().push(args[1].clone()); Ok(Some(args[0].clone())) }
-                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    Value::Array(elems) => {
+                        elems.borrow_mut().push(args[1].clone());
+                        Ok(Some(args[0].clone()))
+                    }
+                    _ => Err(VmError::TypeError {
+                        expected: "array",
+                        got: args[0].type_name(),
+                    }),
                 }
             }
             "arr_set" => {
-                if args.len() < 3 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 3, got: args.len() }); }
+                if args.len() < 3 {
+                    return Err(VmError::CapArity {
+                        cap: cap.to_string(),
+                        expected: 3,
+                        got: args.len(),
+                    });
+                }
                 match &args[0] {
                     Value::Array(elems) => {
-                        let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
+                        let idx = match &args[1] {
+                            Value::Int(i) => *i as usize,
+                            _ => 0,
+                        };
                         let mut arr = elems.borrow_mut();
-                        if idx < arr.len() { arr[idx] = args[2].clone(); }
+                        if idx < arr.len() {
+                            arr[idx] = args[2].clone();
+                        }
                         Ok(Some(args[0].clone()))
                     }
                     Value::Map(map) => {
@@ -2414,21 +2690,38 @@ fn dispatch_cap(
                         map.borrow_mut().insert(key, args[2].clone());
                         Ok(Some(args[0].clone()))
                     }
-                    _ => Err(VmError::TypeError { expected: "array or map", got: args[0].type_name() }),
+                    _ => Err(VmError::TypeError {
+                        expected: "array or map",
+                        got: args[0].type_name(),
+                    }),
                 }
             }
             "arr_get" => {
-                if args.len() < 2 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() }); }
+                if args.len() < 2 {
+                    return Err(VmError::CapArity {
+                        cap: cap.to_string(),
+                        expected: 2,
+                        got: args.len(),
+                    });
+                }
                 match &args[0] {
                     Value::Array(elems) => {
-                        let idx = match &args[1] { Value::Int(i) => *i as usize, _ => 0 };
-                        Ok(Some(elems.borrow().get(idx).cloned().unwrap_or(Value::Null)))
+                        let idx = match &args[1] {
+                            Value::Int(i) => *i as usize,
+                            _ => 0,
+                        };
+                        Ok(Some(
+                            elems.borrow().get(idx).cloned().unwrap_or(Value::Null),
+                        ))
                     }
                     Value::Map(map) => {
                         let key = crate::map_ops::map_key_string(&args[1])?;
                         Ok(Some(crate::map_ops::map_get(&map.borrow(), &key)?))
                     }
-                    _ => Err(VmError::TypeError { expected: "array or map", got: args[0].type_name() }),
+                    _ => Err(VmError::TypeError {
+                        expected: "array or map",
+                        got: args[0].type_name(),
+                    }),
                 }
             }
             _ => Err(VmError::UnknownCap(cap.to_string())),
@@ -2442,9 +2735,15 @@ fn dispatch_cap(
         if let Some(expected) = spec.argc
             && args.len() != expected
         {
-            return Err(VmError::CapArity { cap: cap.to_string(), expected, got: args.len() });
+            return Err(VmError::CapArity {
+                cap: cap.to_string(),
+                expected,
+                got: args.len(),
+            });
         }
-        return match handler.call_with_deadline(args, crate::wall::remaining_ms(quotas.max_wall_time_ms)) {
+        return match handler
+            .call_with_deadline(args, crate::wall::remaining_ms(quotas.max_wall_time_ms))
+        {
             // A host cap that returns nothing (`fs.write`, `akg.write`, …) still
             // leaves Null: the compiler only knows the built-ins' arity, so it pops
             // the result of every host call, and `let x = fs.write(..)` stores one
@@ -2454,9 +2753,10 @@ fn dispatch_cap(
                 cap: cap.to_string(),
                 limit_ms: quotas.max_wall_time_ms,
             }),
-            Err(crate::host::HostCapError::Message(msg)) => {
-                Err(VmError::CapFailed { cap: cap.to_string(), message: msg })
-            }
+            Err(crate::host::HostCapError::Message(msg)) => Err(VmError::CapFailed {
+                cap: cap.to_string(),
+                message: msg,
+            }),
             Err(crate::host::HostCapError::Exit(code)) => Err(VmError::Exit(code)),
         };
     }
@@ -2640,7 +2940,8 @@ mod wall_clock_limit_tests {
         // write() and never reach exit, hanging forever regardless of the
         // wall-clock limit.
         let mut cmd = std::process::Command::new("bash");
-        cmd.arg("-c").arg("head -c 1000000 /dev/zero | tr '\\0' 'a'");
+        cmd.arg("-c")
+            .arg("head -c 1000000 /dev/zero | tr '\\0' 'a'");
         let start = std::time::Instant::now();
         match run_with_wall_clock_limit(cmd, 5_000).expect("spawn should succeed") {
             CommandOutcome::Output(output) => {
@@ -2689,7 +2990,12 @@ mod wall_clock_limit_tests {
         host_caps.grant_polyglot(&["bash"]);
 
         match run_with_caps(&prog, &Quotas::default(), Some(&host_caps)) {
-            Err(VmError::LangRuntimeError { lang, message, crush_line, .. }) => {
+            Err(VmError::LangRuntimeError {
+                lang,
+                message,
+                crush_line,
+                ..
+            }) => {
                 assert_eq!(lang, "bash");
                 assert!(
                     message.contains("boom"),
@@ -2847,7 +3153,10 @@ mod wall_clock_limit_tests {
         host_caps.grant_polyglot(&["python"]);
         // Cold pypi resolve+install can be slow; generous headroom without
         // masking a genuine hang.
-        let quotas = Quotas { max_wall_time_ms: 90_000, ..Default::default() };
+        let quotas = Quotas {
+            max_wall_time_ms: 90_000,
+            ..Default::default()
+        };
 
         let result = run_with_caps(&prog, &quotas, Some(&host_caps));
 
@@ -2872,13 +3181,18 @@ mod wall_clock_limit_tests {
                         "expected six.__version__ on stdout, got {s:?}"
                     );
                     assert!(
-                        s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false),
+                        s.chars()
+                            .next()
+                            .map(|c| c.is_ascii_digit())
+                            .unwrap_or(false),
                         "expected a version number, got {s:?}"
                     );
                 }
                 other => panic!("expected Value::Str with sandboxed stdout, got {other:?}"),
             },
-            other => panic!("expected the sandboxed python+pypi:six block to succeed, got {other:?}"),
+            other => {
+                panic!("expected the sandboxed python+pypi:six block to succeed, got {other:?}")
+            }
         }
 
         let _ = std::fs::remove_dir_all(&cache_dir);
@@ -2922,7 +3236,10 @@ mod wall_clock_limit_tests {
 
         let mut host_caps = HostCaps::new();
         host_caps.grant_polyglot(&["javascript"]);
-        let quotas = Quotas { max_wall_time_ms: 90_000, ..Default::default() };
+        let quotas = Quotas {
+            max_wall_time_ms: 90_000,
+            ..Default::default()
+        };
 
         let result = run_with_caps(&prog, &quotas, Some(&host_caps));
 
@@ -2977,7 +3294,12 @@ mod wall_clock_limit_tests {
         host_caps.grant_polyglot(&["javascript"]);
 
         match run_with_caps(&prog, &Quotas::default(), Some(&host_caps)) {
-            Err(VmError::LangRuntimeError { lang, message, phase, .. }) => {
+            Err(VmError::LangRuntimeError {
+                lang,
+                message,
+                phase,
+                ..
+            }) => {
                 assert_eq!(lang, "javascript");
                 assert_eq!(phase, LangFailurePhase::SandboxSetup);
                 assert!(
@@ -3039,7 +3361,10 @@ mod exec_lang_permission_tests {
     /// any spawn, so no interpreter is needed on the test host.
     fn python_block(declared: &[&str]) -> Program {
         let spec = serde_json::json!({"lang": "python", "code": "print(1)", "var_count": 0});
-        let src = format!("EXEC_LANG \"{}\"\nHALT", spec.to_string().replace('"', "\\\""));
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('"', "\\\"")
+        );
         assemble(&src, Some(declared), None).unwrap()
     }
 
@@ -3051,7 +3376,10 @@ mod exec_lang_permission_tests {
 
     #[test]
     fn allowed_caps_without_the_gate_denies_the_block() {
-        let quotas = Quotas { allowed_caps: Some(vec!["io.print".into()]), ..Quotas::default() };
+        let quotas = Quotas {
+            allowed_caps: Some(vec!["io.print".into()]),
+            ..Quotas::default()
+        };
         let prog = python_block(&["polyglot.python"]);
         match run_with_caps(&prog, &quotas, Some(&granted())) {
             Err(VmError::CapDenied(cap)) => assert_eq!(cap, "polyglot.python"),
@@ -3072,9 +3400,15 @@ mod exec_lang_permission_tests {
     fn alias_tags_check_the_canonical_gate() {
         // `@py` needs `polyglot.python`, the name the compiler declares.
         let spec = serde_json::json!({"lang": "py", "code": "print(1)", "var_count": 0});
-        let src = format!("EXEC_LANG \"{}\"\nHALT", spec.to_string().replace('"', "\\\""));
+        let src = format!(
+            "EXEC_LANG \"{}\"\nHALT",
+            spec.to_string().replace('"', "\\\"")
+        );
         let prog = assemble(&src, Some(&["polyglot.python"]), None).unwrap();
-        let quotas = Quotas { allowed_caps: Some(vec![]), ..Quotas::default() };
+        let quotas = Quotas {
+            allowed_caps: Some(vec![]),
+            ..Quotas::default()
+        };
         match run_with_caps(&prog, &quotas, Some(&granted())) {
             Err(VmError::CapDenied(cap)) => assert_eq!(cap, "polyglot.python"),
             other => panic!("expected CapDenied(polyglot.python), got {other:?}"),

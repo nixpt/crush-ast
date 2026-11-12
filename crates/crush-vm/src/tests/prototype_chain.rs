@@ -14,7 +14,8 @@ use crush_cosm::{
 };
 
 fn program(src: &str, module: CosmModule) -> Program {
-    let mut p = assemble(src, Some(&["io.print"]), None).unwrap_or_else(|e| panic!("assembly: {e}"));
+    let mut p =
+        assemble(src, Some(&["io.print"]), None).unwrap_or_else(|e| panic!("assembly: {e}"));
     p.cosm = Some(module);
     p
 }
@@ -22,16 +23,31 @@ fn program(src: &str, module: CosmModule) -> Program {
 fn run_both(src: &str, module: CosmModule, want: &str) {
     let p = program(src, module);
     let on_scheduler = run(&p, &Quotas::default()).map(|r| r.output);
-    assert_eq!(on_scheduler.map_err(|e| e.to_string()).as_deref(), Ok(want), "scheduler VM");
-    let on_portable = crate::portable_vm::PortableVm::new(p).run().map(|r| r.output);
-    assert_eq!(on_portable.map_err(|e| e.to_string()).as_deref(), Ok(want), "portable VM");
+    assert_eq!(
+        on_scheduler.map_err(|e| e.to_string()).as_deref(),
+        Ok(want),
+        "scheduler VM"
+    );
+    let on_portable = crate::portable_vm::PortableVm::new(p)
+        .run()
+        .map(|r| r.output);
+    assert_eq!(
+        on_portable.map_err(|e| e.to_string()).as_deref(),
+        Ok(want),
+        "portable VM"
+    );
 }
 
 fn fails_on_both(src: &str, module: CosmModule, want: &str) {
     let p = program(src, module);
     let got_scheduler = run(&p, &Quotas::default()).map(|r| r.output);
-    let got_portable = crate::portable_vm::PortableVm::new(p).run().map(|r| r.output);
-    for (vm, got) in [("scheduler VM", got_scheduler), ("portable VM", got_portable)] {
+    let got_portable = crate::portable_vm::PortableVm::new(p)
+        .run()
+        .map(|r| r.output);
+    for (vm, got) in [
+        ("scheduler VM", got_scheduler),
+        ("portable VM", got_portable),
+    ] {
         let e = got.expect_err(vm).to_string();
         assert!(e.contains(want), "{vm}: want {want:?} in {e:?}");
     }
@@ -46,13 +62,18 @@ fn js_kind(name: &str, f: impl FnOnce(&mut KindDecl)) -> KindDecl {
     k.resolution = Resolution::PrototypeChain;
     k.receiver = Receiver::DynamicThis;
     k.equality = Equality::Identity;
-    k.construct = Construct::JsNew { ctor_fn: format!("{name}::constructor").into() };
+    k.construct = Construct::JsNew {
+        ctor_fn: format!("{name}::constructor").into(),
+    };
     f(&mut k);
     k
 }
 
 fn module(kinds: Vec<KindDecl>) -> CosmModule {
-    CosmModule { kinds, interfaces: Vec::new() }
+    CosmModule {
+        kinds,
+        interfaces: Vec::new(),
+    }
 }
 
 /// A class hierarchy: `Animal` (speak → "animal"), `Dog extends Animal`
@@ -411,8 +432,16 @@ fn meter() -> CosmModule {
             Some("Meter::get::doubled".into()),
             Some("Meter::set::doubled".into()),
         ));
-        k.members.push(MemberDecl::accessor("tag", Some("Meter::get::tag".into()), None));
-        k.members.push(MemberDecl::accessor("secret", None, Some("Meter::set::secret".into())));
+        k.members.push(MemberDecl::accessor(
+            "tag",
+            Some("Meter::get::tag".into()),
+            None,
+        ));
+        k.members.push(MemberDecl::accessor(
+            "secret",
+            None,
+            Some("Meter::set::secret".into()),
+        ));
     })])
 }
 

@@ -3,7 +3,7 @@
 //! Parses CSON text into the canonical `crush_caison` types.
 //! Uses the unified type definitions from `crush-caison`.
 
-use crush_cast::caison::{CaisonDocument, CaisonKey, CaisonNode, CaisonValue};
+use crush_cast::caison::{CaisonDocument, CaisonNode, CaisonValue};
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -70,7 +70,9 @@ impl<'a> CsonParser<'a> {
             if in_quotes && c == '"' {
                 self.consume();
                 break;
-            } else if !in_quotes && (c.is_whitespace() || c == ':' || c == '~' || c == ',' || c == '}') {
+            } else if !in_quotes
+                && (c.is_whitespace() || c == ':' || c == '~' || c == ',' || c == '}')
+            {
                 break;
             } else {
                 s.push(c);
@@ -95,7 +97,9 @@ impl<'a> CsonParser<'a> {
             if let Ok(w) = num_str.parse::<f64>() {
                 return Ok(Some(w));
             } else {
-                return Err(CsonParseError::Unexpected(format!("Invalid weight: ~{num_str}")));
+                return Err(CsonParseError::Unexpected(format!(
+                    "Invalid weight: ~{num_str}"
+                )));
             }
         }
         Ok(None)
@@ -105,7 +109,7 @@ impl<'a> CsonParser<'a> {
         self.skip_whitespace();
         if self.match_char('{') {
             let mut properties = HashMap::new();
-            let mut annotations = Vec::new();
+            let annotations = Vec::new();
 
             loop {
                 self.skip_whitespace();
@@ -127,7 +131,9 @@ impl<'a> CsonParser<'a> {
 
                 self.skip_whitespace();
                 if !self.match_char(':') {
-                    return Err(CsonParseError::Unexpected("Expected ':' after key".to_string()));
+                    return Err(CsonParseError::Unexpected(
+                        "Expected ':' after key".to_string(),
+                    ));
                 }
 
                 let val = self.parse_value()?;
@@ -146,7 +152,9 @@ impl<'a> CsonParser<'a> {
             let mut arr = Vec::new();
             loop {
                 self.skip_whitespace();
-                if self.match_char(']') { break; }
+                if self.match_char(']') {
+                    break;
+                }
                 arr.push(self.parse_value()?);
                 self.skip_whitespace();
                 self.match_char(',');

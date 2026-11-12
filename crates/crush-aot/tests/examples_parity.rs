@@ -17,8 +17,7 @@ use crush_lang_sdk::{Quotas, Runtime};
 /// `(example, backend)` pairs whose AOT output is known to differ, and why. Keyed by
 /// backend so a known divergence on one can't hide a regression on the other. Keep it
 /// exact: the test also fails when a pair starts matching, so the list can't go stale.
-const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[
-];
+const KNOWN_DIVERGENCES: &[(&str, &str, &str)] = &[];
 
 /// Parallel builds. Each is a rustc or gcc process of its own, next to the other test
 /// binaries `cargo test` runs, so stay well under the core count by default.
@@ -27,7 +26,11 @@ fn worker_count() -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .filter(|&n: &usize| n > 0)
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()).min(4))
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map_or(1, |n| n.get())
+                .min(4)
+        })
 }
 
 fn examples_dir() -> PathBuf {
@@ -35,7 +38,11 @@ fn examples_dir() -> PathBuf {
 }
 
 fn cc_available(cc: &str) -> bool {
-    Command::new(cc).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(cc)
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// `// expect-error: <text>` marker on its own line within the first ~20 lines.
@@ -56,7 +63,10 @@ fn is_capability_error(source: &str) -> bool {
     let Ok(program) = crush_lang_sdk::compile::compile_crush_source(source) else {
         return false;
     };
-    let quotas = Quotas { max_steps: 20_000_000, ..Quotas::default() };
+    let quotas = Quotas {
+        max_steps: 20_000_000,
+        ..Quotas::default()
+    };
     match Runtime::with_quotas(quotas).run(&program) {
         Err(e) => e.to_string().contains("capability"),
         _ => false,
@@ -78,10 +88,16 @@ fn vm_stdout(source: &str) -> Option<String> {
     // An interactive program (`io.read`) can't be compared without input, and the
     // in-process VM would read this test's own stdin: under a shell whose stdin never
     // closes, the test then hangs forever (it did, twice).
-    if crush_lang_sdk::effects::used_by(&program).ok()?.contains("io.read") {
+    if crush_lang_sdk::effects::used_by(&program)
+        .ok()?
+        .contains("io.read")
+    {
         return None;
     }
-    let quotas = Quotas { max_steps: 20_000_000, ..Quotas::default() };
+    let quotas = Quotas {
+        max_steps: 20_000_000,
+        ..Quotas::default()
+    };
     let result = Runtime::with_quotas(quotas).run(&program).ok()?;
     result.halted.then_some(result.output)
 }
@@ -185,7 +201,10 @@ fn aot_backends_print_what_the_vm_prints_for_every_example() {
                             // A feature the backend says it doesn't support is not a divergence.
                             Err(e) if e.contains("cannot compile") => continue,
                             Err(e) => {
-                                failures.lock().unwrap().push(format!("{name} [{backend}]: build failed: {e}"));
+                                failures
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("{name} [{backend}]: build failed: {e}"));
                                 continue;
                             }
                         };
@@ -193,12 +212,15 @@ fn aot_backends_print_what_the_vm_prints_for_every_example() {
                         match aot_stdout(&so) {
                             Ok(got) if got == expected => {}
                             Ok(got) => {
-                                diverged
-                                    .lock()
-                                    .unwrap()
-                                    .insert((name.clone(), backend.to_string()), (expected.clone(), got));
+                                diverged.lock().unwrap().insert(
+                                    (name.clone(), backend.to_string()),
+                                    (expected.clone(), got),
+                                );
                             }
-                            Err(e) => failures.lock().unwrap().push(format!("{name} [{backend}]: run failed: {e}")),
+                            Err(e) => failures
+                                .lock()
+                                .unwrap()
+                                .push(format!("{name} [{backend}]: run failed: {e}")),
                         }
                     }
                 }
@@ -225,7 +247,9 @@ fn aot_backends_print_what_the_vm_prints_for_every_example() {
         ));
     }
     for (name, backend) in known.difference(&diverged_keys) {
-        failures.push(format!("{name} [{backend}]: now matches the VM; remove it from KNOWN_DIVERGENCES"));
+        failures.push(format!(
+            "{name} [{backend}]: now matches the VM; remove it from KNOWN_DIVERGENCES"
+        ));
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     // Guard against the loop silently skipping everything (e.g. examples moved).
