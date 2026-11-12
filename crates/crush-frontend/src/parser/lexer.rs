@@ -190,10 +190,9 @@ impl Token {
             Token::Lang(_) => Some("lang"),
             Token::Import(_) => Some("import"),
             Token::Match(_) => Some("match"),
-            // Word forms of the logical operators are identifier-shaped too.
-            Token::And(_) => Some("and"),
-            Token::Or(_) => Some("or"),
-            Token::Not(_) => Some("not"),
+            // `And`/`Or`/`Not` are deliberately absent: the lexer emits the
+            // same tokens for `&&`/`||`/`!`, so accepting them here would
+            // turn `obj.!(1)` or `obj.&&` into field names.
             _ => None,
         }
     }
@@ -303,6 +302,10 @@ pub struct Lexer {
     /// `@python` (AtIdent) the lexer pre-extracts the raw body and buffers
     /// a `LangBody` here to hand back on the next call.
     pending: Option<Token>,
+    /// The previous token was a `.`. Past a dot the word forms `and`/`or`/
+    /// `not` are field names (`obj.not(1)`), not operators; the punctuation
+    /// spellings `&&`/`||`/`!` never are (CRUSH-394).
+    after_dot: bool,
 }
 
 impl Lexer {
@@ -313,6 +316,7 @@ impl Lexer {
             line: 1,
             col: 1,
             pending: None,
+            after_dot: false,
         }
     }
 
@@ -651,6 +655,7 @@ impl Lexer {
             "null" => Token::Null(location),
             // Word forms of the logical operators (the guide documents them as
             // identical to `&&` / `||` / `!`).
+            "and" | "or" | "not" if self.after_dot => Token::Ident(value, location),
             "and" => Token::And(location),
             "or" => Token::Or(location),
             "not" => Token::Not(location),
@@ -1080,6 +1085,12 @@ impl Lexer {
     }
 
     pub fn next_token(&mut self) -> Result<Token, ParseError> {
+        let token = self.next_token_inner()?;
+        self.after_dot = matches!(token, Token::Dot(_));
+        Ok(token)
+    }
+
+    fn next_token_inner(&mut self) -> Result<Token, ParseError> {
         if let Some(buffered) = self.pending.take() {
             return Ok(buffered);
         }

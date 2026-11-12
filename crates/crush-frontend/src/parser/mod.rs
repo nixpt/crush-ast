@@ -4260,5 +4260,10 @@ fn heavy() {
         // Literal keywords are values, not field names — still rejected.
         assert!(Parser::parse("let v = obj.true").is_err());
         assert!(Parser::parse("let v = obj.null").is_err());
+        // Operator punctuation shares the And/Or/Not tokens with the word
+        // forms; it must never become a field name.
+        assert!(Parser::parse("let v = obj.!(1)").is_err());
+        assert!(Parser::parse("let v = obj.&&").is_err());
+        assert!(Parser::parse("let v = obj.||").is_err());
     }
 }
