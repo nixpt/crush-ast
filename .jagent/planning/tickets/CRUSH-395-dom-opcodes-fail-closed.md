@@ -1,15 +1,15 @@
-# CRUSH-393 — VM: `DOM_*` opcodes fail closed and a `dom_native` handler's error propagates
+# CRUSH-395 — VM: `DOM_*` opcodes fail closed and a `dom_native` handler's error propagates
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-393 |
+| **ID** | CRUSH-395 |
 | **Priority** | P1 |
 | **Status** | Done |
 | **Phase** | M5 |
 | **Assignee** | opencode (dispatched agent) |
 | **Dependencies** | none (sibling of CRUSH-234's AI fix) |
 | **Estimated effort** | S |
-| **Filed by** | opencode — 2026-11-12, from GitHub issue #378 |
+| **Filed by** | opencode — 2026-11-12, from GitHub issue #378; renumbered from a briefly-held CRUSH-393 (double-allocated when two agents minted IDs concurrently; CRUSH-393 belongs to the CRUSH-369 renumber) |
 
 > NOTE: GitHub issue numbers and CRUSH ticket numbers are separate namespaces;
 > GitHub issue #378 collided with CRUSH-378 (bitwise ops, filed by altair
