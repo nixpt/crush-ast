@@ -424,17 +424,13 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     let dest = destination(cli);
     match cli.emit {
         EmitKind::Casm => {
-            // CASM JSON, the `casm::Program` IR (`.casmb` → MessagePack).
+            // CASM JSON, the `casm::Program` IR (`.casmb` → MessagePack,
+            // named encoding — structs as maps — so functions round-trip;
+            // #372, CRUSH-392).
             let codec = match &dest {
                 Dest::File(p) => casm::Format::from_path(p),
                 Dest::Stdout => casm::Format::Json,
             };
-            if codec == casm::Format::Binary && !casm_prog.functions.is_empty() {
-                anyhow::bail!(
-                    "binary CASM (.casmb) can't hold a program with functions yet — it would \
-                     not load back (#372); write CASM JSON (.casm) instead"
-                );
-            }
             let bytes = casm_prog.serialize(codec).map_err(|e| anyhow::anyhow!("{e}"))?;
             write_artifact(cli, &dest, &bytes, "")
         }

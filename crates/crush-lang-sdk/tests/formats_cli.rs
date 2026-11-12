@@ -123,13 +123,16 @@ fn emit_casm_is_casm_json_that_crush_run_runs() {
     assert!(!err.contains("note:"), "a JSON .casm is not deprecated: {err}");
 }
 
+/// The #372 guard is lifted (CRUSH-392): a `.casmb` — the named MessagePack
+/// encoding — now holds a program with functions and `crush-run` executes it.
 #[test]
-fn binary_casm_is_refused_rather_than_written_unloadable() {
+fn binary_casm_round_trips_and_runs() {
     let d = hi();
-    let out = run("crushc", d.path(), &["hi.crush", "--emit", "casm", "-o", "hi.casmb"]);
-    assert!(!out.status.success());
-    assert!(stderr(&out).contains("#372"), "{}", stderr(&out));
-    assert!(!d.path().join("hi.casmb").exists());
+    let out = ok(&run("crushc", d.path(), &["hi.crush", "--emit", "casm", "-o", "hi.casmb"]), "hi.casmb");
+    assert!(d.path().join("hi.casmb").is_file(), "written: {out}");
+    // It loads through the gated casm loader.
+    casm::Program::load(&d.path().join("hi.casmb")).unwrap();
+    runs_and_prints(d.path(), "hi.casmb", "42");
 }
 
 /// The round trip the issue named: a program using `io.print`, emitted as

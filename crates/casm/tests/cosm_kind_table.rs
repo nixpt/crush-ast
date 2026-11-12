@@ -42,9 +42,11 @@ fn the_kind_table_round_trips_through_casm_json() {
     assert_eq!(back.cosm, Some(point_module()));
 }
 
-/// Binary CASM. (Its functions don't survive a binary round-trip, kind
-/// table or not — `Instruction`'s flattened args encode as a map the
-/// positional decoder doesn't accept — so these programs have none.)
+/// Binary CASM. Since CRUSH-392 (#372) the binary format encodes named
+/// (structs as maps), so programs with functions round-trip — the positional
+/// encoding that used to refuse a flattened `Instruction` is gone. The
+/// function-less form is kept here because it is also the shape of the old
+/// four-field file the compatibility test below writes.
 fn binary_program(cosm: Option<CosmModule>) -> Program {
     let mut p = program(cosm);
     p.functions.clear();
@@ -61,6 +63,34 @@ fn the_kind_table_round_trips_through_binary_casm() {
     assert_eq!(back.manifest.permissions, p.manifest.permissions);
 }
 
+/// CRUSH-392 (#372): a program WITH functions now survives the binary
+/// round-trip — instructions included, with their flattened args intact.
+/// (`Program` doesn't implement `PartialEq`, so this asserts on the decoded
+/// structure directly.)
+#[test]
+fn a_program_with_functions_round_trips_through_binary_casm() {
+    let p = program(Some(point_module()));
+    let bin = p.serialize(Format::Binary).unwrap();
+    let back = Program::deserialize(&bin, Format::Binary).unwrap();
+
+    let main = back.functions.get("main").expect("main survives");
+    assert_eq!(main.body.len(), 1);
+    assert_eq!(main.body[0].op, "push_int");
+    assert_eq!(main.body[0].args["value"], 7);
+    assert_eq!(back.cosm, Some(point_module()));
+    assert_eq!(back.lang.as_deref(), Some("crush"));
+    assert_eq!(back.manifest.permissions, p.manifest.permissions);
+
+    // And the decoded program re-serializes to the identical CASM JSON —
+    // the decoded structure is the same, not merely loadable.
+    let a = Program::deserialize(&p.serialize(Format::Json).unwrap(), Format::Json).unwrap();
+    let b = Program::deserialize(&back.serialize(Format::Json).unwrap(), Format::Json).unwrap();
+    assert_eq!(
+        serde_json::to_value(&a).unwrap(),
+        serde_json::to_value(&b).unwrap()
+    );
+}
+
 #[test]
 fn casm_json_without_the_field_loads_and_is_written_as_before() {
     let old = r#"{"version":"1.0","functions":{},"manifest":{"permissions":[]},"lang":null}"#;
@@ -71,7 +101,20 @@ fn casm_json_without_the_field_loads_and_is_written_as_before() {
     assert!(!json.contains("cosm"), "{json}");
 }
 
-/// Binary CASM as written before the field existed: a four-field array.
+/// Binary CASM as written before the field existed: a four-field **array**
+/// (the old positional encoding, `rmp_serde::encode::write`).
+///
+/// The decoder still accepts it, so such a file keeps loading after CRUSH-392
+/// (#372) switched the writer to the named encoding
+/// (`rmp_serde::encode::write_named`, structs as maps) — that switch was what
+/// made `Instruction`'s flattened args round-trip at all. No loadable file
+/// was lost: a positional `.casmb` with functions never decoded
+/// (`invalid type: sequence, expected a map`).
+///
+/// Byte-identity change: a function-less program with no kind table is no
+/// longer written as the same four-field array — it is now a four-field
+/// **map** — so the old assertion that the new bytes equal the old bytes is
+/// gone by design (CRUSH-392).
 #[test]
 fn old_binary_casm_still_loads() {
     #[derive(serde::Serialize)]
@@ -89,12 +132,19 @@ fn old_binary_casm_still_loads() {
         lang: new.lang.clone(),
     };
     let mut bytes = b"#!/usr/bin/env crush run\n".to_vec();
+    // The old positional writer, verbatim.
     rmp_serde::encode::write(&mut bytes, &old).unwrap();
     let p = Program::deserialize(&bytes, Format::Binary).unwrap();
     assert_eq!(p.cosm, None);
     assert_eq!(p.lang.as_deref(), Some("crush"));
-    // And a program without a kind table is still written byte for byte the same.
-    assert_eq!(new.serialize(Format::Binary).unwrap(), bytes);
+
+    // The named encoding round-trips too, and a program without a kind table
+    // omits `cosm` there as in the positional form.
+    let named = new.serialize(Format::Binary).unwrap();
+    assert_ne!(named, bytes, "named (maps) vs old positional (arrays)");
+    let back = Program::deserialize(&named, Format::Binary).unwrap();
+    assert_eq!(back.cosm, None);
+    assert_eq!(back.lang.as_deref(), Some("crush"));
 }
 
 /// The one rule every engine applies: a Kind that behaves as a plain map runs;
