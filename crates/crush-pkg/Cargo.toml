@@ -17,7 +17,6 @@ path = "src/main.rs"
 
 [dependencies]
 crush-vm.workspace = true
-crush-cast.workspace = true
 casm.workspace = true
 crush-frontend.workspace = true
 crush-lang-sdk.workspace = true
@@ -26,7 +25,6 @@ serde.workspace = true
 serde_json.workspace = true
 toml = "0.8"
 anyhow.workspace = true
-thiserror.workspace = true
 clap.workspace = true
 walkdir = "2.5"
 zip = "0.6"

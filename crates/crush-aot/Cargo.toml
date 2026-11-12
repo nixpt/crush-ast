@@ -26,7 +26,6 @@ crush-lang-wasm = { path = "../crush-lang-wasm", version = "0.11.2" }
 crush-lang-bash = { path = "../crush-lang-bash", version = "0.11.2" }
 crush-lang-zsh = { path = "../crush-lang-zsh", version = "0.11.2" }
 crush-lang-nepali = { path = "../crush-lang-nepali", version = "0.11.2" }
-crush-lang-custom = { path = "../crush-lang-custom", version = "0.11.2" }
 crush-lang-dart = { path = "../crush-lang-dart", version = "0.11.2" }
 crush-walker-core.workspace = true
 crush-cast.workspace = true
@@ -40,9 +39,6 @@ tempfile = "3"
 hex = "0.4"
 clap.workspace = true
 shlex = "1"
-tree-sitter.workspace = true
-tree-sitter-c = "0.23"
-tree-sitter-cpp = "0.23"
 
 crush-jit = { workspace = true }
 
