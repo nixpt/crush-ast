@@ -2274,7 +2274,7 @@ fn emit_c_instr(
                     ));
                 }
                 "pop" => {
-                    out.push_str(&format!("                {{ Value __arr = _pop(); Value __v = mk_null(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; if (__a->len > 0) {{ __v = __a->data[--__a->len]; }} }} }} _push(__v); }} _pc={next_pc}; break; // cap_call pop\n"));
+                    out.push_str(&format!("                {{ Value __arr = _pop(); Value __v = mk_null(); if (__arr.tag != TAG_ARRAY) _crush_arith_error(\"pop: expected array\"); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; if (__a->len > 0) {{ __v = __a->data[--__a->len]; }} }} }} _push(__v); }} _pc={next_pc}; break; // cap_call pop\n"));
                 }
                 "arr_get" => {
                     out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break; // cap_call arr_get\n"));

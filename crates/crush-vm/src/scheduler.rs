@@ -2590,10 +2590,13 @@ fn dispatch_cap(
                         });
                     }
                 };
-                let character = char::from_u32(codepoint as u32).ok_or(VmError::TypeError {
-                    expected: "valid Unicode codepoint",
-                    got: "invalid codepoint",
-                })?;
+                let character = u32::try_from(codepoint)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .ok_or(VmError::TypeError {
+                        expected: "valid Unicode codepoint",
+                        got: "invalid codepoint",
+                    })?;
                 Ok(Some(Value::Str(character.to_string())))
             }
             "conv.ord" | "str.ord" => {

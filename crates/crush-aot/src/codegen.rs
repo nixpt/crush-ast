@@ -1214,7 +1214,7 @@ fn emit_body(
                     ));
                 }
                 "pop" => {
-                    out.push_str(&format!("{ind}{{ let __arr = stack.pop().unwrap_or(RuntimeValue::Null); let __v = if let RuntimeValue::Array(ref a) = __arr {{ a.borrow_mut().pop().unwrap_or(RuntimeValue::Null) }} else {{ RuntimeValue::Null }}; stack.push(__v); }}\n"));
+                    out.push_str(&format!("{ind}{{ let __arr = stack.pop().unwrap_or(RuntimeValue::Null); let __v = if let RuntimeValue::Array(ref a) = __arr {{ a.borrow_mut().pop().unwrap_or(RuntimeValue::Null) }} else {{ eprintln!(\"crush(aot): pop expects array, got {{:?}}\", __arr); std::process::exit(1) }}; stack.push(__v); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "arr_get" => {

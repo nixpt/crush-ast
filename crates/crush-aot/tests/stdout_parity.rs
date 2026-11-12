@@ -368,6 +368,52 @@ fn method_pop_matches_the_vm_on_every_engine() {
     );
 }
 
+/// Both AOT backends fail the run (non-zero exit, `needle` on stderr), as the
+/// VM raises an error, instead of printing a value.
+fn assert_fails_on_aot(name: &str, source: &str, needle: &str) {
+    let program = crush_frontend::compile_crush_source(source).expect("frontend");
+    let compiler = AotCompiler::new();
+    let mut backends = vec![(
+        "rust",
+        compiler
+            .compile_casm(&program, &format!("{name}_rust"))
+            .expect("rust backend"),
+    )];
+    if cc_available("gcc") {
+        backends.push((
+            "c",
+            compiler
+                .compile_c(&program, &format!("{name}_c"), "gcc")
+                .expect("c backend"),
+        ));
+    }
+    for (backend, so) in backends {
+        let out = Command::new(aot_runner())
+            .arg(&so)
+            .output()
+            .expect("spawn crush-aot-runner");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{backend} backend: {name} must fail");
+        assert!(
+            stderr.contains(needle),
+            "{backend} backend: {name}: {stderr}"
+        );
+    }
+}
+
+// CRUSH-391 review: `pop` on a non-array is an error on the VM; the AOT
+// backends used to print null and exit 0.
+#[test]
+fn method_pop_on_a_non_array_fails_on_the_aot_backends() {
+    let source = r#"fn main() { let n = 5
+               io.print(n.pop())
+               return 0 }"#;
+    let program = crush_lang_sdk::compile::compile_crush_source(source).expect("frontend");
+    let vm = crush_lang_sdk::Runtime::with_quotas(crush_lang_sdk::Quotas::default()).run(&program);
+    assert!(vm.is_err(), "the VM refuses pop on a non-array");
+    assert_fails_on_aot("pop_non_array", source, "pop");
+}
+
 // CRUSH-391: the str.* names route to the same conv.* implementation on both
 // AOT backends (inlined identically), so alias and original agree exactly.
 #[test]

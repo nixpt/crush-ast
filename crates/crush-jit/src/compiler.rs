@@ -1558,7 +1558,10 @@ fn emit_one(
         NewArray => emit_helper_call(b, ctx, OP_NEW_ARRAY, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         ArrayPush => emit_helper_call(b, ctx, OP_ARRAY_PUSH, 0, _ptr_ty, helper_sig),
         ArrayPop => emit_helper_call(b, ctx, OP_ARRAY_POP, 0, _ptr_ty, helper_sig),
-        ArrayPopValue => emit_helper_call(b, ctx, OP_ARRAY_POP_VALUE, 0, _ptr_ty, helper_sig),
+        // Checked: pop on a non-array stops the run here, like FastVM.
+        ArrayPopValue => {
+            emit_helper_call_checked(b, ctx, OP_ARRAY_POP_VALUE, 0, _ptr_ty, helper_sig)
+        }
         ArrSet => emit_helper_call(b, ctx, OP_ARR_SET, 0, _ptr_ty, helper_sig),
 
         StrContains => emit_helper_call(b, ctx, OP_STR_CONTAINS, 0, _ptr_ty, helper_sig),

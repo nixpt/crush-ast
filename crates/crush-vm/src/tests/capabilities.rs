@@ -367,6 +367,9 @@ fn cap_str_ord_chr_match_conv_ord_chr_exactly() {
         "PUSH_STR \"ab\"\nCAP_CALL \"str.ord\" 1\nHALT",
         "PUSH -1\nCAP_CALL \"str.chr\" 1\nHALT",
         "PUSH 1114112\nCAP_CALL \"str.chr\" 1\nHALT",
+        // Past u32: must not wrap to a valid char (4294967361 = 2^32 + 65 'A').
+        "PUSH 4294967361\nCAP_CALL \"str.chr\" 1\nHALT",
+        "PUSH -4294967231\nCAP_CALL \"str.chr\" 1\nHALT",
     ] {
         let program = assemble(source, Some(&["str.ord", "str.chr"]), Some("test")).unwrap();
         assert!(
