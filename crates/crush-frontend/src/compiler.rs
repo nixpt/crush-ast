@@ -2546,6 +2546,25 @@ impl Compiler {
                     meta,
                 ));
             }
+            Expression::CallValue { callee, args, meta } => {
+                // CRUSH-363: a call on a computed callee (`h[k](41)`,
+                // `f(x)(y)`, `make_adder()(3)`). The exact instruction shape
+                // the declared-variable path above emits for
+                // `let f = …; f(args)`: arguments last-first (as for
+                // `call`), the callee value on top, then `call_value` — so
+                // semantics are identical to the two-step form, and a
+                // non-function value still fails at run time
+                // ("<type> is not callable").
+                for arg in args.iter().rev() {
+                    self.compile_arg(arg, instrs)?;
+                }
+                self.compile_expr(callee, instrs)?;
+                instrs.push(self.create_instr(
+                    "call_value",
+                    serde_json::json!({"argc": args.len()}),
+                    meta,
+                ));
+            }
             Expression::CapabilityCall { name, args, meta } => {
                 // Walkers resolve method receivers before emitting named caps.
                 // Only unresolved parser calls need the `obj.method` heuristic.

@@ -313,6 +313,12 @@ impl Optimizer {
                     Self::replace_vars_expr(arg, consts);
                 }
             }
+            Expression::CallValue { callee, args, .. } => {
+                Self::replace_vars_expr(callee, consts);
+                for arg in args {
+                    Self::replace_vars_expr(arg, consts);
+                }
+            }
             Expression::ArrayLiteral { elements, .. } => {
                 for el in elements {
                     Self::replace_vars_expr(el, consts);
@@ -480,6 +486,12 @@ impl Optimizer {
                     Self::optimize_expr(arg);
                 }
             }
+            Expression::CallValue { callee, args, .. } => {
+                Self::optimize_expr(callee);
+                for arg in args {
+                    Self::optimize_expr(arg);
+                }
+            }
             Expression::ArrayLiteral { elements, .. } => {
                 for el in elements {
                     Self::optimize_expr(el);
@@ -561,6 +573,12 @@ impl Optimizer {
             }
             Expression::MethodCall { target, args, .. } => {
                 Self::collect_mutated_in_expr(target, out);
+                for a in args {
+                    Self::collect_mutated_in_expr(a, out);
+                }
+            }
+            Expression::CallValue { callee, args, .. } => {
+                Self::collect_mutated_in_expr(callee, out);
                 for a in args {
                     Self::collect_mutated_in_expr(a, out);
                 }

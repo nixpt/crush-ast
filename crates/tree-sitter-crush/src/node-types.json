@@ -746,11 +746,23 @@
         "required": true,
         "types": [
           {
+            "type": "capability_call",
+            "named": true
+          },
+          {
+            "type": "expression",
+            "named": true
+          },
+          {
             "type": "field_access",
             "named": true
           },
           {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "index_expression",
             "named": true
           }
         ]

@@ -2058,25 +2058,26 @@ impl Parser {
                             args,
                             meta,
                         },
-                        _ => {
-                            let (line, col) = self.get_location(self.peek());
-                            self.errors.push(ParseError::UnexpectedToken {
-                                line,
-                                col,
-                                msg: "Cannot call non-function".to_string(),
-                            });
-                            return Err(());
-                        }
+                        // A computed receiver (`f().m(x)`, `S { n: 3 }.size()`,
+                        // `h[k].m(x)`): the member resolves on the receiver's
+                        // Kind at run time (`call_member`, CRUSH-277 S5).
+                        target => Expression::MethodCall {
+                            target: Box::new(target),
+                            method: field,
+                            args,
+                            meta: op_meta,
+                        },
                     },
-                    _ => {
-                        let (line, col) = self.get_location(self.peek());
-                        self.errors.push(ParseError::UnexpectedToken {
-                            line,
-                            col,
-                            msg: "Cannot call non-function".to_string(),
-                        });
-                        return Err(());
-                    }
+                    // Any other postfix expression may be called:
+                    // `h[k](41)`, `f(x)(y)`, `make_adder()(3)`, `(|| a)(…)`.
+                    // The callee's value is looked up and called at run time
+                    // — identical semantics to `let f = …; f(args)`
+                    // (CRUSH-251's `call_value`, CRUSH-363).
+                    callee => Expression::CallValue {
+                        callee: Box::new(callee),
+                        args,
+                        meta: op_meta,
+                    },
                 }
             } else {
                 // Binary operator
@@ -3952,6 +3953,67 @@ if x > 0 {
         let source = "data |> process |> output";
         let program = Parser::parse(source).unwrap();
         assert!(program.functions.contains_key("main"));
+    }
+
+    /// A call on a subscript (and any other postfix expression) parses —
+    /// CRUSH-363. Previously "Cannot call non-function": the call rule only
+    /// accepted a bare name (or `name.field`).
+    #[test]
+    fn test_parse_call_on_subscript_and_computed_callees() {
+        let source = r#"
+fn main() {
+    let h = { add: |a| => a + 1 }
+    let k = "add"
+    print(h[k](41))
+}
+"#;
+        let program = Parser::parse(source).unwrap();
+        let main = &program.functions["main"];
+        let call = main
+            .body
+            .iter()
+            .find_map(|stmt| match stmt {
+                Statement::ExprStmt { expr, .. } => match expr {
+                    Expression::Call { function, args, .. } if function == "print" => {
+                        Some(args.first().unwrap().clone())
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("print(h[k](41)) statement");
+        // The argument is a call on the subscript value, not a parse error.
+        match &call {
+            Expression::CallValue { callee, args, .. } => {
+                assert!(matches!(**callee, Expression::Index { .. }), "{callee:?}");
+                assert_eq!(args.len(), 1);
+            }
+            other => panic!("expected CallValue, got {other:?}"),
+        }
+    }
+
+    /// `f(x)(y)`, `(g)(x)` and a computed method receiver (`S { … }.m()`)
+    /// parse too — the same relaxed rule.
+    #[test]
+    fn test_parse_chained_and_receiver_calls() {
+        for (snippet, expect) in [
+            ("make_adder(3)(4)", "CallValue"),
+            ("(make_adder(7))(1)", "CallValue"),
+            ("Point { x: 1 }.sum()", "MethodCall"),
+        ] {
+            let source = format!("struct Point {{ x }}\nfn main() {{\n    let r = {snippet}\n}}\n");
+            let program = Parser::parse(&source).unwrap();
+            let main = &program.functions["main"];
+            let found = main.body.iter().find_map(|stmt| match stmt {
+                Statement::VarDecl { value, .. } => Some(match value {
+                    Expression::CallValue { .. } => "CallValue",
+                    Expression::MethodCall { .. } => "MethodCall",
+                    _ => "other",
+                }),
+                _ => None,
+            });
+            assert_eq!(found, Some(expect), "{snippet}");
+        }
     }
 
     #[test]
