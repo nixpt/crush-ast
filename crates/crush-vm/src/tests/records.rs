@@ -378,6 +378,97 @@ fn arities_and_member_ops_survive_disassembly() {
 }
 
 #[test]
+fn a_member_call_on_a_map_calls_the_function_under_the_key() {
+    // CRUSH-362: `h.add(41)` on `{ add: |a| => a + 1 }` — the function is
+    // stored as a closure value in the map, called like CALL_VALUE calls one
+    // (arguments pushed last-first under the receiver, captured values as the
+    // leading parameters).
+    let m = module(vec![]);
+    run_both(
+        r#"
+.func main
+    PUSH 41
+    NEW_OBJ
+    MAKE_CLOSURE add_fn 1 0
+    SET_FIELD "add"
+    CALL_MEMBER "add" 1
+    CAP_CALL "io.print" 1
+    RET
+.func add_fn
+    STORE 0
+    LOAD 0
+    PUSH 1
+    ADD
+    RET
+"#,
+        m,
+        "42\n",
+    );
+}
+
+#[test]
+fn a_map_member_call_with_a_capture_sees_it_as_a_leading_parameter() {
+    let m = module(vec![]);
+    run_both(
+        r#"
+.func main
+    PUSH 4
+    STORE 0
+    NEW_OBJ
+    STORE 1
+    PUSH 10
+    MAKE_CLOSURE sub_fn 1 1
+    STORE 2
+    LOAD 1
+    LOAD 2
+    SET_FIELD "sub"
+    STORE 1
+    LOAD 0
+    LOAD 1
+    CALL_MEMBER "sub" 1
+    CAP_CALL "io.print" 1
+    RET
+.func sub_fn
+    STORE 0
+    STORE 1
+    LOAD 0
+    LOAD 1
+    SUB
+    RET
+"#,
+        m,
+        "6\n",
+    );
+}
+
+#[test]
+fn a_map_member_call_checks_the_value_and_the_key() {
+    let m = module(vec![]);
+    // A key that doesn't hold a function: the same check CALL_VALUE applies.
+    fails_on_both(
+        r#".func main
+    NEW_OBJ
+    PUSH 7
+    SET_FIELD "n"
+    CALL_MEMBER "n" 0
+    RET
+"#,
+        m.clone(),
+        "int is not callable",
+    );
+    // A key that isn't in the map at all.
+    fails_on_both(
+        r#".func main
+    NEW_OBJ
+    CALL_MEMBER "sub" 0
+    RET
+"#,
+        m,
+        "map has no member `sub`",
+    );
+}
+
+#[test]
 fn fastvm_lowers_construct_of_a_map_kind_and_refuses_the_other_member_ops() {
     let m = || module(vec![kind("P", |k| k.storage = sealed(&["x"]))]);
     let ok = program(".func main\n    CONSTRUCT \"P\" 0\n    PUSH 1\n    SET_FIELD \"x\"\n    HALT\n", m());

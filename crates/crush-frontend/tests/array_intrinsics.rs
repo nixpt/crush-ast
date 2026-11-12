@@ -43,7 +43,10 @@ fn array_push_checks_its_arity() {
 #[test]
 fn a_variable_named_array_keeps_method_call_semantics() {
     // `array` is a declared variable here, so `array.push(x)` is a method
-    // call on it (receiver + 1 arg), not the two-argument intrinsic.
+    // call on it (receiver + 1 arg), not the two-argument intrinsic. It stays
+    // one under CRUSH-362: `push` is a dot-less host capability invoked in
+    // method form (RECEIVER_CAPABILITIES); only names outside that list
+    // resolve at run time as member calls.
     let ops = ops("fn main() { let array = []; array.push(1); }");
     assert!(
         ops.iter()
