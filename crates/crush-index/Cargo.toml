@@ -14,5 +14,4 @@ crush-cast   = { workspace = true }
 crush-caison = { path = "../crush-caison", version = "0.11.2" }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
-anyhow       = { workspace = true }
 chrono       = { workspace = true }

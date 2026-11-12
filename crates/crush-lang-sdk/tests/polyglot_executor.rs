@@ -251,6 +251,45 @@ fn an_executor_error_becomes_a_vm_error() {
     }
 }
 
+/// CRUSH-358: the documented bare multi-output form — `@python -> a, b { … }`
+/// and `-> a, b, c` — marshals every declared output back, in declaration
+/// order, on both engines that run polyglot blocks (the scheduler VM and
+/// [`PortableVm`]).
+#[test]
+fn multiple_declared_outputs_arrive_in_order_on_both_engines() {
+    // Output `i` (in the order the request declares) gets value i+1, keyed by
+    // name — so a dropped or reordered output cannot pass.
+    let numberer = polyglot_executor_fn(|req: &PolyglotRequest<'_>| {
+        let outs: serde_json::Map<String, serde_json::Value> = req
+            .outputs
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.clone(), serde_json::json!(i + 1)))
+            .collect();
+        Ok(format!(
+            "{CRUSH_RESULT_SENTINEL}{}\n",
+            serde_json::Value::Object(outs)
+        ))
+    });
+    let caps = granted_with(numberer);
+
+    // Three outputs: each name must receive its own positional value.
+    let src = "fn main() {\n  @python -> a, b, c {\n    a = 0\n    b = 0\n    c = 0\n  }\n  print(a)\n  print(b)\n  print(c)\n}\n";
+    let program = compile(src);
+    let native = scheduler(&program, &caps).expect("scheduler");
+    let port = portable(&program, &caps).expect("portable");
+    assert_eq!(native, "1\n2\n3\n", "scheduler: outputs arrive in order");
+    assert_eq!(port, "1\n2\n3\n", "portable: outputs arrive in order");
+
+    // The two-output form from the issue.
+    let src = "fn main() {\n  @python -> a, b {\n    a = 0\n    b = 0\n  }\n  print(a + b)\n}\n";
+    let program = compile(src);
+    let native = scheduler(&program, &caps).expect("scheduler");
+    let port = portable(&program, &caps).expect("portable");
+    assert_eq!(native, "3\n");
+    assert_eq!(port, "3\n");
+}
+
 #[test]
 fn spawned_tasks_use_the_same_executor() {
     let src = "fn work(n) {\n  @python -> y {\n    y = n * 2\n  }\n  return y\n}\nfn main() {\n  let a = spawn work(5)\n  let b = spawn work(7)\n  yield\n  print(await a)\n  print(await b)\n}\n";
