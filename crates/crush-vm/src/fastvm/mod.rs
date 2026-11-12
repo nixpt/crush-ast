@@ -301,6 +301,19 @@ pub fn dom_request_denied(
     (!granted).then(|| crate::dom_args::not_granted(kind))
 }
 
+/// A VM value in fastvm's flat value layer, which has no Map or Array: those
+/// come back as their JSON text.
+fn flat_value(value: crate::vm::Value) -> Option<RuntimeValue> {
+    Some(match value {
+        crate::vm::Value::Null => RuntimeValue::Null,
+        crate::vm::Value::Bool(b) => RuntimeValue::Bool(b),
+        crate::vm::Value::Int(i) => RuntimeValue::Int(i),
+        crate::vm::Value::Float(f) => RuntimeValue::Float(f),
+        crate::vm::Value::Str(s) => RuntimeValue::String(s),
+        other => RuntimeValue::String(serde_json::to_value(&other).ok()?.to_string()),
+    })
+}
+
 pub fn resolve_host_request(
     req: &HostRequest,
     host_caps: Option<&crate::HostCaps>,
@@ -350,24 +363,26 @@ pub fn resolve_host_request(
             return None;
         }
         let deadline = crate::vm::Quotas::default().max_wall_time_ms;
-        let value =
-            crate::ai_args::dispatch(kind, payload, Vec::new(), Some(caps), deadline).ok()?;
-        return Some(match value {
-            crate::vm::Value::Null => RuntimeValue::Null,
-            crate::vm::Value::Bool(b) => RuntimeValue::Bool(b),
-            crate::vm::Value::Int(i) => RuntimeValue::Int(i),
-            crate::vm::Value::Float(f) => RuntimeValue::Float(f),
-            crate::vm::Value::Str(s) => RuntimeValue::String(s),
-            other => RuntimeValue::String(serde_json::to_value(&other).ok()?.to_string()),
-        });
+        let value = crate::ai_args::dispatch(
+            kind,
+            payload,
+            Vec::new(),
+            Some(caps),
+            &crate::vm::Quotas::default(),
+            deadline,
+        )
+        .ok()?;
+        return flat_value(value);
     }
-    // DOM: `crate::value::RuntimeValue` (the flat value layer used by fastvm
-    // dispatch) has no Map variant, so mirror the {ok: true, kind, echo: []}
-    // stub shape from `crush_lang_sdk::dom_native` as a deterministic String.
-    Some(RuntimeValue::String(format!(
-        "{{ok:true,kind:{},echo:[]}}",
-        kind
-    )))
+    // DOM: call the granted handler, as the scheduler and PortableVm do (it used
+    // to return a fixed `{ok:true,...}` string without calling it, so a failing
+    // handler looked like success). A handler error is `None`: this seam has no
+    // error channel, and `dom_request_denied` names the ungranted case.
+    let deadline = crate::vm::Quotas::default().max_wall_time_ms;
+    let value =
+        crate::dom_args::dispatch(kind, Some(caps), &crate::vm::Quotas::default(), deadline)
+            .ok()?;
+    flat_value(value)
 }
 
 #[cfg(test)]

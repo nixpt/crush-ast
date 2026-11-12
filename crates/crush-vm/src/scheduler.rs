@@ -1914,6 +1914,7 @@ fn execute_one(
                 &payload,
                 operands,
                 host_caps,
+                quotas,
                 crate::wall::remaining_ms(quotas.max_wall_time_ms),
             );
             // CRUSH-165 hook: an AI opcode, as cap `ai_native.<kind>`.
@@ -1945,6 +1946,7 @@ fn execute_one(
             let value = crate::dom_args::dispatch(
                 kind,
                 host_caps,
+                quotas,
                 crate::wall::remaining_ms(quotas.max_wall_time_ms),
             );
             // CRUSH-165 hook: a DOM opcode, as cap `dom_native.<kind>`.

@@ -9,7 +9,7 @@
 //! does.
 
 use crate::host::{HostCapError, HostCaps};
-use crate::vm::{Value, VmError};
+use crate::vm::{Quotas, Value, VmError};
 
 /// The error for a DOM op with no registered handler / grant. One message
 /// for the scheduler, PortableVm and FastVM embedders.
@@ -41,12 +41,16 @@ pub fn not_granted(kind: &str) -> VmError {
 pub fn dispatch(
     kind: &str,
     host_caps: Option<&HostCaps>,
+    quotas: &Quotas,
     deadline_ms: u64,
 ) -> Result<Value, VmError> {
     let gate = format!("dom_native.{kind}");
     let Some(handler) = host_caps.and_then(|h| h.get(&gate)) else {
         return Err(not_granted(kind));
     };
+    // The embedder's allowlist applies as it does to CAP_CALL and EXEC_LANG.
+    // Not the declaration check: the compiler does not declare `dom_native.*`.
+    crate::scheduler::check_cap_permitted(&gate, true, quotas)?;
     let args: Vec<Value> = Vec::new();
     if let Some(expected) = handler.spec().argc
         && args.len() != expected
@@ -63,7 +67,7 @@ pub fn dispatch(
             cap: gate,
             limit_ms: deadline_ms,
         }),
-        Err(HostCapError::Message(msg)) => Err(VmError::UnknownCap(format!("{gate}: {msg}"))),
+        Err(HostCapError::Message(message)) => Err(VmError::CapFailed { cap: gate, message }),
         Err(HostCapError::Exit(code)) => Err(VmError::Exit(code)),
     }
 }
@@ -104,14 +108,14 @@ mod tests {
     #[test]
     fn ungranted_is_a_named_error_and_never_calls() {
         let caps = HostCaps::new();
-        let err = dispatch("query", Some(&caps), 1000).unwrap_err();
+        let err = dispatch("query", Some(&caps), &Quotas::default(), 1000).unwrap_err();
         let msg = err.to_string();
         assert!(matches!(err, VmError::CapDenied(_)), "{msg}");
         assert!(
             msg.contains("dom_native.query") && msg.contains("not granted"),
             "{msg}"
         );
-        let none = dispatch("query", None, 1000).unwrap_err();
+        let none = dispatch("query", None, &Quotas::default(), 1000).unwrap_err();
         assert_eq!(none.to_string(), msg);
     }
 
@@ -119,20 +123,22 @@ mod tests {
     fn a_failing_handler_propagates_instead_of_becoming_null() {
         let mut caps = HostCaps::new();
         caps.register(Box::new(Boom));
-        let err = dispatch("query", Some(&caps), 1000).unwrap_err();
+        let err = dispatch("query", Some(&caps), &Quotas::default(), 1000).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("dom_native.query") && msg.contains("boom"),
             "{msg}"
         );
-        assert!(!matches!(err, VmError::CapDenied(_)), "{msg}");
+        // A granted capability that ran and failed: catchable `CapFailed`,
+        // like the same failure through CAP_CALL, not a security refusal.
+        assert!(matches!(err, VmError::CapFailed { .. }), "{err:?}");
     }
 
     #[test]
     fn arity_is_checked_against_the_spec() {
         let mut caps = HostCaps::new();
         caps.register(Box::new(WrongArity));
-        let err = dispatch("query", Some(&caps), 1000).unwrap_err();
+        let err = dispatch("query", Some(&caps), &Quotas::default(), 1000).unwrap_err();
         assert!(
             matches!(
                 err,
@@ -163,6 +169,31 @@ mod tests {
         }
         let mut caps = HostCaps::new();
         caps.register(Box::new(Ok_));
-        assert_eq!(dispatch("query", Some(&caps), 1000).unwrap(), Value::Int(7));
+        assert_eq!(
+            dispatch("query", Some(&caps), &Quotas::default(), 1000).unwrap(),
+            Value::Int(7)
+        );
+    }
+
+    #[test]
+    fn the_embedder_allowlist_refuses_a_granted_op_without_calling_it() {
+        let mut caps = HostCaps::new();
+        caps.register(Box::new(Boom));
+        let quotas = Quotas {
+            allowed_caps: Some(vec!["io.print".into()]),
+            ..Default::default()
+        };
+        // Boom would fail with "boom"; refused first, it never runs.
+        let err = dispatch("query", Some(&caps), &quotas, 1000).unwrap_err();
+        assert!(
+            matches!(&err, VmError::CapDenied(cap) if cap == "dom_native.query"),
+            "{err:?}"
+        );
+        let allowed = Quotas {
+            allowed_caps: Some(vec!["dom_native.query".into()]),
+            ..Default::default()
+        };
+        let err = dispatch("query", Some(&caps), &allowed, 1000).unwrap_err();
+        assert!(matches!(err, VmError::CapFailed { .. }), "{err:?}");
     }
 }

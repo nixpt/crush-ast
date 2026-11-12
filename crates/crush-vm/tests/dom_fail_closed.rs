@@ -132,6 +132,53 @@ fn a_granted_handler_still_pushes_its_value() {
     assert_eq!(portable.stack.last(), Some(&Value::Str("node-1".into())));
 }
 
+/// The embedder's allowlist (`Quotas::allowed_caps`) covers DOM opcodes as it
+/// covers CAP_CALL: a granted op the allowlist leaves out is refused, on both
+/// engines, and its handler never runs.
+#[test]
+fn the_embedder_allowlist_refuses_a_granted_dom_op() {
+    let program = dom_program();
+    let caps = || {
+        let mut caps = HostCaps::new();
+        caps.register(Box::new(Stub));
+        caps
+    };
+    let quotas = Quotas {
+        allowed_caps: Some(vec!["io.print".into()]),
+        ..Default::default()
+    };
+    let sched = run_with_caps(&program, &quotas, Some(&caps()))
+        .expect_err("an op outside the allowlist must refuse")
+        .to_string();
+    assert!(sched.contains("dom_native.query"), "{sched}");
+    let mut pvm = PortableVm::new(program);
+    pvm.set_host_caps(caps());
+    pvm.set_quotas(quotas);
+    let portable = pvm.run().expect_err("PortableVm must refuse").to_string();
+    assert_eq!(portable, sched, "engines agree on the refusal");
+}
+
+/// FastVM's embedder seam calls the granted handler (it used to answer every
+/// granted DOM request with a fixed `{ok:true,...}` string without calling
+/// it): a value comes back, a failing handler resolves to nothing.
+#[test]
+fn fastvm_resolve_host_request_calls_the_dom_handler() {
+    use crush_vm::fastvm::{HostRequest, resolve_host_request};
+    use crush_vm::value::RuntimeValue;
+    let req = HostRequest::DomQuery {
+        args: serde_json::json!({}),
+    };
+    let mut stub = HostCaps::new();
+    stub.register(Box::new(Stub));
+    assert_eq!(
+        resolve_host_request(&req, Some(&stub)),
+        Some(RuntimeValue::String("node-1".into()))
+    );
+    let mut boom = HostCaps::new();
+    boom.register(Box::new(Boom));
+    assert_eq!(resolve_host_request(&req, Some(&boom)), None);
+}
+
 /// End-to-end through the standalone runner: a `.cvm1` whose only effect is
 /// a `DOM_QUERY` dies with the named refusal on stderr (`crush-vm run` has
 /// no host grant source, so its registry is empty).
