@@ -839,9 +839,11 @@ pub fn raise_fault_to_handler<F>(
         return Err(err);
     }
     let handler_depth = try_stack.last().map(|h| h.call_depth);
-    if let Some(block_failed) =
-        crate::block_capture::escaping_throw(captures, handler_depth, &Value::Error(err.to_string()))
-    {
+    if let Some(block_failed) = crate::block_capture::escaping_throw(
+        captures,
+        handler_depth,
+        &Value::Error(err.to_string()),
+    ) {
         return Err(block_failed);
     }
     if let Some(handler) = try_stack.pop() {

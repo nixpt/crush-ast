@@ -18,7 +18,9 @@ use std::sync::Arc;
 /// (CRUSH-369) so a thrown value and a catchable fault unwind the same way —
 /// cross-function walks included.
 pub(crate) fn handler_frame(call_stack: &[FastFrame]) -> Option<(usize, usize)> {
-    let index = call_stack.iter().rposition(|frame| !frame.handlers.is_empty())?;
+    let index = call_stack
+        .iter()
+        .rposition(|frame| !frame.handlers.is_empty())?;
     Some((index, *call_stack[index].handlers.last()?))
 }
 

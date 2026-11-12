@@ -1,8 +1,8 @@
-# CRUSH-369 — try/catch does not catch runtime errors (array index out of range, failing fs.read)
+# CRUSH-393 — try/catch does not catch runtime errors (array index out of range, failing fs.read)
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-369 |
+| **ID** | CRUSH-393 |
 | **Priority** | P1 |
 | **Status** | Done |
 | **Phase** | VM |
@@ -10,7 +10,7 @@
 | **Dependencies** | none |
 | **Estimated effort** | M |
 
-Filed by opencode — 2026-11-10, from GitHub issue #369.
+Filed by opencode — 2026-11-10, from GitHub issue #369; renumbered from CRUSH-369 (ID collision with CRUSH-369-annotation-warnings-in-toolchain.md, per CONTRIBUTING's renumber-the-newer rule).
 
 ## Problem
 

@@ -178,9 +178,17 @@ fn fault_unwinding_past_an_open_polyglot_capture_fails_the_block() {
     }];
     let mut try_stack = Vec::new();
     let mut call_stack = vec![
-            Frame { return_ip: None, memory: std::collections::HashMap::new(), on_ret: crate::vm::RetValue::Keep },
-            Frame { return_ip: None, memory: std::collections::HashMap::new(), on_ret: crate::vm::RetValue::Keep },
-        ];
+        Frame {
+            return_ip: None,
+            memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
+        },
+        Frame {
+            return_ip: None,
+            memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
+        },
+    ];
     let mut stack = Vec::new();
     let err = raise_fault_to_handler(
         VmError::DivByZero,
@@ -204,11 +212,23 @@ fn fault_unwinds_to_a_handler_inside_the_polyglot_block() {
         call_depth: 1,
         buf: String::new(),
     }];
-    let mut try_stack = vec![TryHandler { handler_ip: 7, call_depth: 2, stack_len: 0 }];
+    let mut try_stack = vec![TryHandler {
+        handler_ip: 7,
+        call_depth: 2,
+        stack_len: 0,
+    }];
     let mut call_stack = vec![
-            Frame { return_ip: None, memory: std::collections::HashMap::new(), on_ret: crate::vm::RetValue::Keep },
-            Frame { return_ip: None, memory: std::collections::HashMap::new(), on_ret: crate::vm::RetValue::Keep },
-        ];
+        Frame {
+            return_ip: None,
+            memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
+        },
+        Frame {
+            return_ip: None,
+            memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
+        },
+    ];
     let mut stack = Vec::new();
     let handler_ip = raise_fault_to_handler(
         VmError::DivByZero,
@@ -228,14 +248,23 @@ fn fault_unwinds_to_a_handler_inside_the_polyglot_block() {
 fn uncatchable_faults_are_refused_by_the_shared_unwinder() {
     // Quota exhaustion and a deliberate sys.exit stay fatal even with a
     // handler active: the unwinder returns them untouched.
-    let mut try_stack = vec![TryHandler { handler_ip: 7, call_depth: 1, stack_len: 0 }];
-    for fatal in [
-        VmError::CallDepthQuota(64),
-        VmError::Exit(3),
-    ] {
+    let mut try_stack = vec![TryHandler {
+        handler_ip: 7,
+        call_depth: 1,
+        stack_len: 0,
+    }];
+    for fatal in [VmError::CallDepthQuota(64), VmError::Exit(3)] {
         let mut call_stack = vec![
-            Frame { return_ip: None, memory: std::collections::HashMap::new(), on_ret: crate::vm::RetValue::Keep },
-            Frame { return_ip: None, memory: std::collections::HashMap::new(), on_ret: crate::vm::RetValue::Keep },
+            Frame {
+                return_ip: None,
+                memory: std::collections::HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
+            },
+            Frame {
+                return_ip: None,
+                memory: std::collections::HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
+            },
         ];
         let mut stack = Vec::new();
         let mut captures = Vec::new();
