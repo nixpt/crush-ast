@@ -19,7 +19,7 @@
 //! cannot disagree about what a cap receives.
 
 use crate::host::{HostCapError, HostCaps};
-use crate::vm::{Value, VmError};
+use crate::vm::{Quotas, Value, VmError};
 
 /// Payload key holding the number of stack operands the opcode consumes.
 pub const STACK_ARGS_KEY: &str = "stack_args";
@@ -76,12 +76,15 @@ pub fn dispatch(
     payload: &serde_json::Value,
     operands: Vec<Value>,
     host_caps: Option<&HostCaps>,
+    quotas: &Quotas,
     deadline_ms: u64,
 ) -> Result<Value, VmError> {
     let gate = format!("ai_native.{kind}");
     let Some(handler) = host_caps.and_then(|h| h.get(&gate)) else {
         return Err(not_granted(kind));
     };
+    // The embedder's allowlist applies as it does to CAP_CALL and EXEC_LANG.
+    crate::scheduler::check_cap_permitted(&gate, true, quotas)?;
     let args = cap_args(payload, operands);
     if let Some(expected) = handler.spec().argc
         && args.len() != expected
@@ -98,7 +101,7 @@ pub fn dispatch(
             cap: gate,
             limit_ms: deadline_ms,
         }),
-        Err(HostCapError::Message(msg)) => Err(VmError::UnknownCap(format!("{gate}: {msg}"))),
+        Err(HostCapError::Message(message)) => Err(VmError::CapFailed { cap: gate, message }),
         Err(HostCapError::Exit(code)) => Err(VmError::Exit(code)),
     }
 }
@@ -143,6 +146,7 @@ mod tests {
             &payload,
             vec![Value::Str("hi".into())],
             Some(&caps),
+            &Quotas::default(),
             1000,
         )
         .unwrap();
@@ -166,6 +170,7 @@ mod tests {
             &serde_json::json!({}),
             vec![],
             Some(&caps),
+            &Quotas::default(),
             1000,
         )
         .unwrap_err();
@@ -190,6 +195,7 @@ mod tests {
             &serde_json::json!({"query": "x"}),
             vec![],
             Some(&caps),
+            &Quotas::default(),
             1000,
         )
         .unwrap_err();
@@ -199,7 +205,15 @@ mod tests {
             msg.contains("ai_native.query") && msg.contains("not granted"),
             "{msg}"
         );
-        let none = dispatch("query", &serde_json::json!({}), vec![], None, 1000).unwrap_err();
+        let none = dispatch(
+            "query",
+            &serde_json::json!({}),
+            vec![],
+            None,
+            &Quotas::default(),
+            1000,
+        )
+        .unwrap_err();
         assert_eq!(none.to_string(), msg);
     }
 
@@ -209,5 +223,48 @@ mod tests {
         assert_eq!(stack_argc(&serde_json::json!({})), 0);
         assert_eq!(parse_payload("").unwrap(), serde_json::json!({}));
         assert!(parse_payload("{not json").is_err());
+    }
+
+    struct Boom;
+    impl HostCap for Boom {
+        fn spec(&self) -> HostCapSpec {
+            HostCapSpec {
+                name: "ai_native.query".into(),
+                argc: None,
+                returns: true,
+            }
+        }
+        fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+            Err("boom".into())
+        }
+    }
+
+    #[test]
+    fn a_failing_handler_is_cap_failed_and_the_allowlist_applies() {
+        let mut caps = HostCaps::new();
+        caps.register(Box::new(Boom));
+        let payload = serde_json::json!({});
+        let err = dispatch(
+            "query",
+            &payload,
+            vec![],
+            Some(&caps),
+            &Quotas::default(),
+            1000,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, VmError::CapFailed { cap, message } if cap == "ai_native.query" && message == "boom"),
+            "{err:?}"
+        );
+        let quotas = Quotas {
+            allowed_caps: Some(vec!["io.print".into()]),
+            ..Default::default()
+        };
+        let err = dispatch("query", &payload, vec![], Some(&caps), &quotas, 1000).unwrap_err();
+        assert!(
+            matches!(&err, VmError::CapDenied(cap) if cap == "ai_native.query"),
+            "{err:?}"
+        );
     }
 }

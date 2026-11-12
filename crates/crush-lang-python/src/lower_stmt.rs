@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crush_cast::{CastType, Expression, ImportStatement, Statement};
 use rustpython_ast as py_ast;
 
-use crate::lower_expr::{lower_constant, lower_expr, lower_expr_hoist};
+use crate::lower_expr::{lower_binop, lower_constant, lower_expr, lower_expr_hoist};
 
 /// Monotonic counter for `try`/`except` synthetic exception-variable names
 /// (`__exc_0`, `__exc_1`, ...). Independent of `lower_expr.rs`'s comprehension
@@ -246,38 +246,7 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
                 name: target_name.to_string(),
                 meta: meta.clone(),
             };
-            let rhs = match op {
-                py_ast::Operator::Add | py_ast::Operator::Sub | py_ast::Operator::Mult => {
-                    Expression::BinaryOp {
-                        operator: match op {
-                            py_ast::Operator::Add => "+",
-                            py_ast::Operator::Sub => "-",
-                            py_ast::Operator::Mult => "*",
-                            _ => unreachable!(),
-                        }
-                        .to_string(),
-                        left: Box::new(left),
-                        right: Box::new(val),
-                        meta: meta.clone(),
-                    }
-                }
-                py_ast::Operator::Div => Expression::CapabilityCall {
-                    name: "math.truediv".to_string(),
-                    args: vec![left, val],
-                    meta: meta.clone(),
-                },
-                py_ast::Operator::FloorDiv => Expression::CapabilityCall {
-                    name: "math.floordiv".to_string(),
-                    args: vec![left, val],
-                    meta: meta.clone(),
-                },
-                py_ast::Operator::Mod => Expression::CapabilityCall {
-                    name: "math.floormod".to_string(),
-                    args: vec![left, val],
-                    meta: meta.clone(),
-                },
-                _ => anyhow::bail!("unsupported augmented operator"),
-            };
+            let rhs = lower_binop(op, left, val, meta.clone());
             Ok(Statement::VarDecl {
                 name: target_name.to_string(),
                 value: rhs,

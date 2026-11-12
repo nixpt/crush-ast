@@ -149,6 +149,54 @@ pub enum Token {
 }
 
 impl Token {
+    /// Identifier-shaped spelling of a keyword token, if it has one —
+    /// `Some("match")` for `Token::Match`, `Some("if")` for `Token::If`, etc.
+    ///
+    /// Field access after `.` accepts these as field/capability names
+    /// (CRUSH-367): past a dot the word cannot start a statement or
+    /// expression, so `regex.match(...)`, `x.if`, `s.for` are unambiguous
+    /// and parse. Everywhere else the word stays a keyword — match
+    /// expressions, bare `match(...)`, statement starts — because this
+    /// helper is only consulted right after a `.`.
+    ///
+    /// Multilingual keyword spellings read back as their canonical English
+    /// form (the token doesn't record which spelling was written, e.g.
+    /// `函数` lexes straight to `Token::Fn`).
+    pub fn keyword_name(&self) -> Option<&'static str> {
+        match self {
+            Token::Let(_) => Some("let"),
+            Token::Mut(_) => Some("mut"),
+            Token::Fn(_) => Some("fn"),
+            Token::If(_) => Some("if"),
+            Token::Else(_) => Some("else"),
+            Token::While(_) => Some("while"),
+            Token::For(_) => Some("for"),
+            Token::In(_) => Some("in"),
+            Token::Return(_) => Some("return"),
+            Token::Try(_) => Some("try"),
+            Token::Catch(_) => Some("catch"),
+            Token::Throw(_) => Some("throw"),
+            Token::Break(_) => Some("break"),
+            Token::Continue(_) => Some("continue"),
+            Token::Struct(_) => Some("struct"),
+            Token::Use(_) => Some("use"),
+            Token::Capability(_) => Some("capability"),
+            Token::Async(_) => Some("async"),
+            Token::Await(_) => Some("await"),
+            Token::Spawn(_) => Some("spawn"),
+            Token::Yield(_) => Some("yield"),
+            Token::New(_) => Some("new"),
+            Token::Export(_) => Some("export"),
+            Token::Lang(_) => Some("lang"),
+            Token::Import(_) => Some("import"),
+            Token::Match(_) => Some("match"),
+            // `And`/`Or`/`Not` are deliberately absent: the lexer emits the
+            // same tokens for `&&`/`||`/`!`, so accepting them here would
+            // turn `obj.!(1)` or `obj.&&` into field names.
+            _ => None,
+        }
+    }
+
     /// Human-readable description for error messages — e.g. `` `=` `` for
     /// `Assign`, `` `foo` `` for `Ident("foo", _)`, `"end of input"` for
     /// `EOF`. Every parser error site should use this (or `Display`, which
@@ -254,6 +302,10 @@ pub struct Lexer {
     /// `@python` (AtIdent) the lexer pre-extracts the raw body and buffers
     /// a `LangBody` here to hand back on the next call.
     pending: Option<Token>,
+    /// The previous token was a `.`. Past a dot the word forms `and`/`or`/
+    /// `not` are field names (`obj.not(1)`), not operators; the punctuation
+    /// spellings `&&`/`||`/`!` never are (CRUSH-394).
+    after_dot: bool,
 }
 
 impl Lexer {
@@ -264,6 +316,7 @@ impl Lexer {
             line: 1,
             col: 1,
             pending: None,
+            after_dot: false,
         }
     }
 
@@ -602,6 +655,7 @@ impl Lexer {
             "null" => Token::Null(location),
             // Word forms of the logical operators (the guide documents them as
             // identical to `&&` / `||` / `!`).
+            "and" | "or" | "not" if self.after_dot => Token::Ident(value, location),
             "and" => Token::And(location),
             "or" => Token::Or(location),
             "not" => Token::Not(location),
@@ -774,10 +828,10 @@ impl Lexer {
         Ok(Token::AtIdent(id, at_location))
     }
 
-    /// Read a `-> name` / `-> (a, b)` output list, starting just after the
-    /// arrow has been consumed. Returns `None` on any malformed list (no
-    /// identifier, a stray comma, an unclosed `(`) — the caller restores its
-    /// checkpoint, same convention as `read_dep_list`.
+    /// Read a `-> name` / `-> a, b` / `-> (a, b)` output list, starting just
+    /// after the arrow has been consumed. Returns `None` on any malformed
+    /// list (no identifier, a stray comma, an unclosed `(`) — the caller
+    /// restores its checkpoint, same convention as `read_dep_list`.
     fn read_output_list(&mut self) -> Option<Vec<String>> {
         let mut outputs = Vec::new();
         while let Some(ch) = self.peek() {
@@ -820,9 +874,34 @@ impl Lexer {
                 }
             }
         } else {
-            let name = self.read_output_ident()?;
-            outputs.push(name);
-            Some(outputs)
+            // Bare form: `-> a` or `-> a, b, c` — comma-separated names
+            // terminated by the block's `{` (the caller checks for it). A
+            // trailing comma leaves the next name missing, which fails the
+            // same malformed-list bail as any other broken list.
+            loop {
+                while let Some(ch) = self.peek() {
+                    if ch.is_whitespace() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                let name = self.read_output_ident()?;
+                outputs.push(name);
+                while let Some(ch) = self.peek() {
+                    if ch.is_whitespace() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                match self.peek() {
+                    Some(',') => {
+                        self.advance();
+                    }
+                    _ => return Some(outputs),
+                }
+            }
         }
     }
 
@@ -1031,6 +1110,12 @@ impl Lexer {
     }
 
     pub fn next_token(&mut self) -> Result<Token, ParseError> {
+        let token = self.next_token_inner()?;
+        self.after_dot = matches!(token, Token::Dot(_));
+        Ok(token)
+    }
+
+    fn next_token_inner(&mut self) -> Result<Token, ParseError> {
         if let Some(buffered) = self.pending.take() {
             return Ok(buffered);
         }
@@ -1603,6 +1688,43 @@ mod tests {
             Token::LangBody(_, _, deps, outputs) => {
                 assert!(deps.is_empty());
                 assert_eq!(outputs, vec!["mean".to_string(), "stdev".to_string()]);
+            }
+            other => panic!("expected LangBody, got {other:?}"),
+        }
+    }
+
+    /// CRUSH-358: the documented bare multi-output form `-> a, b` (no
+    /// parentheses) is captured in order, same as the parenthesized form.
+    #[test]
+    fn test_lex_lang_block_with_bare_multi_output() {
+        let mut lexer = Lexer::new("@python -> a, b { pass }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(_, _, deps, outputs) => {
+                assert!(deps.is_empty());
+                assert_eq!(outputs, vec!["a".to_string(), "b".to_string()]);
+            }
+            other => panic!("expected LangBody, got {other:?}"),
+        }
+    }
+
+    /// CRUSH-358: three bare outputs keep declaration order.
+    #[test]
+    fn test_lex_lang_block_with_bare_three_outputs() {
+        let mut lexer = Lexer::new("@javascript -> a, b, c { pass }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("javascript".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(_, _, _, outputs) => {
+                assert_eq!(
+                    outputs,
+                    vec!["a".to_string(), "b".to_string(), "c".to_string()]
+                );
             }
             other => panic!("expected LangBody, got {other:?}"),
         }

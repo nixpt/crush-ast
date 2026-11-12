@@ -57,13 +57,23 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
                 | syn::BinOp::SubAssign(_)
                 | syn::BinOp::MulAssign(_)
                 | syn::BinOp::DivAssign(_)
-                | syn::BinOp::RemAssign(_) => {
+                | syn::BinOp::RemAssign(_)
+                | syn::BinOp::BitAndAssign(_)
+                | syn::BinOp::BitOrAssign(_)
+                | syn::BinOp::BitXorAssign(_)
+                | syn::BinOp::ShlAssign(_)
+                | syn::BinOp::ShrAssign(_) => {
                     let operator = match e.op {
                         syn::BinOp::AddAssign(_) => "+",
                         syn::BinOp::SubAssign(_) => "-",
                         syn::BinOp::MulAssign(_) => "*",
                         syn::BinOp::DivAssign(_) => "/",
                         syn::BinOp::RemAssign(_) => "%",
+                        syn::BinOp::BitAndAssign(_) => "&",
+                        syn::BinOp::BitOrAssign(_) => "|",
+                        syn::BinOp::BitXorAssign(_) => "^",
+                        syn::BinOp::ShlAssign(_) => "<<",
+                        syn::BinOp::ShrAssign(_) => ">>",
                         _ => unreachable!(),
                     };
                     let mut meta = meta;

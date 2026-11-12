@@ -1832,6 +1832,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                         AssignOp::ModAssign => "%",
                         AssignOp::LShiftAssign => "<<",
                         AssignOp::RShiftAssign => ">>",
+                        AssignOp::ZeroFillRShiftAssign => ">>>",
                         AssignOp::BitOrAssign => "|",
                         AssignOp::BitXorAssign => "^",
                         AssignOp::BitAndAssign => "&",

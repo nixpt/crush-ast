@@ -1423,3 +1423,9 @@ CRUSH-367. A package whose entry has a top-level import compiles file-by-file: s
 Reason:
 The cap's one shared implementation (crush-lang-sdk host_caps.rs, every host registers it) now builds Value::new_map([(exit_code, Int), (stdout, Str), (stderr, Str)]) instead of a serde_json string, so json.parse wrappers are gone and field access is direct. For a command that can't start, chose result-with-failure-code over Err because cap failures are uncatchable today (CRUSH-219 backlog, t11_missing_file KNOWN_GAP pins it), so Err would keep the run-ending behaviour the ticket removes; and chose exit_code -1 over shell-style 127/126 because process.exec is argv-exec, not a shell — shell codes would misclassify NotFound vs PermissionDenied vs resource errors, while -1 already means 'no exit status exists' in this cap (signal-killed unwrap_or(-1) path) and can't collide with a real 0-255 exit code; the OS reason rides on stderr either way. Move to a catchable error when CRUSH-219 lands.
 
+
+## 2026-11-10T22:57:45-06:00 — CRUSH-369: VM faults unwind to try handlers via one shared unwinder
+
+Reason:
+A catchable VmError raised under an active try frame converts to a caught Value::Error through vm::raise_fault_to_handler, called by both the scheduler (the engine crush-run uses) and PortableVm, so catchability classification and unwind cannot drift between engines; FastVM shares the handler walk with its Throw opcode; JIT refuses loudly (fault dispatch not wired to handlers) and AOT already refuses try/catch. Quotas, capability-security, sys.exit, broken VM state, uncaught throws and polyglot block failures stay fatal.
+

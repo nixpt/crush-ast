@@ -15,7 +15,6 @@ path = "src/bin/walker.rs"
 crush-cast.workspace = true
 crush-walker-core.workspace = true
 anyhow.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 zshrs-parse = "0.10"
 
