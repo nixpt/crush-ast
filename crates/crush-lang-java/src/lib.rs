@@ -47,10 +47,10 @@
 //! F4: end-to-end parse test (mirror Go's `test_treesitter_frontend_adapter`).
 //! F5: differential fixtures across the 5 most common Java patterns per the CRUSH-37 ticket's Commit 2 scope (class declaration, method body, imports, generics, lambda).
 
+use crush_cast::Program;
 use crush_walker_core::{
     impl_both_for_walker, Frontend, LanguageAdapter, TreeSitterFrontend, Walker,
 };
-use crush_cast::Program;
 use tree_sitter::Tree;
 
 /// Java inner walker. Mirrors Go/C/Zig/Dart.
@@ -236,11 +236,7 @@ mod tests {
 
         // Register in AdapterRegistry (the unified registry).
         let mut registry = AdapterRegistry::new();
-        registry.register(Box::new(JavaFrontend::new(
-            JavaAdapter,
-            "java",
-            &["java"],
-        )));
+        registry.register(Box::new(JavaFrontend::new(JavaAdapter, "java", &["java"])));
 
         let languages = registry.languages();
         assert!(

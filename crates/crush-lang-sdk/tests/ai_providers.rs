@@ -124,7 +124,10 @@ fn a_backend_is_not_a_grant() {
     let err = crush_vm::run_with_caps(&program(), &Quotas::default(), Some(&caps))
         .expect_err("ungranted AI op must fail closed")
         .to_string();
-    assert!(err.contains("ai_native.query") && err.contains("not granted"), "{err}");
+    assert!(
+        err.contains("ai_native.query") && err.contains("not granted"),
+        "{err}"
+    );
     assert_eq!(oracle.calls.load(Ordering::SeqCst), 0);
     assert!(fleet.dispatched.lock().unwrap().is_empty());
 }

@@ -1,9 +1,9 @@
 //! W-WIP-001 and W-TMP-001 diagnostic passes — Phase 2a of the AI-native roadmap.
 
 use crate::diagnostics::{CompilerDiagnostic, DiagnosticSeverity};
-use crush_cast::manifest::SourceLoc;
-use crush_cast::Program;
 use chrono::{NaiveDate, Utc};
+use crush_cast::Program;
+use crush_cast::manifest::SourceLoc;
 use crush_index::stale::TempStaleChecker;
 
 const W_WIP: &str = "W-WIP-001";
@@ -37,9 +37,7 @@ pub fn check_wip(program: &Program) -> Vec<CompilerDiagnostic> {
             wip.unresolved.len()
         ),
         location: SourceLoc::default(),
-        hint: Some(
-            "resolve all @wip.todo and @wip.unresolved before shipping".to_string(),
-        ),
+        hint: Some("resolve all @wip.todo and @wip.unresolved before shipping".to_string()),
     }]
 }
 

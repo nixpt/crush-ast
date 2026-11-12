@@ -45,7 +45,12 @@ impl Body {
     /// Push an instruction, returning its index (for label/branch patching).
     fn op(&mut self, op: &str, args: serde_json::Value) -> usize {
         let i = self.instrs.len();
-        self.instrs.push(Instruction { op: op.into(), lang: None, meta: None, args });
+        self.instrs.push(Instruction {
+            op: op.into(),
+            lang: None,
+            meta: None,
+            args,
+        });
         i
     }
     fn plain(&mut self, op: &str) {
@@ -80,107 +85,281 @@ pub fn q6k_gemv_program() -> Program {
     let mut b = Body::new();
 
     // ── SIMT ids → s64 ───────────────────────────────────────────────────────────
-    b.plain("ptx_block_dim_x"); b.cvt("s64"); b.store("ntid");
-    b.plain("ptx_block_idx_x"); b.cvt("s64"); b.store("ctaid");
-    b.plain("ptx_thread_idx_x"); b.cvt("s64"); b.store("tid");
+    b.plain("ptx_block_dim_x");
+    b.cvt("s64");
+    b.store("ntid");
+    b.plain("ptx_block_idx_x");
+    b.cvt("s64");
+    b.store("ctaid");
+    b.plain("ptx_thread_idx_x");
+    b.cvt("s64");
+    b.store("tid");
     // gtid = ctaid*ntid + tid ; row = gtid>>5 ; lane = gtid&31
-    b.load("ctaid"); b.load("ntid"); b.plain("mul"); b.load("tid"); b.plain("add"); b.store("gtid");
-    b.load("gtid"); b.pi(5); b.plain("shr"); b.store("row");
-    b.load("gtid"); b.pi(31); b.plain("and"); b.store("lane");
+    b.load("ctaid");
+    b.load("ntid");
+    b.plain("mul");
+    b.load("tid");
+    b.plain("add");
+    b.store("gtid");
+    b.load("gtid");
+    b.pi(5);
+    b.plain("shr");
+    b.store("row");
+    b.load("gtid");
+    b.pi(31);
+    b.plain("and");
+    b.store("lane");
 
     // ── params → s64 ─────────────────────────────────────────────────────────────
-    b.load("p_w"); b.cvt("s64"); b.store("wbase");
-    b.load("p_x"); b.cvt("s64"); b.store("xbase");
-    b.load("p_y"); b.cvt("s64"); b.store("ybase");
-    b.load("p_cols"); b.cvt("s64"); b.store("cols");
-    b.load("p_rows"); b.cvt("s64"); b.store("rows");
-    b.load("cols"); b.pi(8); b.plain("shr"); b.store("bpr");   // super-blocks per row = cols/256
-    b.load("row"); b.load("bpr"); b.plain("mul"); b.store("rb"); // super-blocks before this row
+    b.load("p_w");
+    b.cvt("s64");
+    b.store("wbase");
+    b.load("p_x");
+    b.cvt("s64");
+    b.store("xbase");
+    b.load("p_y");
+    b.cvt("s64");
+    b.store("ybase");
+    b.load("p_cols");
+    b.cvt("s64");
+    b.store("cols");
+    b.load("p_rows");
+    b.cvt("s64");
+    b.store("rows");
+    b.load("cols");
+    b.pi(8);
+    b.plain("shr");
+    b.store("bpr"); // super-blocks per row = cols/256
+    b.load("row");
+    b.load("bpr");
+    b.plain("mul");
+    b.store("rb"); // super-blocks before this row
 
     // ── bounds: if row >= rows -> ret ────────────────────────────────────────────
-    b.load("row"); b.load("rows"); b.plain("ge");
+    b.load("row");
+    b.load("rows");
+    b.plain("ge");
     let j_bounds = b.op("jmp_if", json!({ "target": 0 })); // patched -> RET
 
     // ── acc = 0.0f (f32) ; c = lane ──────────────────────────────────────────────
-    b.op("push_float", json!({ "value": 0.0 })); b.cvt("f32"); b.store("acc");
-    b.load("lane"); b.store("c");
+    b.op("push_float", json!({ "value": 0.0 }));
+    b.cvt("f32");
+    b.store("acc");
+    b.load("lane");
+    b.store("c");
 
     // ── loop over the lane's strided columns ─────────────────────────────────────
     let loop_top = b.here();
-    b.load("c"); b.load("cols"); b.plain("ge");
+    b.load("c");
+    b.load("cols");
+    b.plain("ge");
     let j_endloop = b.op("jmp_if", json!({ "target": 0 })); // patched -> ENDLOOP
 
     // e = c&255 ; sb = c>>8 ; wsb = wbase + (rb+sb)*210
-    b.load("c"); b.pi(255); b.plain("and"); b.store("e");
-    b.load("c"); b.pi(8); b.plain("shr"); b.store("sb");
-    b.load("rb"); b.load("sb"); b.plain("add"); b.pi(210); b.plain("mul"); b.load("wbase"); b.plain("add"); b.store("wsb");
+    b.load("c");
+    b.pi(255);
+    b.plain("and");
+    b.store("e");
+    b.load("c");
+    b.pi(8);
+    b.plain("shr");
+    b.store("sb");
+    b.load("rb");
+    b.load("sb");
+    b.plain("add");
+    b.pi(210);
+    b.plain("mul");
+    b.load("wbase");
+    b.plain("add");
+    b.store("wsb");
 
     // i = e&31 ; half = e>>7 ; gg = (e>>5)&3
-    b.load("e"); b.pi(31); b.plain("and"); b.store("i");
-    b.load("e"); b.pi(7); b.plain("shr"); b.store("half");
-    b.load("e"); b.pi(5); b.plain("shr"); b.pi(3); b.plain("and"); b.store("gg");
+    b.load("e");
+    b.pi(31);
+    b.plain("and");
+    b.store("i");
+    b.load("e");
+    b.pi(7);
+    b.plain("shr");
+    b.store("half");
+    b.load("e");
+    b.pi(5);
+    b.plain("shr");
+    b.pi(3);
+    b.plain("and");
+    b.store("gg");
 
     // ql byte: addr = wsb + half*64 + (gg&1)*32 + i
-    b.load("half"); b.pi(64); b.plain("mul");
-    b.load("gg"); b.pi(1); b.plain("and"); b.pi(32); b.plain("mul");
-    b.plain("add"); b.store("qlbase");
-    b.load("wsb"); b.load("qlbase"); b.plain("add"); b.load("i"); b.plain("add"); b.store("qladdr");
-    b.load("qladdr"); b.ldg("u8"); b.cvt("s64"); b.store("qlbyte");
+    b.load("half");
+    b.pi(64);
+    b.plain("mul");
+    b.load("gg");
+    b.pi(1);
+    b.plain("and");
+    b.pi(32);
+    b.plain("mul");
+    b.plain("add");
+    b.store("qlbase");
+    b.load("wsb");
+    b.load("qlbase");
+    b.plain("add");
+    b.load("i");
+    b.plain("add");
+    b.store("qladdr");
+    b.load("qladdr");
+    b.ldg("u8");
+    b.cvt("s64");
+    b.store("qlbyte");
 
     // nibble = ((e>>6)&1) ? (qlbyte>>4) : (qlbyte&15)  — branchless via shift = hi*4
-    b.load("e"); b.pi(6); b.plain("shr"); b.pi(1); b.plain("and"); b.store("hi");
-    b.load("hi"); b.pi(2); b.plain("shl"); b.store("nibsh");
-    b.load("qlbyte"); b.load("nibsh"); b.plain("shr"); b.pi(15); b.plain("and"); b.store("qlval");
+    b.load("e");
+    b.pi(6);
+    b.plain("shr");
+    b.pi(1);
+    b.plain("and");
+    b.store("hi");
+    b.load("hi");
+    b.pi(2);
+    b.plain("shl");
+    b.store("nibsh");
+    b.load("qlbyte");
+    b.load("nibsh");
+    b.plain("shr");
+    b.pi(15);
+    b.plain("and");
+    b.store("qlval");
 
     // qh byte: addr = wsb + 128 + i + half*32 ; qh_val = (qh >> (gg<<1)) & 3
-    b.load("wsb"); b.pi(128); b.plain("add"); b.load("i"); b.plain("add");
-    b.load("half"); b.pi(32); b.plain("mul"); b.plain("add"); b.store("qhaddr");
-    b.load("qhaddr"); b.ldg("u8"); b.cvt("s64"); b.store("qhbyte");
-    b.load("gg"); b.pi(1); b.plain("shl"); b.store("qhsh");
-    b.load("qhbyte"); b.load("qhsh"); b.plain("shr"); b.pi(3); b.plain("and"); b.store("qhval");
+    b.load("wsb");
+    b.pi(128);
+    b.plain("add");
+    b.load("i");
+    b.plain("add");
+    b.load("half");
+    b.pi(32);
+    b.plain("mul");
+    b.plain("add");
+    b.store("qhaddr");
+    b.load("qhaddr");
+    b.ldg("u8");
+    b.cvt("s64");
+    b.store("qhbyte");
+    b.load("gg");
+    b.pi(1);
+    b.plain("shl");
+    b.store("qhsh");
+    b.load("qhbyte");
+    b.load("qhsh");
+    b.plain("shr");
+    b.pi(3);
+    b.plain("and");
+    b.store("qhval");
 
     // q6 = (qlval | (qhval<<4)) - 32
-    b.load("qlval"); b.load("qhval"); b.pi(4); b.plain("shl"); b.plain("or"); b.pi(32); b.plain("sub"); b.store("q6");
+    b.load("qlval");
+    b.load("qhval");
+    b.pi(4);
+    b.plain("shl");
+    b.plain("or");
+    b.pi(32);
+    b.plain("sub");
+    b.store("q6");
 
     // scale: sc = sign-extend-s8( u8[ wsb + 192 + (e>>4) ] )  via (b<<56)>>56
-    b.load("wsb"); b.pi(192); b.plain("add"); b.load("e"); b.pi(4); b.plain("shr"); b.plain("add"); b.store("scaddr");
-    b.load("scaddr"); b.ldg("u8"); b.cvt("s64"); b.store("scbyte");
-    b.load("scbyte"); b.pi(56); b.plain("shl"); b.pi(56); b.plain("shr"); b.store("sc");
+    b.load("wsb");
+    b.pi(192);
+    b.plain("add");
+    b.load("e");
+    b.pi(4);
+    b.plain("shr");
+    b.plain("add");
+    b.store("scaddr");
+    b.load("scaddr");
+    b.ldg("u8");
+    b.cvt("s64");
+    b.store("scbyte");
+    b.load("scbyte");
+    b.pi(56);
+    b.plain("shl");
+    b.pi(56);
+    b.plain("shr");
+    b.store("sc");
 
     // d = f16[ wsb + 208 ] (widened to f32 by the loader)
-    b.load("wsb"); b.pi(208); b.plain("add"); b.store("daddr");
-    b.load("daddr"); b.ldg("f16"); b.store("dval");
+    b.load("wsb");
+    b.pi(208);
+    b.plain("add");
+    b.store("daddr");
+    b.load("daddr");
+    b.ldg("f16");
+    b.store("dval");
 
     // dq = dval * (f32)sc * (f32)q6
-    b.load("sc"); b.cvt("f32"); b.store("scf");
-    b.load("q6"); b.cvt("f32"); b.store("q6f");
-    b.load("dval"); b.load("scf"); b.plain("mul"); b.load("q6f"); b.plain("mul"); b.store("dq");
+    b.load("sc");
+    b.cvt("f32");
+    b.store("scf");
+    b.load("q6");
+    b.cvt("f32");
+    b.store("q6f");
+    b.load("dval");
+    b.load("scf");
+    b.plain("mul");
+    b.load("q6f");
+    b.plain("mul");
+    b.store("dq");
 
     // x[c] = f32[ xbase + c*4 ] ; acc = fma(dq, x, acc)
-    b.load("xbase"); b.load("c"); b.pi(2); b.plain("shl"); b.plain("add"); b.store("xaddr");
-    b.load("xaddr"); b.ldg("f32"); b.store("xval");
-    b.load("dq"); b.load("xval"); b.load("acc"); b.plain("fma"); b.store("acc");
+    b.load("xbase");
+    b.load("c");
+    b.pi(2);
+    b.plain("shl");
+    b.plain("add");
+    b.store("xaddr");
+    b.load("xaddr");
+    b.ldg("f32");
+    b.store("xval");
+    b.load("dq");
+    b.load("xval");
+    b.load("acc");
+    b.plain("fma");
+    b.store("acc");
 
     // c += 32 ; back-edge
-    b.load("c"); b.pi(32); b.plain("add"); b.store("c");
+    b.load("c");
+    b.pi(32);
+    b.plain("add");
+    b.store("c");
     b.op("jmp", json!({ "target": loop_top }));
 
     // ── ENDLOOP: warp butterfly reduction over 32 lanes ──────────────────────────
     let endloop = b.here();
     b.patch_target(j_endloop, endloop);
     for off in [16i64, 8, 4, 2, 1] {
-        b.load("acc");                                   // shfl var
-        b.pi(off); b.cvt("u32");                          // idx (butterfly lane mask)
-        b.pi(31); b.cvt("u32");                           // c-operand 0x1f (full-warp width)
+        b.load("acc"); // shfl var
+        b.pi(off);
+        b.cvt("u32"); // idx (butterfly lane mask)
+        b.pi(31);
+        b.cvt("u32"); // c-operand 0x1f (full-warp width)
         b.op("ptx_shfl_sync_bfly", json!({ "membermask": 0xffffffffu64 }));
-        b.load("acc"); b.plain("add"); b.store("acc");    // acc += shuffled
+        b.load("acc");
+        b.plain("add");
+        b.store("acc"); // acc += shuffled
     }
 
     // ── lane 0 writes y[row] ─────────────────────────────────────────────────────
-    b.load("lane"); b.pi(0); b.plain("ne");
+    b.load("lane");
+    b.pi(0);
+    b.plain("ne");
     let j_skip = b.op("jmp_if", json!({ "target": 0 })); // patched -> RET (skip store if lane!=0)
-    b.load("ybase"); b.load("row"); b.pi(2); b.plain("shl"); b.plain("add"); b.store("yaddr");
-    b.load("yaddr"); b.load("acc"); b.plain("ptx_st_global");
+    b.load("ybase");
+    b.load("row");
+    b.pi(2);
+    b.plain("shl");
+    b.plain("add");
+    b.store("yaddr");
+    b.load("yaddr");
+    b.load("acc");
+    b.plain("ptx_st_global");
 
     // ── RET ──────────────────────────────────────────────────────────────────────
     let ret_idx = b.here();

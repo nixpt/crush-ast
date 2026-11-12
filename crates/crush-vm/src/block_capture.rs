@@ -52,24 +52,40 @@ pub fn emit(captures: &mut [OutputCapture], out_parts: &mut Vec<String>, part: S
 }
 
 /// `lang.capture_begin(lang, line)`, opened by the frame at `call_depth`.
-pub fn begin(captures: &mut Vec<OutputCapture>, args: &[Value], call_depth: usize) -> Result<Option<Value>, VmError> {
+pub fn begin(
+    captures: &mut Vec<OutputCapture>,
+    args: &[Value],
+    call_depth: usize,
+) -> Result<Option<Value>, VmError> {
     let lang = match args.first() {
         Some(Value::Str(s)) => s.to_string(),
-        _ => return Err(VmError::Unsupported("lang.capture_begin(lang, line): lang must be a string".into())),
+        _ => {
+            return Err(VmError::Unsupported(
+                "lang.capture_begin(lang, line): lang must be a string".into(),
+            ));
+        }
     };
     let line = match args.get(1) {
         Some(Value::Int(n)) if *n > 0 => u32::try_from(*n).ok(),
         _ => None,
     };
-    captures.push(OutputCapture { lang, line, call_depth, buf: String::new() });
+    captures.push(OutputCapture {
+        lang,
+        line,
+        call_depth,
+        buf: String::new(),
+    });
     Ok(None)
 }
 
 /// `lang.capture_end()`: close the innermost capture and emit what it caught.
-pub fn end(captures: &mut Vec<OutputCapture>, out_parts: &mut Vec<String>) -> Result<Option<Value>, VmError> {
-    let capture = captures
-        .pop()
-        .ok_or_else(|| VmError::Unsupported("lang.capture_end() without lang.capture_begin()".into()))?;
+pub fn end(
+    captures: &mut Vec<OutputCapture>,
+    out_parts: &mut Vec<String>,
+) -> Result<Option<Value>, VmError> {
+    let capture = captures.pop().ok_or_else(|| {
+        VmError::Unsupported("lang.capture_end() without lang.capture_begin()".into())
+    })?;
     let text = visible_text(&capture.buf);
     if !text.is_empty() {
         emit(captures, out_parts, text);
@@ -155,8 +171,14 @@ mod tests {
         ]);
         let err = escaping_throw(&mut caps, Some(1), &exc).expect("escapes");
         assert!(caps.is_empty());
-        assert_eq!(err.to_string(), crate::scheduler::lang_runtime_error("python", b"ValueError: x", Some(3)).to_string());
+        assert_eq!(
+            err.to_string(),
+            crate::scheduler::lang_runtime_error("python", b"ValueError: x", Some(3)).to_string()
+        );
         begin(&mut caps, &[Value::Str("python".into()), Value::Int(3)], 1).unwrap();
-        assert!(escaping_throw(&mut caps, None, &Value::Null).is_some(), "uncaught");
+        assert!(
+            escaping_throw(&mut caps, None, &Value::Null).is_some(),
+            "uncaught"
+        );
     }
 }

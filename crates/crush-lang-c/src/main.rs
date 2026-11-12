@@ -11,7 +11,9 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     run_walker_binary(
-        crush_lang_c::CWalker { file_name: cli.input.clone() },
+        crush_lang_c::CWalker {
+            file_name: cli.input.clone(),
+        },
         "c",
         &[".c", ".h"],
         &cli.input,

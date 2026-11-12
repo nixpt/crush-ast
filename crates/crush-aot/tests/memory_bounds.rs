@@ -14,7 +14,11 @@ use crush_aot::AotCompiler;
 const ADDRESS_SPACE_LIMIT: &str = "--as=268435456";
 
 fn available(tool: &str) -> bool {
-    Command::new(tool).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(tool)
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Run the built module under the address-space limit; returns its first stdout line.
@@ -26,9 +30,17 @@ fn run_limited(so: &Path) -> Result<String, String> {
         .output()
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
-        return Err(format!("exit {:?}: {}", out.status.code(), String::from_utf8_lossy(&out.stderr)));
+        return Err(format!(
+            "exit {:?}: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        ));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").to_string())
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string())
 }
 
 fn assert_bounded(name: &str, source: &str, expected: &str) {
@@ -38,12 +50,26 @@ fn assert_bounded(name: &str, source: &str, expected: &str) {
     }
     let program = crush_frontend::compile_crush_source(source).expect("frontend");
     let compiler = AotCompiler::new();
-    let mut builds = vec![("rust", compiler.compile_casm(&program, &format!("{name}_rust")).expect("rust backend"))];
+    let mut builds = vec![(
+        "rust",
+        compiler
+            .compile_casm(&program, &format!("{name}_rust"))
+            .expect("rust backend"),
+    )];
     if available("gcc") {
-        builds.push(("c", compiler.compile_c(&program, &format!("{name}_c"), "gcc").expect("c backend")));
+        builds.push((
+            "c",
+            compiler
+                .compile_c(&program, &format!("{name}_c"), "gcc")
+                .expect("c backend"),
+        ));
     }
     for (backend, so) in builds {
-        assert_eq!(run_limited(&so).as_deref(), Ok(expected), "{name} [{backend}]");
+        assert_eq!(
+            run_limited(&so).as_deref(),
+            Ok(expected),
+            "{name} [{backend}]"
+        );
     }
 }
 

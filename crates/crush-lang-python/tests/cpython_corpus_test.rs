@@ -40,22 +40,43 @@ fn crush_output_matches_cpython() {
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
         match run_crush(&source) {
             Ok(got) if got == expected => {}
-            Ok(got) => failures.push(format!("{}:\n  cpython: {expected:?}\n  crush:   {got:?}", path.display())),
+            Ok(got) => failures.push(format!(
+                "{}:\n  cpython: {expected:?}\n  crush:   {got:?}",
+                path.display()
+            )),
             Err(e) => failures.push(format!("{}: {e:#}", path.display())),
         }
     }
-    assert!(failures.is_empty(), "{} program(s) diverge from CPython:\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} program(s) diverge from CPython:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 #[test]
 fn expected_outputs_match_cpython() {
-    if std::process::Command::new("python3").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
+    if std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+    {
         eprintln!("python3 not on PATH — skipping .out freshness check");
         return;
     }
     for path in corpus() {
-        let out = std::process::Command::new("python3").arg(&path).output().unwrap();
+        let out = std::process::Command::new("python3")
+            .arg(&path)
+            .output()
+            .unwrap();
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{} .out is stale", path.display());
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            expected,
+            "{} .out is stale",
+            path.display()
+        );
     }
 }

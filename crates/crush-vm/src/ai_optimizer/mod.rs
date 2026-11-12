@@ -13,7 +13,7 @@
 //! comparisons, nanoseconds, every target incl. wasm); loading a model file,
 //! if wanted, belongs behind a pure-Rust backend such as tract (CRUSH-256).
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Default path for the GC prediction model (no model is shipped).
 pub const GC_MODEL_PATH: &str = "crates/crush-vm/models/gc_model.onnx";
@@ -53,7 +53,12 @@ impl Default for VmOptimizer {
 impl VmOptimizer {
     /// Create an optimizer with the default policy ([`GcPolicy::Never`]).
     pub fn new() -> Self {
-        Self { policy: GcPolicy::default(), test_mode: false, telemetry_log: Vec::new(), log_enabled: false }
+        Self {
+            policy: GcPolicy::default(),
+            test_mode: false,
+            telemetry_log: Vec::new(),
+            log_enabled: false,
+        }
     }
 
     /// Choose the decision policy.
@@ -155,7 +160,10 @@ mod tests {
 
     #[test]
     fn loading_a_model_is_an_error() {
-        let err = VmOptimizer::new().load_gc_model("x.onnx").unwrap_err().to_string();
+        let err = VmOptimizer::new()
+            .load_gc_model("x.onnx")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("CRUSH-256"), "{err}");
     }
 }

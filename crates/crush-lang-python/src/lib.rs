@@ -14,8 +14,8 @@ use std::any::Any;
 use std::collections::HashMap;
 
 use crush_cast::{Function, Program, Statement};
-use rustpython_ast as py_ast;
 use crush_walker_core::{FeatureReport, Frontend, LowerCtx};
+use rustpython_ast as py_ast;
 
 /// Python language frontend implementing the `Frontend` trait.
 pub struct PythonFrontend;
@@ -38,8 +38,10 @@ impl Frontend for PythonFrontend {
             .downcast_ref::<(String, Vec<py_ast::Stmt>)>()
             .map(|(_, stmts)| stmts)
             .ok_or_else(|| anyhow::anyhow!("expected (String, Stmt vec)"))?;
-        let mut r = FeatureReport::default();
-        r.lang = "python".to_string();
+        let mut r = FeatureReport {
+            lang: "python".to_string(),
+            ..Default::default()
+        };
         for stmt in stmts {
             match stmt {
                 py_ast::Stmt::FunctionDef { .. } => r.uses_functions = true,
@@ -49,18 +51,19 @@ impl Frontend for PythonFrontend {
                 py_ast::Stmt::Import(py_ast::StmtImport { names, .. }) => {
                     for alias in names {
                         r.uses_imports.push(alias.name.to_string());
-                        if analyzer::is_dangerous_import(&alias.name.to_string()) {
+                        if analyzer::is_dangerous_import(alias.name.as_str()) {
                             r.dangerous_imports.push(alias.name.to_string());
                         }
                     }
                 }
-                py_ast::Stmt::ImportFrom(py_ast::StmtImportFrom { module, .. }) => {
-                    if let Some(module) = module {
-                        let m = module.to_string();
-                        r.uses_imports.push(m.clone());
-                        if analyzer::is_dangerous_import(&m) {
-                            r.dangerous_imports.push(m);
-                        }
+                py_ast::Stmt::ImportFrom(py_ast::StmtImportFrom {
+                    module: Some(module),
+                    ..
+                }) => {
+                    let m = module.to_string();
+                    r.uses_imports.push(m.clone());
+                    if analyzer::is_dangerous_import(&m) {
+                        r.dangerous_imports.push(m);
                     }
                 }
                 py_ast::Stmt::Global { .. } | py_ast::Stmt::Nonlocal { .. } => {

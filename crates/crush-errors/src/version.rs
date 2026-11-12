@@ -104,7 +104,10 @@ mod tests {
 
     #[test]
     fn constructors_set_the_boundary() {
-        assert_eq!(VersionMismatch::casm("1.0", "2.0").boundary, VersionBoundary::Casm);
+        assert_eq!(
+            VersionMismatch::casm("1.0", "2.0").boundary,
+            VersionBoundary::Casm
+        );
         let v = VersionMismatch::cast("1", "2");
         assert_eq!(v.boundary, VersionBoundary::Cast);
         assert_eq!((v.expected.as_str(), v.found.as_str()), ("1", "2"));

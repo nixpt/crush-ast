@@ -292,20 +292,39 @@ fn builtin_names_agree_across_both_doors() {
             vec![stmt(call("print", vec![call("math.abs", vec![int(-2)])]))],
             true,
         ),
-        ("make_range arity", vec![stmt(call("make_range", vec![]))], false),
         (
-            "make_range over-arity",
-            vec![stmt(call("make_range", vec![int(1), int(2), int(3), int(4)]))],
+            "make_range arity",
+            vec![stmt(call("make_range", vec![]))],
             false,
         ),
-        ("arr_get arity", vec![stmt(call("arr_get", vec![int(1)]))], false),
+        (
+            "make_range over-arity",
+            vec![stmt(call(
+                "make_range",
+                vec![int(1), int(2), int(3), int(4)],
+            ))],
+            false,
+        ),
+        (
+            "arr_get arity",
+            vec![stmt(call("arr_get", vec![int(1)]))],
+            false,
+        ),
     ];
 
     for (label, body, expect_ok) in cases {
         let checked = compile_cast_owned(program(body.clone()));
         let walker = Compiler::new().compile(program(body));
-        assert_eq!(checked.is_ok(), expect_ok, "{label}: compile_cast {checked:?}");
-        assert_eq!(walker.is_ok(), expect_ok, "{label}: Compiler::compile {walker:?}");
+        assert_eq!(
+            checked.is_ok(),
+            expect_ok,
+            "{label}: compile_cast {checked:?}"
+        );
+        assert_eq!(
+            walker.is_ok(),
+            expect_ok,
+            "{label}: Compiler::compile {walker:?}"
+        );
         if let (Ok(c), Ok(w)) = (checked, walker) {
             let ops = |p: &casm::Program| {
                 p.functions["main"]
@@ -362,6 +381,12 @@ fn user_functions_still_shadow_builtin_names() {
         functions,
         ..Default::default()
     };
-    assert!(compile_cast_owned(p.clone()).is_ok(), "quiet door refused a shadowing fn");
-    assert!(Compiler::new().compile(p).is_ok(), "walker door refused a shadowing fn");
+    assert!(
+        compile_cast_owned(p.clone()).is_ok(),
+        "quiet door refused a shadowing fn"
+    );
+    assert!(
+        Compiler::new().compile(p).is_ok(),
+        "walker door refused a shadowing fn"
+    );
 }

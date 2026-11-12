@@ -7,12 +7,13 @@ use crate::assembler::{assemble, disassemble};
 use crate::bytecode::Program;
 use crate::vm::{Quotas, VmError, run};
 use crush_cosm::{
-    Conformance, Const, Construct, CosmModule, FieldDecl, HookImpl, KindDecl, KindRef, MemberDecl, Receiver,
-    Resolution, Satisfaction, Semantics, Storage, ValueMode,
+    Conformance, Const, Construct, CosmModule, FieldDecl, HookImpl, KindDecl, KindRef, MemberDecl,
+    Receiver, Resolution, Satisfaction, Semantics, Storage, ValueMode,
 };
 
 fn program(src: &str, module: CosmModule) -> Program {
-    let mut p = assemble(src, Some(&["io.print"]), None).unwrap_or_else(|e| panic!("assembly: {e}"));
+    let mut p =
+        assemble(src, Some(&["io.print"]), None).unwrap_or_else(|e| panic!("assembly: {e}"));
     p.cosm = Some(module);
     p
 }
@@ -22,20 +23,33 @@ fn on_scheduler(p: &Program) -> Result<String, VmError> {
 }
 
 fn on_portable(p: &Program) -> Result<String, VmError> {
-    crate::portable_vm::PortableVm::new(p.clone()).run().map(|r| r.output)
+    crate::portable_vm::PortableVm::new(p.clone())
+        .run()
+        .map(|r| r.output)
 }
 
 /// Both VMs print `want`.
 fn run_both(src: &str, module: CosmModule, want: &str) {
     let p = program(src, module);
-    assert_eq!(on_scheduler(&p).map_err(|e| e.to_string()).as_deref(), Ok(want), "scheduler VM");
-    assert_eq!(on_portable(&p).map_err(|e| e.to_string()).as_deref(), Ok(want), "portable VM");
+    assert_eq!(
+        on_scheduler(&p).map_err(|e| e.to_string()).as_deref(),
+        Ok(want),
+        "scheduler VM"
+    );
+    assert_eq!(
+        on_portable(&p).map_err(|e| e.to_string()).as_deref(),
+        Ok(want),
+        "portable VM"
+    );
 }
 
 /// Both VMs fail with an error containing `want`.
 fn fails_on_both(src: &str, module: CosmModule, want: &str) {
     let p = program(src, module);
-    for (vm, got) in [("scheduler VM", on_scheduler(&p)), ("portable VM", on_portable(&p))] {
+    for (vm, got) in [
+        ("scheduler VM", on_scheduler(&p)),
+        ("portable VM", on_portable(&p)),
+    ] {
         let e = got.expect_err(vm).to_string();
         assert!(e.contains(want), "{vm}: want {want:?} in {e:?}");
     }
@@ -48,11 +62,19 @@ fn kind(name: &str, f: impl FnOnce(&mut KindDecl)) -> KindDecl {
 }
 
 fn sealed(fields: &[&str]) -> Storage {
-    Storage::Sealed { fields: fields.iter().map(|f| FieldDecl::new(*f, Default::default())).collect() }
+    Storage::Sealed {
+        fields: fields
+            .iter()
+            .map(|f| FieldDecl::new(*f, Default::default()))
+            .collect(),
+    }
 }
 
 fn module(kinds: Vec<KindDecl>) -> CosmModule {
-    CosmModule { kinds, interfaces: Vec::new() }
+    CosmModule {
+        kinds,
+        interfaces: Vec::new(),
+    }
 }
 
 #[test]
@@ -113,7 +135,9 @@ fn slots_defaults_and_positional_construction() {
     let m = module(vec![kind("V", |k| {
         let mut x = FieldDecl::new("x", Default::default());
         x.default = Some(Const::Int(5));
-        k.storage = Storage::Sealed { fields: vec![x, FieldDecl::new("y", Default::default())] };
+        k.storage = Storage::Sealed {
+            fields: vec![x, FieldDecl::new("y", Default::default())],
+        };
     })]);
     run_both(
         r#"
@@ -277,14 +301,18 @@ fn python_style_construction_runs_an_inherited_init() {
             k.storage = Storage::OpenDict;
             k.resolution = Resolution::C3;
             k.receiver = Receiver::BoundSelf;
-            k.members.push(MemberDecl::method("__init__", "Base::__init__"));
+            k.members
+                .push(MemberDecl::method("__init__", "Base::__init__"));
         }),
         kind("Child", |k| {
             k.storage = Storage::OpenDict;
             k.resolution = Resolution::C3;
             k.receiver = Receiver::BoundSelf;
             k.parents = vec![KindRef::new("Base")];
-            k.construct = Construct::PyNewInit { new_fn: None, init_fn: None };
+            k.construct = Construct::PyNewInit {
+                new_fn: None,
+                init_fn: None,
+            };
         }),
     ]);
     run_both(
@@ -343,7 +371,8 @@ fn a_method_two_traits_provide_is_ambiguous() {
     let m = module(vec![kind("P", |k| {
         for t in ["Shape", "Solid"] {
             let mut c = Conformance::new(t, Satisfaction::Nominal);
-            c.members.push(MemberDecl::method("area", format!("P::{t}::area")));
+            c.members
+                .push(MemberDecl::method("area", format!("P::{t}::area")));
             k.conforms.push(c);
         }
     })]);
@@ -356,7 +385,9 @@ fn a_method_two_traits_provide_is_ambiguous() {
 
 #[test]
 fn a_method_call_checks_the_arity() {
-    let m = module(vec![kind("P", |k| k.members.push(MemberDecl::method("m", "P::m")))]);
+    let m = module(vec![kind("P", |k| {
+        k.members.push(MemberDecl::method("m", "P::m"))
+    })]);
     fails_on_both(
         ".func main\n    PUSH 1\n    PUSH 2\n    CONSTRUCT \"P\" 0\n    CALL_MEMBER \"m\" 2\n    HALT\n.func P::m 2\n    RET\n",
         m,
@@ -366,7 +397,10 @@ fn a_method_call_checks_the_arity() {
 
 #[test]
 fn arities_and_member_ops_survive_disassembly() {
-    let p = program(SHOW, module(vec![kind("S", |k| k.storage = sealed(&["x"]))]));
+    let p = program(
+        SHOW,
+        module(vec![kind("S", |k| k.storage = sealed(&["x"]))]),
+    );
     let text = disassemble(&p);
     assert!(text.contains(".func S::show 1"), "{text}");
     assert!(text.contains("CONSTRUCT \"S\" 1"), "{text}");
@@ -471,17 +505,40 @@ fn a_map_member_call_checks_the_value_and_the_key() {
 #[test]
 fn fastvm_lowers_construct_of_a_map_kind_and_refuses_the_other_member_ops() {
     let m = || module(vec![kind("P", |k| k.storage = sealed(&["x"]))]);
-    let ok = program(".func main\n    CONSTRUCT \"P\" 0\n    PUSH 1\n    SET_FIELD \"x\"\n    HALT\n", m());
+    let ok = program(
+        ".func main\n    CONSTRUCT \"P\" 0\n    PUSH 1\n    SET_FIELD \"x\"\n    HALT\n",
+        m(),
+    );
     assert!(crate::fastvm::lower_bytecode_program(&ok).is_ok());
-    for op in ["GET_MEMBER \"x\"", "IS_KIND \"P\"", "CALL_MEMBER \"x\" 0", "COPY"] {
-        let p = program(&format!(".func main\n    CONSTRUCT \"P\" 0\n    {op}\n    HALT\n"), m());
+    for op in [
+        "GET_MEMBER \"x\"",
+        "IS_KIND \"P\"",
+        "CALL_MEMBER \"x\" 0",
+        "COPY",
+    ] {
+        let p = program(
+            &format!(".func main\n    CONSTRUCT \"P\" 0\n    {op}\n    HALT\n"),
+            m(),
+        );
         let Err(e) = crate::fastvm::lower_bytecode_program(&p) else {
             panic!("{op} must be refused");
         };
-        assert!(e.to_string().contains("COSM member ops need Kinds"), "{op}: {e}");
+        assert!(
+            e.to_string().contains("COSM member ops need Kinds"),
+            "{op}: {e}"
+        );
     }
     // `TYPEOF` would name a map where the VMs name the Kind.
-    let p = program(".func main\n    NEW_RECORD \"P\"\n    TYPEOF\n    HALT\n", m());
-    let Err(e) = crate::fastvm::lower_bytecode_program(&p) else { panic!("TYPEOF must be refused") };
-    assert!(e.to_string().contains("`type_of` in a program with Kinds isn't supported on FastVM or the JIT"), "{e}");
+    let p = program(
+        ".func main\n    NEW_RECORD \"P\"\n    TYPEOF\n    HALT\n",
+        m(),
+    );
+    let Err(e) = crate::fastvm::lower_bytecode_program(&p) else {
+        panic!("TYPEOF must be refused")
+    };
+    assert!(
+        e.to_string()
+            .contains("`type_of` in a program with Kinds isn't supported on FastVM or the JIT"),
+        "{e}"
+    );
 }

@@ -38,7 +38,11 @@ fn is_store(op: &str) -> bool {
 
 /// Where control can go after `body[pc]`, or `Err(())` when a jump's target
 /// can't be resolved.
-fn successors(body: &[Instruction], pc: usize, labels: &HashMap<&str, usize>) -> Result<[Option<usize>; 2], ()> {
+fn successors(
+    body: &[Instruction],
+    pc: usize,
+    labels: &HashMap<&str, usize>,
+) -> Result<[Option<usize>; 2], ()> {
     let instr = &body[pc];
     let target = || match instr.args.get("target") {
         Some(t) if t.is_u64() => t.as_u64().map(|t| t as usize).ok_or(()),
@@ -48,9 +52,8 @@ fn successors(body: &[Instruction], pc: usize, labels: &HashMap<&str, usize>) ->
     Ok(match instr.op.as_str() {
         "ret" | "return" | "halt" => [None, None],
         "jmp" | "jump" | "break" | "continue" => [Some(target()?), None],
-        "jmp_if" | "jump_if" | "branch_if" | "jmp_if_not" | "jump_if_not" | "branch_if_not" | "enter_try" => {
-            [Some(target()?), Some(pc + 1)]
-        }
+        "jmp_if" | "jump_if" | "branch_if" | "jmp_if_not" | "jump_if_not" | "branch_if_not"
+        | "enter_try" => [Some(target()?), Some(pc + 1)],
         _ => [Some(pc + 1), None],
     })
 }
@@ -142,7 +145,12 @@ mod tests {
     }
 
     fn checked(body: serde_json::Value) -> Vec<usize> {
-        loads_to_check(&func(body)).iter().enumerate().filter(|(_, c)| **c).map(|(pc, _)| pc).collect()
+        loads_to_check(&func(body))
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| **c)
+            .map(|(pc, _)| pc)
+            .collect()
     }
 
     #[test]

@@ -26,7 +26,11 @@ fn main() {
 }
 "#,
     );
-    assert_eq!(out.trim(), "b\na", "map keys must iterate in insertion order");
+    assert_eq!(
+        out.trim(),
+        "b\na",
+        "map keys must iterate in insertion order"
+    );
 }
 
 #[test]

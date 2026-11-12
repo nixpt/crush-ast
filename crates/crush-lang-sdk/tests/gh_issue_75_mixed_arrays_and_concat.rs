@@ -16,7 +16,8 @@ fn run(source: &str) -> Result<String, String> {
 /// Was `Array elements must have compatible types`.
 #[test]
 fn mixed_literal() {
-    let src = "fn main() {\n  let a = [\"hello\", 0]\n  print(a[0])\n  print(a[1])\n  print(len(a))\n}\n";
+    let src =
+        "fn main() {\n  let a = [\"hello\", 0]\n  print(a[0])\n  print(a[1])\n  print(len(a))\n}\n";
     assert_eq!(run(src).unwrap(), "hello\n0\n2\n");
 }
 

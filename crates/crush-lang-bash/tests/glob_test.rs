@@ -13,13 +13,16 @@ fn run(src: &str, caps: &crush_vm::HostCaps) -> Result<(String, i32), String> {
     let casm = crush_frontend::compiler::Compiler::new()
         .compile(cast)
         .map_err(|e| format!("CAST→CASM: {e:#}"))?;
-    let prog = crush_lang_sdk::compile::casm_to_vm(&casm).map_err(|e| format!("CASM→CVM1: {e:#}"))?;
+    let prog =
+        crush_lang_sdk::compile::casm_to_vm(&casm).map_err(|e| format!("CASM→CVM1: {e:#}"))?;
     let quotas = crush_vm::Quotas {
         max_steps: 1_000_000,
         ..Default::default()
     };
     let mut out = String::new();
-    match crush_vm::vm::run_with_caps_streaming(&prog, &quotas, Some(caps), &mut |s: &str| out.push_str(s)) {
+    match crush_vm::vm::run_with_caps_streaming(&prog, &quotas, Some(caps), &mut |s: &str| {
+        out.push_str(s)
+    }) {
         Ok(_) => Ok((out, 0)),
         Err(crush_vm::VmError::Exit(code)) => Ok((out, code)),
         Err(e) => Err(format!("runtime: {e}")),
@@ -58,8 +61,11 @@ fn glob_matches_files_through_the_grant() {
         .fs(true)
         .fs_root(dir.display().to_string())
         .build();
-    let (out, code) = run("echo *.txt\necho zz*\nfor f in *.md; do echo \"[$f]\"; done\n", &caps)
-        .expect("glob over the granted root");
+    let (out, code) = run(
+        "echo *.txt\necho zz*\nfor f in *.md; do echo \"[$f]\"; done\n",
+        &caps,
+    )
+    .expect("glob over the granted root");
     assert_eq!(out, "a.txt b.txt\nzz*\n[c.md]\n");
     assert_eq!(code, 0);
     let _ = std::fs::remove_dir_all(&dir);
@@ -80,7 +86,8 @@ fn directory_components_glob_through_the_grant() {
         .fs(true)
         .fs_root(dir.display().to_string())
         .build();
-    let (out, code) = run("echo */*.txt\necho */\n", &caps).expect("glob through a directory component");
+    let (out, code) =
+        run("echo */*.txt\necho */\n", &caps).expect("glob through a directory component");
     assert_eq!(out, "a/one.txt b/two.txt\na/ b/\n");
     assert_eq!(code, 0);
     let _ = std::fs::remove_dir_all(&dir);

@@ -72,10 +72,16 @@ impl std::fmt::Display for ParseRecordError {
                 write!(f, "required string field `{name}` missing or non-string")
             }
             Self::BadOptionalString(name) => {
-                write!(f, "optional string field `{name}` present but not string/null")
+                write!(
+                    f,
+                    "optional string field `{name}` present but not string/null"
+                )
             }
             Self::BadOptionalNumber(name) => {
-                write!(f, "optional number field `{name}` present but not number/null")
+                write!(
+                    f,
+                    "optional number field `{name}` present but not number/null"
+                )
             }
         }
     }
@@ -366,9 +372,18 @@ mod tests {
         let rec = parse_record_borrowed(line).expect("unescaped line must parse");
 
         // Required fields: must be Borrowed (zero-copy).
-        assert!(matches!(rec.code, Cow::Borrowed(_)), "code must be Borrowed");
-        assert!(matches!(rec.level, Cow::Borrowed(_)), "level must be Borrowed");
-        assert!(matches!(rec.message, Cow::Borrowed(_)), "message must be Borrowed");
+        assert!(
+            matches!(rec.code, Cow::Borrowed(_)),
+            "code must be Borrowed"
+        );
+        assert!(
+            matches!(rec.level, Cow::Borrowed(_)),
+            "level must be Borrowed"
+        );
+        assert!(
+            matches!(rec.message, Cow::Borrowed(_)),
+            "message must be Borrowed"
+        );
 
         // Optional fields: serde_json doesn't propagate borrows through
         // Option<Cow>, so these are Owned (allocated). Values are still
@@ -381,7 +396,8 @@ mod tests {
         let code_ptr = rec.code.as_ptr();
         let line_code_start = line.find("\"E-LINT\"").unwrap() + 1; // skip opening quote
         assert_eq!(
-            code_ptr, line[line_code_start..].as_ptr(),
+            code_ptr,
+            line[line_code_start..].as_ptr(),
             "code must point into the input buffer (zero-copy)"
         );
     }
@@ -395,8 +411,14 @@ mod tests {
         let rec = parse_record_borrowed(line).expect("escaped line must parse (not error)");
 
         // Unescaped fields still borrow.
-        assert!(matches!(rec.code, Cow::Borrowed(_)), "code must be Borrowed");
-        assert!(matches!(rec.level, Cow::Borrowed(_)), "level must be Borrowed");
+        assert!(
+            matches!(rec.code, Cow::Borrowed(_)),
+            "code must be Borrowed"
+        );
+        assert!(
+            matches!(rec.level, Cow::Borrowed(_)),
+            "level must be Borrowed"
+        );
 
         // Escaped field must be Owned (serde un-escaped it into a new String).
         assert!(
@@ -428,7 +450,10 @@ mod tests {
         assert_eq!(parsed.line, Some(7));
         assert_eq!(parsed.col, None);
         assert_eq!(parsed.message, rec.message);
-        assert_eq!(parsed.hint.as_deref(), Some("set TEMP in your shell before running"));
+        assert_eq!(
+            parsed.hint.as_deref(),
+            Some("set TEMP in your shell before running")
+        );
     }
 
     /// BorrowedDiagRecord → OwnedDiagRecord conversion: all fields

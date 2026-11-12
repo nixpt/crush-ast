@@ -14,9 +14,15 @@ pub fn slice_indices(len: i64, start: Option<i64>, stop: Option<i64>, step: i64)
         v.clamp(lo, hi)
     };
     let (start, stop) = if step > 0 {
-        (start.map_or(0, |v| norm(v, 0, len)), stop.map_or(len, |v| norm(v, 0, len)))
+        (
+            start.map_or(0, |v| norm(v, 0, len)),
+            stop.map_or(len, |v| norm(v, 0, len)),
+        )
     } else {
-        (start.map_or(len - 1, |v| norm(v, -1, len - 1)), stop.map_or(-1, |v| norm(v, -1, len - 1)))
+        (
+            start.map_or(len - 1, |v| norm(v, -1, len - 1)),
+            stop.map_or(-1, |v| norm(v, -1, len - 1)),
+        )
     };
     let mut out = Vec::new();
     let mut i = start;
@@ -31,29 +37,50 @@ fn bound(v: &Value, what: &'static str) -> Result<Option<i64>, VmError> {
     match v {
         Value::Null => Ok(None),
         Value::Int(i) => Ok(Some(*i)),
-        other => Err(VmError::TypeError { expected: what, got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: what,
+            got: other.type_name(),
+        }),
     }
 }
 
 /// `target[start:stop:step]` for a string or an array; bounds and step may be null.
-pub fn slice_values(target: &Value, start: &Value, stop: &Value, step: &Value) -> Result<Value, VmError> {
+pub fn slice_values(
+    target: &Value,
+    start: &Value,
+    stop: &Value,
+    step: &Value,
+) -> Result<Value, VmError> {
     let step = bound(step, "int or null step")?.unwrap_or(1);
     if step == 0 {
-        return Err(VmError::TypeError { expected: "non-zero slice step", got: "0" });
+        return Err(VmError::TypeError {
+            expected: "non-zero slice step",
+            got: "0",
+        });
     }
-    let (start, stop) = (bound(start, "int or null start")?, bound(stop, "int or null stop")?);
+    let (start, stop) = (
+        bound(start, "int or null start")?,
+        bound(stop, "int or null stop")?,
+    );
     match target {
         Value::Str(s) => {
             let chars: Vec<char> = s.chars().collect();
             let idx = slice_indices(chars.len() as i64, start, stop, step);
-            Ok(Value::Str(idx.into_iter().map(|i| chars[i as usize]).collect()))
+            Ok(Value::Str(
+                idx.into_iter().map(|i| chars[i as usize]).collect(),
+            ))
         }
         Value::Array(a) => {
             let a = a.borrow();
             let idx = slice_indices(a.len() as i64, start, stop, step);
-            Ok(Value::new_array(idx.into_iter().map(|i| a[i as usize].clone()).collect()))
+            Ok(Value::new_array(
+                idx.into_iter().map(|i| a[i as usize].clone()).collect(),
+            ))
         }
-        other => Err(VmError::TypeError { expected: "string or array to slice", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "string or array to slice",
+            got: other.type_name(),
+        }),
     }
 }
 
@@ -63,15 +90,25 @@ pub fn slice_values(target: &Value, start: &Value, stop: &Value, step: &Value) -
 /// and `a[-3:]` the whole array). One implementation for both VMs.
 pub fn arr_slice_values(cap: &str, args: &[Value]) -> Result<Value, VmError> {
     if args.len() < 2 {
-        return Err(VmError::CapArity { cap: cap.to_string(), expected: 2, got: args.len() });
+        return Err(VmError::CapArity {
+            cap: cap.to_string(),
+            expected: 2,
+            got: args.len(),
+        });
     }
     let Value::Array(elems) = &args[0] else {
-        return Err(VmError::TypeError { expected: "array", got: args[0].type_name() });
+        return Err(VmError::TypeError {
+            expected: "array",
+            got: args[0].type_name(),
+        });
     };
     let bound = |v: &Value| match v {
         Value::Int(i) => Ok(Some(*i)),
         Value::Null => Ok(None),
-        other => Err(VmError::TypeError { expected: "int or null", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "int or null",
+            got: other.type_name(),
+        }),
     };
     let start = bound(&args[1])?;
     let end = match args.get(2) {
@@ -80,14 +117,18 @@ pub fn arr_slice_values(cap: &str, args: &[Value]) -> Result<Value, VmError> {
     };
     let arr = elems.borrow();
     let idx = slice_indices(arr.len() as i64, start, end, 1);
-    Ok(Value::new_array(idx.into_iter().map(|i| arr[i as usize].clone()).collect()))
+    Ok(Value::new_array(
+        idx.into_iter().map(|i| arr[i as usize].clone()).collect(),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn s(v: &str) -> Value { Value::Str(v.to_string()) }
+    fn s(v: &str) -> Value {
+        Value::Str(v.to_string())
+    }
 
     // #254: Crush's `a[start:end]` counts negative bounds from the end.
     #[test]
@@ -113,15 +154,30 @@ mod tests {
     fn matches_cpython_slices() {
         let n = Value::Null;
         let i = Value::Int;
-        assert_eq!(slice_values(&s("crush"), &i(1), &i(3), &n).unwrap(), s("ru"));
+        assert_eq!(
+            slice_values(&s("crush"), &i(1), &i(3), &n).unwrap(),
+            s("ru")
+        );
         assert_eq!(slice_values(&s("crush"), &i(-2), &n, &n).unwrap(), s("sh"));
-        assert_eq!(slice_values(&s("crush"), &n, &n, &i(-1)).unwrap(), s("hsurc"));
+        assert_eq!(
+            slice_values(&s("crush"), &n, &n, &i(-1)).unwrap(),
+            s("hsurc")
+        );
         assert_eq!(slice_values(&s("crush"), &n, &n, &i(2)).unwrap(), s("cuh"));
         assert_eq!(slice_values(&s("crush"), &i(10), &n, &n).unwrap(), s(""));
-        assert_eq!(slice_values(&s("crush"), &i(-100), &i(2), &n).unwrap(), s("cr"));
-        assert_eq!(slice_values(&s("crush"), &i(3), &i(0), &i(-1)).unwrap(), s("sur"));
+        assert_eq!(
+            slice_values(&s("crush"), &i(-100), &i(2), &n).unwrap(),
+            s("cr")
+        );
+        assert_eq!(
+            slice_values(&s("crush"), &i(3), &i(0), &i(-1)).unwrap(),
+            s("sur")
+        );
         let arr = Value::new_array(vec![i(1), i(2), i(3), i(4)]);
-        assert_eq!(slice_values(&arr, &i(1), &i(-1), &n).unwrap(), Value::new_array(vec![i(2), i(3)]));
+        assert_eq!(
+            slice_values(&arr, &i(1), &i(-1), &n).unwrap(),
+            Value::new_array(vec![i(2), i(3)])
+        );
         assert!(slice_values(&s("x"), &n, &n, &i(0)).is_err());
     }
 }

@@ -65,7 +65,8 @@ fn audit(engine: Engine) {
     // key covers the generated source, the opt level and the compiler, so a shared
     // cache can't hand back a stale build.
     let cache = tempfile::tempdir().unwrap();
-    let aot = if std::env::var_os(crush_aot::compiler::CACHE_DIR_ENV).is_some_and(|d| !d.is_empty()) {
+    let aot = if std::env::var_os(crush_aot::compiler::CACHE_DIR_ENV).is_some_and(|d| !d.is_empty())
+    {
         AotCompiler::new()
     } else {
         AotCompiler::new().with_cache_dir(cache.path().to_path_buf())
@@ -81,12 +82,7 @@ fn audit(engine: Engine) {
     for (path, outcome) in files.iter().zip(outcomes) {
         let name = path.file_stem().unwrap().to_str().unwrap();
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
-        if let Err(error) = check(
-            name,
-            engine,
-            &expected,
-            outcome,
-        ) {
+        if let Err(error) = check(name, engine, &expected, outcome) {
             failures.push(error);
         }
     }

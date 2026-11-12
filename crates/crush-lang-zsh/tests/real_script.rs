@@ -12,6 +12,7 @@ fn zsh_runs_the_kitchen_sink_script_like_zsh() {
             shell_args: &["-f"],
             to_cast: crush_lang_zsh::zsh_to_cast,
         },
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../crush-lang-bash/tests/scripts/kitchen_sink.sh"),
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../crush-lang-bash/tests/scripts/kitchen_sink.sh"),
     );
 }

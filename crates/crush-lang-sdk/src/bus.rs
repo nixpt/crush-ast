@@ -57,10 +57,10 @@ impl BusState {
         // that isn't `String`, never recurse into cyclic data).
         let payload_json = serde_json::to_value(&payload).unwrap();
         let mut queues = self.inner.queues.lock().unwrap();
-        queues
-            .entry(topic.clone())
-            .or_default()
-            .push_back(Message { topic, payload_json });
+        queues.entry(topic.clone()).or_default().push_back(Message {
+            topic,
+            payload_json,
+        });
         self.inner.cv.notify_one();
     }
 

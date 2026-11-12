@@ -70,7 +70,11 @@ fn integration_modules_cap_returns_array_via_runtime() {
         HALT
     "#;
     let result = rt
-        .run_casm(casm, &["codebase.modules", "io.print"], Some("modules-test"))
+        .run_casm(
+            casm,
+            &["codebase.modules", "io.print"],
+            Some("modules-test"),
+        )
         .expect("run");
     assert!(result.halted, "the CASM program should halt cleanly");
     assert!(
@@ -153,7 +157,11 @@ fn integration_callers_cap_returns_call_site_via_runtime() {
         HALT
     "#;
     let result = rt
-        .run_casm(casm, &["codebase.callers", "io.print"], Some("callers-test"))
+        .run_casm(
+            casm,
+            &["codebase.callers", "io.print"],
+            Some("callers-test"),
+        )
         .expect("run");
     assert!(result.halted);
 

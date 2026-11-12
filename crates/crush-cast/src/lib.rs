@@ -16,8 +16,8 @@ pub mod types;
 pub mod validate;
 pub use manifest::{
     Annotation, ChangelogEntry, CoverageAnnotation, DecisionNode, ErrorAnnotation, ErrorLikelihood,
-    ExhaustiveMatchSite, FunctionAnnotations, Invariant, ModuleManifest, ReadAnnotation,
-    SourceLoc, TemporaryNode, WeightedError, WriteAnnotation, WipNode,
+    ExhaustiveMatchSite, FunctionAnnotations, Invariant, ModuleManifest, ReadAnnotation, SourceLoc,
+    TemporaryNode, WeightedError, WipNode, WriteAnnotation,
 };
 pub use pack::{CAST_VERSION, Format, PackError};
 pub use types::CastType;
@@ -489,7 +489,12 @@ impl Statement {
         fields: Vec<(String, CastType)>,
         meta: HashMap<String, serde_json::Value>,
     ) -> Self {
-        Statement::StructDef { name: name.into(), fields, kind: None, meta }
+        Statement::StructDef {
+            name: name.into(),
+            fields,
+            kind: None,
+            meta,
+        }
     }
 }
 
@@ -558,7 +563,11 @@ pub enum KindValue {
 impl std::fmt::Display for KindValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let join = |items: &[KindValue]| {
-            items.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
+            items
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         match self {
             KindValue::Name { name } => write!(f, "{name}"),

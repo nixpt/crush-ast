@@ -262,13 +262,19 @@ impl ScriptRunner {
         let resolved = match buckets::resolve(&spec, &config, &index) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("crush-pkg: buckets resolution for '{spec}' failed ({e}), falling back to host {runtime_bin}");
+                eprintln!(
+                    "crush-pkg: buckets resolution for '{spec}' failed ({e}), falling back to host {runtime_bin}"
+                );
                 return None;
             }
         };
         let profile = buckets::sandbox::SandboxProfile {
             project_dir: Some(cwd.to_path_buf()),
-            extra_ro_binds: resolved.installations.iter().map(|i| i.path.clone()).collect(),
+            extra_ro_binds: resolved
+                .installations
+                .iter()
+                .map(|i| i.path.clone())
+                .collect(),
             allow_network: false,
             // The remaining fields (`extra_rw_binds`, `net_ns`) exist in the
             // buckets checkout but not in crates.io `crush-buckets` 0.1.0,
@@ -306,7 +312,12 @@ impl CapsuleRunner for ScriptRunner {
             .unwrap_or(std::env::current_dir()?);
 
         let mut cmd = self
-            .buckets_command(runtime_bin, &full_args, &cwd, manifest.capsule.runtime_version.as_deref())
+            .buckets_command(
+                runtime_bin,
+                &full_args,
+                &cwd,
+                manifest.capsule.runtime_version.as_deref(),
+            )
             .unwrap_or_else(|| {
                 let mut c = Command::new(runtime_bin);
                 c.args(&full_args);
@@ -436,10 +447,22 @@ mod tests {
 
     #[test]
     fn test_buckets_spec_mapping() {
-        assert_eq!(ScriptRunner::new(ScriptRuntime::Bun).buckets_spec(), Some("bun"));
-        assert_eq!(ScriptRunner::new(ScriptRuntime::Node).buckets_spec(), Some("node"));
-        assert_eq!(ScriptRunner::new(ScriptRuntime::Deno).buckets_spec(), Some("deno"));
-        assert_eq!(ScriptRunner::new(ScriptRuntime::Python).buckets_spec(), Some("python"));
+        assert_eq!(
+            ScriptRunner::new(ScriptRuntime::Bun).buckets_spec(),
+            Some("bun")
+        );
+        assert_eq!(
+            ScriptRunner::new(ScriptRuntime::Node).buckets_spec(),
+            Some("node")
+        );
+        assert_eq!(
+            ScriptRunner::new(ScriptRuntime::Deno).buckets_spec(),
+            Some("deno")
+        );
+        assert_eq!(
+            ScriptRunner::new(ScriptRuntime::Python).buckets_spec(),
+            Some("python")
+        );
         // Sona has no pkgx/buckets bottle — always falls back to the host PATH.
         assert_eq!(ScriptRunner::new(ScriptRuntime::Sona).buckets_spec(), None);
     }
@@ -448,7 +471,11 @@ mod tests {
     fn test_buckets_command_returns_none_for_sona() {
         let runner = ScriptRunner::new(ScriptRuntime::Sona);
         let dir = tempfile::tempdir().unwrap();
-        assert!(runner.buckets_command("sona", &[], dir.path(), None).is_none());
+        assert!(
+            runner
+                .buckets_command("sona", &[], dir.path(), None)
+                .is_none()
+        );
     }
 
     /// Exercises the real buckets resolve→install→sandbox pipeline against

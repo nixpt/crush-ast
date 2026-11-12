@@ -209,7 +209,10 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         );
     }
     use crush_lang_sdk::formats::{self, InputFormat};
-    let format = formats::detect_or_bail(&cli.input, matches!(cli.message_format, MessageFormat::Text))?;
+    let format = formats::detect_or_bail(
+        &cli.input,
+        matches!(cli.message_format, MessageFormat::Text),
+    )?;
     if !matches!(format, InputFormat::Crush) && !format.is_cast() {
         anyhow::bail!(
             "crushc compiles `.crush` source or CAST (`.cast.json`, `.cast`, `.castb`); \
@@ -263,12 +266,7 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
                 MessageFormat::Json => {
                     let diags: Vec<crush_lang_sdk::theme::JsonDiagnostic> = errors
                         .iter()
-                        .map(|e| {
-                            crush_lang_sdk::theme::JsonDiagnostic::parse_error(
-                                e,
-                                Some(&file),
-                            )
-                        })
+                        .map(|e| crush_lang_sdk::theme::JsonDiagnostic::parse_error(e, Some(&file)))
                         .collect();
                     eprint!(
                         "{}",
@@ -298,8 +296,10 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     if cli.emit != EmitKind::Ast {
         let mut checked = program.clone();
         crush_frontend::cast_enrich::enrich_cast(&mut checked);
-        let warnings =
-            crush_lang_sdk::compile::annotation_diagnostics(&checked, &cli.input.display().to_string());
+        let warnings = crush_lang_sdk::compile::annotation_diagnostics(
+            &checked,
+            &cli.input.display().to_string(),
+        );
         crush_lang_sdk::compile::print_annotation_diagnostics(
             &warnings,
             matches!(cli.message_format, MessageFormat::Json),
@@ -324,7 +324,9 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
             Dest::File(p) => crush_cast::Format::from_path(p),
             Dest::Stdout => crush_cast::Format::Json,
         };
-        let bytes = program.serialize(codec).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let bytes = program
+            .serialize(codec)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         return write_artifact(cli, &dest, &bytes, "");
     }
 
@@ -360,8 +362,8 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
             let file = cli.input.display().to_string();
             match cli.message_format {
                 MessageFormat::Text => {
-                    eprint!(
-                        "{badge} type error: {body}\n",
+                    eprintln!(
+                        "{badge} type error: {body}",
                         badge = crush_lang_sdk::theme::paint_error_badge("type"),
                         body = body,
                     );
@@ -392,7 +394,11 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         // The declared-capability check needs the bytecode's names, so --check
         // compiles too (cheap) rather than reporting "no errors" for a
         // program the real build would refuse.
-        if let Some(declared) = lowered.manifest.as_ref().and_then(|m| m.capabilities.clone()) {
+        if let Some(declared) = lowered
+            .manifest
+            .as_ref()
+            .and_then(|m| m.capabilities.clone())
+        {
             let casm_prog = crush_frontend::compiler::Compiler::new()
                 .compile_lowered(lowered.clone(), cosm.clone())?;
             enforce_declared_capabilities(cli, &casm_prog, Some(&declared));
@@ -415,7 +421,10 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
 
     // ── Step 4: Compile to CASM then VM ─────────────────────────────
     let mut compiler = crush_frontend::compiler::Compiler::new();
-    let declared = lowered.manifest.as_ref().and_then(|m| m.capabilities.clone());
+    let declared = lowered
+        .manifest
+        .as_ref()
+        .and_then(|m| m.capabilities.clone());
     let casm_prog = compiler.compile_lowered(lowered, cosm)?;
     // #258: `@capabilities` is the reviewable contract; enforce it here the way
     // `crush-run run FILE.crush` and the SDK compile path do. The declaration
@@ -435,7 +444,9 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
                      not load back (#372); write CASM JSON (.casm) instead"
                 );
             }
-            let bytes = casm_prog.serialize(codec).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let bytes = casm_prog
+                .serialize(codec)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             write_artifact(cli, &dest, &bytes, "")
         }
         EmitKind::Cvms => {
@@ -467,20 +478,29 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
 
 /// #258: exit 1 with the same `[compile] … not declared in @capabilities`
 /// error `crush-run run FILE.crush` gives, in text or JSON.
-fn enforce_declared_capabilities(cli: &Cli, casm_prog: &casm::Program, declared: Option<&[String]>) {
+fn enforce_declared_capabilities(
+    cli: &Cli,
+    casm_prog: &casm::Program,
+    declared: Option<&[String]>,
+) {
     let Some(declared) = declared else { return };
     let Err(e) = crush_lang_sdk::compile::check_declared_capabilities(casm_prog, declared) else {
         return;
     };
     match cli.message_format {
-        MessageFormat::Text => eprint!("{}", crush_lang_sdk::theme::render_anyhow_error(&e, "compile")),
+        MessageFormat::Text => eprint!(
+            "{}",
+            crush_lang_sdk::theme::render_anyhow_error(&e, "compile")
+        ),
         MessageFormat::Json => eprint!(
             "{}",
-            crush_lang_sdk::theme::render_diagnostics_ndjson(&crush_lang_sdk::theme::diagnostics_for_error(
-                &e,
-                Some(&cli.input.display().to_string()),
-                crush_lang_sdk::theme::JsonDiagnostic::CODE_IO,
-            ))
+            crush_lang_sdk::theme::render_diagnostics_ndjson(
+                &crush_lang_sdk::theme::diagnostics_for_error(
+                    &e,
+                    Some(&cli.input.display().to_string()),
+                    crush_lang_sdk::theme::JsonDiagnostic::CODE_IO,
+                )
+            )
         ),
     }
     std::process::exit(1);
