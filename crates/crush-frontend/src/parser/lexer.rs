@@ -774,10 +774,10 @@ impl Lexer {
         Ok(Token::AtIdent(id, at_location))
     }
 
-    /// Read a `-> name` / `-> (a, b)` output list, starting just after the
-    /// arrow has been consumed. Returns `None` on any malformed list (no
-    /// identifier, a stray comma, an unclosed `(`) — the caller restores its
-    /// checkpoint, same convention as `read_dep_list`.
+    /// Read a `-> name` / `-> a, b` / `-> (a, b)` output list, starting just
+    /// after the arrow has been consumed. Returns `None` on any malformed
+    /// list (no identifier, a stray comma, an unclosed `(`) — the caller
+    /// restores its checkpoint, same convention as `read_dep_list`.
     fn read_output_list(&mut self) -> Option<Vec<String>> {
         let mut outputs = Vec::new();
         while let Some(ch) = self.peek() {
@@ -820,9 +820,34 @@ impl Lexer {
                 }
             }
         } else {
-            let name = self.read_output_ident()?;
-            outputs.push(name);
-            Some(outputs)
+            // Bare form: `-> a` or `-> a, b, c` — comma-separated names
+            // terminated by the block's `{` (the caller checks for it). A
+            // trailing comma leaves the next name missing, which fails the
+            // same malformed-list bail as any other broken list.
+            loop {
+                while let Some(ch) = self.peek() {
+                    if ch.is_whitespace() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                let name = self.read_output_ident()?;
+                outputs.push(name);
+                while let Some(ch) = self.peek() {
+                    if ch.is_whitespace() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                match self.peek() {
+                    Some(',') => {
+                        self.advance();
+                    }
+                    _ => return Some(outputs),
+                }
+            }
         }
     }
 
@@ -1603,6 +1628,43 @@ mod tests {
             Token::LangBody(_, _, deps, outputs) => {
                 assert!(deps.is_empty());
                 assert_eq!(outputs, vec!["mean".to_string(), "stdev".to_string()]);
+            }
+            other => panic!("expected LangBody, got {other:?}"),
+        }
+    }
+
+    /// CRUSH-358: the documented bare multi-output form `-> a, b` (no
+    /// parentheses) is captured in order, same as the parenthesized form.
+    #[test]
+    fn test_lex_lang_block_with_bare_multi_output() {
+        let mut lexer = Lexer::new("@python -> a, b { pass }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("python".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(_, _, deps, outputs) => {
+                assert!(deps.is_empty());
+                assert_eq!(outputs, vec!["a".to_string(), "b".to_string()]);
+            }
+            other => panic!("expected LangBody, got {other:?}"),
+        }
+    }
+
+    /// CRUSH-358: three bare outputs keep declaration order.
+    #[test]
+    fn test_lex_lang_block_with_bare_three_outputs() {
+        let mut lexer = Lexer::new("@javascript -> a, b, c { pass }");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            Token::AtIdent("javascript".to_string(), SourceLocation { line: 1, col: 1 })
+        );
+        match lexer.next_token().unwrap() {
+            Token::LangBody(_, _, _, outputs) => {
+                assert_eq!(
+                    outputs,
+                    vec!["a".to_string(), "b".to_string(), "c".to_string()]
+                );
             }
             other => panic!("expected LangBody, got {other:?}"),
         }
