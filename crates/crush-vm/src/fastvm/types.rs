@@ -214,5 +214,8 @@ pub struct FastFrame {
     pub locals_base: usize, // Start index in locals vec
     #[allow(dead_code)]
     pub locals_count: usize, // Number of locals in this frame
-    pub handlers: Vec<usize>, // Exception handler return addresses (PCs)
+    /// Active try handlers, innermost last: the handler PC and the operand
+    /// stack height at `EnterTry`, which a caught throw or fault restores
+    /// (CRUSH-369; CVM1's `TryHandler::stack_len`).
+    pub handlers: Vec<(usize, usize)>,
 }

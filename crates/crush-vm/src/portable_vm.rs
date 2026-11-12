@@ -723,7 +723,21 @@ impl PortableVm {
                 .record_instruction(ip, &code[ip..next_ip.min(code.len())]);
             before
         };
-        self.execute_instruction(opcode, next_ip)?;
+        // CRUSH-369: a catchable fault raised with a try handler active becomes
+        // a caught `Value::Error` instead of aborting the run — the same unwind
+        // a `THROW` would do (shared with the scheduler).
+        if let Err(err) = self.execute_instruction(opcode, next_ip) {
+            match crate::vm::raise_fault_to_handler(
+                err,
+                &mut self.try_stack,
+                &mut self.call_stack,
+                &mut self.stack,
+                &mut self.captures,
+            ) {
+                Ok(handler_ip) => self.jump_to(handler_ip),
+                Err(err) => return Err(err),
+            }
+        }
         if let Some(args) = self.lang_yield.take() {
             // A deferred `@lang` block: this EXEC_LANG runs again once the
             // host provides its result (see `set_lang_deferred`).
@@ -881,39 +895,9 @@ impl PortableVm {
                 let v = self.stack.remove(idx);
                 self.push(v);
             }
-            // `+` concatenates when EITHER side is a string. This MUST match scheduler.rs exactly:
-            // the two VMs run the same programs, and a divergence here is a silent miscompile.
-            //
-            // It was already diverging. This arm did not guard its operands, and to_f64_p ends in
-            // `_ => 0.0` — so portable_vm silently evaluated `"a" + "b"` to 0 and `"x: " + 5` to 5,
-            // while scheduler.rs raised a TypeError on the very same source. No error either way.
-            ADD if matches!(self.peek_n(0), Some(Value::Str(_)))
-                || matches!(self.peek_n(1), Some(Value::Str(_))) =>
-            {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                self.push(Value::Str(format!("{}{}", a.as_text(), b.as_text())));
-            }
-            // Anything else non-numeric is a LOUD error, not a silent 0.
-            // (Two arrays under ADD concatenate in `add_values`, CRUSH-135.)
-            ADD | SUB | MUL | DIV | MOD
-                if !(opcode == ADD
-                    && matches!(
-                        (self.peek_n(1), self.peek_n(0)),
-                        (Some(Value::Array(_)), Some(Value::Array(_)))
-                    )
-                    || matches!(self.peek_n(0), Some(Value::Int(_)) | Some(Value::Float(_)))
-                        && matches!(
-                            self.peek_n(1),
-                            Some(Value::Int(_)) | Some(Value::Float(_))
-                        )) =>
-            {
-                let got = self.peek_n(0).map(value_type_name).unwrap_or("nothing");
-                return Err(VmError::TypeError {
-                    expected: "numeric",
-                    got,
-                });
-            }
+            // `+` concatenates when either side is a string and two arrays concatenate
+            // (CRUSH-135); anything else non-numeric is a TypeError naming the bad operand.
+            // `add_values` and the other helpers do all of that, as they do in scheduler.rs.
             ADD | SUB | MUL | DIV | MOD => {
                 let b = self.pop()?;
                 let a = self.pop()?;
@@ -932,14 +916,14 @@ impl PortableVm {
                 self.push(crate::arithmetic::neg_value(&a)?);
             }
             MATH_POW => {
-                let exp = self.pop()?;
-                let base = self.pop()?;
+                let exp = need_num(self.pop()?)?;
+                let base = need_num(self.pop()?)?;
                 let base_f = to_f64_p(&base);
                 let exp_f = to_f64_p(&exp);
                 self.push(Value::Float(base_f.powf(exp_f)));
             }
             MATH_SQRT | MATH_ABS | MATH_ROUND | MATH_FLOOR | MATH_CEIL => {
-                let a = self.pop()?;
+                let a = need_num(self.pop()?)?;
                 let af = to_f64_p(&a);
                 let res = match opcode {
                     MATH_SQRT => af.sqrt(),
@@ -1078,8 +1062,8 @@ impl PortableVm {
                 });
             }
             BITAND | BITOR | BITXOR | SHL | SHR => {
-                let b = self.pop()?;
-                let a = self.pop()?;
+                let b = need_num(self.pop()?)?;
+                let a = need_num(self.pop()?)?;
                 let ai = to_i64(&a);
                 let bi = to_i64(&b);
                 let result = match opcode {
@@ -1099,7 +1083,7 @@ impl PortableVm {
                 self.push(result);
             }
             BITNOT => {
-                let a = self.pop()?;
+                let a = need_num(self.pop()?)?;
                 self.push(Value::Int(!to_i64(&a)));
             }
             NOT => {
@@ -2146,6 +2130,7 @@ impl PortableVm {
                     &payload,
                     operands,
                     self.host_caps.as_ref(),
+                    &self.quotas,
                     crate::wall::remaining_ms(self.quotas.max_wall_time_ms),
                 );
                 // CRUSH-165 hook: an AI opcode, as cap `ai_native.<kind>`.
@@ -2164,23 +2149,27 @@ impl PortableVm {
             // Slots are 0x9A-0x9F (CRUD/nav) and 0xB5-0xB8
             // (parent/attr/text/event) per CRUSH-33 Commit 1; the
             // `dom_native_kind_for_opcode` switch maps slot -> kind.
+            // GitHub issue #378 (CRUSH-234's AI fix, mirrored): ungranted is a
+            // named `VmError::CapDenied` (`crate::dom_args`) — not a silent
+            // null — and a granted handler's error propagates.
             DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT
             | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
                 let kind = crate::bytecode::dom_native_kind_for_opcode(opcode)
                     .expect("DOM opcode byte in combined match arm must map to a known kind");
-                let gate = format!("dom_native.{kind}");
-                let value = match self.host_caps.as_ref().and_then(|h| h.get(&gate)) {
-                    Some(handler) => handler.call(vec![]).ok().flatten().unwrap_or(Value::Null),
-                    None => Value::Null,
-                };
+                let value = crate::dom_args::dispatch(
+                    kind,
+                    self.host_caps.as_ref(),
+                    &self.quotas,
+                    crate::wall::remaining_ms(self.quotas.max_wall_time_ms),
+                );
                 // CRUSH-165 hook: a DOM opcode, as cap `dom_native.<kind>`.
                 #[cfg(feature = "transcript")]
                 self.transcript.record_cap(
-                    &gate,
+                    &format!("dom_native.{kind}"),
                     &[],
-                    crate::transcript::CapOutcome::Value(&value),
+                    crate::transcript::CapOutcome::of_value(&value),
                 );
-                self.push(value);
+                self.push(value?);
             }
             SPAWN => {
                 let argc = u16::from_be_bytes(
@@ -2298,6 +2287,8 @@ impl PortableVm {
             .map(|i| {
                 let mut vm = PortableVm::new(program.clone());
                 vm.quotas = self.quotas.clone();
+                // Items share this VM's deadline, not a fresh one each (#422).
+                vm.wall_deadline = self.wall_deadline;
                 vm.ip = entry;
                 vm.stack = worker.stack(i);
                 let result = vm.run();
@@ -2307,7 +2298,13 @@ impl PortableVm {
                 Ok((result.output, crate::parallel::move_out(&value)?))
             })
             .collect();
-        crate::parallel::collect(results)
+        let mapped = crate::parallel::collect(results)?;
+        // Items share this VM's deadline (#422); also catch one that passed
+        // just as the last item finished.
+        if let Some(deadline) = self.wall_deadline {
+            crate::wall::check(deadline, self.quotas.max_wall_time_ms)?;
+        }
+        Ok(mapped)
     }
 
     fn dispatch_cap(&mut self, cap: &str, args: Vec<Value>) -> Result<Option<Value>, VmError> {
@@ -2455,7 +2452,7 @@ impl PortableVm {
                         }),
                     }
                 }
-                "conv.chr" => {
+                "conv.chr" | "str.chr" => {
                     let codepoint = match &args[0] {
                         Value::Int(value) => *value,
                         other => {
@@ -2465,13 +2462,16 @@ impl PortableVm {
                             });
                         }
                     };
-                    let character = char::from_u32(codepoint as u32).ok_or(VmError::TypeError {
-                        expected: "valid Unicode codepoint",
-                        got: "invalid codepoint",
-                    })?;
+                    let character = u32::try_from(codepoint)
+                        .ok()
+                        .and_then(char::from_u32)
+                        .ok_or(VmError::TypeError {
+                            expected: "valid Unicode codepoint",
+                            got: "invalid codepoint",
+                        })?;
                     Ok(Some(Value::Str(character.to_string())))
                 }
-                "conv.ord" => {
+                "conv.ord" | "str.ord" => {
                     let text = match &args[0] {
                         Value::Str(value) => value,
                         other => {
@@ -2508,6 +2508,28 @@ impl PortableVm {
                         Value::Array(elems) => {
                             elems.borrow_mut().push(args[1].clone());
                             Ok(Some(args[0].clone()))
+                        }
+                        _ => Err(VmError::TypeError {
+                            expected: "array",
+                            got: args[0].type_name(),
+                        }),
+                    }
+                }
+                "pop" => {
+                    // The method-call form's value is the removed element
+                    // (CRUSH-391) — not the array: `let x = a.pop()` wants the
+                    // element, and the compiler compensates the ARR_POP
+                    // opcode's [array, value] pair only on the opcode path.
+                    if args.len() != 1 {
+                        return Err(VmError::CapArity {
+                            cap: cap.to_string(),
+                            expected: 1,
+                            got: args.len(),
+                        });
+                    }
+                    match &args[0] {
+                        Value::Array(elems) => {
+                            Ok(Some(elems.borrow_mut().pop().unwrap_or(Value::Null)))
                         }
                         _ => Err(VmError::TypeError {
                             expected: "array",
@@ -2780,17 +2802,6 @@ impl PortableVm {
         self.stack.last().ok_or(VmError::StackUnderflow)
     }
 
-    /// Peek `n` values down the stack without popping (0 = top).
-    ///
-    /// The ADD arms must inspect operand TYPES before committing to a numeric or a string
-    /// interpretation, which they cannot do after popping.
-    fn peek_n(&self, n: usize) -> Option<&Value> {
-        self.stack
-            .len()
-            .checked_sub(n + 1)
-            .and_then(|k| self.stack.get(k))
-    }
-
     fn check_step_quota(&self) -> Result<(), VmError> {
         if self.steps >= self.quotas.max_steps {
             return Err(VmError::StepQuota(self.quotas.max_steps));
@@ -2899,6 +2910,19 @@ pub enum VmYield {
     },
     /// VM has hit a breakpoint (for debugging).
     DebugBreak { reason: String },
+}
+
+/// A number, or the TypeError scheduler.rs raises with `need_num!`. Without
+/// it `to_i64`/`to_f64_p` read a bool or string as 0.
+fn need_num(v: Value) -> Result<Value, VmError> {
+    if v.is_numeric() {
+        Ok(v)
+    } else {
+        Err(VmError::TypeError {
+            expected: "numeric",
+            got: v.type_name(),
+        })
+    }
 }
 
 /// Helper functions for array operations.
@@ -3381,6 +3405,86 @@ HALT"#;
         let mut vm = PortableVm::new(program);
         let r = vm.run().unwrap();
         assert_eq!(r.stack, vec![Value::Str("msg".to_string())]);
+    }
+
+    #[test]
+    fn test_portable_a_fault_inside_try_is_caught_as_an_error_value() {
+        // CRUSH-369: try { 1/0 } catch { } — the DivByZero fault unwinds to
+        // the handler as a caught Value::Error carrying the fault's message,
+        // and execution resumes at the handler, exactly like a THROW would.
+        let source = r#"ENTER_TRY handler
+PUSH 1
+PUSH 0
+DIV
+EXIT_TRY
+JMP done
+handler:
+HALT
+done:
+HALT"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Error("division by zero".to_string())]);
+    }
+
+    #[test]
+    fn test_portable_a_fault_without_try_still_aborts() {
+        let program = assemble("PUSH 1\nPUSH 0\nDIV\nHALT", None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run();
+        assert!(matches!(result, Err(VmError::DivByZero)), "{result:?}");
+    }
+
+    #[test]
+    fn test_portable_a_fault_in_a_callee_unwinds_to_the_callers_try() {
+        let source = r#".func main
+    ENTER_TRY handler
+    PUSH 0
+    CALL boom
+    EXIT_TRY
+    JMP done
+handler:
+    HALT
+done:
+    HALT
+.func boom
+    PUSH 1
+    PUSH 0
+    DIV
+    RET"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let r = vm.run().unwrap();
+        assert_eq!(r.stack, vec![Value::Error("division by zero".to_string())]);
+    }
+
+    #[test]
+    fn test_portable_call_depth_quota_is_not_catchable() {
+        // Quotas stay fatal (CRUSH-369): infinite recursion inside try still
+        // ends the run with the quota error.
+        let source = r#".func main
+    ENTER_TRY handler
+    PUSH 0
+    CALL recurse
+    EXIT_TRY
+    JMP done
+handler:
+    POP
+    PUSH 99
+done:
+    HALT
+.func recurse
+    PUSH 1
+    CALL recurse
+    RET"#;
+        let program = assemble(source, None, Some("test")).unwrap();
+        let mut vm = PortableVm::new(program);
+        let result = vm.run();
+        assert!(
+            matches!(result, Err(VmError::CallDepthQuota(_))),
+            "{result:?}"
+        );
     }
 
     #[test]

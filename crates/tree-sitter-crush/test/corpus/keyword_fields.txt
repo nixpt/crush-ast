@@ -1,0 +1,50 @@
+================================================================================
+Keyword field names after a dot
+================================================================================
+
+// A keyword after `.` is an unambiguous field/capability name — `regex.match`
+// (CRUSH-367, GitHub issue #367) is listed by `crush-run caps` and must parse.
+// `match` stays a keyword everywhere else (match expressions, bare calls).
+
+fn main() {
+    print(regex.match("^[a-z]+", "ab cd"))
+    let m = regex.match("x", "y")
+}
+
+---
+
+(program
+  (comment)
+  (comment)
+  (comment)
+  (fn_def
+    name: (identifier)
+    parameters: (parameter_list)
+    body: (block
+      (expr_stmt
+        (expression
+          (capability_call
+            name: (identifier)
+            arguments: (argument_list
+              (expression
+                (capability_call
+                  name: (field_access
+                    target: (identifier)
+                    field: (identifier))
+                  arguments: (argument_list
+                    (expression
+                      (string_literal))
+                    (expression
+                      (string_literal)))))))))
+      (var_decl
+        name: (identifier)
+        value: (expression
+          (capability_call
+            name: (field_access
+              target: (identifier)
+              field: (identifier))
+            arguments: (argument_list
+              (expression
+                (string_literal))
+              (expression
+                (string_literal)))))))))
