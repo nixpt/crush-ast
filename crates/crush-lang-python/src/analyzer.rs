@@ -1486,10 +1486,7 @@ mod free_var_tests {
         let fv = free_variables(src).expect("parse");
         assert!(fv.top_level_bound.is_empty());
         assert!(fv.bound_anywhere.contains("x"));
-        assert!(
-            fv.bound_anywhere.contains("flag") == false,
-            "flag is only read"
-        );
+        assert!(!fv.bound_anywhere.contains("flag"), "flag is only read");
     }
 
     #[test]

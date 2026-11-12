@@ -228,3 +228,55 @@ fn bitwise_not_shift() {
     let r = run_src("PUSH 16\nPUSH 2\nSHR\nHALT"); // 16>>2 = 4
     assert_eq!(r.stack, vec![Value::Int(4)]);
 }
+
+// ── both VMs agree on non-numeric operands ─────────────────────────────────
+
+/// Runs on the scheduler and the portable VM; they must agree, error included.
+fn both_vms(src: &str) -> Result<String, String> {
+    let prog = crate::assembler::assemble(src, Some(&["io.print"]), None).expect("assembly");
+    let native = crate::vm::run(&prog, &crate::vm::Quotas::default())
+        .map(|r| r.output)
+        .map_err(|e| e.to_string());
+    let portable = crate::portable_vm::PortableVm::new(prog)
+        .run()
+        .map(|r| r.output)
+        .map_err(|e| e.to_string());
+    assert_eq!(
+        portable, native,
+        "portable VM and scheduler disagree on:\n{src}"
+    );
+    native
+}
+
+/// A bool is not a number on either VM. The portable VM used to read it as 0
+/// in the bit and math opcodes (`true & 1` printed 0, `sqrt(true)` 0.0) where
+/// the scheduler raised a TypeError, and named the wrong operand in ADD..MOD.
+#[test]
+fn both_vms_refuse_a_bool_operand_the_same_way() {
+    let binary = [
+        "ADD", "SUB", "MUL", "DIV", "MOD", "BITAND", "BITOR", "BITXOR", "SHL", "SHR", "MATH_POW",
+    ];
+    for op in binary {
+        for (a, b) in [("PUSH_BOOL 1", "PUSH 1"), ("PUSH 1", "PUSH_BOOL 1")] {
+            let src = format!(
+                ".func main\n    {a}\n    {b}\n    {op}\n    CAP_CALL \"io.print\" 1\n    RET\n"
+            );
+            let err = both_vms(&src).expect_err(op);
+            assert!(err.contains("got bool"), "{op}: {err}");
+        }
+    }
+    for op in [
+        "BITNOT",
+        "MATH_SQRT",
+        "MATH_ABS",
+        "MATH_ROUND",
+        "MATH_FLOOR",
+        "MATH_CEIL",
+    ] {
+        let src = format!(
+            ".func main\n    PUSH_BOOL 1\n    {op}\n    CAP_CALL \"io.print\" 1\n    RET\n"
+        );
+        let err = both_vms(&src).expect_err(op);
+        assert!(err.contains("got bool"), "{op}: {err}");
+    }
+}
