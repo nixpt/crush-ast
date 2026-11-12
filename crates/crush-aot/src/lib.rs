@@ -79,7 +79,8 @@ fn refuse_green_task(program: &casm::Program, backend: &'static str) -> Result<(
 /// the old behaviour — push a made-up `{ok, kind, echo}` stub and carry on —
 /// silently invented model output. AOT now refuses them at compile time, naming
 /// the op. Both spellings the frontend/CASM use are covered (`ai_tool_chain` /
-/// `ai_toolchain`, `ai_goal_decl` / `ai_goal_declaration`).
+/// `ai_toolchain`, `ai_goal_decl` / `ai_goal_declaration`, `ai_knowledge_share`
+/// / `ai_knowledge_sharing`).
 const AI_OPS: &[&str] = &[
     "ai_query",
     "ai_synthesize",
@@ -93,6 +94,7 @@ const AI_OPS: &[&str] = &[
     "ai_goal_decl",
     "ai_progress_update",
     "ai_knowledge_sharing",
+    "ai_knowledge_share",
 ];
 
 /// #423: the DOM opcodes are the same kind of op — the VMs dispatch them to a

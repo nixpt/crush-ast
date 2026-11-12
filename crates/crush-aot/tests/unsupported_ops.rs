@@ -73,6 +73,7 @@ fn ai_ops_are_rejected_by_both_backends() {
         "ai_goal_decl",
         "ai_progress_update",
         "ai_knowledge_sharing",
+        "ai_knowledge_share",
     ] {
         let mut program = casm("fn main() { print(1) }");
         let main: &mut Function = program.functions.get_mut("main").unwrap();
