@@ -77,6 +77,12 @@ pub struct ReplState {
     pub imports: Vec<Statement>,
 }
 
+impl Default for ReplState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReplState {
     pub fn new() -> Self {
         Self {
@@ -316,13 +322,22 @@ fn resolve_snippet_imports(
     let is_module_import = |s: &Statement| {
         matches!(
             s,
-            Statement::Import { import: crush_cast::ImportStatement::CrushModule { .. }, .. }
+            Statement::Import {
+                import: crush_cast::ImportStatement::CrushModule { .. },
+                ..
+            }
         )
     };
     let new: Vec<Statement> = snippet
         .functions
         .get("main")
-        .map(|m| m.body.iter().filter(|s| is_module_import(s)).cloned().collect())
+        .map(|m| {
+            m.body
+                .iter()
+                .filter(|s| is_module_import(s))
+                .cloned()
+                .collect()
+        })
         .unwrap_or_default();
     if new.is_empty() && state.imports.is_empty() {
         return Ok(snippet);
@@ -331,7 +346,9 @@ fn resolve_snippet_imports(
     let mut body = state.imports.clone();
     body.append(&mut main.body);
     main.body = body;
-    let origin = std::env::current_dir().unwrap_or_else(|_| ".".into()).join("<repl>");
+    let origin = std::env::current_dir()
+        .unwrap_or_else(|_| ".".into())
+        .join("<repl>");
     let opts = crush_frontend::import_system::ImportOptions {
         search_paths: config.import_paths.clone(),
         ..Default::default()
@@ -460,7 +477,11 @@ fn check_stdlib_available(config: &ReplConfig) -> anyhow::Result<()> {
 }
 
 pub fn evaluate_silent(source: &str, state: &mut ReplState, config: &ReplConfig) -> ReplEvalResult {
-    let mut eval_result = ReplEvalResult { output: None, error: None, defined: vec![] };
+    let mut eval_result = ReplEvalResult {
+        output: None,
+        error: None,
+        defined: vec![],
+    };
     if let Err(e) = check_stdlib_available(config) {
         eval_result.error = Some(e.to_string());
         return eval_result;
@@ -484,7 +505,7 @@ pub fn evaluate_silent(source: &str, state: &mut ReplState, config: &ReplConfig)
     };
 
     // Functions merged from imported modules are not the line's own.
-    let mut defined: Vec<String> = snippet
+    let defined: Vec<String> = snippet
         .functions
         .iter()
         .filter(|(k, f)| *k != "main" && !f.meta.contains_key("source_file"))
@@ -494,7 +515,7 @@ pub fn evaluate_silent(source: &str, state: &mut ReplState, config: &ReplConfig)
 
     let had_main_statements = state.merge_snippet(snippet);
     let (compiled_program, show_result) = state.to_exec_program();
-    
+
     let casm = match compile_pipeline(compiled_program) {
         Ok(c) => c,
         Err(e) => {
@@ -502,7 +523,7 @@ pub fn evaluate_silent(source: &str, state: &mut ReplState, config: &ReplConfig)
             return eval_result;
         }
     };
-    
+
     let vm_program = match compile::casm_to_vm(&casm) {
         Ok(p) => p,
         Err(e) => {
@@ -517,7 +538,7 @@ pub fn evaluate_silent(source: &str, state: &mut ReplState, config: &ReplConfig)
         if let Some(caps) = repl_host_caps(config) {
             vm.set_host_caps(caps);
         }
-        
+
         match vm.run() {
             Ok(result) => {
                 let mut out_str = String::new();
@@ -536,23 +557,20 @@ pub fn evaluate_silent(source: &str, state: &mut ReplState, config: &ReplConfig)
                     eval_result.output = Some(out_str);
                 }
             }
-            Err(e) => {
-                match config.message_format {
-                    MessageFormat::Text => {
-                        eval_result.error = Some(crate::theme::render_runtime_error(&e));
-                    }
-                    MessageFormat::Json => {
-                        let diag = JsonDiagnostic::runtime_error(&crate::RuntimeError::Vm(e));
-                        eval_result.error = Some(diag.to_line());
-                    }
+            Err(e) => match config.message_format {
+                MessageFormat::Text => {
+                    eval_result.error = Some(crate::theme::render_runtime_error(&e));
                 }
-            }
+                MessageFormat::Json => {
+                    let diag = JsonDiagnostic::runtime_error(&crate::RuntimeError::Vm(e));
+                    eval_result.error = Some(diag.to_line());
+                }
+            },
         }
     }
 
     eval_result
 }
-
 
 fn evaluate_input(source: &str, state: &mut ReplState, config: &ReplConfig) -> anyhow::Result<()> {
     let snippet = parse_repl_source(source).map_err(|errors| {
@@ -613,10 +631,8 @@ fn evaluate_input(source: &str, state: &mut ReplState, config: &ReplConfig) -> a
                         // arm by wrapping into a synthetic `RuntimeError::Vm`
                         // — that way editors can branch on the same code
                         // family they already see from `crush-run`.
-                        let diag = JsonDiagnostic::runtime_error(
-                            &crate::RuntimeError::Vm(e),
-                        );
-                        eprint!("{}\n", diag.to_line());
+                        let diag = JsonDiagnostic::runtime_error(&crate::RuntimeError::Vm(e));
+                        eprintln!("{}", diag.to_line());
                     }
                 }
             }
@@ -652,7 +668,7 @@ pub fn run(config: ReplConfig) -> anyhow::Result<()> {
             std::thread::sleep(std::time::Duration::from_millis(60));
         }
     }
-    
+
     let subtext = "crush-repl — incremental Crush polyglot language REPL";
     for ch in subtext.chars() {
         print!("{}", ch);
@@ -690,19 +706,13 @@ pub fn run(config: ReplConfig) -> anyhow::Result<()> {
                     // structural checks, unknown commands) bucket into
                     // `Other` and stay on blanket `E-IO`.
                     match (&err, config.message_format) {
-                        (
-                            MetaCommandError::Parse { source, errors },
-                            MessageFormat::Text,
-                        ) => {
+                        (MetaCommandError::Parse { source, errors }, MessageFormat::Text) => {
                             eprint!(
                                 "{}",
                                 crate::theme::render_parse_errors(errors, None, source)
                             );
                         }
-                        (
-                            MetaCommandError::Parse { source: _, errors },
-                            MessageFormat::Json,
-                        ) => {
+                        (MetaCommandError::Parse { source: _, errors }, MessageFormat::Json) => {
                             let diags: Vec<JsonDiagnostic> = errors
                                 .iter()
                                 .map(|e| JsonDiagnostic::parse_error(e, None))
@@ -717,7 +727,7 @@ pub fn run(config: ReplConfig) -> anyhow::Result<()> {
                                 &e.to_string(),
                                 JsonDiagnostic::CODE_IO,
                             );
-                            eprint!("{}\n", diag.to_line());
+                            eprintln!("{}", diag.to_line());
                         }
                     }
                 }
@@ -782,11 +792,9 @@ pub fn run(config: ReplConfig) -> anyhow::Result<()> {
                     // Parse, semantic and runtime errors keep their own codes
                     // and positions (the same records `crushc` / `crush-run`
                     // emit); anything else is the generic I/O code.
-                    for diag in crate::theme::diagnostics_for_error(
-                        &err,
-                        None,
-                        JsonDiagnostic::CODE_IO,
-                    ) {
+                    for diag in
+                        crate::theme::diagnostics_for_error(&err, None, JsonDiagnostic::CODE_IO)
+                    {
                         eprintln!("{}", diag.to_line());
                     }
                 }
@@ -831,7 +839,8 @@ mod tests {
         let bad = "\"unterminated\n";
         let errs = parse_repl_source(bad).expect_err("expected parse error");
         assert!(
-            errs.iter().any(|e| matches!(e, ParseError::UnterminatedString { .. })),
+            errs.iter()
+                .any(|e| matches!(e, ParseError::UnterminatedString { .. })),
             "expected at least one UnterminatedString error, got {errs:?}"
         );
     }

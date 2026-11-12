@@ -10,17 +10,25 @@ use std::path::{Path, PathBuf};
 use crush_cast::{CAST_VERSION, Program};
 
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
 }
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if path.is_dir() {
-            if matches!(name.as_ref(), "target" | ".git" | "node_modules" | ".claude") {
+            if matches!(
+                name.as_ref(),
+                "target" | ".git" | "node_modules" | ".claude"
+            ) {
                 continue;
             }
             collect(&path, out);
@@ -36,7 +44,11 @@ fn every_repo_cast_json_loads_through_the_gate_at_cast_version() {
     collect(&repo_root(), &mut files);
     files.sort();
     // The corpus is 41 files as of #365; a sweep that finds none is broken.
-    assert!(files.len() >= 40, "found only {} .cast.json files", files.len());
+    assert!(
+        files.len() >= 40,
+        "found only {} .cast.json files",
+        files.len()
+    );
 
     let mut failures = Vec::new();
     for file in &files {
@@ -50,15 +62,26 @@ fn every_repo_cast_json_loads_through_the_gate_at_cast_version() {
             Err(e) => failures.push(format!("{}: {e}", file.display())),
         }
     }
-    assert!(failures.is_empty(), "{} of {} failed:\n{}", failures.len(), files.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} of {} failed:\n{}",
+        failures.len(),
+        files.len(),
+        failures.join("\n")
+    );
 }
 
 fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            if path.file_name().is_some_and(|n| n == "tests" || n == "target") {
+            if path
+                .file_name()
+                .is_some_and(|n| n == "tests" || n == "target")
+            {
                 continue;
             }
             collect_rs(&path, out);
@@ -93,5 +116,9 @@ fn no_producer_writes_a_literal_cast_version() {
             }
         }
     }
-    assert!(offenders.is_empty(), "write crush_cast::CAST_VERSION instead:\n{}", offenders.join("\n"));
+    assert!(
+        offenders.is_empty(),
+        "write crush_cast::CAST_VERSION instead:\n{}",
+        offenders.join("\n")
+    );
 }

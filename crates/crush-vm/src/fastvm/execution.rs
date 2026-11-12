@@ -1,18 +1,21 @@
 //! Instruction execution logic for FastVM.
 
+use super::Capability;
+use super::arithmetic::{
+    add_rtv, compare_ordered, concat_arrays, div_rtv, mod_rtv, mul_rtv, neg_rtv, sub_rtv,
+};
 use super::instructions::SymbolTables;
 use super::instructions::{FastInstr, FastOp};
 use super::operations::{current_locals_base, is_truthy};
-use super::arithmetic::{add_rtv, concat_arrays, sub_rtv, mul_rtv, div_rtv, mod_rtv, neg_rtv, compare_ordered};
 use super::similarity::calculate_similarity;
 use super::types::{FastError, FastFrame, FastYield, HostRequest, ROOT_FRAME_PC, UNASSIGNED_LOCAL};
 use crate::memory::{Arena, Object};
 use crate::value::RuntimeValue;
-use super::Capability;
 use std::sync::Arc;
 
 /// Execute a single instruction
 #[inline(always)]
+#[allow(clippy::too_many_arguments)] // one VM dispatch signature; a params struct would obscure the opcode plumbing
 pub fn execute_one(
     instr: FastInstr,
     pc: &mut usize,
@@ -236,7 +239,11 @@ pub fn execute_one(
             };
             stack.push(RuntimeValue::Float(base_f.powf(exp_f)));
         }
-        FastOp::MathSqrt | FastOp::MathAbs | FastOp::MathRound | FastOp::MathFloor | FastOp::MathCeil => {
+        FastOp::MathSqrt
+        | FastOp::MathAbs
+        | FastOp::MathRound
+        | FastOp::MathFloor
+        | FastOp::MathCeil => {
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
             let af = match a {
                 RuntimeValue::Int(x) => x as f64,
@@ -295,12 +302,16 @@ pub fn execute_one(
         FastOp::And => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(RuntimeValue::Bool(is_truthy(&a, arena) && is_truthy(&b, arena)));
+            stack.push(RuntimeValue::Bool(
+                is_truthy(&a, arena) && is_truthy(&b, arena),
+            ));
         }
         FastOp::Or => {
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            stack.push(RuntimeValue::Bool(is_truthy(&a, arena) || is_truthy(&b, arena)));
+            stack.push(RuntimeValue::Bool(
+                is_truthy(&a, arena) || is_truthy(&b, arena),
+            ));
         }
         FastOp::Not => {
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
@@ -503,10 +514,10 @@ pub fn execute_one(
             for _ in 0..count {
                 let val = stack.pop().ok_or(FastError::StackUnderflow)?;
                 let key = stack.pop().ok_or(FastError::StackUnderflow)?;
-                if let RuntimeValue::Ref(ptr) = &key {
-                    if let Some(Object::Str(s)) = arena.get(*ptr) {
-                        map.insert(s.clone(), val);
-                    }
+                if let RuntimeValue::Ref(ptr) = &key
+                    && let Some(Object::Str(s)) = arena.get(*ptr)
+                {
+                    map.insert(s.clone(), val);
                 }
             }
             let ptr = arena.alloc(Object::Map(map));
@@ -744,10 +755,14 @@ pub fn execute_one(
             let val = stack.pop().ok_or(FastError::StackUnderflow)?;
             let target = stack.pop().ok_or(FastError::StackUnderflow)?;
             if let RuntimeValue::Ref(ptr) = target {
-                if let Ok(Object::Object { fields, class_name, .. }) = arena.get_mut(ptr) {
+                if let Ok(Object::Object {
+                    fields, class_name, ..
+                }) = arena.get_mut(ptr)
+                {
                     // COSM K1.4: an instance of a sealed Kind takes only its
                     // declared fields, as on the VMs.
-                    crate::fastvm::check_sealed_write(class_name, name).map_err(FastError::ExecutionError)?;
+                    crate::fastvm::check_sealed_write(class_name, name)
+                        .map_err(FastError::ExecutionError)?;
                     fields.insert(name.clone(), val);
                 } else {
                     return Err(FastError::TypeMismatch);
@@ -1230,22 +1245,30 @@ pub fn execute_one(
         FastOp::AiAgentDelegation => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiAgentDelegation { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiAgentDelegation {
+                args,
+            })));
         }
         FastOp::AiLearningLoop => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiLearningLoop { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiLearningLoop {
+                args,
+            })));
         }
         FastOp::AiContextAware => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiContextAware { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiContextAware {
+                args,
+            })));
         }
         FastOp::AiSemanticMatch => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiSemanticMatch { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiSemanticMatch {
+                args,
+            })));
         }
         FastOp::AiSynthesize => {
             let json_str = &symbols.strings[instr.arg as usize];
@@ -1255,17 +1278,23 @@ pub fn execute_one(
         FastOp::AiGoalDeclaration => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiGoalDeclaration { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiGoalDeclaration {
+                args,
+            })));
         }
         FastOp::AiProgressUpdate => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiProgressUpdate { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiProgressUpdate {
+                args,
+            })));
         }
         FastOp::AiKnowledgeSharing => {
             let json_str = &symbols.strings[instr.arg as usize];
             let args = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
-            return Ok(Some(FastYield::Request(HostRequest::AiKnowledgeSharing { args })));
+            return Ok(Some(FastYield::Request(HostRequest::AiKnowledgeSharing {
+                args,
+            })));
         }
 
         FastOp::Await => {
@@ -1278,8 +1307,8 @@ pub fn execute_one(
 
         FastOp::CrossLangCall => {
             let site = &symbols.cross_lang_calls[instr.arg as usize];
-            let target_lang = symbols.strings[site.target_lang_idx as usize].clone();
-            let function_name = symbols.strings[site.function_name_idx as usize].clone();
+            let _target_lang = symbols.strings[site.target_lang_idx as usize].clone();
+            let _function_name = symbols.strings[site.function_name_idx as usize].clone();
 
             // Pop arguments from stack (in reverse order)
             let mut args = Vec::new();
@@ -1291,7 +1320,9 @@ pub fn execute_one(
 
             // Call the function via global registry
             // let result = crate::polyglot::call_function_global(&target_lang, &function_name, args);
-            return Err(FastError::ExecutionError("Polyglot execution not supported yet".into()));
+            return Err(FastError::ExecutionError(
+                "Polyglot execution not supported yet".into(),
+            ));
         }
     }
 

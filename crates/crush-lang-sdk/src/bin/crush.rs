@@ -46,7 +46,9 @@ fn exec(name: &str, args: impl IntoIterator<Item = String>) -> ExitCode {
                 eprintln!("(crush-debug is built with the `debug` feature of crush-lang-sdk)");
             }
             if name == "crush-gui" {
-                eprintln!("(crush-gui is its own package: `cargo install crush-gui`, or build the workspace)");
+                eprintln!(
+                    "(crush-gui is its own package: `cargo install crush-gui`, or build the workspace)"
+                );
             }
             ExitCode::FAILURE
         }
@@ -67,14 +69,21 @@ fn update(args: impl Iterator<Item = String>) -> ExitCode {
         find_on_path(installer, env::var_os("PATH").as_deref())
     };
     let Some(bin) = bin else {
-        eprintln!("crush: `crush update` needs crush-installer, which is not next to crush or on PATH.");
+        eprintln!(
+            "crush: `crush update` needs crush-installer, which is not next to crush or on PATH."
+        );
         eprintln!("Install it with: cargo install crush-installer");
-        eprintln!("(or, if this crush came from cargo, update it with: cargo install crush-lang-sdk)");
+        eprintln!(
+            "(or, if this crush came from cargo, update it with: cargo install crush-lang-sdk)"
+        );
         return ExitCode::FAILURE;
     };
     let me = env::current_exe().ok();
     let caller_dir = me.as_deref().and_then(Path::parent);
-    match Command::new(&bin).args(installer_args(caller_dir, args)).status() {
+    match Command::new(&bin)
+        .args(installer_args(caller_dir, args))
+        .status()
+    {
         Ok(status) => match status.code() {
             Some(code) => ExitCode::from(code as u8),
             None => ExitCode::FAILURE,
@@ -108,11 +117,17 @@ fn usage() {
     eprintln!("USAGE:");
     eprintln!("    crush                    start the interactive REPL");
     eprintln!("    crush repl [ARGS]        start the interactive REPL");
-    eprintln!("    crush run FILE [ARGS]    run a program (.crush, .cast.json/.castb, .casm, .cvms, .cvm1)");
-    eprintln!("    crush build FILE [ARGS]  compile .crush (or CAST) to .cvm1; --emit casm|cvms|cast|ast");
+    eprintln!(
+        "    crush run FILE [ARGS]    run a program (.crush, .cast.json/.castb, .casm, .cvms, .cvm1)"
+    );
+    eprintln!(
+        "    crush build FILE [ARGS]  compile .crush (or CAST) to .cvm1; --emit casm|cvms|cast|ast"
+    );
     eprintln!("    crush cast CMD FILE      CAST tools: validate, pack, unpack, format, diff");
     eprintln!("    crush debug FILE [ARGS]  debug a .crush program: break, step, watch, print");
-    eprintln!("    crush gui run FILE --ui  run a program that draws a window with ui.* (needs crush-gui)");
+    eprintln!(
+        "    crush gui run FILE --ui  run a program that draws a window with ui.* (needs crush-gui)"
+    );
     eprintln!("    crush doctor [--json]    check the host runtimes polyglot blocks need");
     eprintln!("    crush update [--check]   update to the newest release (needs crush-installer)");
     eprintln!();

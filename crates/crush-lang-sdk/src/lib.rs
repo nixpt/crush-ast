@@ -23,12 +23,9 @@
 //! # Ok(()) }
 //! ```
 
-pub mod akg;
 pub mod ai_native;
+pub mod akg;
 pub mod builder;
-pub mod concurrency_native;
-pub mod dom_native;
-pub mod effects;
 pub mod bus;
 pub mod caps;
 pub mod cast_cli;
@@ -36,23 +33,24 @@ pub mod cli;
 pub mod codebase;
 pub mod compile;
 pub mod compute;
-pub mod formats;
+pub mod concurrency_native;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod doctor;
+pub mod dom_native;
+pub mod effects;
+pub mod formats;
 // Compares against crush-vm's FastVM backend — native-plugins only.
-#[cfg(feature = "native-plugins")]
-pub mod differential;
 #[cfg(feature = "db")]
 pub mod db;
-#[cfg(any(feature = "db", feature = "stdlib"))]
-mod util;
-#[cfg(feature = "graphics")]
-pub mod graphics;
+#[cfg(feature = "native-plugins")]
+pub mod differential;
 pub mod fs_backend;
 mod fs_tools;
-pub mod host_caps;
 #[cfg(feature = "gpu")]
 pub mod gpu;
+#[cfg(feature = "graphics")]
+pub mod graphics;
+pub mod host_caps;
 #[cfg(feature = "net")]
 pub mod net;
 pub mod repl;
@@ -66,15 +64,17 @@ pub mod stdlib;
 pub mod task;
 mod text_tools;
 pub mod theme;
+#[cfg(any(feature = "db", feature = "stdlib"))]
+mod util;
 
 // Re-export the core crush-vm types a host author needs.
 pub use crush_vm::run as run_program;
 pub use crush_vm::vm::Value;
 pub use crush_vm::{HostCap, HostCapSpec, HostCaps, run_with_caps};
-pub use crush_vm::{Program, Quotas, VmError, VmResult, assemble, disassemble};
 pub use crush_vm::{
     PolyglotError, PolyglotExecutor, PolyglotRequest, SubprocessExecutor, polyglot_executor_fn,
 };
+pub use crush_vm::{Program, Quotas, VmError, VmResult, assemble, disassemble};
 
 pub use builder::{ProgramBuilder, ProgramBuilderError};
 pub use caps::{CapabilityError, concat, len, print};

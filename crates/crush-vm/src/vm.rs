@@ -51,12 +51,18 @@ pub enum VmError {
     #[error("{0} is not callable: only functions can be called")]
     NotCallable(&'static str),
     #[error("function `{function}` takes {expected} argument(s), got {got}")]
-    FuncArity { function: String, expected: usize, got: usize },
+    FuncArity {
+        function: String,
+        expected: usize,
+        got: usize,
+    },
     #[error("call_value_apply expects an array of arguments, got {0}")]
     ApplyArgsType(&'static str),
     /// A language-styled printer (`py.print`, `conv.text`) met a function
     /// value; its format isn't pinned by any corpus yet (CRUSH-251).
-    #[error("printing a function value (`{0}`) isn't supported in this language's print yet (CRUSH-251)")]
+    #[error(
+        "printing a function value (`{0}`) isn't supported in this language's print yet (CRUSH-251)"
+    )]
     PrintFunc(String),
     #[error("type error: expected {expected}, got {got}")]
     TypeError {
@@ -203,7 +209,10 @@ pub fn callable(callee: &Value, argc: usize) -> Result<std::rc::Rc<FuncValue>, V
 pub fn cell(v: &Value) -> Result<std::rc::Rc<std::cell::RefCell<Value>>, VmError> {
     match v {
         Value::Cell(c) => Ok(c.clone()),
-        other => Err(VmError::TypeError { expected: "cell", got: other.type_name() }),
+        other => Err(VmError::TypeError {
+            expected: "cell",
+            got: other.type_name(),
+        }),
     }
 }
 
@@ -294,9 +303,7 @@ impl PartialEq for Value {
             // not exact, so this comparison can disagree with true integer
             // equality at the extremes of i64's range -- same caveat as
             // Python's `int == float`.
-            (Value::Int(i), Value::Float(f)) | (Value::Float(f), Value::Int(i)) => {
-                *i as f64 == *f
-            }
+            (Value::Int(i), Value::Float(f)) | (Value::Float(f), Value::Int(i)) => *i as f64 == *f,
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Array(a), Value::Array(b)) => *a.borrow() == *b.borrow(),
             (Value::Tuple(a), Value::Tuple(b)) => a == b,
@@ -313,9 +320,8 @@ impl PartialEq for Value {
             }
             // Two closures over the same variable share its cell.
             (Value::Cell(a), Value::Cell(b)) => std::rc::Rc::ptr_eq(a, b),
-            (Value::Record(_), Value::Record(_) | Value::Map(_)) | (Value::Map(_), Value::Record(_)) => {
-                crate::cosm_rt::record_eq(self, other)
-            }
+            (Value::Record(_), Value::Record(_) | Value::Map(_))
+            | (Value::Map(_), Value::Record(_)) => crate::cosm_rt::record_eq(self, other),
             (Value::Kind(a), Value::Kind(b)) => a.name() == b.name(),
             _ => false,
         }
@@ -456,7 +462,11 @@ impl std::fmt::Display for Value {
             Value::Cell(_) => write!(f, "<cell>"),
             // Crush's struct print: the map the struct used to be.
             Value::Record(r) => {
-                let inner: Vec<String> = r.fields().iter().map(|(k, v)| format!("{k}: {v}")).collect();
+                let inner: Vec<String> = r
+                    .fields()
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect();
                 write!(f, "{{{}}}", inner.join(", "))
             }
             Value::Kind(k) => write!(f, "<kind {}>", k.name()),
@@ -538,21 +548,11 @@ impl serde::Serialize for Value {
                 }
                 map.end()
             }
-            Value::Error(e) => {
-                serializer.serialize_str(&format!("error({e})"))
-            }
-            Value::Bytes(b) => {
-                serializer.serialize_str(&format!("<{} bytes>", b.len()))
-            }
-            Value::Handle(id) => {
-                serializer.serialize_str(&format!("<handle {id}>"))
-            }
-            Value::Foreign(id) => {
-                serializer.serialize_str(&format!("<foreign {id}>"))
-            }
-            Value::Func(func) => {
-                serializer.serialize_str(&format!("<fn {}>", func.display_name()))
-            }
+            Value::Error(e) => serializer.serialize_str(&format!("error({e})")),
+            Value::Bytes(b) => serializer.serialize_str(&format!("<{} bytes>", b.len())),
+            Value::Handle(id) => serializer.serialize_str(&format!("<handle {id}>")),
+            Value::Foreign(id) => serializer.serialize_str(&format!("<foreign {id}>")),
+            Value::Func(func) => serializer.serialize_str(&format!("<fn {}>", func.display_name())),
             Value::Cell(_) => serializer.serialize_str("<cell>"),
             Value::Record(r) => {
                 let fields = r.fields();
@@ -591,6 +591,7 @@ impl serde::Serialize for Value {
 ///      `crush-lang-sdk/src/stdlib.rs::tests::test_json_parse_tagged_forms`
 ///      fixtures 4 and 5.
 ///   4. Fallback: `Value::Str(content)` — no disambiguation.
+///
 ///   Specifying `<handle ` BEFORE `<... bytes>` resolves the
 ///   `<handle N>` vs `<N bytes>` overlap cleanly, because the `handle `
 ///   literal token is more specific than the generic `<` prefix.
@@ -631,10 +632,7 @@ impl<'de> serde::Deserialize<'de> for Value {
         impl<'de> serde::de::Visitor<'de> for ValueVisitor {
             type Value = Value;
 
-            fn expecting(
-                &self,
-                formatter: &mut std::fmt::Formatter<'_>,
-            ) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 // Short hint — full enumeration lives in the
                 // impl-level doc-comment above. Trim that redundancy
                 // here so that serde error messages citing
@@ -647,24 +645,15 @@ impl<'de> serde::Deserialize<'de> for Value {
                 Ok(Value::Null)
             }
 
-            fn visit_bool<E: serde::de::Error>(
-                self,
-                v: bool,
-            ) -> Result<Self::Value, E> {
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
                 Ok(Value::Bool(v))
             }
 
-            fn visit_i64<E: serde::de::Error>(
-                self,
-                v: i64,
-            ) -> Result<Self::Value, E> {
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
                 Ok(Value::Int(v))
             }
 
-            fn visit_u64<E: serde::de::Error>(
-                self,
-                v: u64,
-            ) -> Result<Self::Value, E> {
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
                 // `serde_json` only emits `visit_u64` for positive
                 // integers exceeding i64::MAX — guard against overflow.
                 if v <= i64::MAX as u64 {
@@ -674,23 +663,15 @@ impl<'de> serde::Deserialize<'de> for Value {
                     // (use the bound `E` rather than `serde::de::Error::custom(...)`
                     // which relies on Rust inferring `Self` — sometimes
                     // fragile across inference versions).
-                    Err(E::custom(format!(
-                        "Value: u64 {v} exceeds i64::MAX"
-                    )))
+                    Err(E::custom(format!("Value: u64 {v} exceeds i64::MAX")))
                 }
             }
 
-            fn visit_f64<E: serde::de::Error>(
-                self,
-                v: f64,
-            ) -> Result<Self::Value, E> {
+            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Self::Value, E> {
                 Ok(Value::Float(v))
             }
 
-            fn visit_str<E: serde::de::Error>(
-                self,
-                v: &str,
-            ) -> Result<Self::Value, E> {
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
                 // Tagged-form disambiguation — order matters:
                 //   1. `<handle N>` (most specific prefix)
                 //   2. `<N bytes>`   (general `<...>` shape)
@@ -717,10 +698,7 @@ impl<'de> serde::Deserialize<'de> for Value {
                 Ok(Value::Str(v.to_string()))
             }
 
-            fn visit_string<E: serde::de::Error>(
-                self,
-                v: String,
-            ) -> Result<Self::Value, E> {
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
                 // Defer to visit_str so the tagged-form logic stays
                 // in one place. serde_json calls visit_string for
                 // owned strings; routing through visit_str keeps the
@@ -789,7 +767,11 @@ impl GreenThread {
         Self {
             ip,
             stack: Vec::new(),
-            call_stack: vec![Frame { return_ip: None, memory: HashMap::new(), on_ret: RetValue::Keep }],
+            call_stack: vec![Frame {
+                return_ip: None,
+                memory: HashMap::new(),
+                on_ret: RetValue::Keep,
+            }],
             try_stack: Vec::new(),
             steps: 0,
             done: false,
@@ -807,7 +789,11 @@ impl GreenThread {
         Self {
             ip,
             stack: args,
-            call_stack: vec![Frame { return_ip: None, memory: HashMap::new(), on_ret: RetValue::Keep }],
+            call_stack: vec![Frame {
+                return_ip: None,
+                memory: HashMap::new(),
+                on_ret: RetValue::Keep,
+            }],
             try_stack: Vec::new(),
             steps: 0,
             done: false,
@@ -831,7 +817,9 @@ impl Value {
     }
 
     pub fn new_list(v: Vec<Value>) -> Self {
-        Value::List(std::rc::Rc::new(std::cell::RefCell::new(v.into_iter().collect())))
+        Value::List(std::rc::Rc::new(std::cell::RefCell::new(
+            v.into_iter().collect(),
+        )))
     }
 
     pub fn new_vector(v: Vec<Value>) -> Self {
@@ -844,7 +832,9 @@ impl Value {
 
     /// A map from any key/value pairs (kept in the order given).
     pub fn new_map(m: impl IntoIterator<Item = (String, Value)>) -> Self {
-        Value::Map(std::rc::Rc::new(std::cell::RefCell::new(m.into_iter().collect())))
+        Value::Map(std::rc::Rc::new(std::cell::RefCell::new(
+            m.into_iter().collect(),
+        )))
     }
 }
 
@@ -911,7 +901,9 @@ impl Quotas {
     /// Add an `allowed_caps` entry that stops matching at `until` (CRUSH-164).
     pub fn allow_cap_until(mut self, entry: impl Into<String>, until: std::time::Instant) -> Self {
         let entry = entry.into();
-        self.allowed_caps.get_or_insert_with(Vec::new).push(entry.clone());
+        self.allowed_caps
+            .get_or_insert_with(Vec::new)
+            .push(entry.clone());
         self.allowed_caps_expiry.push((entry, until));
         self
     }
@@ -1050,15 +1042,14 @@ pub fn run_fastvm_with_caps(
     capabilities: Vec<std::sync::Arc<dyn crate::fastvm::Capability>>,
 ) -> Result<crate::fastvm::FastYield, crate::fastvm::FastError> {
     use std::sync::Arc;
-    let lowered = crate::fastvm::lower_program(casm_program).map_err(|e| {
-        crate::fastvm::FastError::ExecutionError(e.to_string())
-    })?;
-    
+    let lowered = crate::fastvm::lower_program(casm_program)
+        .map_err(|e| crate::fastvm::FastError::ExecutionError(e.to_string()))?;
+
     // Create dummy HAL for now (since host calls are stubbed)
     let hal = Arc::new(DummyHal {});
 
     let mut vm = crate::fastvm::FastVM::new(lowered, capabilities, hal);
-    
+
     // Give it a large budget to run to completion
     Ok(vm.run(1_000_000))
 }
@@ -1138,11 +1129,12 @@ impl CrushResultExt for Result<crate::fastvm::FastYield, crate::fastvm::FastErro
     }
 
     fn crush_is_null(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Ok(crate::fastvm::FastYield::Finished(None))
-            | Ok(crate::fastvm::FastYield::Finished(Some(crate::RuntimeValue::Null))) => true,
-            _ => false,
-        }
+                | Ok(crate::fastvm::FastYield::Finished(Some(
+                    crate::RuntimeValue::Null
+                )))
+        )
     }
 }
-

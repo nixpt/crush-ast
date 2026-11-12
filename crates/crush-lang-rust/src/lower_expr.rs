@@ -10,7 +10,8 @@ use syn::Expr;
 use syn::spanned::Spanned;
 
 pub fn lower_expr(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
-    lower_expr_inner(expr, ctx).map_err(|error| crate::diagnostics::at("expression", expr.span(), error))
+    lower_expr_inner(expr, ctx)
+        .map_err(|error| crate::diagnostics::at("expression", expr.span(), error))
 }
 
 fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
@@ -52,10 +53,15 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
                 syn::BinOp::BitXor(_) => "^",
                 syn::BinOp::Shl(_) => "<<",
                 syn::BinOp::Shr(_) => ">>",
-                syn::BinOp::AddAssign(_) | syn::BinOp::SubAssign(_) | syn::BinOp::MulAssign(_)
-                | syn::BinOp::DivAssign(_) | syn::BinOp::RemAssign(_)
-                | syn::BinOp::BitAndAssign(_) | syn::BinOp::BitOrAssign(_)
-                | syn::BinOp::BitXorAssign(_) | syn::BinOp::ShlAssign(_)
+                syn::BinOp::AddAssign(_)
+                | syn::BinOp::SubAssign(_)
+                | syn::BinOp::MulAssign(_)
+                | syn::BinOp::DivAssign(_)
+                | syn::BinOp::RemAssign(_)
+                | syn::BinOp::BitAndAssign(_)
+                | syn::BinOp::BitOrAssign(_)
+                | syn::BinOp::BitXorAssign(_)
+                | syn::BinOp::ShlAssign(_)
                 | syn::BinOp::ShrAssign(_) => {
                     let operator = match e.op {
                         syn::BinOp::AddAssign(_) => "+",
@@ -117,7 +123,10 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
         }
         Expr::Call(e) => {
             let mut meta = meta;
-            meta.insert("rust_source_call".to_string(), serde_json::Value::Bool(true));
+            meta.insert(
+                "rust_source_call".to_string(),
+                serde_json::Value::Bool(true),
+            );
             let lowered_args: Vec<Expression> = e
                 .args
                 .iter()
@@ -135,7 +144,10 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
                 }
                 _ => anyhow::bail!("complex function expression not supported"),
             };
-            meta.insert("rust_source_name".to_string(), serde_json::Value::String(func_name.clone()));
+            meta.insert(
+                "rust_source_name".to_string(),
+                serde_json::Value::String(func_name.clone()),
+            );
             match func_name.as_str() {
                 "println" | "print" => Ok(Expression::CapabilityCall {
                     name: "io.print".to_string(),
@@ -179,14 +191,13 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
                 meta,
             })
         }
-        Expr::Block(e) => {
-            block_to_expr(&e.block, ctx)
-        }
+        Expr::Block(e) => block_to_expr(&e.block, ctx),
         Expr::Paren(e) => lower_expr(&e.expr, ctx),
-        Expr::Return(e) => {
-            Err(unsupported_at(e.span(), "return in a value expression",
-                "use return as a function or closure statement"))
-        }
+        Expr::Return(e) => Err(unsupported_at(
+            e.span(),
+            "return in a value expression",
+            "use return as a function or closure statement",
+        )),
         Expr::MethodCall(e) => {
             let receiver = lower_expr(&e.receiver, ctx)?;
             let mut args = vec![receiver];
@@ -207,18 +218,28 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
         Expr::Range(e) => {
             let start = match &e.start {
                 Some(s) => lower_expr(s, ctx)?,
-                None => Expression::IntLiteral { value: 0, meta: ctx.meta_at(0) },
+                None => Expression::IntLiteral {
+                    value: 0,
+                    meta: ctx.meta_at(0),
+                },
             };
             let end = match &e.end {
                 // CRUSH-197: `a..=b` is inclusive — the CAST range is half-open.
-                Some(end) if matches!(e.limits, syn::RangeLimits::Closed(_)) => Expression::BinaryOp {
-                    operator: "+".to_string(),
-                    left: Box::new(lower_expr(end, ctx)?),
-                    right: Box::new(Expression::IntLiteral { value: 1, meta: ctx.meta_at(0) }),
+                Some(end) if matches!(e.limits, syn::RangeLimits::Closed(_)) => {
+                    Expression::BinaryOp {
+                        operator: "+".to_string(),
+                        left: Box::new(lower_expr(end, ctx)?),
+                        right: Box::new(Expression::IntLiteral {
+                            value: 1,
+                            meta: ctx.meta_at(0),
+                        }),
+                        meta: ctx.meta_at(0),
+                    }
+                }
+                Some(end) => lower_expr(end, ctx)?,
+                None => Expression::NullLiteral {
                     meta: ctx.meta_at(0),
                 },
-                Some(end) => lower_expr(end, ctx)?,
-                None => Expression::NullLiteral { meta: ctx.meta_at(0) },
             };
             Ok(Expression::Range {
                 start: Box::new(start),
@@ -240,61 +261,82 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
             })
         }
         Expr::Array(e) => {
-            let elements: Vec<Expression> = e.elems.iter()
+            let elements: Vec<Expression> = e
+                .elems
+                .iter()
                 .map(|elem| lower_expr(elem, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Expression::ArrayLiteral { elements, meta })
         }
         Expr::Closure(e) => {
             let mut meta = meta;
-            meta.insert("rust_numeric_params".into(),
-                serde_json::Value::Array(e.inputs.iter().map(crate::numeric::hint).collect()));
+            meta.insert(
+                "rust_numeric_params".into(),
+                serde_json::Value::Array(e.inputs.iter().map(crate::numeric::hint).collect()),
+            );
             // A closure's omitted return type is inferred, unlike a free
             // function's omitted return type (unit).
-            meta.insert("rust_numeric_return".into(), match e.output {
-                syn::ReturnType::Default => serde_json::Value::Null,
-                _ => crate::numeric::result(&e.output),
-            });
-            meta.insert("rust_value_params".into(),
-                serde_json::Value::Array(e.inputs.iter().map(crate::values::hint).collect()));
+            meta.insert(
+                "rust_numeric_return".into(),
+                match e.output {
+                    syn::ReturnType::Default => serde_json::Value::Null,
+                    _ => crate::numeric::result(&e.output),
+                },
+            );
+            meta.insert(
+                "rust_value_params".into(),
+                serde_json::Value::Array(e.inputs.iter().map(crate::values::hint).collect()),
+            );
             if e.capture.is_some() {
-                return Err(unsupported_at(e.span(), "move closure",
-                    "value capture requires Rust ownership semantics (CRUSH-xps-7)"));
+                return Err(unsupported_at(
+                    e.span(),
+                    "move closure",
+                    "value capture requires Rust ownership semantics (CRUSH-xps-7)",
+                ));
             }
             if e.asyncness.is_some() {
-                return Err(unsupported_at(e.span(), "async closure",
-                    "async Rust execution is not implemented"));
+                return Err(unsupported_at(
+                    e.span(),
+                    "async closure",
+                    "async Rust execution is not implemented",
+                ));
             }
-            let parameter_names: std::collections::HashSet<_> = e.inputs.iter()
-                .filter_map(|p| pat_to_ident(p).ok()).collect();
-            let params: Vec<(String, CastType)> = e.inputs.iter()
+            let parameter_names: std::collections::HashSet<_> = e
+                .inputs
+                .iter()
+                .filter_map(|p| pat_to_ident(p).ok())
+                .collect();
+            let params: Vec<(String, CastType)> = e
+                .inputs
+                .iter()
                 .enumerate()
                 .map(|(i, p)| {
-                    let name = closure_param_name(p, i, &parameter_names)
-                        .map_err(|err| anyhow::anyhow!("unsupported Rust closure parameter: {err}"))?;
+                    let name = closure_param_name(p, i, &parameter_names).map_err(|err| {
+                        anyhow::anyhow!("unsupported Rust closure parameter: {err}")
+                    })?;
                     Ok((name, CastType::Any))
                 })
                 .collect::<anyhow::Result<_>>()?;
             // A lambda has a statement body in CAST. Reuse function-tail
             // lowering so all statements and explicit returns are preserved.
             let body = crate::lower_stmt::lower_tail_return(&e.body, ctx)?;
-            Ok(Expression::Lambda {
-                params,
-                body,
-                meta,
-            })
+            Ok(Expression::Lambda { params, body, meta })
         }
         Expr::Reference(e) => {
             let mut meta = meta;
             meta.insert("rust_value_method".into(), serde_json::json!("reference"));
             Ok(Expression::Call {
                 function: "__crush_rust_value__".into(),
-                args: vec![lower_expr(&e.expr, ctx)?], meta,
+                args: vec![lower_expr(&e.expr, ctx)?],
+                meta,
             })
         }
         Expr::Macro(m) => lower_macro_expr(&m.mac, ctx),
         Expr::Match(e) => lower_match(e, ctx),
-        _ => anyhow::bail!("unsupported Rust expression `{}`; this construct has no CAST lowering", expr.to_token_stream()),
+        _ => anyhow::bail!(
+            "unsupported Rust expression `{}`; this construct has no CAST lowering",
+            expr.to_token_stream()
+        ),
     }
 }
 
@@ -302,16 +344,25 @@ fn block_to_expr(block: &syn::Block, ctx: &LowerCtx<'_>) -> anyhow::Result<Expre
     match block.stmts.as_slice() {
         [] => {
             let start = block.span().start();
-            Ok(Expression::NullLiteral { meta: ctx.meta_lc(start.line, start.column + 1) })
+            Ok(Expression::NullLiteral {
+                meta: ctx.meta_lc(start.line, start.column + 1),
+            })
         }
         [syn::Stmt::Expr(expr, None)] => lower_expr(expr, ctx),
         [syn::Stmt::Macro(mac)] if mac.semi_token.is_none() => lower_macro_expr(&mac.mac, ctx),
-        _ => Err(unsupported_at(block.span(), "block expression",
-            "only an empty block or a single tail expression is supported in a value position; multi-statement and semicolon-ending blocks need statement lowering")),
+        _ => Err(unsupported_at(
+            block.span(),
+            "block expression",
+            "only an empty block or a single tail expression is supported in a value position; multi-statement and semicolon-ending blocks need statement lowering",
+        )),
     }
 }
 
-pub(crate) fn unsupported_at(span: proc_macro2::Span, construct: &str, reason: &str) -> anyhow::Error {
+pub(crate) fn unsupported_at(
+    span: proc_macro2::Span,
+    construct: &str,
+    reason: &str,
+) -> anyhow::Error {
     crate::diagnostics::unsupported(span, construct, reason)
 }
 
@@ -340,7 +391,9 @@ fn closure_param_name(
             }
             Ok(name)
         }
-        _ => anyhow::bail!("destructuring and ref patterns are not supported; expected an identifier or wildcard"),
+        _ => anyhow::bail!(
+            "destructuring and ref patterns are not supported; expected an identifier or wildcard"
+        ),
     }
 }
 
@@ -351,11 +404,17 @@ fn lower_lit(
     match lit {
         syn::Lit::Int(i) => crate::numeric::lower_literal(i, false, meta),
         syn::Lit::Float(f) => {
-            anyhow::ensure!(f.suffix().is_empty() || f.suffix() == "f64",
-                "unsupported Rust float suffix `{}`: f32 precision is not implemented (CRUSH-xps-8)", f.suffix());
+            anyhow::ensure!(
+                f.suffix().is_empty() || f.suffix() == "f64",
+                "unsupported Rust float suffix `{}`: f32 precision is not implemented (CRUSH-xps-8)",
+                f.suffix()
+            );
             let mut meta = meta;
             meta.insert("rust_numeric_suffix".into(), serde_json::json!(f.suffix()));
-            Ok(Expression::FloatLiteral { value: f.base10_parse()?, meta })
+            Ok(Expression::FloatLiteral {
+                value: f.base10_parse()?,
+                meta,
+            })
         }
         syn::Lit::Str(s) => Ok(Expression::StringLiteral {
             value: s.value(),
@@ -376,10 +435,16 @@ fn lower_lit(
         syn::Lit::Byte(b) => {
             let mut meta = meta;
             meta.insert("rust_numeric_suffix".into(), serde_json::json!("u8"));
-            Ok(Expression::IntLiteral { value: b.value() as i64, meta })
+            Ok(Expression::IntLiteral {
+                value: b.value() as i64,
+                meta,
+            })
         }
         _ => {
-            anyhow::bail!("unsupported Rust literal `{}`; this literal has no CAST representation", lit.to_token_stream())
+            anyhow::bail!(
+                "unsupported Rust literal `{}`; this literal has no CAST representation",
+                lit.to_token_stream()
+            )
         }
     }
 }
@@ -387,14 +452,21 @@ fn lower_lit(
 /// Expression-position macros (CRUSH-197): `vec![..]`, `format!(..)`, `println!(..)`.
 fn lower_macro_expr(mac: &syn::Macro, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
     let meta = ctx.meta_at(0);
-    let name = mac.path.get_ident().map(|i| i.to_string()).unwrap_or_default();
+    let name = mac
+        .path
+        .get_ident()
+        .map(|i| i.to_string())
+        .unwrap_or_default();
     match name.as_str() {
         "vec" => {
             use syn::parse::Parser;
             let elems = syn::punctuated::Punctuated::<Expr, syn::Token![,]>::parse_terminated
                 .parse2(mac.tokens.clone())
                 .map_err(|_| anyhow::anyhow!("vec![value; n] (repeat form) is not supported"))?;
-            let elements = elems.iter().map(|e| lower_expr(e, ctx)).collect::<Result<Vec<_>, _>>()?;
+            let elements = elems
+                .iter()
+                .map(|e| lower_expr(e, ctx))
+                .collect::<Result<Vec<_>, _>>()?;
             let mut meta = meta;
             meta.insert("rust_vec".into(), serde_json::Value::Bool(true));
             Ok(Expression::ArrayLiteral { elements, meta })
@@ -403,10 +475,11 @@ fn lower_macro_expr(mac: &syn::Macro, ctx: &LowerCtx<'_>) -> anyhow::Result<Expr
         "println" | "print" | "eprintln" | "eprint" => {
             crate::formatting::output_macro(mac)?;
             Ok(Expression::CapabilityCall {
-            name: "io.print".to_string(),
-            args: vec![format_args_to_expr(&mac.tokens, ctx)?],
-            meta,
-        }) },
+                name: "io.print".to_string(),
+                args: vec![format_args_to_expr(&mac.tokens, ctx)?],
+                meta,
+            })
+        }
         _ => anyhow::bail!("macro invocation not supported: {name}!"),
     }
 }
@@ -416,7 +489,10 @@ fn lower_macro_expr(mac: &syn::Macro, ctx: &LowerCtx<'_>) -> anyhow::Result<Expr
 /// Supports Display `{}`, typed literal Debug `{:?}`, positional `{0}`, inline names
 /// `{x}` (Rust 2021) and `{{` / `}}`. Width/precision/fill specs (`{:.2}`,
 /// `{:>5}`) are rejected loudly rather than printed wrong.
-pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
+pub fn format_args_to_expr(
+    tokens: &proc_macro2::TokenStream,
+    ctx: &LowerCtx<'_>,
+) -> anyhow::Result<Expression> {
     use syn::parse::Parser;
     let meta = ctx.meta_at(0);
     let parts = syn::punctuated::Punctuated::<Expr, syn::Token![,]>::parse_terminated
@@ -424,13 +500,24 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
         .map_err(|e| anyhow::anyhow!("could not parse format arguments: {e}"))?;
     let mut it = parts.iter();
     let fmt = match it.next() {
-        None => return Ok(Expression::StringLiteral { value: String::new(), meta }),
-        Some(Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. })) => s.value(),
+        None => {
+            return Ok(Expression::StringLiteral {
+                value: String::new(),
+                meta,
+            });
+        }
+        Some(Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(s),
+            ..
+        })) => s.value(),
         Some(_) => anyhow::bail!("format string must be a string literal"),
     };
     let args: Vec<&Expr> = it.collect();
     if args.iter().any(|e| matches!(e, Expr::Assign(_))) {
-        return Err(crate::formatting::error(&parts, "named format arguments need explicit argument materialization"));
+        return Err(crate::formatting::error(
+            &parts,
+            "named format arguments need explicit argument materialization",
+        ));
     }
     let mut uses = Vec::new();
     let mut captures = false;
@@ -440,8 +527,14 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
     let mut chars = fmt.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '{' if chars.peek() == Some(&'{') => { chars.next(); lit.push('{'); }
-            '}' if chars.peek() == Some(&'}') => { chars.next(); lit.push('}'); }
+            '{' if chars.peek() == Some(&'{') => {
+                chars.next();
+                lit.push('{');
+            }
+            '}' if chars.peek() == Some(&'}') => {
+                chars.next();
+                lit.push('}');
+            }
             '{' => {
                 let mut spec = String::new();
                 loop {
@@ -456,7 +549,9 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
                     None => (spec.trim().to_string(), String::new()),
                 };
                 if !(fmt_spec.is_empty() || fmt_spec == "?") {
-                    anyhow::bail!("format spec `{{{spec}}}` is not supported yet (only {{}}, {{:?}}, {{name}}, {{0}})");
+                    anyhow::bail!(
+                        "format spec `{{{spec}}}` is not supported yet (only {{}}, {{:?}}, {{name}}, {{0}})"
+                    );
                 }
                 let argument = if target.is_empty() {
                     let index = next_arg;
@@ -466,32 +561,59 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
                     target.parse::<usize>().ok()
                 };
                 let value = if let Some(i) = argument {
-                    let e = args.get(i).ok_or_else(|| anyhow::anyhow!("format argument {i} missing"))?;
+                    let e = args
+                        .get(i)
+                        .ok_or_else(|| anyhow::anyhow!("format argument {i} missing"))?;
                     uses.push(i);
-                    if fmt_spec == "?" { crate::formatting::debug(e, ctx)? } else { lower_expr(e, ctx)? }
+                    if fmt_spec == "?" {
+                        crate::formatting::debug(e, ctx)?
+                    } else {
+                        lower_expr(e, ctx)?
+                    }
                 } else {
                     captures = true;
                     if fmt_spec == "?" {
-                        syn::parse_str::<syn::Ident>(&target).map_err(|_| crate::formatting::error(&parts, "invalid inline format capture"))?;
+                        syn::parse_str::<syn::Ident>(&target).map_err(|_| {
+                            crate::formatting::error(&parts, "invalid inline format capture")
+                        })?;
                         let p = parts.span().start();
                         let mut meta = ctx.meta_lc(p.line, p.column + 1);
-                        let value = Expression::Var { name: target, meta: meta.clone() };
+                        let value = Expression::Var {
+                            name: target,
+                            meta: meta.clone(),
+                        };
                         let placeholder = Expression::NullLiteral { meta: meta.clone() };
                         meta.insert("rust_debug_pending".into(), serde_json::json!(true));
-                        Expression::CapabilityCall { name: "rust.debug".into(), args: vec![value, placeholder], meta }
+                        Expression::CapabilityCall {
+                            name: "rust.debug".into(),
+                            args: vec![value, placeholder],
+                            meta,
+                        }
                     } else {
-                        Expression::Var { name: target, meta: ctx.meta_at(0) }
+                        Expression::Var {
+                            name: target,
+                            meta: ctx.meta_at(0),
+                        }
                     }
                 };
                 if !lit.is_empty() {
-                    pieces.push(Expression::StringLiteral { value: std::mem::take(&mut lit), meta: ctx.meta_at(0) });
+                    pieces.push(Expression::StringLiteral {
+                        value: std::mem::take(&mut lit),
+                        meta: ctx.meta_at(0),
+                    });
                 }
                 // Display uses its existing two-argument ABI. Literal Debug
                 // has already produced exact typed text above.
                 pieces.push(if fmt_spec.is_empty() {
                     Expression::CapabilityCall {
                         name: "conv.text".to_string(),
-                        args: vec![value, Expression::StringLiteral { value: "rust".to_string(), meta: ctx.meta_at(0) }],
+                        args: vec![
+                            value,
+                            Expression::StringLiteral {
+                                value: "rust".to_string(),
+                                meta: ctx.meta_at(0),
+                            },
+                        ],
                         meta: ctx.meta_at(0),
                     }
                 } else {
@@ -503,34 +625,54 @@ pub fn format_args_to_expr(tokens: &proc_macro2::TokenStream, ctx: &LowerCtx<'_>
         }
     }
     if !lit.is_empty() {
-        pieces.push(Expression::StringLiteral { value: lit, meta: ctx.meta_at(0) });
+        pieces.push(Expression::StringLiteral {
+            value: lit,
+            meta: ctx.meta_at(0),
+        });
     }
     if (0..args.len()).any(|i| !uses.contains(&i)) {
-        return Err(crate::formatting::error(&parts, "unused format arguments are unsupported"));
+        return Err(crate::formatting::error(
+            &parts,
+            "unused format arguments are unsupported",
+        ));
     }
     if args.iter().any(|e| !crate::formatting::inert(e))
         && (captures || uses != (0..args.len()).collect::<Vec<_>>())
     {
-        return Err(crate::formatting::error(&parts, "effectful repeated/reordered format arguments need explicit argument materialization"));
+        return Err(crate::formatting::error(
+            &parts,
+            "effectful repeated/reordered format arguments need explicit argument materialization",
+        ));
     }
     // Start from "" so `+` is string concatenation even when the first piece is a number.
-    let mut acc = Expression::StringLiteral { value: String::new(), meta: ctx.meta_at(0) };
+    let mut acc = Expression::StringLiteral {
+        value: String::new(),
+        meta: ctx.meta_at(0),
+    };
     // Empty format! still produces an owned String. Nonempty formats already
     // acquire that class from their existing concatenation nodes.
     if pieces.is_empty() {
-        pieces.push(Expression::StringLiteral { value: String::new(), meta: ctx.meta_at(0) });
+        pieces.push(Expression::StringLiteral {
+            value: String::new(),
+            meta: ctx.meta_at(0),
+        });
     }
     for p in pieces {
         let mut meta = ctx.meta_at(0);
         meta.insert("rust_format_piece".into(), serde_json::Value::Bool(true));
-        acc = Expression::BinaryOp { operator: "+".to_string(), left: Box::new(acc), right: Box::new(p), meta };
+        acc = Expression::BinaryOp {
+            operator: "+".to_string(),
+            left: Box::new(acc),
+            right: Box::new(p),
+            meta,
+        };
     }
     Ok(acc)
 }
 
 /// `match x { 1 | 2 => a, n => b, _ => c }` → CAST `Match` (CRUSH-197).
 fn lower_match(e: &syn::ExprMatch, ctx: &LowerCtx<'_>) -> anyhow::Result<Expression> {
-    use crate::lower_stmt::{lower_block, Tail};
+    use crate::lower_stmt::{Tail, lower_block};
     let mut arms = Vec::new();
     for arm in &e.arms {
         if arm.guard.is_some() {
@@ -538,13 +680,23 @@ fn lower_match(e: &syn::ExprMatch, ctx: &LowerCtx<'_>) -> anyhow::Result<Express
         }
         let body = match arm.body.as_ref() {
             Expr::Block(b) => lower_block(&b.block.stmts, ctx, Tail::Value)?,
-            other => vec![Statement::ExprStmt { expr: lower_expr(other, ctx)?, meta: ctx.meta_at(0) }],
+            other => vec![Statement::ExprStmt {
+                expr: lower_expr(other, ctx)?,
+                meta: ctx.meta_at(0),
+            }],
         };
         for pattern in lower_pattern(&arm.pat, ctx)? {
-            arms.push(crush_cast::MatchArm { pattern, body: body.clone() });
+            arms.push(crush_cast::MatchArm {
+                pattern,
+                body: body.clone(),
+            });
         }
     }
-    Ok(Expression::Match { expression: Box::new(lower_expr(&e.expr, ctx)?), arms, meta: ctx.meta_at(0) })
+    Ok(Expression::Match {
+        expression: Box::new(lower_expr(&e.expr, ctx)?),
+        arms,
+        meta: ctx.meta_at(0),
+    })
 }
 
 /// A Rust pattern → CAST patterns (or-patterns expand to one arm each).
@@ -552,8 +704,12 @@ fn lower_pattern(p: &syn::Pat, ctx: &LowerCtx<'_>) -> anyhow::Result<Vec<crush_c
     use crush_cast::Pattern;
     Ok(match p {
         syn::Pat::Wild(_) => vec![Pattern::Wildcard],
-        syn::Pat::Lit(l) => vec![Pattern::Literal { value: lower_lit(&l.lit, ctx.meta_at(0))? }],
-        syn::Pat::Ident(pi) if pi.subpat.is_none() => vec![Pattern::Identifier { name: pi.ident.to_string() }],
+        syn::Pat::Lit(l) => vec![Pattern::Literal {
+            value: lower_lit(&l.lit, ctx.meta_at(0))?,
+        }],
+        syn::Pat::Ident(pi) if pi.subpat.is_none() => vec![Pattern::Identifier {
+            name: pi.ident.to_string(),
+        }],
         syn::Pat::Or(o) => {
             let mut out = Vec::new();
             for case in &o.cases {
@@ -584,34 +740,58 @@ fn lower_method(
     // bypassed that contract and failed semantic analysis as undefined.
     let call = |name: &str, args: Vec<Expression>, mut meta: HashMap<String, serde_json::Value>| {
         if name == "len" {
-            Expression::Call { function: name.to_string(), args, meta }
+            Expression::Call {
+                function: name.to_string(),
+                args,
+                meta,
+            }
         } else {
             // This is an already-resolved capability, even if the Rust source
             // has a local binding named `str`, `math`, or `array`.
             meta.insert("resolved_capability".into(), serde_json::json!(true));
-            Expression::CapabilityCall { name: name.to_string(), args, meta }
+            Expression::CapabilityCall {
+                name: name.to_string(),
+                args,
+                meta,
+            }
         }
     };
     let mut meta = meta;
     meta.insert("rust_value_method".into(), serde_json::json!(method));
     Ok(match (method, args.len()) {
         // The value pass proves and rewrites ownership/iterator adapters.
-        ("iter" | "into_iter" | "clone" | "to_owned" | "as_str" | "copied" | "cloned" | "to_vec" | "into"
-            | "unwrap" | "as_slice" | "borrow", 1) => call("__crush_rust_value__", args, meta),
-        ("to_string", 1) => call("conv.text", vec![args.remove(0),
-            Expression::StringLiteral { value: "rust".into(), meta: meta.clone() }], meta),
+        (
+            "iter" | "into_iter" | "clone" | "to_owned" | "as_str" | "copied" | "cloned" | "to_vec"
+            | "into" | "unwrap" | "as_slice" | "borrow",
+            1,
+        ) => call("__crush_rust_value__", args, meta),
+        ("to_string", 1) => call(
+            "conv.text",
+            vec![
+                args.remove(0),
+                Expression::StringLiteral {
+                    value: "rust".into(),
+                    meta: meta.clone(),
+                },
+            ],
+            meta,
+        ),
         ("len", 1) => call("len", args, meta),
         ("push", 2) => call("array.push", args, meta),
         ("pop", 1) => call("array.pop", args, meta),
         ("contains", 2) => call("str.contains", args, meta),
         ("starts_with", 2) => call("rust.str.starts_with", args, meta),
         ("ends_with", 2) => call("rust.str.ends_with", args, meta),
-        ("abs" | "sqrt" | "floor" | "ceil" | "round", 1)
-        | ("pow" | "powi" | "powf", 2) => call("__crush_rust_numeric_method__", args, meta),
+        ("abs" | "sqrt" | "floor" | "ceil" | "round", 1) | ("pow" | "powi" | "powf", 2) => {
+            call("__crush_rust_numeric_method__", args, meta)
+        }
         ("to_uppercase", 1) => call("str.to_upper", args, meta),
         ("to_lowercase", 1) => call("str.to_lower", args, meta),
         ("trim", 1) => call("str.trim", args, meta),
         ("replace", 3) => call("str.replace", args, meta),
-        (other, n) => anyhow::bail!("method `.{other}()` with {} argument(s) is not supported", n - 1),
+        (other, n) => anyhow::bail!(
+            "method `.{other}()` with {} argument(s) is not supported",
+            n - 1
+        ),
     })
 }

@@ -162,11 +162,14 @@ fn ungranted_ai_ops_fail_closed_with_the_same_error_on_every_engine() {
     let prog = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm_to_vm");
     let caps = || {
         let mut c = HostCapsBuilder::new().ai_native(false).build();
-        c.register(Box::new(Capture(Arc::new(Mutex::new(serde_json::Value::Null)))));
+        c.register(Box::new(Capture(Arc::new(Mutex::new(
+            serde_json::Value::Null,
+        )))));
         c
     };
     // The first AI op in `program()` is the statement-form goal declaration.
-    let want = "ai_native.goal_declaration: AI op 'goal_declaration' not granted / no AI host registered";
+    let want =
+        "ai_native.goal_declaration: AI op 'goal_declaration' not granted / no AI host registered";
     let sched = crush_vm::run_with_caps(&prog, &Quotas::default(), Some(&caps()))
         .expect_err("scheduler must refuse")
         .to_string();
@@ -182,13 +185,28 @@ fn ungranted_ai_ops_fail_closed_with_the_same_error_on_every_engine() {
     assert_eq!(bare, sched);
 
     // FastVM: the embedder seam names the same error for every AI request kind.
-    let req = HostRequest::AiQuery { args: serde_json::json!({"query": "q"}) };
+    let req = HostRequest::AiQuery {
+        args: serde_json::json!({"query": "q"}),
+    };
     let denied = crush_vm::fastvm::ai_request_denied(&req, Some(&caps())).expect("denied");
-    assert!(denied.to_string().contains("ai_native.query: AI op 'query' not granted"), "{denied}");
+    assert!(
+        denied
+            .to_string()
+            .contains("ai_native.query: AI op 'query' not granted"),
+        "{denied}"
+    );
     assert!(crush_vm::fastvm::ai_request_denied(&req, None).is_some());
     let granted = HostCapsBuilder::new().ai_native(true).build();
     assert!(crush_vm::fastvm::ai_request_denied(&req, Some(&granted)).is_none());
-    assert!(crush_vm::fastvm::ai_request_denied(&HostRequest::DomQuery { args: serde_json::json!({}) }, None).is_none());
+    assert!(
+        crush_vm::fastvm::ai_request_denied(
+            &HostRequest::DomQuery {
+                args: serde_json::json!({})
+            },
+            None
+        )
+        .is_none()
+    );
 }
 
 #[test]

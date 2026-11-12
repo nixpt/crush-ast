@@ -15,7 +15,6 @@ pub fn parse(source: &str, ext: &str) -> Result<Module> {
             dts: false,
             no_early_errors: false,
             disallow_ambiguous_jsx_like: false,
-            ..Default::default()
         })
     } else {
         Syntax::Es(EsSyntax {

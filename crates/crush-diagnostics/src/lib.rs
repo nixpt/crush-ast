@@ -87,8 +87,8 @@ pub mod wire_consumer;
 // these same names from its own root for back-compat with its existing
 // call sites.
 pub use wire_consumer::{
-    consume_stream, consume_stream_borrowed, parse_record, parse_record_borrowed,
-    BorrowedDiagRecord, OwnedDiagRecord, ParseRecordError,
+    BorrowedDiagRecord, OwnedDiagRecord, ParseRecordError, consume_stream, consume_stream_borrowed,
+    parse_record, parse_record_borrowed,
 };
 
 /// Seven-field wire shape (owned form: [`Diagnostic`]). The field ORDER is the

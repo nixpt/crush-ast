@@ -21,8 +21,8 @@
 
 use chrono::{NaiveDate, Utc};
 use crush_cast::manifest::WeightedError;
-use crush_index::stale::TempStaleChecker;
 use crush_index::CrushIndex;
+use crush_index::stale::TempStaleChecker;
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
 use std::sync::Arc;
@@ -48,11 +48,7 @@ pub fn register(caps: &mut HostCaps, index: Arc<CrushIndex>) {
 /// pin `today` to a hard-coded date (e.g. 2026-06-20). Specialised
 /// hosts that want a frozen `today` for reproducibility can also use
 /// this directly.
-pub fn register_at(
-    caps: &mut HostCaps,
-    index: Arc<CrushIndex>,
-    today: NaiveDate,
-) {
+pub fn register_at(caps: &mut HostCaps, index: Arc<CrushIndex>, today: NaiveDate) {
     caps.register(Box::new(CodebaseModulesCap(Arc::clone(&index))));
     caps.register(Box::new(CodebaseDefinitionCap(Arc::clone(&index))));
     caps.register(Box::new(CodebaseCallersCap(Arc::clone(&index))));
@@ -107,10 +103,7 @@ fn weighted_errors_list(items: &[WeightedError]) -> Value {
         .map(|w| {
             make_map([
                 ("variant", Value::Str(w.variant.clone())),
-                (
-                    "likelihood",
-                    Value::Str(w.likelihood.to_string()),
-                ),
+                ("likelihood", Value::Str(w.likelihood.to_string())),
             ])
         })
         .collect();
@@ -123,7 +116,11 @@ struct CodebaseModulesCap(Arc<CrushIndex>);
 
 impl HostCap for CodebaseModulesCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "codebase.modules".to_string(), argc: Some(0), returns: true }
+        HostCapSpec {
+            name: "codebase.modules".to_string(),
+            argc: Some(0),
+            returns: true,
+        }
     }
 
     fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
@@ -145,10 +142,7 @@ impl HostCap for CodebaseModulesCap {
                     ("file", Value::Str(String::new())),
                     ("exports", str_list(&m.exports)),
                     ("related", str_list(&m.related)),
-                    (
-                        "exhaustive_types",
-                        str_list(&m.exhaustive_types),
-                    ),
+                    ("exhaustive_types", str_list(&m.exhaustive_types)),
                 ])
             })
             .collect();
@@ -162,7 +156,11 @@ struct CodebaseDefinitionCap(Arc<CrushIndex>);
 
 impl HostCap for CodebaseDefinitionCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "codebase.definition".to_string(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "codebase.definition".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
@@ -226,7 +224,11 @@ struct CodebaseCallersCap(Arc<CrushIndex>);
 
 impl HostCap for CodebaseCallersCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "codebase.callers".to_string(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "codebase.callers".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
@@ -269,7 +271,11 @@ struct CodebaseInvariantsCap(Arc<CrushIndex>);
 
 impl HostCap for CodebaseInvariantsCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "codebase.invariants".to_string(), argc: Some(1), returns: true }
+        HostCapSpec {
+            name: "codebase.invariants".to_string(),
+            argc: Some(1),
+            returns: true,
+        }
     }
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
@@ -394,7 +400,11 @@ struct CodebaseWipCap(Arc<CrushIndex>);
 
 impl HostCap for CodebaseWipCap {
     fn spec(&self) -> HostCapSpec {
-        HostCapSpec { name: "codebase.wip".to_string(), argc: Some(0), returns: true }
+        HostCapSpec {
+            name: "codebase.wip".to_string(),
+            argc: Some(0),
+            returns: true,
+        }
     }
 
     fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
@@ -616,9 +626,7 @@ impl HostCap for CodebaseAnnotationHistoryCap {
         let name = match &args[0] {
             Value::Str(s) => s.clone(),
             _ => {
-                return Err(
-                    "codebase.annotation_history: arg must be a string".to_string(),
-                );
+                return Err("codebase.annotation_history: arg must be a string".to_string());
             }
         };
 
@@ -672,11 +680,11 @@ mod tests {
     // import block avoids 3 `unused_imports` warnings on the lib build.
     use chrono::Duration;
     use crush_cast::manifest::TemporaryNode;
-    use crush_index::stale::STALE_DAYS;
     use crush_cast::manifest::{
         ExhaustiveMatchSite, FunctionAnnotations, Invariant, ModuleManifest, SourceLoc,
     };
     use crush_cast::{Function, Program};
+    use crush_index::stale::STALE_DAYS;
 
     fn make_index() -> CrushIndex {
         let mut index = CrushIndex::new();
@@ -702,7 +710,11 @@ mod tests {
             exhaustive_sites: vec![ExhaustiveMatchSite {
                 type_name: "MyEnum".to_string(),
                 function_name: "do_thing".to_string(),
-                location: SourceLoc { file: "mod.crush".to_string(), line: 10, col: 0 },
+                location: SourceLoc {
+                    file: "mod.crush".to_string(),
+                    line: 10,
+                    col: 0,
+                },
                 covered_arms: vec!["A".to_string(), "B".to_string()],
                 missing_arms: vec![],
                 has_wildcard: false,
@@ -806,8 +818,7 @@ mod tests {
     #[test]
     fn invariants_cap_returns_module_invariants() {
         let cap = CodebaseInvariantsCap(Arc::new(make_index()));
-        let rows =
-            first_array(cap.call(vec![Value::Str("mymod".to_string())]).unwrap());
+        let rows = first_array(cap.call(vec![Value::Str("mymod".to_string())]).unwrap());
         assert_eq!(rows.len(), 1);
         assert_eq!(map_str(&rows[0], "name"), "inv-1");
     }
@@ -815,8 +826,7 @@ mod tests {
     #[test]
     fn exhaustive_sites_cap_returns_sites() {
         let cap = CodebaseExhaustiveSitesCap(Arc::new(make_index()));
-        let rows =
-            first_array(cap.call(vec![Value::Str("MyEnum".to_string())]).unwrap());
+        let rows = first_array(cap.call(vec![Value::Str("MyEnum".to_string())]).unwrap());
         assert_eq!(rows.len(), 1);
         assert_eq!(map_str(&rows[0], "function_name"), "do_thing");
     }
@@ -861,8 +871,7 @@ mod tests {
     /// - `fresh`        = 30 days back from `TODAY`
     /// - `stale`        = 100 days back from `TODAY`
     /// - `boundary`     = exactly 90 days back from `TODAY` (`fresh`
-    ///                    per the `AddedDate < threshold` semantics, not
-    ///                    `<=`)
+    ///   per the `AddedDate < threshold` semantics, not `<=`)
     fn pin_today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 6, 20).expect("hard-coded test date is valid")
     }
@@ -992,10 +1001,8 @@ mod tests {
         // (silent skip on missing) → fresh, not stale. Locks in the
         // spec-aligned "don't flag @temporary until `added` is set"
         // policy.
-        let cap = CodebaseStaleTemporariesCap::new(
-            Arc::new(index_with_temporary(None)),
-            pin_today(),
-        );
+        let cap =
+            CodebaseStaleTemporariesCap::new(Arc::new(index_with_temporary(None)), pin_today());
         let rows = first_array(cap.call(vec![]).unwrap());
         assert!(
             rows.is_empty(),
@@ -1010,10 +1017,7 @@ mod tests {
         // is `false` per the shared silent-skip policy; `days_old` is
         // `Null` because the checker can't compute an age from an
         // unparseable `added`.
-        let cap = CodebaseTemporariesCap::new(
-            Arc::new(index_with_temporary(None)),
-            pin_today(),
-        );
+        let cap = CodebaseTemporariesCap::new(Arc::new(index_with_temporary(None)), pin_today());
         let rows = first_array(cap.call(vec![]).unwrap());
         assert_eq!(
             rows.len(),

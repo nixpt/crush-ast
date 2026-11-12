@@ -13,16 +13,16 @@
 
 use std::fmt;
 
-pub(crate) const TAG_NULL: u64  = 0x7FFC_0000_0000_0000;
-pub(crate) const TAG_TRUE: u64  = 0x7FFC_0000_0000_0001;
+pub(crate) const TAG_NULL: u64 = 0x7FFC_0000_0000_0000;
+pub(crate) const TAG_TRUE: u64 = 0x7FFC_0000_0000_0001;
 pub(crate) const TAG_FALSE: u64 = 0x7FFC_0000_0000_0002;
-pub(crate) const TAG_INT: u64   = 0x7FFD_0000_0000_0000;
-pub(crate) const TAG_REF: u64   = 0x7FFE_0000_0000_0000;
+pub(crate) const TAG_INT: u64 = 0x7FFD_0000_0000_0000;
+pub(crate) const TAG_REF: u64 = 0x7FFE_0000_0000_0000;
 pub(crate) const MASK_TOP16: u64 = 0xFFFF_0000_0000_0000;
 pub(crate) const REF_PAYLOAD: u64 = 0x0000_FFFF_FFFF_FFFF; // lower 48 bits
 pub(crate) const MASK_SPECIAL: u64 = 0x7FFC_0000_0000_0000;
 pub(crate) const MASK_INT: u64 = 0x7FFD_0000_0000_0000;
-pub(crate) const MASK_REF: u64  = 0x7FFE_0000_0000_0000;
+pub(crate) const MASK_REF: u64 = 0x7FFE_0000_0000_0000;
 /// Range of the int payload: 48-bit signed. It used to be 16-bit — every
 /// int outside ±32767 was truncated, so `i64::MAX` became -1 and
 /// `i64::MAX + 1` "returned" 0 instead of overflowing (CRUSH-142).
@@ -80,9 +80,13 @@ impl JitValue {
 
     #[inline]
     pub fn to_bool(self) -> Option<bool> {
-        if self.0 == TAG_TRUE { Some(true) }
-        else if self.0 == TAG_FALSE { Some(false) }
-        else { None }
+        if self.0 == TAG_TRUE {
+            Some(true)
+        } else if self.0 == TAG_FALSE {
+            Some(false)
+        } else {
+            None
+        }
     }
 
     /// Check if this is a small int.
@@ -138,12 +142,19 @@ impl JitValue {
     }
 
     pub fn type_name(self) -> &'static str {
-        if self.is_null() { "null" }
-        else if self.0 == TAG_TRUE || self.0 == TAG_FALSE { "bool" }
-        else if self.is_int() { "int" }
-        else if self.is_float() { "float" }
-        else if self.is_ref() { "ref" }
-        else { "unknown" }
+        if self.is_null() {
+            "null"
+        } else if self.0 == TAG_TRUE || self.0 == TAG_FALSE {
+            "bool"
+        } else if self.is_int() {
+            "int"
+        } else if self.is_float() {
+            "float"
+        } else if self.is_ref() {
+            "ref"
+        } else {
+            "unknown"
+        }
     }
 
     #[inline]
@@ -172,26 +183,40 @@ impl JitValue {
 }
 
 impl From<i64> for JitValue {
-    fn from(v: i64) -> Self { Self::int(v) }
+    fn from(v: i64) -> Self {
+        Self::int(v)
+    }
 }
 
 impl From<f64> for JitValue {
-    fn from(v: f64) -> Self { Self::float(v) }
+    fn from(v: f64) -> Self {
+        Self::float(v)
+    }
 }
 
 impl From<bool> for JitValue {
-    fn from(v: bool) -> Self { Self::bool(v) }
+    fn from(v: bool) -> Self {
+        Self::bool(v)
+    }
 }
 
 impl fmt::Display for JitValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(v) = self.to_int() { write!(f, "{v}") }
-        else if let Some(v) = self.to_float() { write!(f, "{v}") }
-        else if self.0 == TAG_TRUE { write!(f, "true") }
-        else if self.0 == TAG_FALSE { write!(f, "false") }
-        else if self.is_null() { write!(f, "null") }
-        else if self.is_ref() { write!(f, "ref#{}", self.to_ref().unwrap()) }
-        else { write!(f, "<jit:{:#018x}>", self.0) }
+        if let Some(v) = self.to_int() {
+            write!(f, "{v}")
+        } else if let Some(v) = self.to_float() {
+            write!(f, "{v}")
+        } else if self.0 == TAG_TRUE {
+            write!(f, "true")
+        } else if self.0 == TAG_FALSE {
+            write!(f, "false")
+        } else if self.is_null() {
+            write!(f, "null")
+        } else if self.is_ref() {
+            write!(f, "ref#{}", self.to_ref().unwrap())
+        } else {
+            write!(f, "<jit:{:#018x}>", self.0)
+        }
     }
 }
 

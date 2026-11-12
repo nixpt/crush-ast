@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crush_lang_c::sdk::{c_to_cast, cast_to_casm, casm_to_vm};
+use crush_lang_c::sdk::{c_to_cast, casm_to_vm, cast_to_casm};
 
 fn corpus() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/gcc_corpus");
@@ -23,7 +23,10 @@ fn corpus() -> Vec<PathBuf> {
 
 fn run_crush(source: &str) -> anyhow::Result<String> {
     let vm = casm_to_vm(&cast_to_casm(&c_to_cast(source, "t.c")?)?)?;
-    let quotas = crush_vm::Quotas { max_steps: 10_000_000, ..Default::default() };
+    let quotas = crush_vm::Quotas {
+        max_steps: 10_000_000,
+        ..Default::default()
+    };
     Ok(crush_vm::run_with_caps(&vm, &quotas, None)?.output)
 }
 
@@ -35,16 +38,29 @@ fn crush_output_matches_gcc() {
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
         match run_crush(&source) {
             Ok(got) if got == expected => {}
-            Ok(got) => failures.push(format!("{}:\n  gcc:   {expected:?}\n  crush: {got:?}", path.display())),
+            Ok(got) => failures.push(format!(
+                "{}:\n  gcc:   {expected:?}\n  crush: {got:?}",
+                path.display()
+            )),
             Err(e) => failures.push(format!("{}: {e:#}", path.display())),
         }
     }
-    assert!(failures.is_empty(), "{} program(s) diverge from gcc:\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} program(s) diverge from gcc:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 #[test]
 fn expected_outputs_match_gcc() {
-    if std::process::Command::new("gcc").arg("--version").output().map(|o| !o.status.success()).unwrap_or(true) {
+    if std::process::Command::new("gcc")
+        .arg("--version")
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+    {
         eprintln!("gcc not on PATH — skipping .out freshness check");
         return;
     }
@@ -52,11 +68,22 @@ fn expected_outputs_match_gcc() {
     std::fs::create_dir_all(&tmp).unwrap();
     for path in corpus() {
         let bin = tmp.join(path.file_stem().unwrap());
-        let ok = std::process::Command::new("gcc").arg("-w").arg("-o").arg(&bin).arg(&path).status().unwrap();
+        let ok = std::process::Command::new("gcc")
+            .arg("-w")
+            .arg("-o")
+            .arg(&bin)
+            .arg(&path)
+            .status()
+            .unwrap();
         assert!(ok.success(), "gcc failed on {}", path.display());
         let out = std::process::Command::new(&bin).output().unwrap();
         let expected = std::fs::read_to_string(path.with_extension("out")).unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{} .out is stale", path.display());
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            expected,
+            "{} .out is stale",
+            path.display()
+        );
     }
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -67,7 +94,10 @@ fn lower_err(src: &str) -> String {
 
 #[test]
 fn unsupported_printf_conversion_fails_loudly() {
-    assert!(lower_err("int main() { double d = 1.5; printf(\"%f\\n\", d); return 0; }").contains("`%f`"));
+    assert!(
+        lower_err("int main() { double d = 1.5; printf(\"%f\\n\", d); return 0; }")
+            .contains("`%f`")
+    );
 }
 
 #[test]

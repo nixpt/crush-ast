@@ -1,7 +1,7 @@
 //! Python AST expression → CAST expression lowering.
 
-use py_ast::Ranged;
 use crush_walker_core::LowerCtx;
+use py_ast::Ranged;
 
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -57,12 +57,42 @@ fn lower_compare_link(
     meta: HashMap<String, serde_json::Value>,
 ) -> Expression {
     match op {
-        py_ast::CmpOp::Eq => Expression::BinaryOp { operator: "==".to_string(), left: Box::new(left), right: Box::new(right), meta },
-        py_ast::CmpOp::NotEq => Expression::BinaryOp { operator: "!=".to_string(), left: Box::new(left), right: Box::new(right), meta },
-        py_ast::CmpOp::Lt => Expression::BinaryOp { operator: "<".to_string(), left: Box::new(left), right: Box::new(right), meta },
-        py_ast::CmpOp::LtE => Expression::BinaryOp { operator: "<=".to_string(), left: Box::new(left), right: Box::new(right), meta },
-        py_ast::CmpOp::Gt => Expression::BinaryOp { operator: ">".to_string(), left: Box::new(left), right: Box::new(right), meta },
-        py_ast::CmpOp::GtE => Expression::BinaryOp { operator: ">=".to_string(), left: Box::new(left), right: Box::new(right), meta },
+        py_ast::CmpOp::Eq => Expression::BinaryOp {
+            operator: "==".to_string(),
+            left: Box::new(left),
+            right: Box::new(right),
+            meta,
+        },
+        py_ast::CmpOp::NotEq => Expression::BinaryOp {
+            operator: "!=".to_string(),
+            left: Box::new(left),
+            right: Box::new(right),
+            meta,
+        },
+        py_ast::CmpOp::Lt => Expression::BinaryOp {
+            operator: "<".to_string(),
+            left: Box::new(left),
+            right: Box::new(right),
+            meta,
+        },
+        py_ast::CmpOp::LtE => Expression::BinaryOp {
+            operator: "<=".to_string(),
+            left: Box::new(left),
+            right: Box::new(right),
+            meta,
+        },
+        py_ast::CmpOp::Gt => Expression::BinaryOp {
+            operator: ">".to_string(),
+            left: Box::new(left),
+            right: Box::new(right),
+            meta,
+        },
+        py_ast::CmpOp::GtE => Expression::BinaryOp {
+            operator: ">=".to_string(),
+            left: Box::new(left),
+            right: Box::new(right),
+            meta,
+        },
         py_ast::CmpOp::In => Expression::Call {
             function: "__crush_contains__".to_string(),
             args: vec![right, left],
@@ -188,7 +218,10 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
                 .map(|a| (a.def.arg.to_string(), CastType::Any))
                 .collect();
             let (mut stmts, value) = lower_expr_hoist(body, ctx)?;
-            stmts.push(Statement::Return { value: Some(value), meta: meta.clone() });
+            stmts.push(Statement::Return {
+                value: Some(value),
+                meta: meta.clone(),
+            });
             Ok(Expression::Lambda {
                 params,
                 body: stmts,
@@ -326,7 +359,9 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
                 && MODULES.contains(&id.as_str())
                 && STRICT_TUPLES.with(|s| s.get())
             {
-                anyhow::bail!("module attribute `{id}.{attr}` is not supported yet (only calls like `{id}.f(...)`)");
+                anyhow::bail!(
+                    "module attribute `{id}.{attr}` is not supported yet (only calls like `{id}.f(...)`)"
+                );
             }
             let target = lower_expr(value, ctx)?;
             Ok(Expression::GetField {
@@ -338,7 +373,10 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
         py_ast::Expr::Subscript(py_ast::ExprSubscript { value, slice, .. }) => {
             let target = lower_expr(value, ctx)?;
             // If the subscript is a slice (arr[0:2]), emit __crush_slice__
-            if let py_ast::Expr::Slice(py_ast::ExprSlice { lower, upper, step, .. }) = slice.as_ref() {
+            if let py_ast::Expr::Slice(py_ast::ExprSlice {
+                lower, upper, step, ..
+            }) = slice.as_ref()
+            {
                 let start = match lower {
                     Some(e) => lower_expr(e, ctx)?,
                     None => Expression::NullLiteral { meta: meta.clone() },
@@ -385,7 +423,9 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Expression::ArrayLiteral { elements, meta })
         }
-        py_ast::Expr::Slice(py_ast::ExprSlice { lower, upper, step, .. }) => {
+        py_ast::Expr::Slice(py_ast::ExprSlice {
+            lower, upper, step, ..
+        }) => {
             let start = match lower {
                 Some(e) => lower_expr(e, ctx)?,
                 None => Expression::NullLiteral { meta: meta.clone() },
@@ -433,7 +473,9 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
 
 /// Modules whose functions are called as `module.fn(...)` (dotted builtins),
 /// not as a method on a value.
-pub(crate) const MODULES: &[&str] = &["math", "random", "time", "os", "sys", "json", "re", "string", "py", "io"];
+pub(crate) const MODULES: &[&str] = &[
+    "math", "random", "time", "os", "sys", "json", "re", "string", "py", "io",
+];
 
 /// A method call on a value → the crush builtin that implements it.
 fn lower_method(
@@ -442,7 +484,11 @@ fn lower_method(
     mut args: Vec<Expression>,
     meta: HashMap<String, serde_json::Value>,
 ) -> anyhow::Result<Expression> {
-    let call = |function: &str, args: Vec<Expression>, meta| Expression::Call { function: function.to_string(), args, meta };
+    let call = |function: &str, args: Vec<Expression>, meta| Expression::Call {
+        function: function.to_string(),
+        args,
+        meta,
+    };
     Ok(match (method, args.len()) {
         ("upper", 0) => call("str.to_upper", vec![receiver], meta),
         ("lower", 0) => call("str.to_lower", vec![receiver], meta),
@@ -458,8 +504,12 @@ fn lower_method(
         ("join", 1) => call("str.join", vec![args.remove(0), receiver], meta),
         ("append", 1) => call("array.push", vec![receiver, args.remove(0)], meta),
         ("pop", 0) => call("array.pop", vec![receiver], meta),
-        ("split", 0) => anyhow::bail!("`.split()` without a separator (whitespace runs) is not supported yet"),
-        (other, n) => anyhow::bail!("method `.{other}()` with {n} argument(s) is not supported yet"),
+        ("split", 0) => {
+            anyhow::bail!("`.split()` without a separator (whitespace runs) is not supported yet")
+        }
+        (other, n) => {
+            anyhow::bail!("method `.{other}()` with {n} argument(s) is not supported yet")
+        }
     })
 }
 
@@ -489,29 +539,45 @@ fn lower_call(
             ("print", "end") => print_end = Some(lower_expr(&keyword.value, ctx)?),
             // crush writes output unbuffered and in order: flushing changes nothing.
             ("print", "flush") => {}
-            (callee, name) => anyhow::bail!(
-                "keyword argument `{name}=` to `{callee}` is not supported yet"
-            ),
+            (callee, name) => {
+                anyhow::bail!("keyword argument `{name}=` to `{callee}` is not supported yet")
+            }
         }
     }
     if callee == "print" && (print_sep.is_some() || print_end.is_some()) {
         let default = || Expression::NullLiteral { meta: meta.clone() };
-        let mut args = vec![print_sep.unwrap_or_else(default), print_end.unwrap_or_else(default)];
+        let mut args = vec![
+            print_sep.unwrap_or_else(default),
+            print_end.unwrap_or_else(default),
+        ];
         args.extend(lowered_args);
-        return Ok(Expression::CapabilityCall { name: "py.print_sep_end".to_string(), args, meta });
+        return Ok(Expression::CapabilityCall {
+            name: "py.print_sep_end".to_string(),
+            args,
+            meta,
+        });
     }
     let func_name = match func {
         py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
         py_ast::Expr::Attribute(py_ast::ExprAttribute { value, attr, .. }) => {
             match value.as_ref() {
-                py_ast::Expr::Name(py_ast::ExprName { id, .. }) if MODULES.contains(&id.as_str()) => {
+                py_ast::Expr::Name(py_ast::ExprName { id, .. })
+                    if MODULES.contains(&id.as_str()) =>
+                {
                     format!("{}.{}", id, attr)
                 }
                 // A method on a value (`s.upper()`, `"a,b".split(",")`,
                 // `items.append(x)`): used to be rejected unless the receiver
                 // was a plain name, and then emitted a call to a function
                 // literally named "s.upper".
-                receiver => return lower_method(lower_expr(receiver, ctx)?, attr.as_str(), lowered_args, meta),
+                receiver => {
+                    return lower_method(
+                        lower_expr(receiver, ctx)?,
+                        attr.as_str(),
+                        lowered_args,
+                        meta,
+                    );
+                }
             }
         }
         _ => return Err(anyhow::anyhow!("complex function calls not yet supported")),
@@ -689,13 +755,7 @@ fn lower_list_or_set_comprehension(
     };
     let loop_stmt = build_comprehension_loop(generators, 0, vec![push_stmt], ctx, &meta)?;
     let loop_stmt = comprehension_scope(loop_stmt, generators)?;
-    Ok((
-        vec![init, loop_stmt],
-        Expression::Var {
-            name: tmp,
-            meta,
-        },
-    ))
+    Ok((vec![init, loop_stmt], Expression::Var { name: tmp, meta }))
 }
 
 /// Python 3 gives a comprehension its own scope: its loop variables don't
@@ -724,7 +784,9 @@ fn comprehension_scope(
                     let renamed = if f == from {
                         Some(to.to_string())
                     } else {
-                        f.strip_prefix(from).filter(|rest| rest.starts_with('.')).map(|rest| format!("{to}{rest}"))
+                        f.strip_prefix(from)
+                            .filter(|rest| rest.starts_with('.'))
+                            .map(|rest| format!("{to}{rest}"))
                     };
                     if let Some(r) = renamed {
                         o.insert("function".to_string(), J::from(r));
@@ -770,7 +832,9 @@ fn build_comprehension_loop(
     // so the obvious variable name doesn't compile. Named `generator` instead.
     let generator = &generators[idx];
     if generator.is_async {
-        anyhow::bail!("async comprehensions (`async for` inside a comprehension) not yet supported");
+        anyhow::bail!(
+            "async comprehensions (`async for` inside a comprehension) not yet supported"
+        );
     }
     let var = match &generator.target {
         py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
@@ -781,7 +845,13 @@ fn build_comprehension_loop(
     };
     let iterable = lower_expr(&generator.iter, ctx)?;
     let mut body = if idx + 1 < generators.len() {
-        vec![build_comprehension_loop(generators, idx + 1, innermost, ctx, meta)?]
+        vec![build_comprehension_loop(
+            generators,
+            idx + 1,
+            innermost,
+            ctx,
+            meta,
+        )?]
     } else {
         innermost
     };
@@ -831,12 +901,12 @@ pub(crate) fn lower_expr_hoist(
     let offset = u32::from(expr.start()) as usize;
     let meta = ctx.meta_at(offset);
     match expr {
-        py_ast::Expr::ListComp(py_ast::ExprListComp { elt, generators, .. }) => {
-            lower_list_or_set_comprehension(elt, generators, ctx, meta)
-        }
-        py_ast::Expr::SetComp(py_ast::ExprSetComp { elt, generators, .. }) => {
-            lower_list_or_set_comprehension(elt, generators, ctx, meta)
-        }
+        py_ast::Expr::ListComp(py_ast::ExprListComp {
+            elt, generators, ..
+        }) => lower_list_or_set_comprehension(elt, generators, ctx, meta),
+        py_ast::Expr::SetComp(py_ast::ExprSetComp {
+            elt, generators, ..
+        }) => lower_list_or_set_comprehension(elt, generators, ctx, meta),
         py_ast::Expr::Call(py_ast::ExprCall {
             func,
             args,
@@ -850,7 +920,10 @@ pub(crate) fn lower_expr_hoist(
             // `call_value`, CRUSH-251). Only where statements can be hoisted;
             // elsewhere it stays an error (CRUSH-zorro-24).
             let temp_callee;
-            let func = if matches!(func.as_ref(), py_ast::Expr::Name(_) | py_ast::Expr::Attribute(_)) {
+            let func = if matches!(
+                func.as_ref(),
+                py_ast::Expr::Name(_) | py_ast::Expr::Attribute(_)
+            ) {
                 func.as_ref()
             } else {
                 let (h, callee) = lower_expr_hoist(func, ctx)?;
@@ -895,7 +968,12 @@ mod comprehension_lowering_tests {
         let expr = crate::parser::parse_expression("0 <= x < 3").unwrap();
         let lowered = lower_expr(&expr, &ctx()).expect("chain should lower");
         match lowered {
-            Expression::BinaryOp { operator, left, right, .. } => {
+            Expression::BinaryOp {
+                operator,
+                left,
+                right,
+                ..
+            } => {
                 assert_eq!(operator, "and");
                 let op_of = |e: &Expression| match e {
                     Expression::BinaryOp { operator, .. } => operator.clone(),
@@ -928,9 +1006,16 @@ mod comprehension_lowering_tests {
         let c = ctx();
         let (hoisted, result) = lower_expr_hoist(&expr, &c).expect("comprehension should lower");
 
-        assert_eq!(hoisted.len(), 2, "expected [init, for-loop], got {hoisted:?}");
+        assert_eq!(
+            hoisted.len(),
+            2,
+            "expected [init, for-loop], got {hoisted:?}"
+        );
         match &hoisted[0] {
-            Statement::VarDecl { value: Expression::ArrayLiteral { elements, .. }, .. } => {
+            Statement::VarDecl {
+                value: Expression::ArrayLiteral { elements, .. },
+                ..
+            } => {
                 assert!(elements.is_empty());
             }
             other => panic!("expected VarDecl(empty array) init, got {other:?}"),
@@ -938,10 +1023,16 @@ mod comprehension_lowering_tests {
         match &hoisted[1] {
             Statement::For { variable, body, .. } => {
                 // Renamed to the comprehension's own scope (`__comp_N_i`).
-                assert!(variable.starts_with("__comp_") && variable.ends_with("_i"), "{variable}");
+                assert!(
+                    variable.starts_with("__comp_") && variable.ends_with("_i"),
+                    "{variable}"
+                );
                 assert_eq!(body.len(), 1);
                 match &body[0] {
-                    Statement::ExprStmt { expr: Expression::Call { function, args, .. }, .. } => {
+                    Statement::ExprStmt {
+                        expr: Expression::Call { function, args, .. },
+                        ..
+                    } => {
                         assert!(function.ends_with(".append"));
                         assert_eq!(args.len(), 1);
                     }
@@ -964,7 +1055,11 @@ mod comprehension_lowering_tests {
         let (hoisted, _) = lower_expr_hoist(&expr, &c).expect("comprehension should lower");
         match &hoisted[1] {
             Statement::For { body, .. } => match &body[0] {
-                Statement::If { then_body, else_body, .. } => {
+                Statement::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
                     assert!(else_body.is_none());
                     assert_eq!(then_body.len(), 1);
                 }

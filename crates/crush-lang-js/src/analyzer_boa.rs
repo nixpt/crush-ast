@@ -161,7 +161,10 @@ impl<'a> BoaAnalyzer<'a> {
                     }
                 }
             }
-            Statement::Continue(_) | Statement::Break(_) | Statement::Empty | Statement::Debugger => {}
+            Statement::Continue(_)
+            | Statement::Break(_)
+            | Statement::Empty
+            | Statement::Debugger => {}
         }
         r.estimated_complexity += 1;
     }
@@ -251,10 +254,8 @@ impl<'a> BoaAnalyzer<'a> {
                 self.walk_expression(o.target(), r);
             }
             Expression::ArrayLiteral(a) => {
-                for elem in a.as_ref() {
-                    if let Some(e) = elem {
-                        self.walk_expression(e, r);
-                    }
+                for e in a.as_ref().iter().flatten() {
+                    self.walk_expression(e, r);
                 }
             }
             Expression::ObjectLiteral(o) => {

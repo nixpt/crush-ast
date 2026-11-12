@@ -36,7 +36,9 @@ fn main() {
     // "bool:true", "null:null", "str:hello" (str values are raw, no quotes).
     match result {
         crush_vm::RuntimeValue::Int(i) => println!("int:{}", i),
-        crush_vm::RuntimeValue::Float(f) => println!("float:{}", crush_vm::float_text::crush_float_to_text(f)),
+        crush_vm::RuntimeValue::Float(f) => {
+            println!("float:{}", crush_vm::float_text::crush_float_to_text(f))
+        }
         crush_vm::RuntimeValue::Bool(b) => println!("bool:{}", b),
         crush_vm::RuntimeValue::Null => println!("null:null"),
         crush_vm::RuntimeValue::String(s) => println!("str:{}", s),
