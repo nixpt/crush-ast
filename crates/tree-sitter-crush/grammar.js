@@ -310,6 +310,14 @@ module.exports = grammar({
                 field('name', $.capability_call),
                 field('arguments', $.argument_list),
             )),
+            // A call on a parenthesised callee (`(make_adder(7))(1)`,
+            // `(|a| => a + 1)(2)`), as the hand parser accepts (CRUSH-363).
+            prec(2, seq(
+                '(',
+                field('name', $.expression),
+                ')',
+                field('arguments', $.argument_list),
+            )),
             // Sugar call: cmd arg1 arg2
             prec(1, seq(
                 field('name', choice(

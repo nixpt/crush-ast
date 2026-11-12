@@ -1,8 +1,0 @@
-fn main() {
-    let h = { add: |a| => a + 1 }
-    let k = "add"
-    print(h[k](41))
-    let f = h[k]
-    print(f(41))
-    print(make_adder(3)(4))
-}

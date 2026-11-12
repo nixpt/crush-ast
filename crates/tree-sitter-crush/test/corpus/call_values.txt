@@ -128,3 +128,48 @@ fn main() {
                   arguments: (argument_list
                     (expression
                       (int_literal))))))))))))
+
+==================
+Call on a parenthesised callee
+==================
+
+fn main() {
+    let a = (make_adder(7))(1)
+    let b = (|x| => x + 1)(2)
+}
+
+---
+
+(program
+  (fn_def
+    (identifier)
+    (parameter_list)
+    (block
+      (var_decl
+        (identifier)
+        (expression
+          (capability_call
+            (expression
+              (capability_call
+                (identifier)
+                (argument_list
+                  (expression
+                    (int_literal)))))
+            (argument_list
+              (expression
+                (int_literal))))))
+      (var_decl
+        (identifier)
+        (expression
+          (capability_call
+            (expression
+              (lambda
+                (lambda_parameter
+                  (identifier))
+                (expression
+                  (binary_op
+                    (identifier)
+                    (int_literal)))))
+            (argument_list
+              (expression
+                (int_literal)))))))))

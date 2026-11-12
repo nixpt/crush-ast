@@ -750,6 +750,10 @@
             "named": true
           },
           {
+            "type": "expression",
+            "named": true
+          },
+          {
             "type": "field_access",
             "named": true
           },
