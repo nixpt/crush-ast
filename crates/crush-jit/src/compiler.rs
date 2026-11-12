@@ -19,13 +19,14 @@ use crate::runtime::{ERR_ARITH_OVERFLOW, ERR_DIV_ZERO, OP_UNINIT_LOAD};
 use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 
 use crate::runtime::{
-    JIT_MAX_LOCALS, JitContext, OP_ADD_STR, OP_ARR_SET, OP_ARRAY_POP, OP_ARRAY_PUSH, OP_CAP_CALL,
-    OP_CAST, OP_CMP_EQUAL, OP_CMP_ORDERED, OP_ENTER_TRY, OP_EXIT_TRY, OP_GET_FIELD, OP_INDEX,
-    OP_LEN, OP_LIST_PUSH, OP_MAKE_LIST, OP_MAKE_MAP, OP_MAKE_RANGE, OP_MAP_KEYS, OP_NEW_ARRAY,
-    OP_NEW_LIST, OP_NEW_OBJ, OP_NEW_SET, OP_NEW_STRUCT, OP_NEW_TUPLE, OP_NEW_VECTOR, OP_PUSH_STR,
-    OP_SET_FIELD, OP_SET_PUSH, OP_STR_CONTAINS, OP_STR_ENDS_WITH, OP_STR_JOIN, OP_STR_REPLACE,
-    OP_STR_SIM, OP_STR_SPLIT, OP_STR_STARTS_WITH, OP_STR_TO_LOWER, OP_STR_TO_UPPER, OP_STR_TRIM,
-    OP_THROW, OP_TRUTHY, OP_TUPLE_PUSH, OP_TYPEOF, OP_VECTOR_PUSH, jit_runtime_helper,
+    JIT_MAX_LOCALS, JitContext, OP_ADD_STR, OP_ARR_SET, OP_ARRAY_POP, OP_ARRAY_POP_VALUE,
+    OP_ARRAY_PUSH, OP_CAP_CALL, OP_CAST, OP_CMP_EQUAL, OP_CMP_ORDERED, OP_ENTER_TRY, OP_EXIT_TRY,
+    OP_GET_FIELD, OP_INDEX, OP_LEN, OP_LIST_PUSH, OP_MAKE_LIST, OP_MAKE_MAP, OP_MAKE_RANGE,
+    OP_MAP_KEYS, OP_NEW_ARRAY, OP_NEW_LIST, OP_NEW_OBJ, OP_NEW_SET, OP_NEW_STRUCT, OP_NEW_TUPLE,
+    OP_NEW_VECTOR, OP_PUSH_STR, OP_SET_FIELD, OP_SET_PUSH, OP_STR_CONTAINS, OP_STR_ENDS_WITH,
+    OP_STR_JOIN, OP_STR_REPLACE, OP_STR_SIM, OP_STR_SPLIT, OP_STR_STARTS_WITH, OP_STR_TO_LOWER,
+    OP_STR_TO_UPPER, OP_STR_TRIM, OP_THROW, OP_TRUTHY, OP_TUPLE_PUSH, OP_TYPEOF, OP_VECTOR_PUSH,
+    jit_runtime_helper,
 };
 
 const OFF_STACK: i64 = 0;
@@ -1557,6 +1558,10 @@ fn emit_one(
         NewArray => emit_helper_call(b, ctx, OP_NEW_ARRAY, instr.arg as i64, _ptr_ty, helper_sig), // M2 Phase 6: infallible
         ArrayPush => emit_helper_call(b, ctx, OP_ARRAY_PUSH, 0, _ptr_ty, helper_sig),
         ArrayPop => emit_helper_call(b, ctx, OP_ARRAY_POP, 0, _ptr_ty, helper_sig),
+        // Checked: pop on a non-array stops the run here, like FastVM.
+        ArrayPopValue => {
+            emit_helper_call_checked(b, ctx, OP_ARRAY_POP_VALUE, 0, _ptr_ty, helper_sig)
+        }
         ArrSet => emit_helper_call(b, ctx, OP_ARR_SET, 0, _ptr_ty, helper_sig),
 
         StrContains => emit_helper_call(b, ctx, OP_STR_CONTAINS, 0, _ptr_ty, helper_sig),

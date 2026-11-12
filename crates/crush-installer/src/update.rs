@@ -1240,7 +1240,12 @@ mod tests {
         rel.publish("0.9.0", &make_tarball("0.9.0", &all_bins()), None);
         let dir = old_install("0.10.0");
         let (r, log) = run(&opts(dir.path()), &rel, None);
-        assert_eq!(r.unwrap(), Outcome::UpToDate);
+        assert_eq!(
+            r.unwrap(),
+            Outcome::UpToDate,
+            "expected not-to-downgrade; update log:\n{log}\ninstalled_version probe: {:?}",
+            installed_version(dir.path())
+        );
         assert!(log.contains("not downgrading"), "{log}");
         assert_eq!(installed_version(dir.path()), Some(v("0.10.0")));
 

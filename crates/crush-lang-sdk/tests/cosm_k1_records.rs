@@ -116,7 +116,7 @@ fn a_method_call_never_reaches_a_global_capability() {
     // the `len` capability.
     fails_on_both(
         "struct S { n: int }\nimpl S { fn len(self) { return self.n; } }\nfn main() {\n  let a = [1, 2]\n  print(a.len())\n}\n",
-        "`.len(…)` on a array: methods resolve on struct instances",
+        "`.len(…)` on a array: member calls resolve on struct instances (COSM Records) and maps",
     );
     fails_on_both(
         "struct S { n: int }\nimpl S { fn len(self) { return self.n; } }\nstruct T { n: int }\nfn main() {\n  let t = T { n: 1 }\n  print(t.len())\n}\n",

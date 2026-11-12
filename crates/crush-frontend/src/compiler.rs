@@ -16,6 +16,33 @@ const GPU_INTRINSICS: &[&str] = &[
     "gpu.f32",
 ];
 
+/// Host capabilities that are invoked in *method form* on a declared receiver
+/// (`xs.arr_slice(1, 3)`, `zs.arr_set(1, 7)`, `xs.push(x)`): every dot-less
+/// name in the VM's capability registry (`crush-vm/src/caps.rs`), which the
+/// runtime applies as `(receiver, arg1, …)`. Dotted names (`fs.read`,
+/// `io.print`, …) are namespaced and never appear as a member of a declared
+/// variable, so they are not here.
+///
+/// CRUSH-362: any *other* dotted call on a declared variable is a member call
+/// whose receiver's type isn't statically known (a local can hold a struct
+/// instance or a map), so it lowers to `call_member` and resolves at run time
+/// — never to a host capability named after the field (that is what made
+/// `h.add(41)` refuse with "not available in this host: add"). The
+/// `method_call_receiver_capabilities_agree` test in crush-lang-sdk fails
+/// when this list and the VM registry drift apart.
+const RECEIVER_CAPABILITIES: &[&str] = &[
+    "parallel_map",
+    "append",
+    "push",
+    "arr_set",
+    "arr_get",
+    "arr_slice",
+    "make_range",
+    // CRUSH-391's method form `xs.pop()` (cap_call "pop", lowered to the
+    // element-only POP op).
+    "pop",
+];
+
 pub type CompileError = anyhow::Error;
 
 pub struct Compiler {
@@ -2676,23 +2703,52 @@ impl Compiler {
                         // Marked member calls were already resolved
                         // (or refused) ahead of the `is_method_call`
                         // split; only the parser's unmarked idiom
-                        // reaches this grant.
-                        self.all_permissions.insert(method.to_string());
+                        // reaches this point. A name in
+                        // `RECEIVER_CAPABILITIES` stays the host
+                        // capability it has always been (CRUSH-235:
+                        // args in order, the receiver first). Anything
+                        // else is a member call whose receiver's type
+                        // isn't statically known (a local can hold a
+                        // struct instance *or* a map), so it resolves
+                        // at run time with CALL_MEMBER (CRUSH-362): a
+                        // struct instance resolves the method on its
+                        // Kind, a map calls the function stored under
+                        // the key — method-call syntax on a declared
+                        // variable never implies a host capability
+                        // named after the field. Last-to-first like
+                        // every member call, the receiver on top.
+                        if RECEIVER_CAPABILITIES.contains(&method) {
+                            self.all_permissions.insert(method.to_string());
+                            instrs.push(self.create_instr(
+                                "load",
+                                serde_json::json!({"name": obj_name}),
+                                meta,
+                            ));
+                            // Push args in order: the receiver is already on the stack, then each
+                            // argument, then cap_call pops them top-first and reverses, so the
+                            // capability sees (receiver, arg1, arg2, …). (CRUSH-235: the old
+                            // last-to-first push reached the capability as (receiver, argN, … arg1).)
+                            for arg in args {
+                                self.compile_expr(arg, instrs)?;
+                            }
+                            instrs.push(self.create_instr(
+                                "cap_call",
+                                serde_json::json!({"name": method, "argc": args.len() + 1}),
+                                meta,
+                            ));
+                            return Ok(());
+                        }
+                        for arg in args.iter().rev() {
+                            self.compile_arg(arg, instrs)?;
+                        }
                         instrs.push(self.create_instr(
                             "load",
                             serde_json::json!({"name": obj_name}),
                             meta,
                         ));
-                        // Push args in order: the receiver is already on the stack, then each
-                        // argument, then cap_call pops them top-first and reverses, so the
-                        // capability sees (receiver, arg1, arg2, …). (CRUSH-235: the old
-                        // last-to-first push reached the capability as (receiver, argN, … arg1).)
-                        for arg in args {
-                            self.compile_expr(arg, instrs)?;
-                        }
                         instrs.push(self.create_instr(
-                            "cap_call",
-                            serde_json::json!({"name": method, "argc": args.len() + 1}),
+                            "call_member",
+                            serde_json::json!({"name": method, "argc": args.len()}),
                             meta,
                         ));
                     } else {

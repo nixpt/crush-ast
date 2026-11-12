@@ -252,6 +252,17 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             privileged: false,
             summary: "push an element onto an array; returns the modified array",
         });
+        // CRUSH-391: the method-call form `a.pop()` lowers to `cap_call "pop"`
+        // (the compiler lowers the function form `array.pop(a)` to the ARR_POP
+        // opcode instead). Returns the element — its expression value — null
+        // for an empty array; every backend shares that contract.
+        reg(CapabilitySpec {
+            name: "pop",
+            argc: Some(1),
+            returns: true,
+            privileged: false,
+            summary: "remove and return an array's last element (null when empty)",
+        });
         reg(CapabilitySpec {
             name: "arr_set",
             argc: None,
@@ -293,6 +304,23 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
             returns: true,
             privileged: false,
             summary: "convert a single-character string to its Unicode codepoint",
+        });
+        // CRUSH-391: the str.* names the issue asked for — aliases that route
+        // to the same shared implementation as conv.ord / conv.chr, not a
+        // second one (one capability, one implementation).
+        reg(CapabilitySpec {
+            name: "str.ord",
+            argc: Some(1),
+            returns: true,
+            privileged: false,
+            summary: "first character's Unicode codepoint (the str.* name for conv.ord)",
+        });
+        reg(CapabilitySpec {
+            name: "str.chr",
+            argc: Some(1),
+            returns: true,
+            privileged: false,
+            summary: "single-character string from a Unicode codepoint (the str.* name for conv.chr)",
         });
         m
     })

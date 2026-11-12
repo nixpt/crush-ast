@@ -2201,6 +2201,72 @@ mod tests {
         );
     }
 
+    // CRUSH-391: `a.pop()` lowers to cap_call "pop", which must map to the
+    // element-only ArrayPopValue on the FastVM/JIT — not the [array, value]
+    // ARR_POP opcode the `array.pop(a)` function form uses (that one gets the
+    // compiler's swap+pop compensation; the cap form doesn't).
+    #[test]
+    fn test_method_pop_lowers_to_the_element_only_fastvm_op() {
+        let source = r#"
+            fn main() {
+                let a = [7, 8]
+                let x = a.pop()
+                print(x)
+            }
+        "#;
+        let casm = crush_frontend::compile_crush_source(source).expect("compile method pop");
+        let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower method pop");
+        assert!(
+            lowered
+                .instructions
+                .iter()
+                .any(|i| i.op == crush_vm::fastvm::FastOp::ArrayPopValue),
+            "cap_call \"pop\" must lower to ArrayPopValue (element-only, CRUSH-391)"
+        );
+        assert!(
+            !lowered
+                .instructions
+                .iter()
+                .any(|i| i.op == crush_vm::fastvm::FastOp::ArrayPop),
+            "the method form must not use the [array, value] ArrayPop opcode"
+        );
+    }
+
+    #[cfg(feature = "native-plugins")]
+    #[test]
+    fn test_compiled_method_pop_runs_in_fastvm() {
+        let source = r#"
+            fn main() {
+                let a = [7, 8, 9]
+                let x = a.pop()
+                return x
+            }
+        "#;
+        let casm = crush_frontend::compile_crush_source(source).expect("compile method pop");
+        let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower method pop");
+        let mut vm =
+            crush_vm::fastvm::FastVM::new(lowered, Vec::new(), std::sync::Arc::new(TestHal));
+        assert_eq!(
+            vm.run(10_000),
+            crush_vm::fastvm::FastYield::Finished(Some(crush_vm::RuntimeValue::Int(9)))
+        );
+    }
+
+    // CRUSH-391: the str.* names reach the conv.* implementations end to end.
+    #[test]
+    fn test_compiled_str_ord_chr_runs() {
+        let source = r#"
+            fn main() {
+                print(str.ord("A"))
+                print(str.chr(66))
+            }
+        "#;
+        let prog = compile_crush_source(source).expect("compile str.ord/chr");
+        let quotas = crush_vm::Quotas::default();
+        let result = crush_vm::run_with_caps(&prog, &quotas, None).expect("run str.ord/chr");
+        assert_eq!(result.output, "65\nB\n");
+    }
+
     #[cfg(feature = "native-plugins")]
     #[derive(Debug)]
     struct TestHal;
