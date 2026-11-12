@@ -99,6 +99,51 @@ fn ai_ops_are_rejected_by_both_backends() {
     }
 }
 
+/// #423: DOM ops used to compile to the same invented `{ok, kind, echo}` stub
+/// with no grant check; the VMs fail closed without a granted `dom_native.*`
+/// handler, so both AOT backends now refuse them by name.
+#[test]
+fn dom_ops_are_rejected_by_both_backends() {
+    use casm::{Function, Instruction};
+    for op in [
+        "dom_query",
+        "dom_mutate",
+        "dom_event_listener",
+        "dom_get",
+        "dom_set",
+        "dom_create",
+        "dom_remove",
+        "dom_child",
+        "dom_parent",
+        "dom_attr",
+        "dom_text",
+        "dom_event",
+    ] {
+        let mut program = casm("fn main() { print(1) }");
+        let main: &mut Function = program.functions.get_mut("main").unwrap();
+        main.body.insert(
+            0,
+            Instruction {
+                op: op.into(),
+                lang: None,
+                meta: None,
+                args: serde_json::json!({}),
+            },
+        );
+        for err in [
+            crush_aot::codegen::gen_rust_source(&program).unwrap_err(),
+            crush_aot::codegen_c::gen_c_source(&program).unwrap_err(),
+        ] {
+            assert!(
+                err.to_string()
+                    .contains(&format!("`{op}` (fn main, instruction 0)")),
+                "{op}: {err}"
+            );
+            assert!(err.to_string().contains("dom_native"), "{err}");
+        }
+    }
+}
+
 #[test]
 fn ai_semantic_match_from_source_is_rejected() {
     let program =

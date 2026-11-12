@@ -7,7 +7,7 @@
 pub fn gen_rust_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     crate::refuse_cosm(program, "Rust")?;
     crate::refuse_green_task(program, "Rust")?;
-    crate::refuse_ai(program, "Rust")?;
+    crate::refuse_host_ops(program, "Rust")?;
     crate::method_support::check_rust_result(program)?;
     let mut out = String::new();
 
@@ -1036,7 +1036,7 @@ fn emit_body(
             }
         }
         // ── AI opcodes ──
-        // UNREACHABLE since CRUSH-234: `crate::refuse_ai` rejects AI ops before codegen.
+        // UNREACHABLE since CRUSH-234: `crate::refuse_host_ops` rejects AI ops before codegen.
         // Was: CRUSH-32 follow-up, each AI opcode emitted a per-opcode inline stub
         // Object ({ok: true, kind, echo: ([])}) via `make_ai_stub`, so the 5
         // tiers (scheduler, portable_vm, fastvm, AOT-Rust, AOT-C) agree at
@@ -1070,7 +1070,8 @@ fn emit_body(
         }
 
         // ── DOM opcodes ──
-        // CRUSH-33 Commit 2: each DOM opcode now emits a per-opcode inline stub
+        // UNREACHABLE since #423: `crate::refuse_host_ops` rejects DOM ops before codegen.
+        // Was: CRUSH-33 Commit 2: each DOM opcode now emits a per-opcode inline stub
         // Object ({ok: true, kind, echo: ([])}) via `make_dom_stub`, so the 5
         // tiers (scheduler, portable_vm, fastvm, AOT-Rust, AOT-C) agree at
         // differential-cmp time — mirror of the AI combined arm above.
