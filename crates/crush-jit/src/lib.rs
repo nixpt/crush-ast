@@ -40,8 +40,8 @@ pub struct JitEngine {
 
 impl JitEngine {
     /// A JIT run's error message, from the context's error flag (CRUSH-213
-    /// classes + the throw/cap flags). When the flag was set while a try
-    /// handler was still active, the message says loudly that this backend
+    /// classes + the throw/cap flags). When a fault the CVM1 engines would
+    /// catch was raised while a try handler was still active, the message says loudly that this backend
     /// can't catch VM faults inside try (CRUSH-369) — the CVM1 engines catch
     /// the same fault — instead of diverging silently.
     fn error_message(ctx: &JitContext) -> String {
@@ -59,7 +59,10 @@ impl JitEngine {
         } else {
             format!("JIT execution error (flag={})", ctx.error)
         };
-        if ctx.handler_stack_top > 0 {
+        // Only faults the CVM1 engines would catch get the prefix: COSM/UNINIT
+        // errors are fatal there too, and flag 4 can be a capability refusal.
+        let cvm1_catches = ctx.error == ERR_DIV_ZERO || ctx.error == ERR_ARITH_OVERFLOW;
+        if ctx.handler_stack_top > 0 && cvm1_catches {
             format!(
                 "try/catch around VM faults is not supported on this backend yet (CRUSH-369): {msg}"
             )

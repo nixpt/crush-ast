@@ -2326,7 +2326,12 @@ impl PortableVm {
                 Ok((result.output, crate::parallel::move_out(&value)?))
             })
             .collect();
-        crate::parallel::collect(results)
+        let mapped = crate::parallel::collect(results)?;
+        // Each item ran under a fresh deadline: check the main VM's own.
+        if let Some(deadline) = self.wall_deadline {
+            crate::wall::check(deadline, self.quotas.max_wall_time_ms)?;
+        }
+        Ok(mapped)
     }
 
     fn dispatch_cap(&mut self, cap: &str, args: Vec<Value>) -> Result<Option<Value>, VmError> {
