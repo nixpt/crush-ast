@@ -1,8 +1,8 @@
-# CRUSH-367 — `regex.match` unusable: `match` keyword rejected after `.`
+# CRUSH-394 — `regex.match` unusable: `match` keyword rejected after `.`
 
 | Field | Value |
 |-------|-------|
-| **ID** | CRUSH-367 |
+| **ID** | CRUSH-394 |
 | **Priority** | P1 |
 | **Status** | Done |
 | **Phase** | M2 |
@@ -10,7 +10,7 @@
 | **Dependencies** | none |
 | **Estimated effort** | S |
 
-**Filed by:** opencode — 2026-11-10, from GitHub issue #367
+**Filed by:** opencode — 2026-11-10, from GitHub issue #367; renumbered from CRUSH-367 (ID collision with CRUSH-367-crush-pkg-imports-through-the-package.md, per CONTRIBUTING's renumber-the-newer rule)
 
 ## Problem
 
