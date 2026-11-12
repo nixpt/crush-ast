@@ -1907,22 +1907,31 @@ impl Parser {
                 }
             } else if op == "." {
                 // Field access
-                let field = match self.peek() {
-                    Token::Ident(n, _) => {
-                        let name = n.clone();
-                        self.advance();
-                        name
-                    }
-                    _ => {
-                        let (line, col) = self.get_location(self.peek());
-                        self.errors.push(ParseError::Expected {
-                            line,
-                            col,
-                            expected: "field name".to_string(),
-                            found: self.peek().describe(),
-                        });
-                        return Err(());
-                    }
+                let field = if let Token::Ident(n, _) = self.peek() {
+                    let name = n.clone();
+                    self.advance();
+                    name
+                } else if let Some(word) = self.peek().keyword_name() {
+                    // CRUSH-367: after `.` the word cannot start a statement
+                    // or a new expression, so keyword-shaped capability/field
+                    // names parse as fields — `regex.match("^[a-z]+", "…")`,
+                    // `x.if`, `m.for`. `match` stays a keyword everywhere
+                    // else (match expressions, bare `match(...)`, statement
+                    // starts); this only opens the door past a dot. Literal
+                    // keywords (`true`/`false`/`null`) are values, not words,
+                    // and stay rejected as field names.
+                    let word = word.to_string();
+                    self.advance();
+                    word
+                } else {
+                    let (line, col) = self.get_location(self.peek());
+                    self.errors.push(ParseError::Expected {
+                        line,
+                        col,
+                        expected: "field name".to_string(),
+                        found: self.peek().describe(),
+                    });
+                    return Err(());
                 };
 
                 Expression::GetField {
@@ -4200,5 +4209,61 @@ fn heavy() {
             },
             other => panic!("expected VarDecl, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_keyword_field_access_after_dot() {
+        // CRUSH-367: a keyword after `.` is an unambiguous field/capability
+        // name — `regex.match(...)` must parse even though `match` is the
+        // match-expression keyword.
+        let program = Parser::parse("let xs = regex.match(\"^[a-z]+\", \"ab cd\")").unwrap();
+        let main = program.functions.get("main").unwrap();
+        match &main.body[0] {
+            Statement::VarDecl { value, .. } => match value {
+                Expression::CapabilityCall { name, .. } => {
+                    assert_eq!(name, "regex.match");
+                }
+                other => panic!("expected CapabilityCall, got {other:?}"),
+            },
+            other => panic!("expected VarDecl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_keyword_field_access_other_keywords() {
+        // The same door opens for every keyword-shaped field name.
+        for word in ["if", "for", "in", "fn", "not", "use"] {
+            let src = format!("let v = obj.{word}(1)");
+            let program =
+                Parser::parse(&src).unwrap_or_else(|e| panic!("{src} should parse, got {e:?}"));
+            let main = program.functions.get("main").unwrap();
+            match &main.body[0] {
+                Statement::VarDecl { value, .. } => match value {
+                    Expression::CapabilityCall { name, .. } => {
+                        assert_eq!(name, &format!("obj.{word}"), "for source `{src}`");
+                    }
+                    other => panic!("expected CapabilityCall for `{src}`, got {other:?}"),
+                },
+                other => panic!("expected VarDecl for `{src}`, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_keyword_still_keyword_outside_field_access() {
+        // The fix only opens the door *after* a dot: bare `match` and `if`
+        // keep their keyword meanings.
+        assert!(Parser::parse("let x = match 1 { 1 => 2, _ => 3 }").is_ok());
+        assert!(Parser::parse("if true { let x = 1 }").is_ok());
+        // And a dot with no field name at all is still an error.
+        assert!(Parser::parse("let v = obj.").is_err());
+        // Literal keywords are values, not field names — still rejected.
+        assert!(Parser::parse("let v = obj.true").is_err());
+        assert!(Parser::parse("let v = obj.null").is_err());
+        // Operator punctuation shares the And/Or/Not tokens with the word
+        // forms; it must never become a field name.
+        assert!(Parser::parse("let v = obj.!(1)").is_err());
+        assert!(Parser::parse("let v = obj.&&").is_err());
+        assert!(Parser::parse("let v = obj.||").is_err());
     }
 }
