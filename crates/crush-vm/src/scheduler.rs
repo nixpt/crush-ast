@@ -2617,7 +2617,7 @@ fn dispatch_cap(
                     }),
                 }
             }
-            "conv.chr" => {
+            "conv.chr" | "str.chr" => {
                 let codepoint = match &args[0] {
                     Value::Int(value) => *value,
                     other => {
@@ -2627,13 +2627,16 @@ fn dispatch_cap(
                         });
                     }
                 };
-                let character = char::from_u32(codepoint as u32).ok_or(VmError::TypeError {
-                    expected: "valid Unicode codepoint",
-                    got: "invalid codepoint",
-                })?;
+                let character = u32::try_from(codepoint)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .ok_or(VmError::TypeError {
+                        expected: "valid Unicode codepoint",
+                        got: "invalid codepoint",
+                    })?;
                 Ok(Some(Value::Str(character.to_string())))
             }
-            "conv.ord" => {
+            "conv.ord" | "str.ord" => {
                 let text = match &args[0] {
                     Value::Str(value) => value,
                     other => {
@@ -2670,6 +2673,26 @@ fn dispatch_cap(
                     Value::Array(elems) => {
                         elems.borrow_mut().push(args[1].clone());
                         Ok(Some(args[0].clone()))
+                    }
+                    _ => Err(VmError::TypeError {
+                        expected: "array",
+                        got: args[0].type_name(),
+                    }),
+                }
+            }
+            "pop" => {
+                // Same contract as portable_vm's dispatch: the removed element
+                // (null when empty), the method-call form's value (CRUSH-391).
+                if args.len() != 1 {
+                    return Err(VmError::CapArity {
+                        cap: cap.to_string(),
+                        expected: 1,
+                        got: args.len(),
+                    });
+                }
+                match &args[0] {
+                    Value::Array(elems) => {
+                        Ok(Some(elems.borrow_mut().pop().unwrap_or(Value::Null)))
                     }
                     _ => Err(VmError::TypeError {
                         expected: "array",

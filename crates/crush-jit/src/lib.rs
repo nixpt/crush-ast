@@ -3100,6 +3100,7 @@ mod tests {
             FastOp::NewArray,
             FastOp::ArrayPush,
             FastOp::ArrayPop,
+            FastOp::ArrayPopValue,
             FastOp::ArrSet,
             // String (runtime helpers)
             FastOp::StrContains,
