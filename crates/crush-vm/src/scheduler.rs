@@ -709,7 +709,32 @@ fn run_from(
             }
             streamed_err = shared_err_parts.len();
         }
-        let action = action?;
+        // CRUSH-369: a catchable fault raised with a try handler active in this
+        // thread becomes a caught `Value::Error` instead of aborting the run —
+        // the same unwind a `THROW` would do (shared with PortableVm).
+        let mut fault_caught_at: Option<usize> = None;
+        let action = match action {
+            Ok(action) => action,
+            Err(err) => {
+                let thread = &mut threads[current];
+                match crate::vm::raise_fault_to_handler(
+                    err,
+                    &mut thread.try_stack,
+                    &mut thread.call_stack,
+                    &mut thread.stack,
+                    &mut thread.captures,
+                ) {
+                    Ok(handler_ip) => {
+                        fault_caught_at = Some(handler_ip);
+                        StepAction::Jump
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+        };
+        if let Some(handler_ip) = fault_caught_at {
+            threads[current].ip = handler_ip;
+        }
         // HALT in a spawned task ends only that task (owner decision
         // 2026-10-15): it finishes like RET, its top-of-stack is its result
         // and its waiters wake. Only main's HALT ends the program.
@@ -1582,6 +1607,11 @@ fn execute_one(
                     },
                 );
                 let (output, results) = mapped?;
+                // Each item runs under a fresh deadline, so the main VM's own
+                // wall clock is checked here, not only every CHECK_EVERY steps.
+                if crate::wall::remaining().is_some_and(|r| r.is_zero()) {
+                    return Err(crate::wall::expired(quotas.max_wall_time_ms));
+                }
                 if !output.is_empty() {
                     *out_len += output.len();
                     if *out_len > quotas.max_output {
