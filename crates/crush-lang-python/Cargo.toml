@@ -21,7 +21,6 @@ crush-cast.workspace = true
 # crush-lang-js). CI checks `--target wasm32-unknown-unknown`.
 crush-walker-core = { path = "../crush-walker-core", version = "0.11.2", default-features = false }
 anyhow.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 rustpython-parser = "0.4"
 rustpython-ast = "0.4"

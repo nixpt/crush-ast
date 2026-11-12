@@ -1428,4 +1428,8 @@ The cap's one shared implementation (crush-lang-sdk host_caps.rs, every host reg
 
 Reason:
 GitHub issue #370 asked for str.ord/str.chr, but conv.ord/conv.chr already existed (CRUSH-117) as always-on portable caps implemented in every backend. Adding str.ord/str.chr as a SECOND implementation would violate one-capability-one-shared-implementation, so both new names route to the same conv.* code in every engine (portable_vm, scheduler, AOT Rust/C inline the same arms; aotc likewise). The a.pop() method form is a cap_call "pop" (like push), NOT the ARR_POP opcode: the opcode leaves [array, value] for the compiler's swap+pop compensation on the array.pop(a) function form, while the capability's value is only the element. FastVM/JIT needed a new ArrayPopValue op for that (cap_call lowering returns one instr, so it cannot compose ArrayPop+Swap+Pop); aotc refuses pop loudly (its new_array is a stub, arrays unsupported there) following CRUSH-241's io.eprint precedent.
+## 2026-11-10T22:57:45-06:00 — CRUSH-369: VM faults unwind to try handlers via one shared unwinder
+
+Reason:
+A catchable VmError raised under an active try frame converts to a caught Value::Error through vm::raise_fault_to_handler, called by both the scheduler (the engine crush-run uses) and PortableVm, so catchability classification and unwind cannot drift between engines; FastVM shares the handler walk with its Throw opcode; JIT refuses loudly (fault dispatch not wired to handlers) and AOT already refuses try/catch. Quotas, capability-security, sys.exit, broken VM state, uncaught throws and polyglot block failures stay fatal.
 

@@ -109,7 +109,6 @@ crush-walker-core-no-tree-sitter.workspace = true
 crush-net = { path = "../crush-net", version = "0.11.2", optional = true, default-features = false }
 crush-ptx = { path = "../crush-ptx", version = "0.11.2", optional = true }
 cudarc = { version = "0.11", features = ["driver", "nvrtc", "cuda-12040"], optional = true }
-crush-errors.workspace = true
 crush-index.workspace = true
 crush-caison.workspace = true
 serde.workspace = true
