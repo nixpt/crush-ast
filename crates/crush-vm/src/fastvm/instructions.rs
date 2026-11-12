@@ -106,6 +106,7 @@ pub enum FastOp {
     ArrSet, // indexed array write (arr, idx, val on stack)
     ArrayPush,
     ArrayPop,
+    ArrayPopValue, // cap_call "pop" (CRUSH-391): pop arr, push only the removed element
     NewTuple,
     TuplePush,
     NewList,
@@ -1068,7 +1069,10 @@ fn lower_instruction(
             // matching the portable VM's built-in dispatch.
             match name {
                 "push" | "append" if argc == 2 => Ok(FastInstr::simple(FastOp::ArrayPush)),
-                "pop" if argc == 1 => Ok(FastInstr::simple(FastOp::ArrayPop)),
+                // `pop` is the *capability* (CRUSH-391): the method-call
+                // form's value is the removed element, so unlike the ARR_POP
+                // opcode it leaves only the element — no array underneath.
+                "pop" if argc == 1 => Ok(FastInstr::simple(FastOp::ArrayPopValue)),
                 "arr_get" | "index" if argc == 2 => Ok(FastInstr::simple(FastOp::Index)),
                 "arr_set" if argc == 3 => Ok(FastInstr::simple(FastOp::ArrSet)),
                 "arr_len" if argc == 1 => Ok(FastInstr::simple(FastOp::Len)),

@@ -47,7 +47,6 @@ thiserror.workspace = true
 # seven-field-shape trio in `src/main.rs::tests`; canonical wire-
 # format lockdown lives in `crates/crush-diagnostics/tests/wire_format.rs`.
 crush-diagnostics.workspace = true
-parking_lot = "0.12.5"
 # (pyo3 moved to the `crush-vm-py` crate along with the bindings — keeping it
 # here forced this crate to be a cdylib. See the `[lib]` note above.)
 

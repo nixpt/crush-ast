@@ -415,10 +415,16 @@ pub fn collect(results: Vec<ItemResult>) -> Result<(String, Value), VmError> {
                 values.push(move_in(value));
             }
             Err(error) => {
-                return Err(VmError::Parallel(format!(
-                    "item {index}: {}",
-                    worker_error(error)
-                )));
+                // Catchability is the worker's own fault's, decided before
+                // `worker_error` rewords it: a worker's quota, exit or
+                // security refusal stays fatal on the main VM (#369 review).
+                let catchable = error.is_catchable();
+                let message = format!("item {index}: {}", worker_error(error));
+                return Err(if catchable {
+                    VmError::Parallel(message)
+                } else {
+                    VmError::ParallelFatal(message)
+                });
             }
         }
     }
@@ -482,6 +488,29 @@ mod tests {
         assert!(
             std::rc::Rc::ptr_eq(inner, c2),
             "the shared cell must stay shared"
+        );
+    }
+
+    #[test]
+    fn a_fatal_item_fault_stays_fatal_through_collect() {
+        // #369 review: a worker's quota must not become a catchable
+        // `Parallel` error; a catchable fault stays catchable. Same text.
+        let fatal = collect(vec![Err(VmError::StepQuota(10))]).unwrap_err();
+        assert!(matches!(fatal, VmError::ParallelFatal(_)), "{fatal:?}");
+        assert!(!fatal.is_catchable());
+        assert!(
+            fatal.to_string().starts_with("parallel_map: item 0: "),
+            "{fatal}"
+        );
+        let caught = collect(vec![Err(VmError::DivByZero)]).unwrap_err();
+        assert!(matches!(caught, VmError::Parallel(_)), "{caught:?}");
+        assert!(caught.is_catchable());
+        // An unavailable capability is reworded, but its kind decides: fatal.
+        let cap = collect(vec![Err(VmError::UnknownCap("fs.read".into()))]).unwrap_err();
+        assert!(!cap.is_catchable(), "{cap:?}");
+        assert!(
+            cap.to_string()
+                .contains("isn't available inside parallel_map workers")
         );
     }
 }

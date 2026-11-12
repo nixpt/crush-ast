@@ -709,7 +709,32 @@ fn run_from(
             }
             streamed_err = shared_err_parts.len();
         }
-        let action = action?;
+        // CRUSH-369: a catchable fault raised with a try handler active in this
+        // thread becomes a caught `Value::Error` instead of aborting the run —
+        // the same unwind a `THROW` would do (shared with PortableVm).
+        let mut fault_caught_at: Option<usize> = None;
+        let action = match action {
+            Ok(action) => action,
+            Err(err) => {
+                let thread = &mut threads[current];
+                match crate::vm::raise_fault_to_handler(
+                    err,
+                    &mut thread.try_stack,
+                    &mut thread.call_stack,
+                    &mut thread.stack,
+                    &mut thread.captures,
+                ) {
+                    Ok(handler_ip) => {
+                        fault_caught_at = Some(handler_ip);
+                        StepAction::Jump
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+        };
+        if let Some(handler_ip) = fault_caught_at {
+            threads[current].ip = handler_ip;
+        }
         // HALT in a spawned task ends only that task (owner decision
         // 2026-10-15): it finishes like RET, its top-of-stack is its result
         // and its waiters wake. Only main's HALT ends the program.
@@ -1582,6 +1607,11 @@ fn execute_one(
                     },
                 );
                 let (output, results) = mapped?;
+                // Each item runs under a fresh deadline, so the main VM's own
+                // wall clock is checked here, not only every CHECK_EVERY steps.
+                if crate::wall::remaining().is_some_and(|r| r.is_zero()) {
+                    return Err(crate::wall::expired(quotas.max_wall_time_ms));
+                }
                 if !output.is_empty() {
                     *out_len += output.len();
                     if *out_len > quotas.max_output {
@@ -1889,6 +1919,7 @@ fn execute_one(
                 &payload,
                 operands,
                 host_caps,
+                quotas,
                 crate::wall::remaining_ms(quotas.max_wall_time_ms),
             );
             // CRUSH-165 hook: an AI opcode, as cap `ai_native.<kind>`.
@@ -1908,23 +1939,29 @@ fn execute_one(
         // `dom_native_kind_for_opcode` switch in `crush_vm/src/bytecode.rs`
         // maps slot -> kind, and `dom_native::KINDS` in `crush-lang-sdk`
         // is the single source of truth for both surfaces.
+        // GitHub issue #378 (CRUSH-234's AI fix, mirrored): ungranted is a
+        // named `VmError::CapDenied` (`crate::dom_args`) — not a silent
+        // null — and a granted handler's error propagates. The opcode's
+        // string operand is not passed to handlers on any tier today
+        // (`dom_args::dispatch` documents the gap).
         DOM_QUERY | DOM_GET | DOM_SET | DOM_CREATE | DOM_REMOVE | DOM_CHILD | DOM_PARENT
         | DOM_ATTR | DOM_TEXT | DOM_EVENT => {
             let kind = bytecode::dom_native_kind_for_opcode(opcode)
                 .expect("DOM opcode byte in combined match arm must map to a known kind");
-            let gate = format!("dom_native.{kind}");
-            let value = match host_caps.and_then(|h| h.get(&gate)) {
-                Some(handler) => handler.call(vec![]).ok().flatten().unwrap_or(Value::Null),
-                None => Value::Null,
-            };
+            let value = crate::dom_args::dispatch(
+                kind,
+                host_caps,
+                quotas,
+                crate::wall::remaining_ms(quotas.max_wall_time_ms),
+            );
             // CRUSH-165 hook: a DOM opcode, as cap `dom_native.<kind>`.
             #[cfg(feature = "transcript")]
             crate::transcript::active::cap(
-                &gate,
+                &format!("dom_native.{kind}"),
                 &[],
-                crate::transcript::CapOutcome::Value(&value),
+                crate::transcript::CapOutcome::of_value(&value),
             );
-            push!(value);
+            push!(value?);
         }
         ENTER_TRY => {
             let target = u32::from_be_bytes(code[ip + 1..ip + 5].try_into().unwrap()) as usize;
@@ -2580,7 +2617,7 @@ fn dispatch_cap(
                     }),
                 }
             }
-            "conv.chr" => {
+            "conv.chr" | "str.chr" => {
                 let codepoint = match &args[0] {
                     Value::Int(value) => *value,
                     other => {
@@ -2590,13 +2627,16 @@ fn dispatch_cap(
                         });
                     }
                 };
-                let character = char::from_u32(codepoint as u32).ok_or(VmError::TypeError {
-                    expected: "valid Unicode codepoint",
-                    got: "invalid codepoint",
-                })?;
+                let character = u32::try_from(codepoint)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .ok_or(VmError::TypeError {
+                        expected: "valid Unicode codepoint",
+                        got: "invalid codepoint",
+                    })?;
                 Ok(Some(Value::Str(character.to_string())))
             }
-            "conv.ord" => {
+            "conv.ord" | "str.ord" => {
                 let text = match &args[0] {
                     Value::Str(value) => value,
                     other => {
@@ -2633,6 +2673,26 @@ fn dispatch_cap(
                     Value::Array(elems) => {
                         elems.borrow_mut().push(args[1].clone());
                         Ok(Some(args[0].clone()))
+                    }
+                    _ => Err(VmError::TypeError {
+                        expected: "array",
+                        got: args[0].type_name(),
+                    }),
+                }
+            }
+            "pop" => {
+                // Same contract as portable_vm's dispatch: the removed element
+                // (null when empty), the method-call form's value (CRUSH-391).
+                if args.len() != 1 {
+                    return Err(VmError::CapArity {
+                        cap: cap.to_string(),
+                        expected: 1,
+                        got: args.len(),
+                    });
+                }
+                match &args[0] {
+                    Value::Array(elems) => {
+                        Ok(Some(elems.borrow_mut().pop().unwrap_or(Value::Null)))
                     }
                     _ => Err(VmError::TypeError {
                         expected: "array",

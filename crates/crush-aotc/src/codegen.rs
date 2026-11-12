@@ -580,13 +580,13 @@ impl AotcCompiler {
                         })
                         .collect();
                     match cap_name {
-                        "conv.chr" => {
+                        "conv.chr" | "str.chr" => {
                             let arg = boxed_args.first().map(|s| s.as_str()).unwrap_or("CV_NULL");
                             let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
                             writeln!(out, "    CrushValue {} = cap_conv_chr({});", t, arg)?;
                             stack.push((t, ty));
                         }
-                        "conv.ord" => {
+                        "conv.ord" | "str.ord" => {
                             let arg = boxed_args.first().map(|s| s.as_str()).unwrap_or("CV_NULL");
                             let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);
                             writeln!(out, "    CrushValue {} = cap_conv_ord({});", t, arg)?;
@@ -603,6 +603,11 @@ impl AotcCompiler {
                         // loudly instead of the silent-null fallback below (CRUSH-241).
                         "io.eprint" => anyhow::bail!(
                             "crush-aotc does not support `io.eprint` (no stderr channel in its C runtime); use the VM or the crush-aot backends"
+                        ),
+                        // No array model here (new_array is a stub), so `pop`
+                        // would silently return null: refuse loudly (CRUSH-391).
+                        "pop" => anyhow::bail!(
+                            "crush-aotc does not support `pop` (no array model in this backend); use the VM or the crush-aot backends"
                         ),
                         "io.read" => {
                             let (t, ty) = new_tmp(&mut tmp_count, InferredType::Dynamic);

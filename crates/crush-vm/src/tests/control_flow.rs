@@ -64,3 +64,233 @@ fn function_call_and_ret() {
     let r = run_src(src);
     assert_eq!(r.stack, vec![Value::Int(2)]);
 }
+
+// ── VM faults are catchable (CRUSH-369) ──────────────────────────────────────
+
+use crate::block_capture::OutputCapture;
+use crate::vm::{Frame, TryHandler, VmError, raise_fault_to_handler};
+
+/// `run_src` panics on Err; the fatal-fault tests need the raw result.
+fn run_src_raw(src: &str) -> Result<crate::vm::VmResult, VmError> {
+    let prog = assemble(src, None, None).expect("assembly");
+    run(&prog, &Quotas::default())
+}
+
+#[test]
+fn a_fault_inside_try_is_caught_as_an_error_value() {
+    // try { 1/0 } catch { } — the DivByZero fault unwinds to the handler as a
+    // caught Value::Error carrying the fault's message, and execution resumes
+    // at the handler, exactly like a THROW of that value would.
+    let r = run_src(
+        "ENTER_TRY handler\nPUSH 1\nPUSH 0\nDIV\nEXIT_TRY\nJMP done\nhandler:\nHALT\ndone:\nHALT",
+    );
+    assert_eq!(r.stack, vec![Value::Error("division by zero".to_string())]);
+}
+
+#[test]
+fn a_fault_without_try_still_aborts_with_the_same_fault() {
+    let result = run_src_raw("PUSH 1\nPUSH 0\nDIV\nHALT");
+    assert!(matches!(result, Err(VmError::DivByZero)), "{result:?}");
+}
+
+#[test]
+fn a_fault_in_a_callee_unwinds_to_the_callers_try() {
+    // The fault is raised two frames below the try (CRUSH-126's unwind).
+    let src = "\
+.func main
+    ENTER_TRY handler
+    PUSH 0
+    CALL boom
+    EXIT_TRY
+    JMP done
+handler:
+    HALT
+done:
+    HALT
+.func boom
+    PUSH 1
+    PUSH 0
+    DIV
+    RET
+";
+    let r = run_src(src);
+    assert_eq!(r.stack, vec![Value::Error("division by zero".to_string())]);
+}
+
+#[test]
+fn a_rethrow_from_catch_reaches_the_outer_try() {
+    // The inner try's handler rethrows (THROW of the caught value); the outer
+    // try catches it. The inner handler was already popped by the first unwind.
+    let src = "\
+.func main
+    ENTER_TRY outer
+    ENTER_TRY inner
+    PUSH 1
+    PUSH 0
+    DIV
+inner:
+    THROW
+outer:
+    HALT
+";
+    let r = run_src(src);
+    assert_eq!(r.stack, vec![Value::Error("division by zero".to_string())]);
+}
+
+#[test]
+fn call_depth_quota_is_not_catchable() {
+    // Quotas stay fatal (CRUSH-369): infinite recursion inside try still ends
+    // the run with the quota error, not a caught value.
+    let src = "\
+.func main
+    ENTER_TRY handler
+    PUSH 0
+    CALL recurse
+    EXIT_TRY
+    JMP done
+handler:
+    POP
+    PUSH 99
+done:
+    HALT
+.func recurse
+    PUSH 1
+    CALL recurse
+    RET
+";
+    let result = run_src_raw(src);
+    assert!(
+        matches!(result, Err(VmError::CallDepthQuota(_))),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn fault_unwinding_past_an_open_polyglot_capture_fails_the_block() {
+    // A catchable fault with no try handler inside an inline-lowered polyglot
+    // block's capture window is the block failing (#312): fatal, as a
+    // LangRuntimeError, not a caught value.
+    let mut captures = vec![OutputCapture {
+        lang: "python".to_string(),
+        line: Some(3),
+        call_depth: 1,
+        buf: String::new(),
+    }];
+    let mut try_stack = Vec::new();
+    let mut call_stack = vec![
+        Frame {
+            return_ip: None,
+            memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
+        },
+        Frame {
+            return_ip: None,
+            memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
+        },
+    ];
+    let mut stack = Vec::new();
+    let err = raise_fault_to_handler(
+        VmError::DivByZero,
+        &mut try_stack,
+        &mut call_stack,
+        &mut stack,
+        &mut captures,
+    )
+    .expect_err("the block failed");
+    assert!(matches!(err, VmError::LangRuntimeError { .. }), "{err:?}");
+    assert!(captures.is_empty(), "the escaped captures are dropped");
+}
+
+#[test]
+fn fault_unwinds_to_a_handler_inside_the_polyglot_block() {
+    // A handler entered inside the block's capture window (deeper than the
+    // capture's call_depth) catches the fault normally; the capture stays open.
+    let mut captures = vec![OutputCapture {
+        lang: "python".to_string(),
+        line: Some(3),
+        call_depth: 1,
+        buf: String::new(),
+    }];
+    let mut try_stack = vec![TryHandler {
+        handler_ip: 7,
+        call_depth: 2,
+        stack_len: 0,
+    }];
+    let mut call_stack = vec![
+        Frame {
+            return_ip: None,
+            memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
+        },
+        Frame {
+            return_ip: None,
+            memory: std::collections::HashMap::new(),
+            on_ret: crate::vm::RetValue::Keep,
+        },
+    ];
+    let mut stack = Vec::new();
+    let handler_ip = raise_fault_to_handler(
+        VmError::DivByZero,
+        &mut try_stack,
+        &mut call_stack,
+        &mut stack,
+        &mut captures,
+    )
+    .expect("caught inside the block");
+    assert_eq!(handler_ip, 7);
+    assert_eq!(stack, vec![Value::Error("division by zero".to_string())]);
+    assert_eq!(captures.len(), 1, "the capture stays open");
+    assert!(try_stack.is_empty(), "the handler was consumed");
+}
+
+#[test]
+fn uncatchable_faults_are_refused_by_the_shared_unwinder() {
+    // Quota exhaustion, a deliberate sys.exit, capability-security refusals
+    // and a fatal fault from a parallel_map item stay fatal even with a
+    // handler active: the unwinder returns them untouched.
+    let mut try_stack = vec![TryHandler {
+        handler_ip: 7,
+        call_depth: 1,
+        stack_len: 0,
+    }];
+    let fatal_kinds = [
+        VmError::CallDepthQuota(64),
+        VmError::StackQuota(1024),
+        VmError::StepQuota(10),
+        VmError::OutputQuota(10),
+        VmError::WallTimeQuota(10),
+        VmError::Exit(3),
+        VmError::UnknownCap("fs.read".into()),
+        VmError::CapDenied("fs.read".into()),
+        VmError::CapNotDeclared("fs.read".into()),
+        VmError::ParallelFatal("item 0: step quota exceeded".into()),
+    ];
+    for fatal in fatal_kinds {
+        let want = fatal.to_string();
+        let mut call_stack = vec![
+            Frame {
+                return_ip: None,
+                memory: std::collections::HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
+            },
+            Frame {
+                return_ip: None,
+                memory: std::collections::HashMap::new(),
+                on_ret: crate::vm::RetValue::Keep,
+            },
+        ];
+        let mut stack = Vec::new();
+        let mut captures = Vec::new();
+        let out = raise_fault_to_handler(
+            fatal,
+            &mut try_stack,
+            &mut call_stack,
+            &mut stack,
+            &mut captures,
+        )
+        .expect_err("stays fatal");
+        assert_eq!(out.to_string(), want, "returned untouched");
+        assert!(stack.is_empty(), "nothing was pushed for {out:?}");
+    }
+}

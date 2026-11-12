@@ -184,49 +184,7 @@ pub fn lower_expr(expr: &py_ast::Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Exp
         }) => {
             let left = lower_expr(left, ctx)?;
             let right = lower_expr(right, ctx)?;
-            // Python `/` / `//` / `%` differ from Crush's truncating DIV/MOD.
-            // Route them through shared VM helpers (CRUSH-200).
-            match op {
-                py_ast::Operator::Div => Ok(Expression::CapabilityCall {
-                    name: "math.truediv".to_string(),
-                    args: vec![left, right],
-                    meta,
-                }),
-                py_ast::Operator::FloorDiv => Ok(Expression::CapabilityCall {
-                    name: "math.floordiv".to_string(),
-                    args: vec![left, right],
-                    meta,
-                }),
-                py_ast::Operator::Mod => Ok(Expression::CapabilityCall {
-                    name: "math.floormod".to_string(),
-                    args: vec![left, right],
-                    meta,
-                }),
-                _ => {
-                    let operator = match op {
-                        py_ast::Operator::Add => "+",
-                        py_ast::Operator::Sub => "-",
-                        py_ast::Operator::Mult => "*",
-                        py_ast::Operator::Pow => "**",
-                        py_ast::Operator::LShift => "<<",
-                        py_ast::Operator::RShift => ">>",
-                        py_ast::Operator::BitOr => "|",
-                        py_ast::Operator::BitXor => "^",
-                        py_ast::Operator::BitAnd => "&",
-                        py_ast::Operator::MatMult => "@",
-                        // Handled above.
-                        py_ast::Operator::Div
-                        | py_ast::Operator::FloorDiv
-                        | py_ast::Operator::Mod => unreachable!(),
-                    };
-                    Ok(Expression::BinaryOp {
-                        operator: operator.to_string(),
-                        left: Box::new(left),
-                        right: Box::new(right),
-                        meta,
-                    })
-                }
-            }
+            Ok(lower_binop(op, left, right, meta))
         }
         py_ast::Expr::UnaryOp(py_ast::ExprUnaryOp { op, operand, .. }) => {
             let operand = lower_expr(operand, ctx)?;
@@ -997,6 +955,51 @@ pub(crate) fn lower_expr_hoist(
     }
 }
 
+/// `left op right`, shared by `x op y` and `x op= y` so the two can't drift.
+/// Python `/`, `//` and `%` differ from Crush's truncating DIV/MOD, so they go
+/// through shared VM helpers (CRUSH-200).
+pub(crate) fn lower_binop(
+    op: &py_ast::Operator,
+    left: Expression,
+    right: Expression,
+    meta: HashMap<String, serde_json::Value>,
+) -> Expression {
+    let helper = match op {
+        py_ast::Operator::Div => Some("math.truediv"),
+        py_ast::Operator::FloorDiv => Some("math.floordiv"),
+        py_ast::Operator::Mod => Some("math.floormod"),
+        _ => None,
+    };
+    if let Some(name) = helper {
+        return Expression::CapabilityCall {
+            name: name.to_string(),
+            args: vec![left, right],
+            meta,
+        };
+    }
+    let operator = match op {
+        py_ast::Operator::Add => "+",
+        py_ast::Operator::Sub => "-",
+        py_ast::Operator::Mult => "*",
+        py_ast::Operator::Pow => "**",
+        py_ast::Operator::LShift => "<<",
+        py_ast::Operator::RShift => ">>",
+        py_ast::Operator::BitOr => "|",
+        py_ast::Operator::BitXor => "^",
+        py_ast::Operator::BitAnd => "&",
+        py_ast::Operator::MatMult => "@",
+        py_ast::Operator::Div | py_ast::Operator::FloorDiv | py_ast::Operator::Mod => {
+            unreachable!("handled above")
+        }
+    };
+    Expression::BinaryOp {
+        operator: operator.to_string(),
+        left: Box::new(left),
+        right: Box::new(right),
+        meta,
+    }
+}
+
 #[cfg(test)]
 mod comprehension_lowering_tests {
     use super::*;
@@ -1132,3 +1135,4 @@ mod comprehension_lowering_tests {
         assert!(err.to_string().contains("generator"));
     }
 }
+

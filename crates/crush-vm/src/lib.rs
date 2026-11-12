@@ -24,6 +24,7 @@ pub mod caps;
 pub mod cosm_gate;
 pub mod cosm_rt;
 pub mod debug;
+pub mod dom_args;
 #[cfg(feature = "native-plugins")]
 pub mod fastvm;
 pub mod float_text;

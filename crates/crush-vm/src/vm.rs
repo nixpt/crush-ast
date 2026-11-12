@@ -47,6 +47,13 @@ pub enum VmError {
     /// `parallel_map` couldn't run an item, or an item failed (#175).
     #[error("parallel_map: {0}")]
     Parallel(String),
+    /// A `parallel_map` item hit a fault that is fatal on the main VM too (a
+    /// quota, `sys.exit`, a capability-security refusal, …). Same text as
+    /// [`VmError::Parallel`], but not catchable: a `try` around `parallel_map`
+    /// must not turn a worker's limit into a value (that let a loop of
+    /// `try { parallel_map(..) }` outlive the wall-clock limit).
+    #[error("parallel_map: {0}")]
+    ParallelFatal(String),
     /// `CALL_VALUE` on something that isn't a function value (CRUSH-251).
     #[error("{0} is not callable: only functions can be called")]
     NotCallable(&'static str),
@@ -135,6 +142,72 @@ pub enum VmError {
     /// malformed kind table.
     #[error("{0}")]
     Cosm(String),
+}
+
+impl VmError {
+    /// Whether a `try` frame may catch this fault (CRUSH-369). A catchable
+    /// fault raised while a `try` handler is active in the current task
+    /// unwinds to that handler as a caught `Value::Error` (see
+    /// [`raise_fault_to_handler`]) instead of aborting the run.
+    ///
+    /// The classification, fault site by fault site:
+    ///
+    /// **Catchable — program-level faults a program can plausibly report and
+    /// recover from:**
+    /// - `ArrayBounds` / `BadIndex` — index or slice out of range (`a[99]`),
+    ///   a non-int index;
+    /// - `DivByZero` / `ArithmeticOverflow` — `/`, `%`, `<<`, negation;
+    /// - `TypeError` — an operand of the wrong type at run time;
+    /// - `NotCallable` / `FuncArity` / `ApplyArgsType` — calling a non-function
+    ///   or a function with the wrong argument count;
+    /// - `CapFailed` / `CapArity` — a **registered, granted** capability ran
+    ///   and failed (`fs.read` of a missing file — CRUSH-241/#370's wording)
+    ///   or was given the wrong argument count. A CLI can catch these, report,
+    ///   and exit with its own status (#369);
+    /// - `Io` — a capability's I/O failed;
+    /// - `Parallel` — a `parallel_map` worker or item failed (#175) with a
+    ///   fault that is itself catchable (`ParallelFatal` is the rest);
+    /// - `PrintFunc` — printing a function value in a language-styled printer.
+    ///
+    /// **Fatal — still aborts the run even inside `try`:**
+    /// - the quotas (`StackQuota`, `StepQuota`, `OutputQuota`,
+    ///   `WallTimeQuota`, `CallDepthQuota`) — the sandbox's own limits, not
+    ///   the program's;
+    /// - `UnknownCap` / `CapDenied` / `CapNotDeclared` — capability-security
+    ///   decisions (an ungranted or undeclared name), unlike a *failing
+    ///   granted* capability, which is `CapFailed` above (#67's distinction);
+    /// - `ParallelFatal` — any fatal fault from inside a `parallel_map` item;
+    /// - `Exit` — a deliberate `sys.exit(code)` must end the run: a CLI's
+    ///   own exit status is not trappable;
+    /// - broken VM/bytecode state (`StackUnderflow`, `UnknownOpcode`,
+    ///   `TruncatedInstruction`, `ConstOutOfRange`, `UninitSlot`, `BadJump`,
+    ///   `UnknownFunction`, `Unsupported`) — a compiler or VM bug, not a
+    ///   program fault;
+    /// - `Uncaught` — a `THROW` that found no handler at the throw site
+    ///   (a catch block rethrowing to no outer handler aborts);
+    /// - `LangRuntimeError` — a polyglot block's failure is fatal by the #312
+    ///   contract (its partial output is dropped); guest exceptions are the
+    ///   guest's own to catch;
+    /// - `Cosm` — COSM kind-table failures stay fatal (CRUSH-zorro-43's
+    ///   own design).
+    pub fn is_catchable(&self) -> bool {
+        matches!(
+            self,
+            VmError::Io(_)
+                | VmError::Parallel(_)
+                | VmError::NotCallable(_)
+                | VmError::FuncArity { .. }
+                | VmError::ApplyArgsType(_)
+                | VmError::PrintFunc(_)
+                | VmError::TypeError { .. }
+                | VmError::ArrayBounds { .. }
+                | VmError::BadIndex(_)
+                | VmError::DivByZero
+                | VmError::ArithmeticOverflow
+                | VmError::CapFailed { .. }
+                | VmError::CapArity { .. }
+        )
+    }
 }
 
 /// Distinguishes the two ways an `EXEC_LANG` polyglot block can fail at
@@ -743,6 +816,53 @@ pub struct TryHandler {
     pub handler_ip: usize,
     pub call_depth: usize,
     pub stack_len: usize,
+}
+
+/// Raise a VM fault at the innermost active `try` handler (CRUSH-369): a
+/// catchable fault ([`VmError::is_catchable`]) becomes a caught
+/// `Value::Error` carrying the fault's message, and execution resumes at the
+/// handler — exactly the unwind a `THROW` of that value would do, including
+/// catching a fault raised in a callee at the caller's `try` (CRUSH-126).
+///
+/// One shared implementation so the scheduler and the PortableVm cannot drift
+/// on which faults are catchable or how the unwind works — the same rule that
+/// keeps `io_print`/`io_read` and the polyglot-capture contract one shared
+/// source of truth.
+///
+/// `Ok(handler_ip)` — the fault was caught: the handler was popped, the call
+/// stack and operand stack truncated to where `ENTER_TRY` ran, and the error
+/// value pushed. The caller only sets the next IP to `handler_ip`.
+///
+/// `Err(err)` — the fault stays fatal: either the fault kind is not
+/// catchable, or no handler was active (`err` is the original fault), or the
+/// unwind would escape an inline-lowered polyglot block, which fails the
+/// block (`err` is that `LangRuntimeError`, partial output dropped — #312).
+pub fn raise_fault_to_handler<F>(
+    err: VmError,
+    try_stack: &mut Vec<TryHandler>,
+    call_stack: &mut Vec<F>,
+    stack: &mut Vec<Value>,
+    captures: &mut Vec<crate::block_capture::OutputCapture>,
+) -> Result<usize, VmError> {
+    if !err.is_catchable() {
+        return Err(err);
+    }
+    let handler_depth = try_stack.last().map(|h| h.call_depth);
+    if let Some(block_failed) = crate::block_capture::escaping_throw(
+        captures,
+        handler_depth,
+        &Value::Error(err.to_string()),
+    ) {
+        return Err(block_failed);
+    }
+    if let Some(handler) = try_stack.pop() {
+        // Unwind to the frame and stack height that entered the try.
+        call_stack.truncate(handler.call_depth);
+        stack.truncate(handler.stack_len);
+        stack.push(Value::Error(err.to_string()));
+        return Ok(handler.handler_ip);
+    }
+    Err(err)
 }
 
 /// Per-thread execution state for the green-thread scheduler.
