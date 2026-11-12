@@ -47,6 +47,13 @@ pub enum VmError {
     /// `parallel_map` couldn't run an item, or an item failed (#175).
     #[error("parallel_map: {0}")]
     Parallel(String),
+    /// A `parallel_map` item hit a fault that is fatal on the main VM too (a
+    /// quota, `sys.exit`, a capability-security refusal, …). Same text as
+    /// [`VmError::Parallel`], but not catchable: a `try` around `parallel_map`
+    /// must not turn a worker's limit into a value (that let a loop of
+    /// `try { parallel_map(..) }` outlive the wall-clock limit).
+    #[error("parallel_map: {0}")]
+    ParallelFatal(String),
     /// `CALL_VALUE` on something that isn't a function value (CRUSH-251).
     #[error("{0} is not callable: only functions can be called")]
     NotCallable(&'static str),
@@ -158,7 +165,8 @@ impl VmError {
     ///   or was given the wrong argument count. A CLI can catch these, report,
     ///   and exit with its own status (#369);
     /// - `Io` — a capability's I/O failed;
-    /// - `Parallel` — a `parallel_map` worker or item failed (#175);
+    /// - `Parallel` — a `parallel_map` worker or item failed (#175) with a
+    ///   fault that is itself catchable (`ParallelFatal` is the rest);
     /// - `PrintFunc` — printing a function value in a language-styled printer.
     ///
     /// **Fatal — still aborts the run even inside `try`:**
@@ -168,6 +176,7 @@ impl VmError {
     /// - `UnknownCap` / `CapDenied` / `CapNotDeclared` — capability-security
     ///   decisions (an ungranted or undeclared name), unlike a *failing
     ///   granted* capability, which is `CapFailed` above (#67's distinction);
+    /// - `ParallelFatal` — any fatal fault from inside a `parallel_map` item;
     /// - `Exit` — a deliberate `sys.exit(code)` must end the run: a CLI's
     ///   own exit status is not trappable;
     /// - broken VM/bytecode state (`StackUnderflow`, `UnknownOpcode`,

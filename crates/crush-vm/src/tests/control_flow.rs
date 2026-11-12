@@ -246,14 +246,28 @@ fn fault_unwinds_to_a_handler_inside_the_polyglot_block() {
 
 #[test]
 fn uncatchable_faults_are_refused_by_the_shared_unwinder() {
-    // Quota exhaustion and a deliberate sys.exit stay fatal even with a
+    // Quota exhaustion, a deliberate sys.exit, capability-security refusals
+    // and a fatal fault from a parallel_map item stay fatal even with a
     // handler active: the unwinder returns them untouched.
     let mut try_stack = vec![TryHandler {
         handler_ip: 7,
         call_depth: 1,
         stack_len: 0,
     }];
-    for fatal in [VmError::CallDepthQuota(64), VmError::Exit(3)] {
+    let fatal_kinds = [
+        VmError::CallDepthQuota(64),
+        VmError::StackQuota(1024),
+        VmError::StepQuota(10),
+        VmError::OutputQuota(10),
+        VmError::WallTimeQuota(10),
+        VmError::Exit(3),
+        VmError::UnknownCap("fs.read".into()),
+        VmError::CapDenied("fs.read".into()),
+        VmError::CapNotDeclared("fs.read".into()),
+        VmError::ParallelFatal("item 0: step quota exceeded".into()),
+    ];
+    for fatal in fatal_kinds {
+        let want = fatal.to_string();
         let mut call_stack = vec![
             Frame {
                 return_ip: None,
@@ -276,10 +290,7 @@ fn uncatchable_faults_are_refused_by_the_shared_unwinder() {
             &mut captures,
         )
         .expect_err("stays fatal");
-        assert!(
-            matches!(out, VmError::CallDepthQuota(_) | VmError::Exit(_)),
-            "{out:?}"
-        );
+        assert_eq!(out.to_string(), want, "returned untouched");
         assert!(stack.is_empty(), "nothing was pushed for {out:?}");
     }
 }

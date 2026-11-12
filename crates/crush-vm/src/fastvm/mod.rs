@@ -164,13 +164,16 @@ impl FastVM {
                     // with the CVM1 engines on fault-catching. Other faults
                     // stay fatal.
                     if execution::is_catchable_fault(&e)
-                        && let Some((frame_index, target_pc)) =
+                        && let Some((frame_index, (target_pc, stack_len))) =
                             execution::handler_frame(&self.call_stack)
                     {
                         self.call_stack.truncate(frame_index + 1);
                         let frame = self.call_stack.last_mut().expect("frame just matched");
                         frame.handlers.pop();
                         self.pc = target_pc;
+                        // Operands of the faulting expression are dropped, as
+                        // on CVM1 (a fault, unlike a throw, can happen mid-expression).
+                        self.stack.truncate(stack_len);
                         self.stack
                             .push(RuntimeValue::String(execution::fault_message(&e)));
                         continue;
@@ -418,6 +421,40 @@ mod tests {
             FastYield::Finished(Some(RuntimeValue::String("division by zero".to_string()))),
             "the fault unwinds to the handler as the caught message"
         );
+    }
+
+    #[test]
+    fn a_caught_fault_or_throw_restores_the_stack_height_of_its_try() {
+        // CRUSH-369 review: a fault can happen mid-expression, so operands
+        // pushed since `EnterTry` (the 5 here) must be dropped before the
+        // handler runs, as CVM1 does — else a `try` in a loop grows the stack.
+        // h (pc 8) pops the caught value; done (pc 9) halts on an empty stack.
+        let fault = make_simple_program(vec![
+            FastInstr::new(FastOp::EnterTry, 8, 0),
+            FastInstr::new(FastOp::PushInt, 5, 0),
+            FastInstr::new(FastOp::PushInt, 1, 0),
+            FastInstr::new(FastOp::PushInt, 0, 0),
+            FastInstr::simple(FastOp::Div),
+            FastInstr::simple(FastOp::Add),
+            FastInstr::simple(FastOp::ExitTry),
+            FastInstr::new(FastOp::Jump, 9, 0),
+            FastInstr::simple(FastOp::Pop),
+            FastInstr::simple(FastOp::Halt),
+        ]);
+        assert_eq!(make_vm(fault).run(10_000), FastYield::Finished(None));
+        let throw = make_simple_program(vec![
+            FastInstr::new(FastOp::EnterTry, 8, 0),
+            FastInstr::new(FastOp::PushInt, 5, 0),
+            FastInstr::new(FastOp::PushInt, 9, 0),
+            FastInstr::simple(FastOp::Throw),
+            FastInstr::simple(FastOp::Halt),
+            FastInstr::simple(FastOp::Halt),
+            FastInstr::simple(FastOp::Halt),
+            FastInstr::simple(FastOp::Halt),
+            FastInstr::simple(FastOp::Pop),
+            FastInstr::simple(FastOp::Halt),
+        ]);
+        assert_eq!(make_vm(throw).run(10_000), FastYield::Finished(None));
     }
 
     #[test]

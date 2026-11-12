@@ -1607,6 +1607,11 @@ fn execute_one(
                     },
                 );
                 let (output, results) = mapped?;
+                // Each item runs under a fresh deadline, so the main VM's own
+                // wall clock is checked here, not only every CHECK_EVERY steps.
+                if crate::wall::remaining().is_some_and(|r| r.is_zero()) {
+                    return Err(crate::wall::expired(quotas.max_wall_time_ms));
+                }
                 if !output.is_empty() {
                     *out_len += output.len();
                     if *out_len > quotas.max_output {

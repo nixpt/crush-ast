@@ -14,10 +14,10 @@ use crate::value::RuntimeValue;
 use std::sync::Arc;
 
 /// The innermost call frame with an active try handler, and that handler's
-/// PC. Shared by `FastOp::Throw` and the run loop's fault recovery
+/// PC and saved stack height. Shared by `FastOp::Throw` and the run loop's fault recovery
 /// (CRUSH-369) so a thrown value and a catchable fault unwind the same way —
 /// cross-function walks included.
-pub(crate) fn handler_frame(call_stack: &[FastFrame]) -> Option<(usize, usize)> {
+pub(crate) fn handler_frame(call_stack: &[FastFrame]) -> Option<(usize, (usize, usize))> {
     let index = call_stack
         .iter()
         .rposition(|frame| !frame.handlers.is_empty())?;
@@ -1084,7 +1084,7 @@ pub fn execute_one(
         FastOp::EnterTry => {
             let target_pc = instr.arg as usize;
             if let Some(frame) = call_stack.last_mut() {
-                frame.handlers.push(target_pc);
+                frame.handlers.push((target_pc, stack.len()));
             }
         }
 
@@ -1097,11 +1097,12 @@ pub fn execute_one(
         FastOp::Throw => {
             let err_val = stack.pop().ok_or(FastError::StackUnderflow)?;
             match handler_frame(call_stack) {
-                Some((frame_index, target_pc)) => {
+                Some((frame_index, (target_pc, stack_len))) => {
                     call_stack.truncate(frame_index + 1);
                     let frame = call_stack.last_mut().expect("frame just matched");
                     frame.handlers.pop();
                     *pc = target_pc;
+                    stack.truncate(stack_len);
                     stack.push(err_val);
                 }
                 None => {
