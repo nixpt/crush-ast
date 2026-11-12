@@ -534,6 +534,9 @@ fn run_from(
     // CRUSH-186: one wall-clock deadline for the whole run.
     let wall_deadline = crate::wall::deadline_in(quotas.max_wall_time_ms);
     let _wall_guard = wall_deadline.map(|d| crate::wall::enter(d, quotas.max_wall_time_ms));
+    // An enclosing run's earlier deadline wins (`enter` keeps it): a
+    // parallel_map item checks the caller's deadline, not a fresh one (#422).
+    let wall_deadline = crate::wall::current().map(|(d, _)| d).or(wall_deadline);
     let mut wall_ticks: usize = 0;
     let code = &program.code;
     let n = code.len();
@@ -1607,8 +1610,9 @@ fn execute_one(
                     },
                 );
                 let (output, results) = mapped?;
-                // Each item runs under a fresh deadline, so the main VM's own
-                // wall clock is checked here, not only every CHECK_EVERY steps.
+                // Items share the main VM's deadline (#422); an item that hit
+                // it fails the call, and this also catches a deadline that
+                // passed just as the last item finished.
                 if crate::wall::remaining().is_some_and(|r| r.is_zero()) {
                     return Err(crate::wall::expired(quotas.max_wall_time_ms));
                 }
@@ -2425,10 +2429,14 @@ pub(crate) fn parallel_map_counted(
         let rebuilds = std::sync::atomic::AtomicUsize::new(0);
         let slots: Vec<std::sync::Mutex<Option<ItemResult>>> =
             (0..n).map(|_| std::sync::Mutex::new(None)).collect();
+        // Workers share the caller's deadline (#422): each thread installs it
+        // before running items, so an item can't outlive the main VM's budget.
+        let parent_deadline = crate::wall::current();
         std::thread::scope(|scope| {
             for _ in 0..threads {
                 scope.spawn(|| {
                     IN_WORKER.with(|w| w.set(true));
+                    let _wall_guard = parent_deadline.map(|(d, l)| crate::wall::enter(d, l));
                     // Built on this thread's first item: values aren't Send.
                     let mut worker: Option<Worker> = None;
                     loop {

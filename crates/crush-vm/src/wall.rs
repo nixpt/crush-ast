@@ -41,6 +41,13 @@ pub fn enter(deadline: Instant, limit_ms: u64) -> DeadlineGuard {
     DeadlineGuard(prev)
 }
 
+/// The active run's deadline and its configured limit on this thread, if any.
+/// `parallel_map` hands this to its worker threads so items share the
+/// caller's deadline instead of each starting a fresh one (#422).
+pub fn current() -> Option<(Instant, u64)> {
+    DEADLINE.with(|d| d.get())
+}
+
 /// The configured limit of the active run, if any (what an error should name).
 pub fn limit_ms() -> Option<u64> {
     DEADLINE.with(|d| d.get()).map(|(_, l)| l)
