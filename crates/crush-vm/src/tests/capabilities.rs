@@ -279,7 +279,12 @@ fn cap_pop_on_an_empty_array_returns_null() {
 
 #[test]
 fn cap_pop_rejects_a_non_array_receiver() {
-    let program = assemble("PUSH 5\nCAP_CALL \"pop\" 1\nHALT", Some(&["pop"]), Some("t")).unwrap();
+    let program = assemble(
+        "PUSH 5\nCAP_CALL \"pop\" 1\nHALT",
+        Some(&["pop"]),
+        Some("t"),
+    )
+    .unwrap();
     assert!(run(&program, &Quotas::default()).is_err());
 }
 
@@ -290,14 +295,18 @@ fn portable_vm_pop_matches_the_scheduler() {
     let mut vm = crate::PortableVm::new(program.clone());
     let via_portable = vm.run().expect("portable vm run");
     let via_scheduler = run(&program, &Quotas::default()).expect("scheduler run");
-    assert_eq!(via_portable.stack, via_scheduler.stack, "pop must not diverge between the CVM1 engines");
+    assert_eq!(
+        via_portable.stack, via_scheduler.stack,
+        "pop must not diverge between the CVM1 engines"
+    );
     assert_eq!(via_portable.stack, vec![Value::Int(2)]);
 }
 
 #[test]
 fn cap_str_ord_chr_are_registered_one_arg_returning() {
     for name in ["str.ord", "str.chr"] {
-        let spec = crate::capabilities().get(name)
+        let spec = crate::capabilities()
+            .get(name)
             .unwrap_or_else(|| panic!("{name} should be in the portable registry"));
         assert_eq!(spec.argc, Some(1));
         assert!(spec.returns);
@@ -311,7 +320,10 @@ fn cap_str_ord_chr_round_trip() {
     assert_eq!(r.stack, vec![Value::Int(65)]);
     let r = run_src_with_perms("PUSH 66\nCAP_CALL \"str.chr\" 1\nHALT", &["str.chr"]);
     assert_eq!(r.stack, vec![Value::Str("B".to_string())]);
-    let r = run_src_with_perms("PUSH_STR \"é\"\nCAP_CALL \"str.ord\" 1\nCAP_CALL \"str.chr\" 1\nHALT", &["str.ord", "str.chr"]);
+    let r = run_src_with_perms(
+        "PUSH_STR \"é\"\nCAP_CALL \"str.ord\" 1\nCAP_CALL \"str.chr\" 1\nHALT",
+        &["str.ord", "str.chr"],
+    );
     assert_eq!(r.stack, vec![Value::Str("é".to_string())]);
 }
 
@@ -325,12 +337,30 @@ fn cap_str_ord_chr_match_conv_ord_chr_exactly() {
         ("PUSH_STR \"é\"", "PUSH 233"),
         ("PUSH_STR \"󰀀\"", "PUSH 130048"),
     ] {
-        let via_conv = run_src_with_perms(&format!("{ord_push}\nCAP_CALL \"conv.ord\" 1\nHALT"), &["conv.ord"]);
-        let via_str = run_src_with_perms(&format!("{ord_push}\nCAP_CALL \"str.ord\" 1\nHALT"), &["str.ord"]);
-        assert_eq!(via_conv.stack, via_str.stack, "str.ord must match conv.ord for {ord_push}");
-        let via_conv = run_src_with_perms(&format!("{chr_push}\nCAP_CALL \"conv.chr\" 1\nHALT"), &["conv.chr"]);
-        let via_str = run_src_with_perms(&format!("{chr_push}\nCAP_CALL \"str.chr\" 1\nHALT"), &["str.chr"]);
-        assert_eq!(via_conv.stack, via_str.stack, "str.chr must match conv.chr for {chr_push}");
+        let via_conv = run_src_with_perms(
+            &format!("{ord_push}\nCAP_CALL \"conv.ord\" 1\nHALT"),
+            &["conv.ord"],
+        );
+        let via_str = run_src_with_perms(
+            &format!("{ord_push}\nCAP_CALL \"str.ord\" 1\nHALT"),
+            &["str.ord"],
+        );
+        assert_eq!(
+            via_conv.stack, via_str.stack,
+            "str.ord must match conv.ord for {ord_push}"
+        );
+        let via_conv = run_src_with_perms(
+            &format!("{chr_push}\nCAP_CALL \"conv.chr\" 1\nHALT"),
+            &["conv.chr"],
+        );
+        let via_str = run_src_with_perms(
+            &format!("{chr_push}\nCAP_CALL \"str.chr\" 1\nHALT"),
+            &["str.chr"],
+        );
+        assert_eq!(
+            via_conv.stack, via_str.stack,
+            "str.chr must match conv.chr for {chr_push}"
+        );
     }
     for source in [
         "PUSH_STR \"\"\nCAP_CALL \"str.ord\" 1\nHALT",
@@ -339,6 +369,9 @@ fn cap_str_ord_chr_match_conv_ord_chr_exactly() {
         "PUSH 1114112\nCAP_CALL \"str.chr\" 1\nHALT",
     ] {
         let program = assemble(source, Some(&["str.ord", "str.chr"]), Some("test")).unwrap();
-        assert!(run(&program, &Quotas::default()).is_err(), "expected rejection: {source}");
+        assert!(
+            run(&program, &Quotas::default()).is_err(),
+            "expected rejection: {source}"
+        );
     }
 }

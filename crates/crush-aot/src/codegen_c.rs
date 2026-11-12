@@ -2269,7 +2269,9 @@ fn emit_c_instr(
                 // only the removed element stays — null for an empty array —
                 // matching the portable VM's dispatch.
                 "pop" if argc != 1 => {
-                    unsupported = Some(format!("cap_call 'pop' with {argc} arguments (the array receiver)"));
+                    unsupported = Some(format!(
+                        "cap_call 'pop' with {argc} arguments (the array receiver)"
+                    ));
                 }
                 "pop" => {
                     out.push_str(&format!("                {{ Value __arr = _pop(); Value __v = mk_null(); if (__arr.tag == TAG_ARRAY) {{ int __ai = __arr.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; if (__a->len > 0) {{ __v = __a->data[--__a->len]; }} }} }} _push(__v); }} _pc={next_pc}; break; // cap_call pop\n"));

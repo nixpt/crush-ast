@@ -2520,10 +2520,21 @@ impl PortableVm {
                     // (CRUSH-391) — not the array: `let x = a.pop()` wants the
                     // element, and the compiler compensates the ARR_POP
                     // opcode's [array, value] pair only on the opcode path.
-                    if args.len() != 1 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 1, got: args.len() }); }
+                    if args.len() != 1 {
+                        return Err(VmError::CapArity {
+                            cap: cap.to_string(),
+                            expected: 1,
+                            got: args.len(),
+                        });
+                    }
                     match &args[0] {
-                        Value::Array(elems) => Ok(Some(elems.borrow_mut().pop().unwrap_or(Value::Null))),
-                        _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                        Value::Array(elems) => {
+                            Ok(Some(elems.borrow_mut().pop().unwrap_or(Value::Null)))
+                        }
+                        _ => Err(VmError::TypeError {
+                            expected: "array",
+                            got: args[0].type_name(),
+                        }),
                     }
                 }
                 "arr_set" => {

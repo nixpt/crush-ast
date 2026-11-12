@@ -702,7 +702,10 @@ fn crush_run_issue_370_repro_pop_eprint_str_ord() {
         stdout.lines().all(|l| l != "e"),
         "the eprint text must not leak to stdout"
     );
-    assert_eq!(stderr, "e\n", "io.eprint writes to stderr (and only stderr)");
+    assert_eq!(
+        stderr, "e\n",
+        "io.eprint writes to stderr (and only stderr)"
+    );
 }
 
 // CRUSH-391: pop's contract end to end — the element is the value, the array
@@ -713,7 +716,11 @@ fn crush_run_method_pop_removes_and_returns_the_last_element() {
         "fn main() {\n    let a = [1, 2, 3]\n    let x = a.pop()\n    print(x)\n    print(len(a))\n    print(a.pop())\n    let empty = []\n    print(empty.pop())\n}\n",
     );
     let output = run_crush_run(&["run", &path]);
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "3\n2\n2\nnull\n");
 }
 
@@ -723,8 +730,14 @@ fn crush_run_method_pop_removes_and_returns_the_last_element() {
 fn crush_run_caps_lists_pop_and_str_ord_chr_as_ambient() {
     let output = run_crush_run(&["caps"]);
     let text = String::from_utf8_lossy(&output.stdout);
-    assert!(text.contains("str.ord/chr"), "caps should list str.ord/chr, got: {text}");
-    assert!(text.contains("push/pop"), "caps should list push/pop, got: {text}");
+    assert!(
+        text.contains("str.ord/chr"),
+        "caps should list str.ord/chr, got: {text}"
+    );
+    assert!(
+        text.contains("push/pop"),
+        "caps should list push/pop, got: {text}"
+    );
 
     let (_dir, path) = temp_program(
         "fn main() {\n    let a = [1, 2]\n    let x = a.pop()\n    io.eprint(\"e\")\n    print(str.ord(\"A\"))\n}\n",

@@ -2643,10 +2643,21 @@ fn dispatch_cap(
             "pop" => {
                 // Same contract as portable_vm's dispatch: the removed element
                 // (null when empty), the method-call form's value (CRUSH-391).
-                if args.len() != 1 { return Err(VmError::CapArity { cap: cap.to_string(), expected: 1, got: args.len() }); }
+                if args.len() != 1 {
+                    return Err(VmError::CapArity {
+                        cap: cap.to_string(),
+                        expected: 1,
+                        got: args.len(),
+                    });
+                }
                 match &args[0] {
-                    Value::Array(elems) => Ok(Some(elems.borrow_mut().pop().unwrap_or(Value::Null))),
-                    _ => Err(VmError::TypeError { expected: "array", got: args[0].type_name() }),
+                    Value::Array(elems) => {
+                        Ok(Some(elems.borrow_mut().pop().unwrap_or(Value::Null)))
+                    }
+                    _ => Err(VmError::TypeError {
+                        expected: "array",
+                        got: args[0].type_name(),
+                    }),
                 }
             }
             "arr_set" => {

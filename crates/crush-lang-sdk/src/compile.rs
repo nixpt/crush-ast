@@ -2217,11 +2217,17 @@ mod tests {
         let casm = crush_frontend::compile_crush_source(source).expect("compile method pop");
         let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower method pop");
         assert!(
-            lowered.instructions.iter().any(|i| i.op == crush_vm::fastvm::FastOp::ArrayPopValue),
+            lowered
+                .instructions
+                .iter()
+                .any(|i| i.op == crush_vm::fastvm::FastOp::ArrayPopValue),
             "cap_call \"pop\" must lower to ArrayPopValue (element-only, CRUSH-391)"
         );
         assert!(
-            !lowered.instructions.iter().any(|i| i.op == crush_vm::fastvm::FastOp::ArrayPop),
+            !lowered
+                .instructions
+                .iter()
+                .any(|i| i.op == crush_vm::fastvm::FastOp::ArrayPop),
             "the method form must not use the [array, value] ArrayPop opcode"
         );
     }
@@ -2238,11 +2244,8 @@ mod tests {
         "#;
         let casm = crush_frontend::compile_crush_source(source).expect("compile method pop");
         let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower method pop");
-        let mut vm = crush_vm::fastvm::FastVM::new(
-            lowered,
-            Vec::new(),
-            std::sync::Arc::new(TestHal),
-        );
+        let mut vm =
+            crush_vm::fastvm::FastVM::new(lowered, Vec::new(), std::sync::Arc::new(TestHal));
         assert_eq!(
             vm.run(10_000),
             crush_vm::fastvm::FastYield::Finished(Some(crush_vm::RuntimeValue::Int(9)))

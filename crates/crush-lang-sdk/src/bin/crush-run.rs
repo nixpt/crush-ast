@@ -521,7 +521,9 @@ fn list_caps() {
     println!("  str.concat    concatenate args → string");
     println!("  str.len       byte length of a string");
     println!("  str.ord/chr   character ↔ codepoint (the str.* names for conv.ord/conv.chr)");
-    println!("  push/pop      array push (returns the array) / pop (returns the element; a.pop() method form)");
+    println!(
+        "  push/pop      array push (returns the array) / pop (returns the element; a.pop() method form)"
+    );
     println!();
     println!("Host capabilities (enable with --fs / --env / --time):");
     println!("  fs.read PATH           read file contents");

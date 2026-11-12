@@ -1209,7 +1209,9 @@ fn emit_body(
                 // the removed element is the expression's value — only that
                 // stays on the stack, matching the portable VM's dispatch.
                 "pop" if argc != 1 => {
-                    unsupported = Some(format!("cap_call 'pop' with {argc} arguments (the array receiver)"));
+                    unsupported = Some(format!(
+                        "cap_call 'pop' with {argc} arguments (the array receiver)"
+                    ));
                 }
                 "pop" => {
                     out.push_str(&format!("{ind}{{ let __arr = stack.pop().unwrap_or(RuntimeValue::Null); let __v = if let RuntimeValue::Array(ref a) = __arr {{ a.borrow_mut().pop().unwrap_or(RuntimeValue::Null) }} else {{ RuntimeValue::Null }}; stack.push(__v); }}\n"));
