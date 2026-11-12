@@ -107,7 +107,10 @@ mod tests {
         let err = dispatch("query", Some(&caps), 1000).unwrap_err();
         let msg = err.to_string();
         assert!(matches!(err, VmError::CapDenied(_)), "{msg}");
-        assert!(msg.contains("dom_native.query") && msg.contains("not granted"), "{msg}");
+        assert!(
+            msg.contains("dom_native.query") && msg.contains("not granted"),
+            "{msg}"
+        );
         let none = dispatch("query", None, 1000).unwrap_err();
         assert_eq!(none.to_string(), msg);
     }
@@ -118,7 +121,10 @@ mod tests {
         caps.register(Box::new(Boom));
         let err = dispatch("query", Some(&caps), 1000).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("dom_native.query") && msg.contains("boom"), "{msg}");
+        assert!(
+            msg.contains("dom_native.query") && msg.contains("boom"),
+            "{msg}"
+        );
         assert!(!matches!(err, VmError::CapDenied(_)), "{msg}");
     }
 

@@ -14,11 +14,10 @@ use crush_lang_sdk::{HostCap, HostCapSpec, HostCaps};
 use crush_vm::bytecode::{DOM_QUERY, HALT, Program};
 use crush_vm::fastvm::{HostRequest, dom_request_denied};
 use crush_vm::portable_vm::PortableVm;
-use crush_vm::vm::{Quotas, Value};
 use crush_vm::run_with_caps;
+use crush_vm::vm::{Quotas, Value};
 
-const WANT: &str =
-    "dom_native.query: DOM op 'query' not granted / no DOM host registered";
+const WANT: &str = "dom_native.query: DOM op 'query' not granted / no DOM host registered";
 
 /// `DOM_QUERY` with the string operand (const-pool index 0) and `HALT`.
 fn dom_program() -> Program {
@@ -73,10 +72,14 @@ fn ungranted_dom_ops_fail_closed_with_the_same_error_on_every_engine() {
 
     // FastVM: the embedder seam names the same error for every DOM request
     // kind, granted or not.
-    let req = HostRequest::DomQuery { args: serde_json::json!({}) };
+    let req = HostRequest::DomQuery {
+        args: serde_json::json!({}),
+    };
     let denied = dom_request_denied(&req, Some(&caps_with(false))).expect("denied");
     assert!(
-        denied.to_string().contains("dom_native.query: DOM op 'query' not granted"),
+        denied
+            .to_string()
+            .contains("dom_native.query: DOM op 'query' not granted"),
         "{denied}"
     );
     assert!(dom_request_denied(&req, None).is_some());
@@ -84,7 +87,13 @@ fn ungranted_dom_ops_fail_closed_with_the_same_error_on_every_engine() {
     assert!(dom_request_denied(&req, Some(&granted)).is_none());
     // Non-DOM requests are not its business.
     assert!(
-        dom_request_denied(&HostRequest::AiQuery { args: serde_json::json!({}) }, None).is_none()
+        dom_request_denied(
+            &HostRequest::AiQuery {
+                args: serde_json::json!({})
+            },
+            None
+        )
+        .is_none()
     );
 }
 
@@ -107,7 +116,10 @@ fn a_failing_granted_handler_propagates_instead_of_null() {
     );
     let mut pvm = PortableVm::new(program);
     pvm.set_host_caps(boom());
-    let portable = pvm.run().expect_err("PortableVm must propagate").to_string();
+    let portable = pvm
+        .run()
+        .expect_err("PortableVm must propagate")
+        .to_string();
     assert_eq!(portable, sched, "engines agree on the propagated error");
 }
 
@@ -117,8 +129,8 @@ fn a_failing_granted_handler_propagates_instead_of_null() {
 fn the_registered_stubs_still_answer() {
     let program = dom_program();
     let caps = || caps_with(true);
-    let sched = run_with_caps(&program, &Quotas::default(), Some(&caps()))
-        .expect("granted must run");
+    let sched =
+        run_with_caps(&program, &Quotas::default(), Some(&caps())).expect("granted must run");
     let Value::Map(m) = sched.stack.last().expect("stub pushed") else {
         panic!("expected the stub Map, got {:?}", sched.stack.last());
     };

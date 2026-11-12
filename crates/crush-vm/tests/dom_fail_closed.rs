@@ -16,8 +16,7 @@ use crush_vm::portable_vm::PortableVm;
 use crush_vm::vm::{Quotas, Value};
 use crush_vm::{HostCaps, run_with_caps};
 
-const WANT: &str =
-    "dom_native.query: DOM op 'query' not granted / no DOM host registered";
+const WANT: &str = "dom_native.query: DOM op 'query' not granted / no DOM host registered";
 
 /// `DOM_QUERY` with the string operand (const-pool index 0) and `HALT`.
 fn dom_program() -> Program {
@@ -70,8 +69,7 @@ fn ungranted_dom_opcode_is_a_named_error_on_the_scheduler() {
         .expect_err("ungranted must refuse");
     let msg = err.to_string();
     assert!(msg.contains(WANT), "{msg}");
-    let bare =
-        run_with_caps(&program, &Quotas::default(), None).expect_err("no caps must refuse");
+    let bare = run_with_caps(&program, &Quotas::default(), None).expect_err("no caps must refuse");
     assert_eq!(bare.to_string(), msg, "same message with no caps at all");
 }
 
@@ -125,8 +123,8 @@ fn a_granted_handler_still_pushes_its_value() {
         caps.register(Box::new(Stub));
         caps
     };
-    let sched = run_with_caps(&program, &Quotas::default(), Some(&caps()))
-        .expect("granted must run");
+    let sched =
+        run_with_caps(&program, &Quotas::default(), Some(&caps())).expect("granted must run");
     assert_eq!(sched.stack.last(), Some(&Value::Str("node-1".into())));
     let mut pvm = PortableVm::new(program);
     pvm.set_host_caps(caps());
