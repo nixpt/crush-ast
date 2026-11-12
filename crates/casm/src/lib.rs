@@ -680,10 +680,13 @@ pub struct Program {
     /// the field existed (it is omitted when `None`, so such a program
     /// serializes exactly as before).
     ///
-    /// Keep this the **last** field: the binary format encodes a struct as a
-    /// positional array, and an omitted trailing field is what lets old
-    /// binary CASM (four fields) still load. In the binary format the module
-    /// is embedded as its canonical COSM JSON (see [`cosm_serde`]).
+    /// Keep this the **last** field: older positional binary CASM (structs as
+    /// arrays) could only omit a trailing field, which is what let old binary
+    /// CASM (four fields) still load. The binary format now encodes named
+    /// (structs as maps; #372, CRUSH-392), where an omitted field needs no
+    /// position, but old positional files still load either way. In the binary
+    /// format the module is embedded as its canonical COSM JSON (see
+    /// [`cosm_serde`]).
     #[serde(default, skip_serializing_if = "Option::is_none", with = "cosm_serde")]
     pub cosm: Option<crush_cosm::CosmModule>,
 }
@@ -770,7 +773,14 @@ impl Program {
                 let mut data = Vec::new();
                 // Add shebang
                 data.extend_from_slice(b"#!/usr/bin/env crush run\n");
-                rmp_serde::encode::write(&mut data, self).map_err(|e| {
+                // Named encoding (structs as maps): `Instruction` carries
+                // `#[serde(flatten)] args`, which only round-trips through a
+                // self-describing map — a positional array encoding (the old
+                // `write`) fails to decode with `invalid type: sequence,
+                // expected a map` (#372, CRUSH-392). The decoder accepts both
+                // maps and arrays, so old positional files still load; nothing
+                // loadable is lost (function-bearing `.casmb` never decoded).
+                rmp_serde::encode::write_named(&mut data, self).map_err(|e| {
                     crush_errors::CrushError::from(CasmError::SerializationError(e.to_string()))
                 })?;
                 Ok(data)
@@ -1147,7 +1157,9 @@ pub fn cosm_unsupported_reason_on(
 /// Serde for [`Program::cosm`]: the module as-is in human-readable formats
 /// (CASM JSON), and as its canonical COSM JSON text in binary ones. The COSM
 /// schema omits empty fields, which a positional binary encoding (MessagePack
-/// structs-as-arrays, as [`Format::Binary`] uses) can't represent.
+/// structs-as-arrays, as [`Format::Binary`] used before #372) can't represent;
+/// the named encoding now in use could, but the compact JSON-text embedding is
+/// kept (it is also what old readers understand).
 pub mod cosm_serde {
     use crush_cosm::CosmModule;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
