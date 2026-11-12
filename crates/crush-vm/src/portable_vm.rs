@@ -2287,6 +2287,8 @@ impl PortableVm {
             .map(|i| {
                 let mut vm = PortableVm::new(program.clone());
                 vm.quotas = self.quotas.clone();
+                // Items share this VM's deadline, not a fresh one each (#422).
+                vm.wall_deadline = self.wall_deadline;
                 vm.ip = entry;
                 vm.stack = worker.stack(i);
                 let result = vm.run();
@@ -2297,7 +2299,8 @@ impl PortableVm {
             })
             .collect();
         let mapped = crate::parallel::collect(results)?;
-        // Each item ran under a fresh deadline: check the main VM's own.
+        // Items share this VM's deadline (#422); also catch one that passed
+        // just as the last item finished.
         if let Some(deadline) = self.wall_deadline {
             crate::wall::check(deadline, self.quotas.max_wall_time_ms)?;
         }

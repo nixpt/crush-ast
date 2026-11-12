@@ -163,3 +163,74 @@ fn a_write_to_a_shared_captured_value_is_still_caught_per_item() {
         "{e}"
     );
 }
+
+// #422: every parallel_map item used to get a fresh wall deadline and the
+// caller checked its own only after the last item, so one call could run for
+// (items / threads) × max_wall_time_ms on the scheduler and items ×
+// max_wall_time_ms on the portable VM (one item after another). Items now
+// share the caller's deadline.
+#[test]
+fn parallel_map_items_share_the_callers_wall_deadline() {
+    const LIMIT_MS: u64 = 200;
+    // `items` spinning items mapped under a LIMIT_MS wall budget.
+    let spin_program = |items: usize| {
+        let mut src = String::from(".func main\n");
+        for _ in 0..items {
+            src.push_str("    PUSH 0\n");
+        }
+        src.push_str(&format!(
+            "    NEW_ARRAY {items}\n    MAKE_CLOSURE spin 1 0\n    CAP_CALL \"parallel_map\" 2\n    RET\n\
+             .func spin\n    STORE 0\nloop:\n    JMP loop\n"
+        ));
+        assemble(&src, Some(&["parallel_map"]), None).expect("assembly")
+    };
+    let quotas = Quotas {
+        max_steps: usize::MAX,
+        max_wall_time_ms: LIMIT_MS,
+        ..Quotas::default()
+    };
+    let bound = std::time::Duration::from_millis(LIMIT_MS * 3);
+
+    // Eight rounds of items per worker thread: ~8 × LIMIT_MS without the fix.
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let prog = spin_program(threads * 8);
+    let start = std::time::Instant::now();
+    let e = run(&prog, &quotas).unwrap_err();
+    let took = start.elapsed();
+    assert!(e.to_string().contains("wall"), "scheduler: {e}");
+    assert!(
+        took < bound,
+        "scheduler parallel_map ran {took:?} for a {LIMIT_MS} ms limit"
+    );
+
+    // The portable VM runs items in sequence: ~16 × LIMIT_MS without the fix.
+    let mut vm = crate::portable_vm::PortableVm::new(spin_program(16));
+    vm.set_quotas(quotas);
+    let start = std::time::Instant::now();
+    let e = vm.run().unwrap_err();
+    let took = start.elapsed();
+    assert!(e.to_string().contains("wall"), "portable: {e}");
+    assert!(
+        took < bound,
+        "portable parallel_map ran {took:?} for a {LIMIT_MS} ms limit"
+    );
+}
+
+// #430 review: a run nested in another run (an embedder's host cap calling
+// `run()`) stops at the enclosing run's earlier deadline, and the error must
+// name that run's limit, not the nested run's own.
+#[test]
+fn a_nested_run_names_the_enclosing_wall_limit() {
+    let prog = assemble(".func main\nloop:\n    JMP loop\n", None, None).expect("assembly");
+    let quotas = Quotas {
+        max_steps: usize::MAX,
+        max_wall_time_ms: 5_000,
+        ..Quotas::default()
+    };
+    let outer = crate::wall::deadline_in(50).expect("deadline");
+    let _guard = crate::wall::enter(outer, 50);
+    let start = std::time::Instant::now();
+    let e = run(&prog, &quotas).unwrap_err();
+    assert!(start.elapsed() < std::time::Duration::from_millis(1_000));
+    assert!(matches!(e, crate::vm::VmError::WallTimeQuota(50)), "{e:?}");
+}
