@@ -16,8 +16,16 @@ use crush_frontend::compile_crush_source;
 /// reflection) keeps this test honest about what the compiler actually does.
 fn known_receiver_capabilities() -> Vec<String> {
     let candidates = [
-        "parallel_map", "append", "push", "arr_set", "arr_get", "arr_slice", "make_range",
-        "io_print", "fs_read", "name_method",
+        "parallel_map",
+        "append",
+        "push",
+        "arr_set",
+        "arr_get",
+        "arr_slice",
+        "make_range",
+        "io_print",
+        "fs_read",
+        "name_method",
     ];
     let mut out = Vec::new();
     for name in candidates {
@@ -29,11 +37,13 @@ fn known_receiver_capabilities() -> Vec<String> {
         let is_cap = p.functions["main"].body.iter().any(|i| {
             i.op == "cap_call" && i.args.get("name").and_then(|v| v.as_str()) == Some(name)
         });
-        let is_member = p.functions["main"]
-            .body
-            .iter()
-            .any(|i| i.op == "call_member" && i.args.get("name").and_then(|v| v.as_str()) == Some(name));
-        assert!(is_cap || is_member, "{name}: neither cap_call nor call_member");
+        let is_member = p.functions["main"].body.iter().any(|i| {
+            i.op == "call_member" && i.args.get("name").and_then(|v| v.as_str()) == Some(name)
+        });
+        assert!(
+            is_cap || is_member,
+            "{name}: neither cap_call nor call_member"
+        );
         if is_cap {
             out.push(name.to_string());
         }
@@ -78,11 +88,16 @@ fn dotted_capability_names_are_never_receiver_capabilities() {
     // about bare names only.
     let p = compile_crush_source("fn main() { let s = fs.read(\"x\") }").unwrap();
     let body = &p.functions["main"].body;
-    assert!(body.iter().any(|i| i.op == "cap_call" && i.args["name"] == "fs.read"), "{body:?}");
+    assert!(
+        body.iter()
+            .any(|i| i.op == "cap_call" && i.args["name"] == "fs.read"),
+        "{body:?}"
+    );
     let p = compile_crush_source("fn main() { let h = { }; h.str_contains(\"x\") }").unwrap();
     let body = &p.functions["main"].body;
     assert!(
-        body.iter().any(|i| i.op == "call_member" && i.args["name"] == "str_contains"),
+        body.iter()
+            .any(|i| i.op == "call_member" && i.args["name"] == "str_contains"),
         "{body:?}"
     );
 }

@@ -30,8 +30,15 @@ const GPU_INTRINSICS: &[&str] = &[
 /// `h.add(41)` refuse with "not available in this host: add"). The
 /// `method_call_receiver_capabilities_agree` test in crush-lang-sdk fails
 /// when this list and the VM registry drift apart.
-const RECEIVER_CAPABILITIES: &[&str] =
-    &["parallel_map", "append", "push", "arr_set", "arr_get", "arr_slice", "make_range"];
+const RECEIVER_CAPABILITIES: &[&str] = &[
+    "parallel_map",
+    "append",
+    "push",
+    "arr_set",
+    "arr_get",
+    "arr_slice",
+    "make_range",
+];
 
 pub type CompileError = anyhow::Error;
 
@@ -2690,7 +2697,11 @@ impl Compiler {
                         // every member call, the receiver on top.
                         if RECEIVER_CAPABILITIES.contains(&method) {
                             self.all_permissions.insert(method.to_string());
-                            instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), meta));
+                            instrs.push(self.create_instr(
+                                "load",
+                                serde_json::json!({"name": obj_name}),
+                                meta,
+                            ));
                             // Push args in order: the receiver is already on the stack, then each
                             // argument, then cap_call pops them top-first and reverses, so the
                             // capability sees (receiver, arg1, arg2, …). (CRUSH-235: the old
@@ -2698,13 +2709,21 @@ impl Compiler {
                             for arg in args {
                                 self.compile_expr(arg, instrs)?;
                             }
-                            instrs.push(self.create_instr("cap_call", serde_json::json!({"name": method, "argc": args.len() + 1}), meta));
+                            instrs.push(self.create_instr(
+                                "cap_call",
+                                serde_json::json!({"name": method, "argc": args.len() + 1}),
+                                meta,
+                            ));
                             return Ok(());
                         }
                         for arg in args.iter().rev() {
                             self.compile_arg(arg, instrs)?;
                         }
-                        instrs.push(self.create_instr("load", serde_json::json!({"name": obj_name}), meta));
+                        instrs.push(self.create_instr(
+                            "load",
+                            serde_json::json!({"name": obj_name}),
+                            meta,
+                        ));
                         instrs.push(self.create_instr(
                             "call_member",
                             serde_json::json!({"name": method, "argc": args.len()}),

@@ -947,7 +947,10 @@ pub fn call_member(recv: &Value, name: &str, argc: usize) -> Result<MemberCall, 
         return match v {
             Some(v) => {
                 let f = crate::vm::callable(&v, argc)?;
-                Ok(MemberCall::Call(Callee { func: f.name.clone(), leading: f.captured.clone() }))
+                Ok(MemberCall::Call(Callee {
+                    func: f.name.clone(),
+                    leading: f.captured.clone(),
+                }))
             }
             None => Err(VmError::Cosm(format!(
                 "map has no member `{name}`: a member call on a map calls the value stored under the key"

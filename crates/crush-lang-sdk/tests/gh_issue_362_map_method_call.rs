@@ -68,7 +68,10 @@ fn a_map_field_not_holding_a_function_is_a_clear_error() {
 #[test]
 fn a_member_call_on_other_types_is_a_clear_error() {
     let e = run("fn main() {\n    let x = 5\n    print(x.foo())\n}\n").expect_err("errors");
-    assert!(e.contains("member calls resolve on struct instances (COSM Records) and maps"), "{e}");
+    assert!(
+        e.contains("member calls resolve on struct instances (COSM Records) and maps"),
+        "{e}"
+    );
 }
 
 /// Genuine host capability calls are unchanged: `fs.read` is still gated
