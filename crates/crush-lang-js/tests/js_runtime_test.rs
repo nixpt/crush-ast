@@ -135,7 +135,9 @@ fn compound_assignment_lowers_like_its_expanded_form() {
         strip(&mut v);
         v
     }
-    for op in ["-", "*", "%", "**", "&", "|", "^", "<<", ">>", ">>>"] {
+    for op in [
+        "+", "-", "*", "/", "%", "**", "&", "|", "^", "<<", ">>", ">>>",
+    ] {
         let compound = shape(&format!("let x = 9; x {op}= 2;"));
         let expanded = shape(&format!("let x = 9; x = x {op} 2;"));
         assert_eq!(compound, expanded, "`{op}=`");

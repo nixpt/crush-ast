@@ -17,6 +17,9 @@ use crate::lower_expr::{lower_binop, lower_constant, lower_expr, lower_expr_hois
 /// variable namespace crush-vm uses.
 static TRY_TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+/// Counter for `a[i] += v` temps (`__aug_obj_N`, `__aug_idx_N`).
+static AUG_TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 fn fresh_exc_temp() -> String {
     let n = TRY_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("__exc_{n}")
@@ -239,7 +242,48 @@ pub fn lower_stmt(stmt: &py_ast::Stmt, ctx: &LowerCtx<'_>) -> anyhow::Result<Sta
         }) => {
             let target_name: String = match target.as_ref() {
                 py_ast::Expr::Name(py_ast::ExprName { id, .. }) => id.to_string(),
-                _ => anyhow::bail!("augmented assignment target must be a name"),
+                // `a[i] += v` (#425): evaluate `a` and `i` once into temps,
+                // then read, combine and write back through them. Python's
+                // order is the same: target parts, the read, then `v`.
+                py_ast::Expr::Subscript(py_ast::ExprSubscript {
+                    value: obj, slice, ..
+                }) => {
+                    if matches!(slice.as_ref(), py_ast::Expr::Slice(_)) {
+                        anyhow::bail!("augmented assignment to a slice is not supported");
+                    }
+                    let n = AUG_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+                    let (obj_t, idx_t) = (format!("__aug_obj_{n}"), format!("__aug_idx_{n}"));
+                    let var = |name: &str| Expression::Var {
+                        name: name.to_string(),
+                        meta: meta.clone(),
+                    };
+                    let decl = |name: &str, value: Expression| Statement::VarDecl {
+                        name: name.to_string(),
+                        value,
+                        type_hint: CastType::Any,
+                        meta: meta.clone(),
+                    };
+                    let current = Expression::Index {
+                        target: Box::new(var(&obj_t)),
+                        index: Box::new(var(&idx_t)),
+                        meta: meta.clone(),
+                    };
+                    let hoisted = vec![
+                        decl(&obj_t, lower_expr(obj, ctx)?),
+                        decl(&idx_t, lower_expr(slice, ctx)?),
+                    ];
+                    let rhs = lower_binop(op, current, lower_expr(value, ctx)?, meta.clone());
+                    let actual = Statement::ExprStmt {
+                        expr: Expression::Call {
+                            function: "__crush_setindex__".to_string(),
+                            args: vec![var(&obj_t), var(&idx_t), rhs],
+                            meta: meta.clone(),
+                        },
+                        meta: meta.clone(),
+                    };
+                    return Ok(wrap_hoisted(hoisted, actual, &meta));
+                }
+                _ => anyhow::bail!("augmented assignment target must be a name or a subscript"),
             };
             let val = lower_expr(value, ctx)?;
             let left = Expression::Var {
