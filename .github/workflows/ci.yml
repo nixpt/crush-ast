@@ -492,6 +492,8 @@ jobs:
     name: Test (gui)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: 1.100.0
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -502,7 +504,11 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libfontconfig1-dev
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned on purpose (not @stable): clippy runs with -D warnings, so a new
+      # stable release would turn CI red with no code change (#437 hit this on
+      # 1.100). Bump the version deliberately, together with any new lint fixes.
+      # RUSTUP_TOOLCHAIN (job env) overrides rust-toolchain.toml's "stable".
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
@@ -519,6 +525,8 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      RUSTUP_TOOLCHAIN: 1.100.0
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -526,7 +534,11 @@ jobs:
           repository: nixpt/buckets
           path: buckets
       - run: mv buckets ..
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned on purpose (not @stable): clippy runs with -D warnings, so a new
+      # stable release would turn CI red with no code change (#437 hit this on
+      # 1.100). Bump the version deliberately, together with any new lint fixes.
+      # RUSTUP_TOOLCHAIN (job env) overrides rust-toolchain.toml's "stable".
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
