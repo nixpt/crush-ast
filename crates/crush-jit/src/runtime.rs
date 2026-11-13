@@ -340,8 +340,8 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let result = match container.to_ref() {
                 Some(ref_idx) => match arena.get(ref_idx) {
                     Some(Object::Array(items)) => match key.to_int() {
-                        Some(idx) => items
-                            .get(idx as usize)
+                        Some(idx) => wrap_index(idx, items.len())
+                            .and_then(|i| items.get(i))
                             .map(rtv_to_jit)
                             .unwrap_or(JitValue::null()),
                         None => JitValue::null(),
@@ -351,20 +351,17 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                         .map(rtv_to_jit)
                         .unwrap_or(JitValue::null()),
                     Some(Object::Str(s)) => match key.to_int() {
-                        Some(idx) => {
-                            let char_idx = idx as usize;
-                            s.chars()
-                                .nth(char_idx)
-                                .map(|c| {
-                                    if let Some(a) = arena_mut(ctx.arena) {
-                                        let cp = a.alloc(Object::Str(c.to_string()));
-                                        JitValue::from_ref(cp)
-                                    } else {
-                                        JitValue::null()
-                                    }
-                                })
-                                .unwrap_or(JitValue::null())
-                        }
+                        Some(idx) => wrap_index(idx, s.chars().count())
+                            .and_then(|i| s.chars().nth(i))
+                            .map(|c| {
+                                if let Some(a) = arena_mut(ctx.arena) {
+                                    let cp = a.alloc(Object::Str(c.to_string()));
+                                    JitValue::from_ref(cp)
+                                } else {
+                                    JitValue::null()
+                                }
+                            })
+                            .unwrap_or(JitValue::null()),
                         None => JitValue::null(),
                     },
                     _ => JitValue::null(),
@@ -546,8 +543,9 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 && let Some(arena) = arena_mut(ctx.arena)
                 && let Ok(Object::Array(arr)) = arena.get_mut(ref_idx)
             {
-                let i = idx as usize;
-                if i < arr.len() {
+                // #442: a negative index counts from the end. The helper has no
+                // error channel, so an out-of-range write is still dropped here.
+                if let Some(i) = wrap_index(idx, arr.len()) {
                     arr[i] = jit_to_rtv(val);
                 }
             }
@@ -1701,4 +1699,12 @@ impl Default for JitContext {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// A Python-style index into a sequence of `len` items: a negative index
+/// counts from the end. `None` when it is out of range (#442).
+fn wrap_index(idx: i64, len: usize) -> Option<usize> {
+    let ilen = i64::try_from(len).ok()?;
+    let i = if idx < 0 { idx.checked_add(ilen)? } else { idx };
+    (0..ilen).contains(&i).then_some(i as usize)
 }

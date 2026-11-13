@@ -2716,14 +2716,14 @@ fn dispatch_cap(
                 }
                 match &args[0] {
                     Value::Array(elems) => {
-                        let idx = match &args[1] {
-                            Value::Int(i) => *i as usize,
-                            _ => 0,
-                        };
+                        // Same contract as the ARR_SET opcode (#442): a negative
+                        // index counts from the end, out of range is a bounds error
+                        // and a non-Int index is BadIndex. This used to truncate the
+                        // index to usize and drop the write silently.
+                        let idx = need_array_index(&args[1])?;
                         let mut arr = elems.borrow_mut();
-                        if idx < arr.len() {
-                            arr[idx] = args[2].clone();
-                        }
+                        let actual = wrap_index(idx, arr.len())?;
+                        arr[actual] = args[2].clone();
                         Ok(Some(args[0].clone()))
                     }
                     Value::Map(map) => {
