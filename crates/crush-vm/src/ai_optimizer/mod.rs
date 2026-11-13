@@ -10,15 +10,11 @@
 //! is gone; the default policy is unchanged ([`GcPolicy::Never`]: the arena
 //! still collects on its own thresholds). A policy fitted offline from
 //! [`VmOptimizer::dump_telemetry_csv`] should land as plain Rust (a few
-//! comparisons, nanoseconds, every target incl. wasm); loading a model file,
-//! if wanted, belongs behind a pure-Rust backend such as tract (CRUSH-256).
+//! comparisons, nanoseconds, every target incl. wasm). Foreign inference
+//! runtimes (ONNX Runtime, tract, candle, ...) must not come back; model
+//! inference goes through zorro (`tests/no_foreign_inference_runtime.rs`).
 
 use anyhow::{Result, bail};
-
-/// Default path for the GC prediction model (no model is shipped).
-pub const GC_MODEL_PATH: &str = "crates/crush-vm/models/gc_model.onnx";
-/// Fallback path for when running from crate root (e.g. tests).
-pub const GC_MODEL_FALLBACK_PATH: &str = "models/gc_model.onnx";
 
 /// How [`VmOptimizer::should_gc`] decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
