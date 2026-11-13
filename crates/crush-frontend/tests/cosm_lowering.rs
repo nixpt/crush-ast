@@ -621,10 +621,11 @@ fn a_dotted_call_on_a_declared_local_resolves_at_run_time() {
 fn strategies_no_engine_runs_are_refused_at_compile_time() {
     // The VMs run Kinds since K1.4; what even they can't run is the shared
     // rule at `casm::CosmSupport::Kinds`.
-    for (kind, shown) in [(
-        "resolution: embedding_promotion",
-        "resolution: embedding_promotion",
-    )] {
+    {
+        let (kind, shown) = (
+            "resolution: embedding_promotion",
+            "resolution: embedding_promotion",
+        );
         let src = format!("@kind({kind})\nstruct V {{ x }}\nlet a = V {{ x: 1 }}\n");
         lower(&src); // the COSM itself is fine…
         assert_has(

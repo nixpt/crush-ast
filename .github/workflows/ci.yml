@@ -306,9 +306,10 @@ jobs:
   # (core). It also takes in bin-only crates (crush-walker, crush-installer,
   # crush-tui), where `--lib` would match nothing.
   #
-  # crush-lang-custom is still left out of Check/Clippy/Feature gates, but it
-  # builds and its tests pass, so it runs here. crush-python links libpython
-  # (pyo3, abi3-py311): setup-python provides a shared libpython.
+  # crush-lang-custom is still left out of Check/Feature gates (Clippy covers
+  # it since #424), but it builds and its tests pass, so it runs here.
+  # crush-python links libpython (pyo3, abi3-py311): setup-python provides a
+  # shared libpython.
   #
   # No tests yet, but kept in the list so new ones run without a CI change:
   # crush-cson, crush-ffi, crush-plugin-example, crush-tui.
@@ -510,9 +511,10 @@ jobs:
       - run: cargo test -p crush-gui --locked
 
   # ── Linting (blocking) ────────────────────────────────────────────────────
-  # Previously: `continue-on-error: true` AND `|| true` — two independent reasons
-  # the job could never go red. Full `-D warnings` is still too much pre-existing
-  # style debt to flip in one PR; deny correctness lints that must stay red-capable.
+  # Full `-D warnings` over every target (lib, bins, tests, examples, benches)
+  # since #424. crush-gui has its own clippy step in its job; crush-python
+  # links libpython, which this job doesn't set up (it is clippy-clean when
+  # built locally against a shared libpython).
   lint:
     name: Clippy
     runs-on: ubuntu-latest
@@ -529,11 +531,10 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: |
-          cargo clippy --workspace \
+          cargo clippy --workspace --all-targets \
             --exclude crush-python \
-            --exclude crush-lang-custom \
             --exclude crush-gui \
-            -- -D clippy::never_loop
+            -- -D warnings
 
   # ── Release build compiles + uploads the binaries as an artifact ─────────
   # `cache-targets: false` (CRUSH-CI-CACHE-1) — this job must NOT restore a

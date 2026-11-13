@@ -113,10 +113,10 @@ fn parse_runtime_value(s: &str) -> Result<crush_vm::RuntimeValue> {
         return Ok(crush_vm::RuntimeValue::Float(s.parse()?));
     }
     // Float (contains '.' or 'e')
-    if s.contains('.') || s.contains('e') || s.contains('E') {
-        if let Ok(f) = s.parse::<f64>() {
-            return Ok(crush_vm::RuntimeValue::Float(f));
-        }
+    if (s.contains('.') || s.contains('e') || s.contains('E'))
+        && let Ok(f) = s.parse::<f64>()
+    {
+        return Ok(crush_vm::RuntimeValue::Float(f));
     }
 
     // Int

@@ -24,13 +24,13 @@ fn test_crush_string_literal_float() {
 #[test]
 fn test_crush_string_literal_bool_true() {
     let result = crush!("fn main() { return true; }");
-    assert_eq!(result.crush_unwrap_bool(), true);
+    assert!(result.crush_unwrap_bool());
 }
 
 #[test]
 fn test_crush_string_literal_bool_false() {
     let result = crush!("fn main() { return false; }");
-    assert_eq!(result.crush_unwrap_bool(), false);
+    assert!(!result.crush_unwrap_bool());
 }
 
 #[test]
@@ -88,7 +88,7 @@ fn test_crush_raw_block_bool() {
             return true;
         }
     });
-    assert_eq!(result.crush_unwrap_bool(), true);
+    assert!(result.crush_unwrap_bool());
 }
 
 // ── crush_file! tests ──────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ fn test_crush_file_float() {
 #[test]
 fn test_crush_file_bool() {
     let result = crush_file!("tests/fixtures/bool.crush");
-    assert_eq!(result.crush_unwrap_bool(), true);
+    assert!(result.crush_unwrap_bool());
 }
 
 // ── Smoke tests ────────────────────────────────────────────────────────────

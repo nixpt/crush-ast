@@ -6,8 +6,10 @@ const DANGEROUS_COMMANDS: &[&str] = &[
 ];
 
 pub fn analyze_program(program: &ZshProgram) -> FeatureReport {
-    let mut r = FeatureReport::default();
-    r.lang = "zsh".to_string();
+    let mut r = FeatureReport {
+        lang: "zsh".to_string(),
+        ..Default::default()
+    };
     for list in &program.lists {
         analyze_sublist(&list.sublist, &mut r);
     }
@@ -32,11 +34,11 @@ fn analyze_pipe(pipe: &ZshPipe, r: &mut FeatureReport) {
 fn analyze_command(cmd: &ZshCommand, r: &mut FeatureReport) {
     match cmd {
         ZshCommand::Simple(simple) => {
-            if let Some(name) = simple.words.first() {
-                if DANGEROUS_COMMANDS.contains(&name.as_str()) {
-                    r.dangerous_imports.push(name.clone());
-                    r.uses_unsafe = true;
-                }
+            if let Some(name) = simple.words.first()
+                && DANGEROUS_COMMANDS.contains(&name.as_str())
+            {
+                r.dangerous_imports.push(name.clone());
+                r.uses_unsafe = true;
             }
             if !simple.assigns.is_empty() {
                 r.has_top_level_side_effects = true;

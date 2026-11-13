@@ -149,9 +149,10 @@ mod adapter_tests {
             Ok(Box::new(()))
         }
         fn analyze(&self, _ast: &Box<dyn std::any::Any>) -> anyhow::Result<FeatureReport> {
-            let mut r = FeatureReport::default();
-            r.lang = "mock_frontend".to_string();
-            Ok(r)
+            Ok(FeatureReport {
+                lang: "mock_frontend".to_string(),
+                ..Default::default()
+            })
         }
         fn lower(&self, _ast: Box<dyn std::any::Any>) -> anyhow::Result<Program> {
             Ok(Program::default())

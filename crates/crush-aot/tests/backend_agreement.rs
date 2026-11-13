@@ -109,12 +109,11 @@ fn rename_functions(program: &mut casm::Program, renames: &[(&str, &str)]) {
     }
     for f in program.functions.values_mut() {
         for instr in &mut f.body {
-            if instr.op == "call" {
-                if let Some(target) = instr.args.get("function").and_then(|t| t.as_str()) {
-                    if let Some((_, to)) = renames.iter().find(|(from, _)| *from == target) {
-                        instr.args["function"] = serde_json::Value::from(*to);
-                    }
-                }
+            if instr.op == "call"
+                && let Some(target) = instr.args.get("function").and_then(|t| t.as_str())
+                && let Some((_, to)) = renames.iter().find(|(from, _)| *from == target)
+            {
+                instr.args["function"] = serde_json::Value::from(*to);
             }
         }
     }
@@ -210,10 +209,12 @@ fn run_vm_print(source: &str) -> i64 {
     let result = Runtime::with_quotas(quotas).run(&program).expect("vm run");
     assert!(result.halted, "program did not halt:\n{}", result.output);
     let first = result.output.lines().next().unwrap_or("");
-    first.trim().parse::<i64>().expect(&format!(
-        "VM: expected Int output from `{source}`, got `{}`",
-        result.output
-    ))
+    first.trim().parse::<i64>().unwrap_or_else(|_| {
+        panic!(
+            "VM: expected Int output from `{source}`, got `{}`",
+            result.output
+        )
+    })
 }
 
 /// Run `source` on every AOT backend (it must `print` the answer) and return
@@ -234,7 +235,7 @@ fn run_aot_print(source: &str) -> Vec<i64> {
                 .expect("{backend}: no stdout from `{source}`")
                 .trim()
                 .parse::<i64>()
-                .expect(&format!("{backend}: expected Int output from `{source}`",)),
+                .unwrap_or_else(|_| panic!("{backend}: expected Int output from `{source}`")),
         );
     }
     outs

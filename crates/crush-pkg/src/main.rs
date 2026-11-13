@@ -435,17 +435,17 @@ impl CommandFailure {
     }
 }
 
-/// Note: `strict_downgrade` was the local CI-gate kernel defined
-/// here before; it has been promoted to the canonical peer crate
-/// `crush_diagnostics` (alongside `diag_line` / `diag_line_from`
-/// / `wants_json`) so any future binary adopting
-/// `--message-format=strict` — `xtask`, `crush-vm`,
-/// `crush-installer`, the future `crush-lint` over `.dejavue` —
-/// routes through the same kernel rather than re-deriving the
-/// `note` → `error` lift. See
-/// `crush_diagnostics::strict_downgrade` for the canonical
-/// surface; the four lockdown tests in
-/// `crush_diagnostics/tests/wire_format.rs` pin its behaviour.
+// Note: `strict_downgrade` was the local CI-gate kernel defined
+// here before; it has been promoted to the canonical peer crate
+// `crush_diagnostics` (alongside `diag_line` / `diag_line_from`
+// / `wants_json`) so any future binary adopting
+// `--message-format=strict` — `xtask`, `crush-vm`,
+// `crush-installer`, the future `crush-lint` over `.dejavue` —
+// routes through the same kernel rather than re-deriving the
+// `note` → `error` lift. See
+// `crush_diagnostics::strict_downgrade` for the canonical
+// surface; the four lockdown tests in
+// `crush_diagnostics/tests/wire_format.rs` pin its behaviour.
 
 /// Emit one NDJSON line (newline-terminated) on the writer.
 /// Strict-mode downgrade is applied at emit time so the
@@ -471,6 +471,7 @@ impl CommandFailure {
 /// silently dropped line info — fixed by adding `line: Option<u32>`
 /// between `file` and `hint`, then collapsing both call paths
 /// (failure-path / lint-findings) onto the struct form here.
+#[allow(clippy::too_many_arguments)] // the NDJSON record's fields, one per arg
 fn emit_diag(
     out: &mut impl Write,
     code: &str,
@@ -549,23 +550,22 @@ fn main() {
     // `crush-pkg lint --message-format=json` would double-emit
     // per-finding records on stdout.
     // ----------------------------------------------------------------
-    if !is_lint_subcommand {
-        if let Ok(manifest_path) = find_manifest() {
-            if let Some(name_only) = manifest_path.file_name() {
-                // Only lint the canonical `capsule.toml` (and its
-                // case-variants picked by `find_manifest`) — `crush.toml`
-                // is the legacy alias and is exempt from this lint for
-                // now (its `[env]` semantics differ across versions).
-                if name_only == "capsule.toml" || name_only == "Capsule.toml" {
-                    let mut out = std::io::stdout();
-                    let _ = emit_post_dispatch_lint(
-                        &mut out,
-                        Some(manifest_path.as_path()),
-                        json_mode,
-                        strict_mode,
-                    );
-                }
-            }
+    if !is_lint_subcommand
+        && let Ok(manifest_path) = find_manifest()
+        && let Some(name_only) = manifest_path.file_name()
+    {
+        // Only lint the canonical `capsule.toml` (and its
+        // case-variants picked by `find_manifest`) — `crush.toml`
+        // is the legacy alias and is exempt from this lint for
+        // now (its `[env]` semantics differ across versions).
+        if name_only == "capsule.toml" || name_only == "Capsule.toml" {
+            let mut out = std::io::stdout();
+            let _ = emit_post_dispatch_lint(
+                &mut out,
+                Some(manifest_path.as_path()),
+                json_mode,
+                strict_mode,
+            );
         }
     }
 }
@@ -1735,7 +1735,7 @@ mod tests {
         // non-bail; we keep the call flow here so lint failure
         // paths still get exercised under the `let _ =` form,
         // but the return value itself isn't otherwise useful.
-        let _ = handle_lint_with(
+        handle_lint_with(
             &mut out,
             &manifest_path,
             /* json_mode */ true,
@@ -1925,7 +1925,7 @@ name = \"alpha-dep\"
         // section, NOT the deps section — catches section-attribution
         // regressions that pass a bare upper/lower bound.
         assert!(
-            line >= 7 && line < 9,
+            (7..9).contains(&line),
             "finding line must point into the [env] block (7 ≤ line < 9 in the fixture); got line = {line}"
         );
         let msg = v["message"].as_str().expect("message must be a string");

@@ -10,10 +10,10 @@ use crush_vm::Quotas;
 use ratatui::{
     Terminal,
     backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -29,13 +29,13 @@ enum AppEvent {
     PolyglotDone(usize, bool, String),
 }
 
-fn highlight_line(text: &str) -> Line {
+fn highlight_line(text: &str) -> Line<'_> {
     let mut spans = Vec::new();
     let mut buf = String::new();
     let mut in_string = false;
     let mut in_comment = false;
 
-    let mut push_buf = |buf: &mut String, spans: &mut Vec<Span<'static>>, style: Style| {
+    let push_buf = |buf: &mut String, spans: &mut Vec<Span<'static>>, style: Style| {
         if !buf.is_empty() {
             let word = buf.clone();
             let final_style = if style == Style::default() {
@@ -226,19 +226,16 @@ impl AppState {
     }
 
     fn load_notebook(&mut self) {
-        if let Ok(contents) = fs::read_to_string("notebook.crushnb") {
-            if let Ok(cells) = serde_json::from_str::<Vec<Cell>>(&contents) {
-                self.cells = cells;
-                self.next_cell_id = self.cells.last().map(|c| c.id + 1).unwrap_or(1);
+        if let Ok(contents) = fs::read_to_string("notebook.crushnb")
+            && let Ok(cells) = serde_json::from_str::<Vec<Cell>>(&contents)
+        {
+            self.cells = cells;
+            self.next_cell_id = self.cells.last().map(|c| c.id + 1).unwrap_or(1);
 
-                self.vm_state = ReplState::new();
-                for cell in &self.cells {
-                    if cell.status == CellStatus::Success {
-                        if !cell.input.trim().starts_with("@") {
-                            let _ =
-                                evaluate_silent(&cell.input, &mut self.vm_state, &self.vm_config);
-                        }
-                    }
+            self.vm_state = ReplState::new();
+            for cell in &self.cells {
+                if cell.status == CellStatus::Success && !cell.input.trim().starts_with("@") {
+                    let _ = evaluate_silent(&cell.input, &mut self.vm_state, &self.vm_config);
                 }
             }
         }
@@ -365,7 +362,7 @@ impl AppState {
                             let mut res = stdout;
                             if !stderr.is_empty() {
                                 if !res.is_empty() {
-                                    res.push_str("\n");
+                                    res.push('\n');
                                 }
                                 res.push_str(&stderr);
                             }
@@ -379,7 +376,7 @@ impl AppState {
                 || block.trim().starts_with("@graph")
                 || block.trim().starts_with("@serve")
             {
-                let cmd_str = block.trim().split_whitespace().next().unwrap();
+                let cmd_str = block.split_whitespace().next().unwrap();
                 let is_dot = cmd_str == "@dot";
                 let is_graph = cmd_str == "@graph";
 
@@ -421,7 +418,7 @@ impl AppState {
                             let mut res = stdout;
                             if !stderr.is_empty() {
                                 if !res.is_empty() {
-                                    res.push_str("\n");
+                                    res.push('\n');
                                 }
                                 res.push_str(&stderr);
                             }
@@ -682,10 +679,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
         while let Ok(app_event) = rx.try_recv() {
             match app_event {
                 AppEvent::AiChunk(cell_id, chunk) => {
-                    if let Some(cell) = state.cells.iter_mut().find(|c| c.id == cell_id) {
-                        if let Some(out) = &mut cell.output {
-                            out.push_str(&chunk);
-                        }
+                    if let Some(cell) = state.cells.iter_mut().find(|c| c.id == cell_id)
+                        && let Some(out) = &mut cell.output
+                    {
+                        out.push_str(&chunk);
                     }
                 }
                 AppEvent::AiDone(cell_id) => {
@@ -707,150 +704,145 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
                         };
                     }
                 }
-                AppEvent::Key(Event::Key(key)) => {
-                    if key.kind == KeyEventKind::Press {
-                        use crossterm::event::KeyModifiers;
-                        match key.code {
-                            KeyCode::Esc => {
-                                if state.help_visible || state.fm_visible || state.agent_visible {
-                                    state.help_visible = false;
-                                    state.fm_visible = false;
-                                    state.agent_visible = false;
-                                } else {
-                                    return Ok(());
-                                }
-                            }
-                            KeyCode::Char('s') | KeyCode::Char('S')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                state.save_notebook();
-                            }
-                            KeyCode::Char('o') | KeyCode::Char('O')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                state.load_notebook();
-                            }
-                            KeyCode::Char('f') | KeyCode::Char('F')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                state.fm_visible = !state.fm_visible;
-                                if state.fm_visible {
-                                    state.refresh_fm();
-                                }
-                            }
-                            KeyCode::Char('h') | KeyCode::Char('H')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                state.help_visible = !state.help_visible;
-                            }
-                            KeyCode::Char('a') | KeyCode::Char('A')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                state.agent_visible = !state.agent_visible;
-                            }
-                            KeyCode::Char('e') | KeyCode::Char('E')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                state.execute_block(&tx);
-                            }
-                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                AppEvent::Key(Event::Key(key)) if key.kind == KeyEventKind::Press => {
+                    use crossterm::event::KeyModifiers;
+                    match key.code {
+                        KeyCode::Esc => {
+                            if state.help_visible || state.fm_visible || state.agent_visible {
+                                state.help_visible = false;
+                                state.fm_visible = false;
+                                state.agent_visible = false;
+                            } else {
                                 return Ok(());
                             }
-                            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                if !state.fm_visible && !state.help_visible && !state.agent_visible
-                                {
-                                    state.insert_char(c);
-                                }
-                            }
-                            KeyCode::Enter => {
-                                if state.fm_visible {
-                                    let entry = &state.fm_entries[state.fm_selected];
-                                    if entry == ".." {
-                                        if let Some(parent) = state.fm_path.parent() {
-                                            state.fm_path = parent.to_path_buf();
-                                            state.refresh_fm();
-                                        }
-                                    } else if entry.ends_with('/') {
-                                        state.fm_path.push(entry.trim_end_matches('/'));
-                                        state.refresh_fm();
-                                    } else {
-                                        let file_path = state.fm_path.join(entry);
-                                        if let Ok(contents) = fs::read_to_string(file_path) {
-                                            state.input_lines =
-                                                contents.lines().map(String::from).collect();
-                                            if state.input_lines.is_empty() {
-                                                state.input_lines.push(String::new());
-                                            }
-                                            state.cursor_y = state.input_lines.len() - 1;
-                                            state.cursor_x =
-                                                state.input_lines[state.cursor_y].len();
-                                            state.fm_visible = false;
-                                        }
-                                    }
-                                } else {
-                                    state.insert_newline();
-                                }
-                            }
-                            KeyCode::Backspace => {
-                                if !state.fm_visible {
-                                    state.backspace();
-                                }
-                            }
-                            KeyCode::Left => {
-                                if !state.fm_visible {
-                                    if state.cursor_x > 0 {
-                                        state.cursor_x -= 1;
-                                    } else if state.cursor_y > 0 {
-                                        state.cursor_y -= 1;
-                                        state.cursor_x =
-                                            state.input_lines[state.cursor_y].chars().count();
-                                    }
-                                }
-                            }
-                            KeyCode::Right => {
-                                if !state.fm_visible {
-                                    let len = state.input_lines[state.cursor_y].chars().count();
-                                    if state.cursor_x < len {
-                                        state.cursor_x += 1;
-                                    } else if state.cursor_y < state.input_lines.len() - 1 {
-                                        state.cursor_y += 1;
-                                        state.cursor_x = 0;
-                                    }
-                                }
-                            }
-                            KeyCode::Up => {
-                                if state.fm_visible {
-                                    if state.fm_selected > 0 {
-                                        state.fm_selected -= 1;
-                                    }
-                                } else {
-                                    if state.cursor_y > 0 {
-                                        state.cursor_y -= 1;
-                                        let len = state.input_lines[state.cursor_y].chars().count();
-                                        if state.cursor_x > len {
-                                            state.cursor_x = len;
-                                        }
-                                    }
-                                }
-                            }
-                            KeyCode::Down => {
-                                if state.fm_visible {
-                                    if state.fm_selected < state.fm_entries.len().saturating_sub(1)
-                                    {
-                                        state.fm_selected += 1;
-                                    }
-                                } else {
-                                    if state.cursor_y < state.input_lines.len() - 1 {
-                                        state.cursor_y += 1;
-                                        let len = state.input_lines[state.cursor_y].chars().count();
-                                        if state.cursor_x > len {
-                                            state.cursor_x = len;
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {}
                         }
+                        KeyCode::Char('s') | KeyCode::Char('S')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            state.save_notebook();
+                        }
+                        KeyCode::Char('o') | KeyCode::Char('O')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            state.load_notebook();
+                        }
+                        KeyCode::Char('f') | KeyCode::Char('F')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            state.fm_visible = !state.fm_visible;
+                            if state.fm_visible {
+                                state.refresh_fm();
+                            }
+                        }
+                        KeyCode::Char('h') | KeyCode::Char('H')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            state.help_visible = !state.help_visible;
+                        }
+                        KeyCode::Char('a') | KeyCode::Char('A')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            state.agent_visible = !state.agent_visible;
+                        }
+                        KeyCode::Char('e') | KeyCode::Char('E')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            state.execute_block(&tx);
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            return Ok(());
+                        }
+                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if !state.fm_visible && !state.help_visible && !state.agent_visible {
+                                state.insert_char(c);
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if state.fm_visible {
+                                let entry = &state.fm_entries[state.fm_selected];
+                                if entry == ".." {
+                                    if let Some(parent) = state.fm_path.parent() {
+                                        state.fm_path = parent.to_path_buf();
+                                        state.refresh_fm();
+                                    }
+                                } else if entry.ends_with('/') {
+                                    state.fm_path.push(entry.trim_end_matches('/'));
+                                    state.refresh_fm();
+                                } else {
+                                    let file_path = state.fm_path.join(entry);
+                                    if let Ok(contents) = fs::read_to_string(file_path) {
+                                        state.input_lines =
+                                            contents.lines().map(String::from).collect();
+                                        if state.input_lines.is_empty() {
+                                            state.input_lines.push(String::new());
+                                        }
+                                        state.cursor_y = state.input_lines.len() - 1;
+                                        state.cursor_x = state.input_lines[state.cursor_y].len();
+                                        state.fm_visible = false;
+                                    }
+                                }
+                            } else {
+                                state.insert_newline();
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            if !state.fm_visible {
+                                state.backspace();
+                            }
+                        }
+                        KeyCode::Left => {
+                            if !state.fm_visible {
+                                if state.cursor_x > 0 {
+                                    state.cursor_x -= 1;
+                                } else if state.cursor_y > 0 {
+                                    state.cursor_y -= 1;
+                                    state.cursor_x =
+                                        state.input_lines[state.cursor_y].chars().count();
+                                }
+                            }
+                        }
+                        KeyCode::Right => {
+                            if !state.fm_visible {
+                                let len = state.input_lines[state.cursor_y].chars().count();
+                                if state.cursor_x < len {
+                                    state.cursor_x += 1;
+                                } else if state.cursor_y < state.input_lines.len() - 1 {
+                                    state.cursor_y += 1;
+                                    state.cursor_x = 0;
+                                }
+                            }
+                        }
+                        KeyCode::Up => {
+                            if state.fm_visible {
+                                if state.fm_selected > 0 {
+                                    state.fm_selected -= 1;
+                                }
+                            } else {
+                                if state.cursor_y > 0 {
+                                    state.cursor_y -= 1;
+                                    let len = state.input_lines[state.cursor_y].chars().count();
+                                    if state.cursor_x > len {
+                                        state.cursor_x = len;
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Down => {
+                            if state.fm_visible {
+                                if state.fm_selected < state.fm_entries.len().saturating_sub(1) {
+                                    state.fm_selected += 1;
+                                }
+                            } else {
+                                if state.cursor_y < state.input_lines.len() - 1 {
+                                    state.cursor_y += 1;
+                                    let len = state.input_lines[state.cursor_y].chars().count();
+                                    if state.cursor_x > len {
+                                        state.cursor_x = len;
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}

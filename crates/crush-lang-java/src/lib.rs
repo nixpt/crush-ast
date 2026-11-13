@@ -49,7 +49,7 @@
 
 use crush_cast::Program;
 use crush_walker_core::{
-    impl_both_for_walker, Frontend, LanguageAdapter, TreeSitterFrontend, Walker,
+    impl_both_for_walker, TreeSitterFrontend, Walker,
 };
 use tree_sitter::Tree;
 
@@ -84,22 +84,22 @@ impl Walker for JavaWalker {
     }
 }
 
-/// JavaAdapter: the macro-generated ZST that registers in BOTH
-/// `WalkerRegistry` (via `impl LanguageWalker`) AND can be wrapped
-/// in `TreeSitterFrontend<JavaAdapter>` for `AdapterRegistry`
-/// (via the Sub-Commit 1 blanket auto-derive for `LanguageAdapter`).
-///
-/// Per the Sub-Commit 2 macro's cascade-closure pattern: the
-/// macro generates CONCRETE impls on a ZST (no supertrait tie, no
-/// blanket impl in THIS crate). The Sub-Commit 1 blanket is in
-/// walker-core (per the cascade-closure-up-front Sub-Commit 1
-/// Lesson 4 pattern) and auto-derives `LanguageAdapter` for
-/// `TreeSitterFrontend<JavaAdapter>` when it is registered.
-///
-/// Notably: there is NO per-type `impl LanguageAdapter for
-/// JavaAdapter` here -- per the user's explicit instruction
-/// ("do NOT write per-type `impl LanguageAdapter for
-/// FrontendType`"). The blanket does the work.
+// JavaAdapter: the macro-generated ZST that registers in BOTH
+// `WalkerRegistry` (via `impl LanguageWalker`) AND can be wrapped
+// in `TreeSitterFrontend<JavaAdapter>` for `AdapterRegistry`
+// (via the Sub-Commit 1 blanket auto-derive for `LanguageAdapter`).
+//
+// Per the Sub-Commit 2 macro's cascade-closure pattern: the
+// macro generates CONCRETE impls on a ZST (no supertrait tie, no
+// blanket impl in THIS crate). The Sub-Commit 1 blanket is in
+// walker-core (per the cascade-closure-up-front Sub-Commit 1
+// Lesson 4 pattern) and auto-derives `LanguageAdapter` for
+// `TreeSitterFrontend<JavaAdapter>` when it is registered.
+//
+// Notably: there is NO per-type `impl LanguageAdapter for
+// JavaAdapter` here -- per the user's explicit instruction
+// ("do NOT write per-type `impl LanguageAdapter for
+// FrontendType`"). The blanket does the work.
 impl_both_for_walker!(
     JavaAdapter,
     "java",                                 // LanguageWalker::language()
@@ -124,7 +124,7 @@ pub type JavaFrontend = TreeSitterFrontend<JavaAdapter>;
 mod tests {
     use super::*;
     use crush_frontend::language_walkers::{LanguageWalker, WalkerRegistry};
-    use crush_walker_core::AdapterRegistry;
+    use crush_walker_core::{AdapterRegistry, Frontend, LanguageAdapter};
 
     // ── Test 1: Sub-Commit 2 macro-generated dual-coercion ──────────
     //

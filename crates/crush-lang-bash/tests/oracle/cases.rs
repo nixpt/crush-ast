@@ -505,7 +505,7 @@ fn run_shell(o: &Oracle, name: &str, src: &str, cwd: &std::path::Path) -> (Strin
         .args(o.shell_args)
         .arg(&path)
         .env("LC_ALL", "C.UTF-8")
-        .current_dir(&cwd)
+        .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

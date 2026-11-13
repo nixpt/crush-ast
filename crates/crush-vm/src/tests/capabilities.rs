@@ -7,7 +7,7 @@
 //! banners are merged into a single classification.
 
 use super::*;
-use crate::assembler::{assemble, disassemble};
+use crate::assembler::assemble;
 use crate::vm::{Quotas, Value, run};
 
 // ── capabilities ─────────────────────────────────────────────────────────────
@@ -157,6 +157,7 @@ fn cap_conv_chr_ord_reject_invalid_values() {
     }
 }
 
+#[test]
 fn map_is_truthy_only_when_non_empty() {
     assert!(!Value::new_map(std::collections::HashMap::new()).is_truthy());
     let mut m = std::collections::HashMap::new();

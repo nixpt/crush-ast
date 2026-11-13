@@ -8,10 +8,10 @@ const EXCLUDED_DIRS: &[&str] = &["target", ".git", "node_modules", "__pycache__"
 
 fn is_excluded_path(path: &Path) -> bool {
     path.components().any(|c| {
-        if let std::path::Component::Normal(s) = c {
-            if let Some(s) = s.to_str() {
-                return EXCLUDED_DIRS.contains(&s);
-            }
+        if let std::path::Component::Normal(s) = c
+            && let Some(s) = s.to_str()
+        {
+            return EXCLUDED_DIRS.contains(&s);
         }
         false
     })

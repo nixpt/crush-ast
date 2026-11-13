@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn test_push_float() {
-        let bits = f64::to_bits(3.14);
+        let bits = f64::to_bits(2.75);
         let prog = make_prog(vec![(FastOp::PushFloat, bits, 0), (FastOp::Halt, 0, 0)]);
         assert_eq!(run_fastvm(&prog), run_jit(&prog));
     }
@@ -1073,7 +1073,7 @@ mod tests {
                 (FastOp::Halt, 0, 0),
             ],
             vec![
-                (FastOp::PushFloat, f64::to_bits(3.14), 0),
+                (FastOp::PushFloat, f64::to_bits(2.75), 0),
                 (FastOp::PushFloat, f64::to_bits(2.0), 0),
                 (FastOp::Mul, 0, 0),
                 (FastOp::Halt, 0, 0),

@@ -26,7 +26,6 @@ use crate::runtime::{
     OP_NEW_VECTOR, OP_PUSH_STR, OP_SET_FIELD, OP_SET_PUSH, OP_STR_CONTAINS, OP_STR_ENDS_WITH,
     OP_STR_JOIN, OP_STR_REPLACE, OP_STR_SIM, OP_STR_SPLIT, OP_STR_STARTS_WITH, OP_STR_TO_LOWER,
     OP_STR_TO_UPPER, OP_STR_TRIM, OP_THROW, OP_TRUTHY, OP_TUPLE_PUSH, OP_TYPEOF, OP_VECTOR_PUSH,
-    jit_runtime_helper,
 };
 
 const OFF_STACK: i64 = 0;
@@ -268,10 +267,10 @@ fn build_fn(
     // handler PC maps to an existing block in `map`.
     let mut handler_map: HashMap<usize, ir::Block> = HashMap::new();
     for instr in program.instructions.iter() {
-        if instr.op == FastOp::EnterTry {
-            if let Some(&blk) = map.get(&(instr.arg as usize)) {
-                handler_map.entry(instr.arg as usize).or_insert(blk);
-            }
+        if instr.op == FastOp::EnterTry
+            && let Some(&blk) = map.get(&(instr.arg as usize))
+        {
+            handler_map.entry(instr.arg as usize).or_insert(blk);
         }
     }
     let mut handler_entries: Vec<(usize, ir::Block)> = handler_map.into_iter().collect();
@@ -389,10 +388,10 @@ fn build_fn(
     let mut next_off_map: HashMap<usize, ir::Block> = HashMap::new();
     for i in 0..blocks.len() {
         let (off, _) = blocks[i];
-        if let Some(&(next_off, _)) = blocks.get(i + 1) {
-            if let Some(&next_block) = map.get(&next_off) {
-                next_off_map.insert(off, next_block);
-            }
+        if let Some(&(next_off, _)) = blocks.get(i + 1)
+            && let Some(&next_block) = map.get(&next_off)
+        {
+            next_off_map.insert(off, next_block);
         }
     }
 
@@ -538,9 +537,6 @@ fn bf64(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value {
 fn bi64(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value {
     b.ins().bitcast(types::I64, MemFlagsData::new(), v)
 }
-fn iadd2(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
-    b.ins().iadd(x, y)
-}
 fn isub(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
     b.ins().isub(x, y)
 }
@@ -555,9 +551,6 @@ fn srem(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
 }
 fn ineg(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value {
     b.ins().ineg(v)
-}
-fn fadd(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
-    b.ins().fadd(x, y)
 }
 fn fsub(b: &mut FunctionBuilder, x: ir::Value, y: ir::Value) -> ir::Value {
     b.ins().fsub(x, y)
@@ -1014,6 +1007,7 @@ fn emit_helper_call_checked(
     b.seal_block(ok_bb);
 }
 
+#[allow(clippy::too_many_arguments)] // one codegen context, threaded per instruction
 fn emit_one(
     b: &mut FunctionBuilder,
     ctx: ir::Value,
@@ -1493,13 +1487,13 @@ fn emit_one(
 
         // ── Bitwise ────────────────────────────────────────────────────────
         BitAnd => {
-            bitwise_bin(b, ctx, |bb, x, y| band(bb, x, y));
+            bitwise_bin(b, ctx, band);
         }
         BitOr => {
-            bitwise_bin(b, ctx, |bb, x, y| bor(bb, x, y));
+            bitwise_bin(b, ctx, bor);
         }
         BitXor => {
-            bitwise_bin(b, ctx, |bb, x, y| bxor(bb, x, y));
+            bitwise_bin(b, ctx, bxor);
         }
         BitNot => {
             let v = pop(b, ctx);
@@ -1509,10 +1503,10 @@ fn emit_one(
             push(b, ctx, tr);
         }
         Shl => {
-            bitwise_bin(b, ctx, |bb, x, y| ishl(bb, x, y));
+            bitwise_bin(b, ctx, ishl);
         }
         Shr => {
-            bitwise_bin(b, ctx, |bb, x, y| sshr(bb, x, y));
+            bitwise_bin(b, ctx, sshr);
         }
 
         // ── Loop control ───────────────────────────────────────────────────
@@ -1708,7 +1702,7 @@ fn arith(
     sub: bool,
     mul: bool,
     _ptr_ty: types::Type,
-    helper_sig: ir::SigRef,
+    _helper_sig: ir::SigRef,
 ) {
     let bv = pop(b, ctx);
     let a = pop(b, ctx);
@@ -1925,55 +1919,6 @@ fn math_unary(b: &mut FunctionBuilder, ctx: ir::Value, op: MathOp) {
     b.seal_block(mbb);
 }
 
-/// Apply a binary math function: pop two, dispatch int/float, push float result.
-fn math_binary(b: &mut FunctionBuilder, ctx: ir::Value, op: MathOp) {
-    let exp = pop(b, ctx);
-    let base = pop(b, ctx);
-    let ia = is_int(b, base);
-    let ib = is_int(b, exp);
-    let bi = band(b, ia, ib);
-    let ibb = b.create_block();
-    let fbb = b.create_block();
-    let mbb = b.create_block();
-    b.append_block_param(mbb, types::I64);
-    b.ins()
-        .brif(bi, ibb, &[] as &[BlockArg], fbb, &[] as &[BlockArg]);
-
-    b.switch_to_block(ibb);
-    let be = eint(b, base);
-    let ee = eint(b, exp);
-    let bf = b.ins().fcvt_from_sint(types::F64, be);
-    let ef2 = b.ins().fcvt_from_sint(types::F64, ee);
-    let rf = math_apply_f64_bin(b, bf, ef2, &op);
-    let rfb = bi64(b, rf);
-    b.ins().jump(mbb, &[BlockArg::Value(rfb)]);
-
-    b.switch_to_block(fbb);
-    // Promote mixed int<->float to float
-    let raw_b = bf64(b, base);
-    let test_b = is_float(b, base);
-    let iv_b = eint(b, base);
-    let conv_b = b.ins().fcvt_from_sint(types::F64, iv_b);
-    let bf2 = select(b, test_b, raw_b, conv_b);
-
-    let raw_e = bf64(b, exp);
-    let test_e = is_float(b, exp);
-    let iv_e = eint(b, exp);
-    let conv_e = b.ins().fcvt_from_sint(types::F64, iv_e);
-    let ef2 = select(b, test_e, raw_e, conv_e);
-
-    let rf2 = math_apply_f64_bin(b, bf2, ef2, &op);
-    let rfb2 = bi64(b, rf2);
-    b.ins().jump(mbb, &[BlockArg::Value(rfb2)]);
-
-    b.switch_to_block(mbb);
-    push(b, ctx, b.block_params(mbb)[0]);
-
-    b.seal_block(ibb);
-    b.seal_block(fbb);
-    b.seal_block(mbb);
-}
-
 /// Apply a f64 unary math operation via CLIF instructions.
 fn math_apply_f64(b: &mut FunctionBuilder, v: ir::Value, op: &MathOp) -> ir::Value {
     match op {
@@ -1983,19 +1928,6 @@ fn math_apply_f64(b: &mut FunctionBuilder, v: ir::Value, op: &MathOp) -> ir::Val
         MathOp::Floor => b.ins().floor(v),
         MathOp::Ceil => b.ins().ceil(v),
     }
-}
-
-/// Apply a f64 binary math operation (placeholder — only Pow uses this, but it's
-/// handled by pushing null in emit_one for now; kept for future runtime helper use).
-fn math_apply_f64_bin(
-    b: &mut FunctionBuilder,
-    a: ir::Value,
-    e: ir::Value,
-    _op: &MathOp,
-) -> ir::Value {
-    // Only called from math_binary for Pow, which currently pushes null instead.
-    // If a second binary math op is added, implement it here.
-    b.ins().fadd(a, e)
 }
 
 // ── Comparison dispatch ────────────────────────────────────────────────────

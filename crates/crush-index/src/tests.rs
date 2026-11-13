@@ -1,3 +1,5 @@
+#![allow(clippy::field_reassign_with_default)] // builds each case from a default
+
 use crate::CrushIndex;
 use crush_cast::manifest::{FunctionAnnotations, Invariant, ModuleManifest};
 use crush_cast::{Function, Program};
@@ -385,7 +387,7 @@ fn test_function_annotations_backward_compat() {
 
 #[test]
 fn test_annotations_empty_module_path_returns_empty() {
-    let mut idx = CrushIndex::new();
+    let idx = CrushIndex::new();
     // Query with empty string — no module is ever keyed by "", so this
     // must succeed (return empty Vec) without panicking.
     let ladder = idx.annotations("");

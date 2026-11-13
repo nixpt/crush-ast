@@ -489,12 +489,11 @@ fn cmd_bench(args: &BenchArgs) -> anyhow::Result<()> {
     // Parse --extern tiers
     let mut externs: Vec<(String, String, Vec<String>)> = Vec::new();
     let mut ext_iter = args.externs.iter().peekable();
-    loop {
-        let Some(label) = ext_iter.next() else { break };
+    while let Some(label) = ext_iter.next() {
         let Some(cmd) = ext_iter.next() else {
             anyhow::bail!("--extern needs LABEL CMD pairs, missing CMD after '{label}'");
         };
-        let argv: Vec<String> = shlex::split(&cmd)
+        let argv: Vec<String> = shlex::split(cmd)
             .ok_or_else(|| anyhow::anyhow!("--extern CMD '{cmd}' has unbalanced quotes"))?;
         if argv.is_empty() {
             anyhow::bail!("--extern CMD '{cmd}' is empty");

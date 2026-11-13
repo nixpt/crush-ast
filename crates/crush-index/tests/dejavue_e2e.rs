@@ -6,18 +6,11 @@
 //! fixed timeline NDJSON string (no on-disk I/O — hermetic, runnable
 //! in parallel).
 
-use chrono::FixedOffset;
 use crush_index::CrushIndex;
 use crush_index::dejavue::{DejavueEvent, build_annotation_links, parse_timeline_str};
 use std::collections::HashMap;
 
 // ── helpers ─────────────────────────────────────────────────────────────────
-
-/// Pinned offset for all test timestamps (CST/CDT, the timezone
-/// `.dejavue/timeline.jsonl` in this repo uses).
-fn offset() -> FixedOffset {
-    FixedOffset::west_opt(5 * 3600).expect("fixed offset is valid")
-}
 
 /// Build a `DejavueEvent` with the supplied timestamp + decision_title.
 /// Other fields left None.

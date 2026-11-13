@@ -29,7 +29,7 @@ fn test_exosphere_fixtures() {
     for entry in std::fs::read_dir(root).unwrap() {
         let e = entry.unwrap();
         let p = e.path();
-        if p.extension().map_or(false, |x| x == "crush") {
+        if p.extension().is_some_and(|x| x == "crush") {
             let name = p.file_stem().unwrap().to_str().unwrap().to_string();
             // Skip fibonacci — recursive return type inference limitation
             if name == "fibonacci" {
@@ -66,7 +66,7 @@ fn test_exosphere_integration() {
     for entry in std::fs::read_dir(root).unwrap() {
         let e = entry.unwrap();
         let p = e.path();
-        if p.extension().map_or(false, |x| x == "crush") {
+        if p.extension().is_some_and(|x| x == "crush") {
             let name = p.file_stem().unwrap().to_str().unwrap().to_string();
             let src = std::fs::read_to_string(&p).unwrap();
 

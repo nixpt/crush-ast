@@ -63,11 +63,10 @@ impl CapsuleBundle {
                     Ok(m) => manifest = Some(m),
                     Err(_) => continue,
                 }
-            } else if name.contains("payload/") && name.ends_with(".casm") {
-                let mut data = Vec::new();
-                entry.read_to_end(&mut data)?;
-                payload = Some(data);
-            } else if name.ends_with(".cvm") || name.ends_with(".cvm1") {
+            } else if (name.contains("payload/") && name.ends_with(".casm"))
+                || name.ends_with(".cvm")
+                || name.ends_with(".cvm1")
+            {
                 let mut data = Vec::new();
                 entry.read_to_end(&mut data)?;
                 payload = Some(data);

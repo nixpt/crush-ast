@@ -993,17 +993,14 @@ console.log(B.m());
 fn test_boa_missing_method_is_compile_error() {
     let program =
         test_lower("class C { m() { return 1; } } const c = new C(); console.log(c.nope());");
-    let err = crush_frontend::compile_cast(&program)
-        .err()
-        .expect("a missing method must not compile");
+    let err =
+        crush_frontend::compile_cast(&program).expect_err("a missing method must not compile");
     assert!(err.to_string().contains("no method `nope`"), "{err}");
     // A field holding a value, called through `this.`, is the same refusal.
     let program = test_lower(
         "class C { constructor() { this.f = 1; } m() { return this.f(2); } } console.log(new C().m());",
     );
-    let err = crush_frontend::compile_cast(&program)
-        .err()
-        .expect("calling a field must not compile");
+    let err = crush_frontend::compile_cast(&program).expect_err("calling a field must not compile");
     assert!(err.to_string().contains("no method `f`"), "{err}");
 }
 

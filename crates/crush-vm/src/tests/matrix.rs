@@ -7,8 +7,7 @@
 //! banners are merged into a single classification.
 
 use super::*;
-use crate::assembler::{assemble, disassemble};
-use crate::vm::{Quotas, Value, run};
+use crate::vm::Value;
 
 // ── Combined round-trip matrix (single source-of-truth for the canonical ────
 // ── trait triplet: Display / Serialize / Deserialize / text_as_value)     ────
@@ -79,7 +78,7 @@ fn all_traits_round_trip_for_every_variant() {
         ("Bool false", Value::Bool(false)),
         ("Int -7", Value::Int(-7)),
         ("Int 0 (sign-edge)", Value::Int(0)),
-        ("Float 3.14 (fractional)", Value::Float(3.14)),
+        ("Float 2.75 (fractional)", Value::Float(2.75)),
         ("Float 0.0 (zero-edge)", Value::Float(0.0)),
         ("Float 3.0 (.0 suffix lockstep)", Value::Float(3.0)),
         ("Str foo", Value::Str("foo".to_string())),

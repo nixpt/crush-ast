@@ -687,7 +687,7 @@ fn emit_function(
     // Push function arguments onto the stack so that subsequent `store`
     // instructions (which pop from the stack into locals) work correctly.
     if !is_main {
-        for (i, param) in func.params.iter().enumerate() {
+        for (i, _param) in func.params.iter().enumerate() {
             out.push_str(&format!(
                 "    stack.push(args.get({i}).cloned().unwrap_or(RuntimeValue::Null));\n"
             ));
@@ -695,7 +695,7 @@ fn emit_function(
     }
 
     // Dispatch loop
-    out.push_str(&format!("    let mut __pc: usize = 0;\n"));
+    out.push_str("    let mut __pc: usize = 0;\n");
     out.push_str("    loop {\n");
     out.push_str("        match __pc {\n");
 

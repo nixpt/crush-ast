@@ -7,7 +7,7 @@
 //! banners are merged into a single classification.
 
 use super::*;
-use crate::assembler::{assemble, disassemble};
+use crate::assembler::assemble;
 use crate::vm::{Quotas, Value, run};
 
 // ── strings ──────────────────────────────────────────────────────────────────

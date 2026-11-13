@@ -83,6 +83,7 @@ pub fn fixture_root(name: &str) -> std::path::PathBuf {
 /// (e.g. `fixtures_base().join("sdk-matrix-locator").join("main.crush")`)
 /// or when chaining without allocation. Pair with `.join(...)` for the
 /// typical "I want to anchor on the fixtures base" intent.
+#[allow(dead_code)] // shared module: not every test binary uses every helper
 pub fn fixtures_base() -> &'static std::path::Path {
     std::path::Path::new(FIXTURES_BASE)
 }

@@ -81,10 +81,10 @@ fn field_pattern() -> &'static Regex {
 /// the field is absent on this line or the line isn't parseable.
 pub fn extract_field(line: &str, key: &str) -> Option<String> {
     for caps in field_pattern().captures_iter(line) {
-        if let (Some(k), Some(v)) = (caps.get(1), caps.get(2)) {
-            if k.as_str() == key {
-                return Some(unescape(v.as_str()));
-            }
+        if let (Some(k), Some(v)) = (caps.get(1), caps.get(2))
+            && k.as_str() == key
+        {
+            return Some(unescape(v.as_str()));
         }
     }
     None

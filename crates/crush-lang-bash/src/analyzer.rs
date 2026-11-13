@@ -6,8 +6,10 @@ const DANGEROUS_COMMANDS: &[&str] = &[
 ];
 
 pub fn analyze_program(program: &ast::Program) -> FeatureReport {
-    let mut r = FeatureReport::default();
-    r.lang = "bash".to_string();
+    let mut r = FeatureReport {
+        lang: "bash".to_string(),
+        ..Default::default()
+    };
 
     for complete in &program.complete_commands {
         for item in &complete.0 {

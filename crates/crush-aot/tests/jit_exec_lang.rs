@@ -5,7 +5,6 @@
 //! yields — including the block's input variables (CRUSH-140).
 
 use crush_vm::fastvm::{FastVM, FastYield, Hal, HostRequest};
-use crush_vm::value::RuntimeValue;
 
 #[derive(Debug)]
 struct NoHal;

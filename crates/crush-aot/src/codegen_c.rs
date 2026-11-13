@@ -35,7 +35,7 @@ pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::Unsupporte
         let fn_name = sanitize_fn_name(name);
         out.push_str(&format!("static Value fn_{fn_name}(void);\n"));
     }
-    out.push_str("\n");
+    out.push('\n');
     // COSM K1.4: the declared fields of each sealed Kind (NULL-terminated),
     // which a struct map of that Kind checks every write against.
     if let Some(module) = program.kind_table() {
@@ -1688,10 +1688,10 @@ fn discover_locals(
         add_local(p, &mut map, &mut next);
     }
     for instr in body {
-        if matches!(instr.op.as_str(), "store" | "load") {
-            if let Some(name) = instr.args.get("name").and_then(|v| v.as_str()) {
-                add_local(name, &mut map, &mut next);
-            }
+        if matches!(instr.op.as_str(), "store" | "load")
+            && let Some(name) = instr.args.get("name").and_then(|v| v.as_str())
+        {
+            add_local(name, &mut map, &mut next);
         }
     }
     map

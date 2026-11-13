@@ -295,7 +295,7 @@ fn test_aot_eval_i64() {
 #[test]
 fn test_aot_eval_bool() {
     let result = crush_aot::eval_bool("fn main() { return 5 > 3; }").expect("eval_bool failed");
-    assert_eq!(result, true);
+    assert!(result);
 }
 
 // ── Cross-tier comparison: AOT vs FastVM ────────────────────────────────

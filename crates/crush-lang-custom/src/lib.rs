@@ -43,81 +43,81 @@ impl CustomFrontend {
         let mut lang_name = "custom".to_string();
         let mut extensions = vec![".custom".to_string()];
 
-        if let Some(grammar_node) = root_map.get("grammar") {
-            if let CaisonValue::Object(grammar_map) = &grammar_node.value {
-                if let Some(node) = grammar_map.get("language") {
-                    if let CaisonValue::String(s) = &node.value {
-                        lang_name = s.clone();
-                    }
-                }
-                if let Some(node) = grammar_map.get("extensions") {
-                    if let CaisonValue::Array(arr) = &node.value {
-                        extensions = arr
-                            .iter()
-                            .filter_map(|v| {
-                                if let CaisonValue::String(s) = &v.value {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                    }
-                }
+        if let Some(grammar_node) = root_map.get("grammar")
+            && let CaisonValue::Object(grammar_map) = &grammar_node.value
+        {
+            if let Some(node) = grammar_map.get("language")
+                && let CaisonValue::String(s) = &node.value
+            {
+                lang_name = s.clone();
+            }
+            if let Some(node) = grammar_map.get("extensions")
+                && let CaisonValue::Array(arr) = &node.value
+            {
+                extensions = arr
+                    .iter()
+                    .filter_map(|v| {
+                        if let CaisonValue::String(s) = &v.value {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
             }
         }
 
         // Parse rules
         let mut rules = Vec::new();
-        if let Some(rules_node) = root_map.get("rules") {
-            if let CaisonValue::Object(rules_map) = &rules_node.value {
-                for (key, val_node) in rules_map {
-                    let rule_name = key.clone();
-                    if let CaisonValue::Object(rule_obj) = &val_node.value {
-                        let pattern_str = match rule_obj.get("pattern") {
-                            Some(n) => match &n.value {
-                                CaisonValue::String(s) => s.clone(),
-                                _ => continue,
-                            },
-                            None => continue,
-                        };
-                        let node_type = match rule_obj.get("node") {
-                            Some(n) => match &n.value {
-                                CaisonValue::String(s) => s.clone(),
-                                _ => "ExprStmt".to_string(),
-                            },
-                            None => "ExprStmt".to_string(),
-                        };
-                        let capability = match rule_obj.get("capability") {
-                            Some(n) => match &n.value {
-                                CaisonValue::String(s) => Some(s.clone()),
-                                _ => None,
-                            },
-                            None => None,
-                        };
+        if let Some(rules_node) = root_map.get("rules")
+            && let CaisonValue::Object(rules_map) = &rules_node.value
+        {
+            for (key, val_node) in rules_map {
+                let rule_name = key.clone();
+                if let CaisonValue::Object(rule_obj) = &val_node.value {
+                    let pattern_str = match rule_obj.get("pattern") {
+                        Some(n) => match &n.value {
+                            CaisonValue::String(s) => s.clone(),
+                            _ => continue,
+                        },
+                        None => continue,
+                    };
+                    let node_type = match rule_obj.get("node") {
+                        Some(n) => match &n.value {
+                            CaisonValue::String(s) => s.clone(),
+                            _ => "ExprStmt".to_string(),
+                        },
+                        None => "ExprStmt".to_string(),
+                    };
+                    let capability = match rule_obj.get("capability") {
+                        Some(n) => match &n.value {
+                            CaisonValue::String(s) => Some(s.clone()),
+                            _ => None,
+                        },
+                        None => None,
+                    };
 
-                        let mut mappings = HashMap::new();
-                        if let Some(m_node) = rule_obj.get("mappings") {
-                            if let CaisonValue::Object(m_map) = &m_node.value {
-                                for (k, v) in m_map {
-                                    if let CaisonValue::String(val_str) = &v.value {
-                                        mappings.insert(k.clone(), val_str.clone());
-                                    }
-                                }
+                    let mut mappings = HashMap::new();
+                    if let Some(m_node) = rule_obj.get("mappings")
+                        && let CaisonValue::Object(m_map) = &m_node.value
+                    {
+                        for (k, v) in m_map {
+                            if let CaisonValue::String(val_str) = &v.value {
+                                mappings.insert(k.clone(), val_str.clone());
                             }
                         }
-
-                        let pattern = Regex::new(&pattern_str)
-                            .map_err(|e| anyhow!("Invalid regex in rule '{}': {}", rule_name, e))?;
-
-                        rules.push(CustomRule {
-                            name: rule_name,
-                            pattern,
-                            node_type,
-                            capability,
-                            mappings,
-                        });
                     }
+
+                    let pattern = Regex::new(&pattern_str)
+                        .map_err(|e| anyhow!("Invalid regex in rule '{}': {}", rule_name, e))?;
+
+                    rules.push(CustomRule {
+                        name: rule_name,
+                        pattern,
+                        node_type,
+                        capability,
+                        mappings,
+                    });
                 }
             }
         }
@@ -133,7 +133,7 @@ impl CustomFrontend {
     pub fn parse_to_program(&self, source: &str) -> Result<Program> {
         let mut main_body = Vec::new();
 
-        for (_line_idx, line) in source.lines().enumerate() {
+        for line in source.lines() {
             let line_trimmed = line.trim();
             if line_trimmed.is_empty()
                 || line_trimmed.starts_with('#')
@@ -194,20 +194,20 @@ impl CustomFrontend {
                                 .clone()
                                 .unwrap_or_else(|| "io.print".to_string());
                             let mut args = Vec::new();
-                            if let Some(arg_key) = rule.mappings.get("args") {
-                                if let Some(m) = caps.name(arg_key) {
-                                    let arg_val = m.as_str().trim_matches('"');
-                                    if let Ok(i) = arg_val.parse::<i64>() {
-                                        args.push(Expression::IntLiteral {
-                                            value: i,
-                                            meta: meta.clone(),
-                                        });
-                                    } else {
-                                        args.push(Expression::StringLiteral {
-                                            value: arg_val.to_string(),
-                                            meta: meta.clone(),
-                                        });
-                                    }
+                            if let Some(arg_key) = rule.mappings.get("args")
+                                && let Some(m) = caps.name(arg_key)
+                            {
+                                let arg_val = m.as_str().trim_matches('"');
+                                if let Ok(i) = arg_val.parse::<i64>() {
+                                    args.push(Expression::IntLiteral {
+                                        value: i,
+                                        meta: meta.clone(),
+                                    });
+                                } else {
+                                    args.push(Expression::StringLiteral {
+                                        value: arg_val.to_string(),
+                                        meta: meta.clone(),
+                                    });
                                 }
                             }
 
@@ -279,9 +279,10 @@ impl Frontend for CustomFrontend {
     }
 
     fn analyze(&self, _parsed: &Box<dyn Any>) -> Result<FeatureReport> {
-        let mut report = FeatureReport::default();
-        report.lang = self.name.clone();
-        Ok(report)
+        Ok(FeatureReport {
+            lang: self.name.clone(),
+            ..Default::default()
+        })
     }
 
     fn lower(&self, parsed: Box<dyn Any>) -> Result<Program> {
@@ -290,6 +291,29 @@ impl Frontend for CustomFrontend {
         } else {
             Err(anyhow!("Lowering failed: invalid AST type"))
         }
+    }
+}
+
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+/// Custom walker adapter — wraps a CustomFrontend definition.
+/// Users define their grammar via CSON, and the adapter automates the pipeline.
+pub struct CustomAdapter(pub CustomFrontend);
+
+impl crush_walker_core::LanguageAdapter for CustomAdapter {
+    fn language_name(&self) -> &'static str {
+        "custom"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &[]
+    }
+    fn walk(
+        &self,
+        source: &str,
+        _filename: &str,
+    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
+        let (report, program) = crush_walker_core::frontend_pipeline(&self.0, source)?;
+        Ok((report, program))
     }
 }
 
@@ -382,7 +406,7 @@ mod tests {
     /// compose. The active test asserts the manual adapter registers.
     #[test]
     fn custom_adapter_registers_in_unified_registry() {
-        use crush_walker_core::{AdapterRegistry, LanguageAdapter};
+        use crush_walker_core::AdapterRegistry;
         let mut registry = AdapterRegistry::new();
         registry.register(Box::new(CustomAdapter(CustomFrontend {
             name: "custom".to_string(),
@@ -395,30 +419,5 @@ mod tests {
             "CustomAdapter must register with name 'custom', got: {:?}",
             langs
         );
-    }
-}
-
-// ── Adapter ──────────────────────────────────────────────────────────────────
-
-// ── Adapter ──────────────────────────────────────────────────────────────────
-
-/// Custom walker adapter — wraps a CustomFrontend definition.
-/// Users define their grammar via CSON, and the adapter automates the pipeline.
-pub struct CustomAdapter(pub CustomFrontend);
-
-impl crush_walker_core::LanguageAdapter for CustomAdapter {
-    fn language_name(&self) -> &'static str {
-        "custom"
-    }
-    fn file_extensions(&self) -> &[&'static str] {
-        &[]
-    }
-    fn walk(
-        &self,
-        source: &str,
-        _filename: &str,
-    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
-        let (report, program) = crush_walker_core::frontend_pipeline(&self.0, source)?;
-        Ok((report, program))
     }
 }

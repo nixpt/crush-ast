@@ -75,6 +75,11 @@ impl Reactor {
         self.inner.lock().unwrap().len()
     }
 
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn spawn_poller(self: &Arc<Self>) -> PollerHandle {
         let inner = Arc::clone(&self.inner);
         let stop = Arc::clone(&self.stop);

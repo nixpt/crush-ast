@@ -116,14 +116,14 @@ pub fn hinted_text(text: &str) -> String {
     // plain `String` is a never-fails operation (only fails on
     // maps-with-non-string-keys, enums with no Serialize impl, etc.;
     // `String` has a built-in Serialize impl that never fails).
-    if let Ok(encoded_full) = serde_json::to_string(text) {
-        if encoded_full.len() <= HINT_MAX_BYTES {
-            // Byte-for-byte equivalence: downstream `serde_json::to_string`
-            // on this `String` produces the same bytes as the encoded_full
-            // check above (no escaping on a copy of the original text
-            // would have changed anything). Return the raw input as-is.
-            return text.to_string();
-        }
+    if let Ok(encoded_full) = serde_json::to_string(text)
+        && encoded_full.len() <= HINT_MAX_BYTES
+    {
+        // Byte-for-byte equivalence: downstream `serde_json::to_string`
+        // on this `String` produces the same bytes as the encoded_full
+        // check above (no escaping on a copy of the original text
+        // would have changed anything). Return the raw input as-is.
+        return text.to_string();
     }
     // Slow path: prefix-truncate on encoded-length budget.
     //

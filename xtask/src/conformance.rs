@@ -183,7 +183,7 @@ fn run_crush(path: &Path, source: &str, workspace_root: &Path) -> Result<String,
     )
     .map_err(|e| format!("compile error: {e}"))?;
     // Use a modest default (1K steps); heavy programs can annotate // budget: N.
-    let budget: usize = parse_budget_annotation(&source).unwrap_or(1_000) as usize;
+    let budget: usize = parse_budget_annotation(source).unwrap_or(1_000) as usize;
     let quotas = crush_vm::Quotas {
         max_steps: budget,
         max_output: 1 << 20,
@@ -274,12 +274,10 @@ fn evaluate_file(path: &Path, workspace_root: &Path, verbose: bool) -> Outcome {
 
     // expect mode: program must succeed and output must match.
     match result {
-        Err(error) => {
-            return Outcome::Fail {
-                file: path.to_path_buf(),
-                reason: format!("program failed unexpectedly: {error}"),
-            };
-        }
+        Err(error) => Outcome::Fail {
+            file: path.to_path_buf(),
+            reason: format!("program failed unexpectedly: {error}"),
+        },
         Ok(actual_output) => {
             // Build expected output: each expect: line becomes one output line,
             // and each `print()` appends a newline, so join with newlines
@@ -302,14 +300,14 @@ fn evaluate_file(path: &Path, workspace_root: &Path, verbose: bool) -> Outcome {
                 return Outcome::Pass;
             }
 
-            return Outcome::Fail {
+            Outcome::Fail {
                 file: path.to_path_buf(),
                 reason: format!(
                     "output mismatch.\n  expected:\n{}\n  actual:\n{}",
                     text_prefix(&expected_output, "    "),
                     text_prefix(&actual_output, "    "),
                 ),
-            };
+            }
         }
     }
 }

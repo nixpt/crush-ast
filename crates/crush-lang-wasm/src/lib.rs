@@ -145,6 +145,35 @@ pub fn walk_wasm(wasm_bytes: &[u8], filename: &str) -> Result<Program, WalkerErr
     })
 }
 
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use crush_walker_core::LanguageAdapter;
+
+pub struct WasmAdapter;
+impl LanguageAdapter for WasmAdapter {
+    fn language_name(&self) -> &'static str {
+        "wasm"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &["wasm"]
+    }
+    fn walk(
+        &self,
+        source: &str,
+        _filename: &str,
+    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
+        let program = crate::walk_wasm(source.as_bytes(), "input.wasm")
+            .map_err(|e| anyhow::anyhow!("wasm@walk: {e:?}"))?;
+        Ok((
+            crush_walker_core::FeatureReport {
+                lang: "wasm".to_string(),
+                ..Default::default()
+            },
+            program,
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,34 +215,5 @@ mod tests {
         let program = walk_wasm(&wasm_bytes, "test.wasm").unwrap();
         assert!(program.functions.contains_key("_start"));
         assert!(program.functions.contains_key("main"));
-    }
-}
-
-// ── Adapter ──────────────────────────────────────────────────────────────────
-
-use crush_walker_core::LanguageAdapter;
-
-pub struct WasmAdapter;
-impl LanguageAdapter for WasmAdapter {
-    fn language_name(&self) -> &'static str {
-        "wasm"
-    }
-    fn file_extensions(&self) -> &[&'static str] {
-        &["wasm"]
-    }
-    fn walk(
-        &self,
-        source: &str,
-        _filename: &str,
-    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
-        let program = crate::walk_wasm(source.as_bytes(), "input.wasm")
-            .map_err(|e| anyhow::anyhow!("wasm@walk: {e:?}"))?;
-        Ok((
-            crush_walker_core::FeatureReport {
-                lang: "wasm".to_string(),
-                ..Default::default()
-            },
-            program,
-        ))
     }
 }

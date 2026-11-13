@@ -248,7 +248,8 @@ fn the_scheduler_vm_runs_kinds_and_refuses_only_what_it_cant() {
         e.contains("COSM strategies not supported on this VM yet: `Point` declares"),
         "{e}"
     );
-    for want in ["hooks eq"] {
+    {
+        let want = "hooks eq";
         assert!(e.contains(want), "missing {want:?}: {e}");
     }
     // Accessors run since CRUSH-277 S4: one isn't named either.

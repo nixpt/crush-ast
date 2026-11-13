@@ -91,7 +91,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Assemble CASM → CVM1 binary program
-    let mut vm_prog = crush_lang_sdk::compile::casm_to_vm(&casm_program)?;
+    let vm_prog = crush_lang_sdk::compile::casm_to_vm(&casm_program)?;
 
     // Register walked capabilities as host capabilities
     use crush_vm::{HostCap, HostCapSpec, HostCaps};

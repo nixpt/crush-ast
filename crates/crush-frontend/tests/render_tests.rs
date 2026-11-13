@@ -5,20 +5,20 @@ use crush_frontend::{parse_source, render::render_program};
 fn strip_source_locations(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
-            if let Some(meta) = map.get_mut("meta") {
-                if let serde_json::Value::Object(meta_map) = meta {
-                    meta_map.remove("line");
-                    meta_map.remove("col");
-                    meta_map.remove("file");
-                }
+            if let Some(meta) = map.get_mut("meta")
+                && let serde_json::Value::Object(meta_map) = meta
+            {
+                meta_map.remove("line");
+                meta_map.remove("col");
+                meta_map.remove("file");
             }
             // Also strip from "location" fields (used in exhaustive_sites, etc.)
-            if let Some(loc) = map.get_mut("location") {
-                if let serde_json::Value::Object(loc_map) = loc {
-                    loc_map.remove("line");
-                    loc_map.remove("col");
-                    loc_map.remove("file");
-                }
+            if let Some(loc) = map.get_mut("location")
+                && let serde_json::Value::Object(loc_map) = loc
+            {
+                loc_map.remove("line");
+                loc_map.remove("col");
+                loc_map.remove("file");
             }
             for (_, v) in map.iter_mut() {
                 strip_source_locations(v);
