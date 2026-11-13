@@ -9,6 +9,11 @@
 //! whole workspace and the two crates it excludes (crush-web, crush-vm-py),
 //! not just crush-vm.
 //!
+//! Not covered: hand-written FFI or a `dlopen` of a runtime library (no
+//! crate shows up), and the two benchmark harnesses under `docs/benchmarks/`
+//! (standalone, not built in CI; their only deps are workspace crates and
+//! `anyhow`).
+//!
 //! **If this fails:** do not add the crate to an allow list. Drop the
 //! dependency (or the feature that pulls it in) and route inference through
 //! zorro.
@@ -35,6 +40,24 @@ const FORBIDDEN: &[&str] = &[
     "llama-cpp-sys-2",
     "ggml",
     "rten",
+    "tensorflow",
+    "tflitec",
+    "openvino",
+    "ct2rs",
+    "ctranslate2",
+    "mlx-rs",
+    "mlx-sys",
+    "ncnn-rs",
+    "tvm",
+    "mistralrs",
+    "kalosm",
+    // rustformers' ggml runtime.
+    "llm",
+    // These vendor ggml / ONNX Runtime inside a differently named crate.
+    "whisper-rs",
+    "whisper-rs-sys",
+    "sherpa-rs",
+    "sherpa-rs-sys",
 ];
 
 /// Families published as many crates (`tract-onnx`, `candle-nn`,
@@ -50,6 +73,17 @@ const FORBIDDEN_PREFIXES: &[&str] = &[
     "llama_cpp",
     "ggml",
     "wonnx",
+    "tensorflow",
+    "tflite",
+    "openvino",
+    "ctranslate2",
+    "mlx-",
+    "ncnn",
+    "tvm-",
+    "mistralrs",
+    "kalosm",
+    "whisper-rs",
+    "sherpa-rs",
 ];
 
 fn is_forbidden(name: &str) -> bool {
@@ -62,11 +96,19 @@ fn is_forbidden(name: &str) -> bool {
 /// when it is the root workspace).
 fn packages(manifest_dir: &str, workspace: bool) -> BTreeSet<String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    // `--locked`: never rewrite a lockfile while checking it; a stale one
-    // fails here instead (refresh it with `cargo tree` or `cargo update`).
-    let mut args = vec!["tree", "--locked"];
+    // The root lockfile is kept current (`scripts/bump-version.sh` refreshes
+    // it), so `--locked` there. The excluded crates' lockfiles are not: a
+    // version bump leaves their path-crate entries behind, and `--locked`
+    // would then fail every PR after a release. For those, let `cargo tree`
+    // resolve and put the lockfile back afterwards, so the check never
+    // changes the tree.
+    let lock_path = format!("{manifest_dir}/Cargo.lock");
+    let saved_lock = (!workspace)
+        .then(|| std::fs::read(&lock_path).ok())
+        .flatten();
+    let mut args = vec!["tree"];
     if workspace {
-        args.push("--workspace");
+        args.extend(["--locked", "--workspace"]);
     }
     args.extend([
         "--all-features",
@@ -84,6 +126,9 @@ fn packages(manifest_dir: &str, workspace: bool) -> BTreeSet<String> {
         .current_dir(manifest_dir)
         .output()
         .expect("run cargo tree");
+    if let Some(saved) = saved_lock {
+        std::fs::write(&lock_path, saved).expect("restore Cargo.lock");
+    }
     assert!(
         out.status.success(),
         "cargo tree in {manifest_dir} failed: {}",
