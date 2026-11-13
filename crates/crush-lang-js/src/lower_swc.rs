@@ -1605,12 +1605,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             Ok(length_of(lower_call_expr(callee, args, m.clone(), ctx)?, m))
         }
         Expr::Call(CallExpr { callee, args, .. }) => lower_call_expr(callee, args, m, ctx),
-        Expr::New(NewExpr {
-            callee,
-            args,
-            span: _,
-            ..
-        }) => {
+        Expr::New(NewExpr { callee, args, .. }) => {
             let callee_str = match callee.as_ref() {
                 Expr::Ident(i) => i.sym.to_string(),
                 // Used to become `new Object`, whatever the callee was.
@@ -1630,9 +1625,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 meta: m,
             })
         }
-        Expr::Member(MemberExpr {
-            obj, prop, span: _, ..
-        }) => {
+        Expr::Member(MemberExpr { obj, prop, .. }) => {
             let target = lower_expr(obj, ctx)?;
             match prop {
                 MemberProp::Ident(ident_name) if is_length_read(ident_name.sym.as_ref(), obj) => {
@@ -1929,11 +1922,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
         // in `check_function`; this catches any `yield` that gets here anyway.
         Expr::Yield(_) => Err(unsupported("`yield`")),
         Expr::Update(UpdateExpr {
-            op,
-            arg,
-            prefix,
-            span: _,
-            ..
+            op, arg, prefix, ..
         }) => {
             let name = match unparen(arg) {
                 Expr::Ident(i) => i.sym.to_string(),
@@ -1957,7 +1946,7 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
         }
         // There is no `super` binding; this read a variable named `super`.
         Expr::SuperProp(_) => Err(unsupported("`super.x`")),
-        Expr::This(ThisExpr { span: _, .. }) => Ok(Expression::Var {
+        Expr::This(ThisExpr { .. }) => Ok(Expression::Var {
             name: "this".to_string(),
             meta: m,
         }),

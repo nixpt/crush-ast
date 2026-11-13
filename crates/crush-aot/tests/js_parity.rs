@@ -295,11 +295,11 @@ const BOA_LOUD: &[(&str, &str)] = &[
     ),
 ];
 
+type Loud<'a> = (&'a str, &'a str);
+type Silent<'a> = (&'a str, &'a str, &'a str);
+
 /// A backend's swc lists, adjusted for the boa lowering.
-fn boa_lists<'a>(
-    loud: &[(&'a str, &'a str)],
-    silent: &[(&'a str, &'a str, &'a str)],
-) -> (Vec<(&'a str, &'a str)>, Vec<(&'a str, &'a str, &'a str)>) {
+fn boa_lists<'a>(loud: &[Loud<'a>], silent: &[Silent<'a>]) -> (Vec<Loud<'a>>, Vec<Silent<'a>>) {
     let moved = |n: &str| BOA_LOUD.iter().any(|e| e.0 == n) || BOA_EXACT.contains(&n);
     let mut l: Vec<_> = loud.iter().copied().filter(|e| !moved(e.0)).collect();
     l.extend(BOA_LOUD.iter().copied());

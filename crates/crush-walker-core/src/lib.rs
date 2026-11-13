@@ -1130,6 +1130,9 @@ macro_rules! impl_both_for_walker {
         // paths where filename is not needed; production callers
         // should use the `LanguageWalker` round-trip.
         impl $crate::Walker for $adapter_name {
+            // `$ts_lang` may be a diverging stub (`panic!`/`unreachable!`)
+            // for a walker whose grammar is not in the workspace yet.
+            #[allow(unreachable_code, clippy::diverging_sub_expression)]
             fn language(&self) -> tree_sitter::Language {
                 $ts_lang
             }
@@ -1164,6 +1167,8 @@ macro_rules! impl_both_for_walker {
             fn extensions(&self) -> &'static [&'static str] {
                 $exts
             }
+            // See `Walker::language` above: `$ts_lang` may diverge.
+            #[allow(unreachable_code, unused_variables, clippy::diverging_sub_expression)]
             fn parse(
                 &self,
                 source: &str,

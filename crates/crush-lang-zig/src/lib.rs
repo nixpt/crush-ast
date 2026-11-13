@@ -630,10 +630,12 @@ mod tests {
                 assert_eq!(name, "items");
             }
             assert_eq!(body.len(), 1);
-            if let Statement::ExprStmt { expr, .. } = &body[0] {
-                if let Expression::CapabilityCall { name, .. } = expr {
-                    assert_eq!(name, "io.print");
-                }
+            if let Statement::ExprStmt {
+                expr: Expression::CapabilityCall { name, .. },
+                ..
+            } = &body[0]
+            {
+                assert_eq!(name, "io.print");
             }
         }
     }

@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 // MerkleNode
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct MerkleNode {
     pub hash: [u8; 32],
     pub left: Option<Box<MerkleNode>>,
@@ -46,8 +46,8 @@ impl MerkleNode {
         let rh: [u8; 32] = right.hash;
         let mut hasher = Sha256::new();
         hasher.update([0x01]);
-        hasher.update(&lh);
-        hasher.update(&rh);
+        hasher.update(lh);
+        hasher.update(rh);
         let level = left.level.max(right.level) + 1;
         Self {
             hash: hasher.finalize().into(),
@@ -85,8 +85,8 @@ impl MerkleNode {
                 };
                 let mut h = Sha256::new();
                 h.update([0x01]);
-                h.update(&l.hash);
-                h.update(&r.hash);
+                h.update(l.hash);
+                h.update(r.hash);
                 h.finalize().into()
             }
         };
@@ -113,18 +113,6 @@ impl MerkleNode {
 
     pub fn root_hash(&self) -> [u8; 32] {
         self.hash
-    }
-}
-
-impl Default for MerkleNode {
-    fn default() -> Self {
-        Self {
-            hash: [0; 32],
-            left: None,
-            right: None,
-            data: None,
-            level: 0,
-        }
     }
 }
 
@@ -210,7 +198,7 @@ impl MerkleTree {
     }
 
     pub fn root_hash_hex(&self) -> Option<String> {
-        self.root_hash().map(|h| hex::encode(h))
+        self.root_hash().map(hex::encode)
     }
 
     pub fn verify(&self) -> anyhow::Result<()> {
@@ -235,14 +223,14 @@ impl MerkleTree {
     pub fn leaf_hashes(&self) -> Vec<[u8; 32]> {
         self.root
             .as_ref()
-            .map_or_else(Vec::new, |r| collect_leaf_hashes(r))
+            .map_or_else(Vec::new, collect_leaf_hashes)
     }
 
     pub fn stats(&self) -> MerkleTreeStats {
         MerkleTreeStats {
             leaf_count: self.leaf_count,
             height: self.height,
-            total_nodes: self.root.as_ref().map_or(0, |r| count_nodes(r)),
+            total_nodes: self.root.as_ref().map_or(0, count_nodes),
             root_hash: self.root_hash(),
         }
     }

@@ -342,7 +342,7 @@ fn identifier_tokens(content: &str) -> Vec<String> {
         //   prev == Some('\n')     → BOL after a newline
         //   prev == Some(c.is_whitespace()) → after whitespace
         //   otherwise              → mid-token (separator)
-        if c == '#' && prev.map_or(true, |p| p == '\n' || p.is_whitespace()) {
+        if c == '#' && prev.is_none_or(|p| p == '\n' || p.is_whitespace()) {
             in_comment = true;
             prev = Some(c);
             continue;
@@ -707,7 +707,7 @@ impl PackageBuilder {
                     .filter_map(|e| e.ok())
                 {
                     let path = entry.path().to_path_buf();
-                    if path.extension().map_or(false, |e| e == "crush") {
+                    if path.extension().is_some_and(|e| e == "crush") {
                         sources.push((path, "source".to_string()));
                     }
                 }
@@ -811,7 +811,7 @@ mod tests {
         let builder = PackageBuilder::new(manifest, dir.path().to_path_buf());
         let sources = builder.collect_all_sources().unwrap();
 
-        assert!(sources.len() >= 1);
+        assert!(!sources.is_empty());
         assert!(sources.iter().any(|(p, _)| p.ends_with("src/main.crush")));
     }
 

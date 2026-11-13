@@ -423,7 +423,7 @@ mod tests {
     #[cfg(feature = "native-plugins")]
     #[test]
     fn fastvm_printcap_emits_trailing_newline() {
-        use crate::fastvm::{FastVM, LoweredProgram};
+        use crate::fastvm::FastVM;
         use std::sync::Arc;
 
         let program = casm::Program {

@@ -721,19 +721,15 @@ fn run_from(
             Ok(action) => action,
             Err(err) => {
                 let thread = &mut threads[current];
-                match crate::vm::raise_fault_to_handler(
+                let handler_ip = crate::vm::raise_fault_to_handler(
                     err,
                     &mut thread.try_stack,
                     &mut thread.call_stack,
                     &mut thread.stack,
                     &mut thread.captures,
-                ) {
-                    Ok(handler_ip) => {
-                        fault_caught_at = Some(handler_ip);
-                        StepAction::Jump
-                    }
-                    Err(err) => return Err(err),
-                }
+                )?;
+                fault_caught_at = Some(handler_ip);
+                StepAction::Jump
             }
         };
         if let Some(handler_ip) = fault_caught_at {

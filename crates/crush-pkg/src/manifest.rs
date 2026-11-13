@@ -135,18 +135,13 @@ pub struct ServiceConfig {
     pub r#type: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum RestartPolicy {
+    #[default]
     No,
     Always,
     OnFailure,
     OnFailureWithBackoff,
-}
-
-impl Default for RestartPolicy {
-    fn default() -> Self {
-        Self::No
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -475,16 +470,16 @@ impl Manifest {
         }
 
         // Auto-migrate [package] → [capsule]
-        if let Some(package) = table.remove("package") {
-            if let Some(name) = package.get("name").cloned() {
-                let capsule = table
-                    .entry("capsule")
-                    .or_insert_with(|| toml::Value::Table(toml::Table::new()))
-                    .as_table_mut()
-                    .ok_or_else(|| anyhow::anyhow!("[capsule] must be a table"))?;
-                if !capsule.contains_key("name") {
-                    capsule.insert("name".to_string(), name);
-                }
+        if let Some(package) = table.remove("package")
+            && let Some(name) = package.get("name").cloned()
+        {
+            let capsule = table
+                .entry("capsule")
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+                .as_table_mut()
+                .ok_or_else(|| anyhow::anyhow!("[capsule] must be a table"))?;
+            if !capsule.contains_key("name") {
+                capsule.insert("name".to_string(), name);
             }
         }
 
@@ -497,10 +492,10 @@ impl Manifest {
             let capsule = table["capsule"]
                 .as_table_mut()
                 .ok_or_else(|| anyhow::anyhow!("[capsule] must be a table"))?;
-            if let Some(ep) = capsule.remove("entry_point") {
-                if !capsule.contains_key("entry") {
-                    capsule.insert("entry".to_string(), ep);
-                }
+            if let Some(ep) = capsule.remove("entry_point")
+                && !capsule.contains_key("entry")
+            {
+                capsule.insert("entry".to_string(), ep);
             }
         }
 
@@ -516,14 +511,14 @@ impl Manifest {
             let capsule = table["capsule"]
                 .as_table_mut()
                 .ok_or_else(|| anyhow::anyhow!("[capsule] must be a table"))?;
-            if let Some(ct) = capsule.remove("capsule_type") {
-                if !capsule.contains_key("language") {
-                    let normalized = match ct {
-                        toml::Value::String(s) => toml::Value::String(s.to_lowercase()),
-                        other => other,
-                    };
-                    capsule.insert("language".to_string(), normalized);
-                }
+            if let Some(ct) = capsule.remove("capsule_type")
+                && !capsule.contains_key("language")
+            {
+                let normalized = match ct {
+                    toml::Value::String(s) => toml::Value::String(s.to_lowercase()),
+                    other => other,
+                };
+                capsule.insert("language".to_string(), normalized);
             }
         }
 
@@ -532,10 +527,10 @@ impl Manifest {
             let capsule = table["capsule"]
                 .as_table_mut()
                 .ok_or_else(|| anyhow::anyhow!("[capsule] must be a table"))?;
-            if let Some(id) = capsule.remove("id") {
-                if !capsule.contains_key("name") {
-                    capsule.insert("name".to_string(), id);
-                }
+            if let Some(id) = capsule.remove("id")
+                && !capsule.contains_key("name")
+            {
+                capsule.insert("name".to_string(), id);
             }
         }
 

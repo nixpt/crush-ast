@@ -169,7 +169,7 @@ fn aot_backends_print_what_the_vm_prints_for_every_example() {
                     let io_read = crush_lang_sdk::compile::compile_crush_source(&source)
                         .ok()
                         .and_then(|program| used_by(&program).ok())
-                        .map_or(false, |used| used.contains("io.read"));
+                        .is_some_and(|used| used.contains("io.read"));
                     let Some(expected) = vm_stdout(&source) else {
                         if has_marker || io_read || is_capability_error(&source) {
                             continue;

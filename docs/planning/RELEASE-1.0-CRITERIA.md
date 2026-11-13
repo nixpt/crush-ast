@@ -155,7 +155,7 @@ Each line: **criterion** — how to verify it — status — evidence.
 | Q3 | Cross-backend agreement and example parity run on every PR. | CI. | ✅ | `backend_agreement` + `examples_parity` (`ci.yml:256-258`). AOT tests are sharded. |
 | Q4 | AOT C runtime under GC stress. | CI. | ✅ | `ci.yml:262`. |
 | Q5 | The **conformance corpus** runs in CI and passes 100% of its non-skipped cases. | CI. | ❌ | CRUSH-211: `conformance` gives 18 pass / 19 fail / 12 skip and is not in CI. |
-| Q6 | Clippy runs with `-D warnings` (or a curated deny list) on the stable core. | CI. | 🟡 | The job blocks, but only on `-D clippy::never_loop` (`ci.yml:486-490`). |
+| Q6 | Clippy runs with `-D warnings` (or a curated deny list) on the stable core. | CI. | ✅ | The job blocks on `-D warnings` over `--workspace --all-targets` (#424); crush-gui is linted in its own job, crush-python is left out of it (needs libpython). |
 | Q7 | **Multi-OS** (Linux, macOS, Windows if promised) and multi-arch (x86_64, aarch64). | CI matrix. | ❌ | All jobs are `ubuntu-latest`. CRUSH-49 and CRUSH-22 are open. |
 | Q8 | `cargo-deny` / `cargo-audit` (licences, advisories). | CI. | ❌ | None. |
 | Q9 | wasm32 builds for the browser-facing crates. | CI. | ✅ | `ci.yml:377-378` (walkers), `crush-web` headless Chromium (`ci.yml:579-613`). |

@@ -7,8 +7,7 @@
 //! banners are merged into a single classification.
 
 use super::*;
-use crate::assembler::{assemble, disassemble};
-use crate::vm::{Quotas, Value, run};
+use crate::vm::Value;
 
 // ── arithmetic ────────────────────────────────────────────────────────────────
 
@@ -81,8 +80,8 @@ fn mod_negative_values() {
 
 #[test]
 fn float_push() {
-    let r = run_src("PUSH_F64 3.14\nHALT");
-    assert!(matches!(r.stack.first(), Some(Value::Float(f)) if (f - 3.14).abs() < 1e-10));
+    let r = run_src("PUSH_F64 2.75\nHALT");
+    assert!(matches!(r.stack.first(), Some(Value::Float(f)) if (f - 2.75).abs() < 1e-10));
 }
 
 #[test]

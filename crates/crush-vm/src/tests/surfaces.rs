@@ -6,7 +6,6 @@
 //! section-banner organizer moved into a sub-file. Multi-line
 //! banners are merged into a single classification.
 
-use super::*;
 use crate::assembler::{assemble, disassemble};
 use crate::vm::{Quotas, Value, run};
 

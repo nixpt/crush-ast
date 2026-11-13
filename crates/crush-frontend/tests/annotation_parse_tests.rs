@@ -277,7 +277,7 @@ fn main() {}
 // ─── Parse-error dispatch: UnknownAnnotation (CRUSH-27 success criterion) ─
 
 #[test]
-fn parse_unknown_annotation_emits_UnknownAnnotation_error() {
+fn parse_unknown_annotation_emits_unknown_annotation_error() {
     // CRUSH-27: bare `@unknown` (no `{ ... }` body) hits the parser's
     // `_ =>` wildcard arm in `parse_program` and emits
     // ParseError::UnknownAnnotation. The body-form path (`@bogus { ... }`)

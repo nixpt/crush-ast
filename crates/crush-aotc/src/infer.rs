@@ -34,7 +34,7 @@ impl TypeMap {
     /// - `store X`   → bind X to whatever is on the stack top
     /// - `load X`    → push the type bound to X (or Dynamic)
     /// - arithmetic  → if both operands are the same scalar type, result is
-    ///                 that type; otherwise Dynamic
+    ///   that type; otherwise Dynamic
     /// - any branch / call → mark the top as Dynamic (conservative)
     pub fn infer(body: &[casm::Instruction]) -> Self {
         let mut locals: HashMap<String, InferredType> = HashMap::new();

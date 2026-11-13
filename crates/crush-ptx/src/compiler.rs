@@ -79,6 +79,12 @@ pub struct PtxCompiler {
     regs: Vec<Reg>, // to declare them later
 }
 
+impl Default for PtxCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PtxCompiler {
     pub fn new() -> Self {
         Self {
@@ -124,7 +130,7 @@ impl PtxCompiler {
         }
 
         // Pass 1: Translate
-        for (i, instr) in func.body.iter().enumerate() {
+        for (i, _instr) in func.body.iter().enumerate() {
             labels.insert(i); // We might jump to any instruction, but realistically only jump targets.
 
             // To handle labels nicely, we just insert a label before each instruction if it's targeted.
@@ -624,7 +630,7 @@ impl PtxCompiler {
             ptx.push_str(&format!("\t.reg {} {};\n", ty.to_str(), names.join(", ")));
         }
 
-        ptx.push_str("\n");
+        ptx.push('\n');
         for instr in instrs {
             ptx.push_str(&format!("{}\n", instr));
         }

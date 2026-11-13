@@ -111,21 +111,21 @@ pub fn crush(input: TokenStream) -> TokenStream {
 /// the outer braces so the Crush parser sees valid top-level code.
 fn extract_block_source(input: &TokenStream) -> Option<String> {
     let mut iter = input.clone().into_iter();
-    if let Some(proc_macro::TokenTree::Group(g)) = iter.next() {
-        if iter.next().is_none() {
-            // Get source including outer braces via span
-            if let Some(full) = g.span().source_text() {
-                // Strip outer `{` and `}` (the macro delimiters)
-                let inner = full.trim();
-                if inner.starts_with('{') && inner.ends_with('}') {
-                    return Some(inner[1..inner.len() - 1].to_string());
-                }
-                return Some(inner.to_string());
+    if let Some(proc_macro::TokenTree::Group(g)) = iter.next()
+        && iter.next().is_none()
+    {
+        // Get source including outer braces via span
+        if let Some(full) = g.span().source_text() {
+            // Strip outer `{` and `}` (the macro delimiters)
+            let inner = full.trim();
+            if inner.starts_with('{') && inner.ends_with('}') {
+                return Some(inner[1..inner.len() - 1].to_string());
             }
-            // Span source not available �� use the group's inner token stream
-            let inner = g.stream().to_string();
-            return Some(inner);
+            return Some(inner.to_string());
         }
+        // Span source not available �� use the group's inner token stream
+        let inner = g.stream().to_string();
+        return Some(inner);
     }
     None
 }

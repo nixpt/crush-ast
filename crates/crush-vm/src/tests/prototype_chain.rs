@@ -7,7 +7,7 @@
 
 use crate::assembler::assemble;
 use crate::bytecode::Program;
-use crate::vm::{Quotas, VmError, run};
+use crate::vm::{Quotas, run};
 use crush_cosm::{
     Construct, CosmModule, Equality, KindDecl, KindRef, MemberDecl, Receiver, Resolution,
     Semantics, Storage,
@@ -123,8 +123,7 @@ fn js_new_construction_binds_this_and_methods_read_it() {
         k.members.push(MemberDecl::method("inc", "Counter::inc"));
     })]);
     run_both(
-        &format!(
-            r#"
+        r#"
 .func main
     PUSH 41
     CONSTRUCT "Counter" 1
@@ -162,8 +161,7 @@ fn js_new_construction_binds_this_and_methods_read_it() {
     POP
     PUSH_NULL
     RET
-"#
-        ),
+"#,
         m,
         "42\n",
     );

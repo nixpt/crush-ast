@@ -4,6 +4,8 @@
 //! [`casm::CASM_VERSION`] via the public API. Lives as an integration test so it
 //! compiles in its own crate against casm's public surface only.
 
+#![allow(clippy::field_reassign_with_default)] // builds each case from a default
+
 use casm::{CASM_VERSION, Format, Program};
 
 fn program_with_version(v: &str) -> Vec<u8> {

@@ -90,7 +90,7 @@ impl<'a> CpuKernelEmitter<'a> {
         writeln!(out, "        double _in  = in[tid];")?;
 
         // Emit body — map "load in" → _in, "store out" → out[tid]
-        let tm = TypeMap::infer(&func.body);
+        let _tm = TypeMap::infer(&func.body);
         let mut stack: Vec<(String, InferredType)> = Vec::new();
         let mut tmp_count = 0usize;
         stack.push(("_in".to_string(), InferredType::Float)); // synthetic param

@@ -934,8 +934,6 @@ fn emit_math_cap(
 /// Compile the generated C string to a `.so` via `cc`, returning the path to
 /// the compiled library.  Requires a C compiler on PATH.
 pub fn compile_to_so(c_source: &str, opts: &AotcOpts) -> anyhow::Result<std::path::PathBuf> {
-    use std::io::Write;
-
     let dir = tempfile::tempdir()?;
     let src_path = dir.path().join("crush_aotc.c");
     let so_path = dir.path().join("crush_aotc.so");

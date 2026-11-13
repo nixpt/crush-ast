@@ -82,12 +82,11 @@ impl<'a> Visitor<'a> {
                 let mut params = Vec::new();
                 if let Some(params_node) = decl.child_by_field_name("parameters") {
                     for p_decl in params_node.children(&mut params_node.walk()) {
-                        if p_decl.kind() == "parameter_declaration" {
-                            if let Some(p_var_decl) = p_decl.child_by_field_name("declarator") {
+                        if p_decl.kind() == "parameter_declaration"
+                            && let Some(p_var_decl) = p_decl.child_by_field_name("declarator") {
                                 params
                                     .push((self.base.text(p_var_decl)?.to_string(), CastType::Any));
                             }
-                        }
                     }
                 }
 
@@ -150,8 +149,8 @@ impl<'a> Visitor<'a> {
                         });
                     }
                 }
-                if decls.is_empty() {
-                    if let Some(decl) = node.child_by_field_name("declarator") {
+                if decls.is_empty()
+                    && let Some(decl) = node.child_by_field_name("declarator") {
                         let name = self.extract_name_from_declarator(decl)?;
                         decls.push(Statement::VarDecl {
                             name: name.to_string(),
@@ -160,7 +159,6 @@ impl<'a> Visitor<'a> {
                             meta: meta.clone(),
                         });
                     }
-                }
                 Ok(decls)
             }
             "expression_statement" => {
@@ -213,9 +211,8 @@ impl<'a> Visitor<'a> {
                     ref args,
                     ..
                 } = expr
-                {
-                    if function == "__crush_export__" && args.len() == 2 {
-                        if let Expression::StringLiteral {
+                    && function == "__crush_export__" && args.len() == 2
+                        && let Expression::StringLiteral {
                             value: export_name, ..
                         } = &args[0]
                         {
@@ -225,8 +222,6 @@ impl<'a> Visitor<'a> {
                                 meta,
                             }]);
                         }
-                    }
-                }
 
                 Ok(vec![Statement::ExprStmt { expr, meta }])
             }
@@ -392,11 +387,9 @@ impl<'a> Visitor<'a> {
                                 if case_child.kind() != "case"
                                     && case_child.kind() != "value"
                                     && case_child.kind() != ":"
-                                {
-                                    if let Ok(stmts) = self.visit_statement(case_child) {
+                                    && let Ok(stmts) = self.visit_statement(case_child) {
                                         case_body.extend(stmts);
                                     }
-                                }
                             }
                             // Filter out break/continue — they belong to the switch, not a loop
                             case_body.retain(|s| {
@@ -407,11 +400,10 @@ impl<'a> Visitor<'a> {
                         "default_statement" => {
                             let mut case_body = Vec::new();
                             for case_child in child.children(&mut child.walk()) {
-                                if case_child.kind() != "default" && case_child.kind() != ":" {
-                                    if let Ok(stmts) = self.visit_statement(case_child) {
+                                if case_child.kind() != "default" && case_child.kind() != ":"
+                                    && let Ok(stmts) = self.visit_statement(case_child) {
                                         case_body.extend(stmts);
                                     }
-                                }
                             }
                             case_body.retain(|s| {
                                 !matches!(s, Statement::Break { .. } | Statement::Continue { .. })
@@ -1132,6 +1124,55 @@ fn rewrite_continue(stmts: Vec<Statement>, prefix: &[Statement]) -> Vec<Statemen
     out
 }
 
+// ── Adapter ──────────────────────────────────────────────────────────────────
+
+use crush_walker_core::LanguageAdapter;
+
+pub struct CAdapter;
+impl LanguageAdapter for CAdapter {
+    fn language_name(&self) -> &'static str {
+        "c"
+    }
+    fn file_extensions(&self) -> &[&'static str] {
+        &["c", "h", "cpp", "cc", "cxx", "c++", "hpp"]
+    }
+    fn walk(
+        &self,
+        source: &str,
+        filename: &str,
+    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
+        let ext = std::path::Path::new(filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("c");
+        let is_cpp = matches!(ext, "cpp" | "cc" | "cxx" | "c++" | "hpp");
+        let mut parser = tree_sitter::Parser::new();
+        if is_cpp {
+            parser
+                .set_language(&tree_sitter_cpp::LANGUAGE.into())
+                .map_err(|e| anyhow::anyhow!("tree-sitter-cpp init: {e}"))?;
+        } else {
+            parser
+                .set_language(&tree_sitter_c::LANGUAGE.into())
+                .map_err(|e| anyhow::anyhow!("tree-sitter-c init: {e}"))?;
+        }
+        let tree = parser
+            .parse(source, None)
+            .ok_or_else(|| anyhow::anyhow!("C/C++ parse failed"))?;
+        let walker = crate::CWalker {
+            file_name: filename.to_string(),
+        };
+        let program = walker.walk(&tree, source.as_bytes())?;
+        Ok((
+            crush_walker_core::FeatureReport {
+                lang: "c".to_string(),
+                ..Default::default()
+            },
+            program,
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::*;
@@ -1337,54 +1378,5 @@ mod tests {
         } else {
             panic!("Expected __crush_ternary__");
         }
-    }
-}
-
-// ── Adapter ──────────────────────────────────────────────────────────────────
-
-use crush_walker_core::LanguageAdapter;
-
-pub struct CAdapter;
-impl LanguageAdapter for CAdapter {
-    fn language_name(&self) -> &'static str {
-        "c"
-    }
-    fn file_extensions(&self) -> &[&'static str] {
-        &["c", "h", "cpp", "cc", "cxx", "c++", "hpp"]
-    }
-    fn walk(
-        &self,
-        source: &str,
-        filename: &str,
-    ) -> anyhow::Result<(crush_walker_core::FeatureReport, crush_cast::Program)> {
-        let ext = std::path::Path::new(filename)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("c");
-        let is_cpp = matches!(ext, "cpp" | "cc" | "cxx" | "c++" | "hpp");
-        let mut parser = tree_sitter::Parser::new();
-        if is_cpp {
-            parser
-                .set_language(&tree_sitter_cpp::LANGUAGE.into())
-                .map_err(|e| anyhow::anyhow!("tree-sitter-cpp init: {e}"))?;
-        } else {
-            parser
-                .set_language(&tree_sitter_c::LANGUAGE.into())
-                .map_err(|e| anyhow::anyhow!("tree-sitter-c init: {e}"))?;
-        }
-        let tree = parser
-            .parse(source, None)
-            .ok_or_else(|| anyhow::anyhow!("C/C++ parse failed"))?;
-        let walker = crate::CWalker {
-            file_name: filename.to_string(),
-        };
-        let program = walker.walk(&tree, source.as_bytes())?;
-        Ok((
-            crush_walker_core::FeatureReport {
-                lang: "c".to_string(),
-                ..Default::default()
-            },
-            program,
-        ))
     }
 }

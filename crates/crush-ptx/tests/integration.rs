@@ -1,6 +1,5 @@
 use casm::{Function, Instruction, Program};
 use crush_ptx::compiler::compile_program;
-use std::collections::HashMap;
 
 #[test]
 fn test_compile_basic_ptx() {

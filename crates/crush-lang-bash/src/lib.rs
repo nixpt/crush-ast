@@ -57,7 +57,7 @@ mod tests {
     //! deleted and the crate would still compile against `Frontend` alone,
     //! silently losing its unified-registry registration.
     use super::*;
-    use crush_walker_core::{AdapterRegistry, LanguageAdapter};
+    use crush_walker_core::AdapterRegistry;
 
     #[test]
     fn bash_adapter_registers_in_unified_registry() {

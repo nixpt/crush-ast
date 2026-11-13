@@ -23,7 +23,6 @@
 //! crush_vm::run_with_caps`. A regression on either side surfaces
 //! here as a synchronous build error or test panic.
 
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crush_pkg::manifest::Manifest;

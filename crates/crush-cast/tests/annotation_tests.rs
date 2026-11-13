@@ -3,6 +3,8 @@
 //! `CoverageAnnotation`), and `Program::flatten_annotations` so downstream
 //! consumers (CRUSH-28's `crush-index`) can iterate annotations uniformly.
 
+#![allow(clippy::field_reassign_with_default)] // builds each case from a default
+
 use crush_cast::{
     Annotation, CoverageAnnotation, ErrorAnnotation, ErrorLikelihood, ExhaustiveMatchSite,
     Function, FunctionAnnotations, Invariant, ModuleManifest, Program, ReadAnnotation, SourceLoc,

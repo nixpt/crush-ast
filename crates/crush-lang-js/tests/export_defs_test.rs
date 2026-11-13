@@ -9,7 +9,7 @@
 //! a program-level function name in the `Export` statement).
 
 // The swc path only: the Boa lowering stubs module items (CRUSH-250).
-#![cfg(not(feature = "boa-backend"))]
+#![cfg(feature = "swc-backend")]
 
 use crush_cast::{Expression, Statement};
 use crush_lang_js::js_to_cast;

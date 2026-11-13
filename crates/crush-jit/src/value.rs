@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn float_roundtrip() {
-        for v in [0.0, -1.0, 3.14, 1e100, f64::MIN, f64::MAX] {
+        for v in [0.0, -1.0, 2.75, 1e100, f64::MIN, f64::MAX] {
             let jv = JitValue::float(v);
             assert!(jv.is_float(), "{v} should be float");
             assert_eq!(jv.to_float(), Some(v), "float {v} roundtrip");
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn float_not_int() {
-        let v = JitValue::float(3.14);
+        let v = JitValue::float(2.75);
         assert!(v.is_float());
         assert!(!v.is_int());
         assert!(v.to_int().is_none());

@@ -852,6 +852,6 @@ mod tests {
         assert!(freed >= 2);
         let after_gc = arena.stats();
         assert!(after_gc.total_freed > baseline.total_freed);
-        assert!(after_gc.num_gc_runs >= baseline.num_gc_runs + 1);
+        assert!(after_gc.num_gc_runs > baseline.num_gc_runs);
     }
 }

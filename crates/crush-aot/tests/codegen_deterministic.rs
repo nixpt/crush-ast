@@ -5,6 +5,9 @@
 
 use std::path::Path;
 
+/// One backend's source generator.
+type Generator = fn(&casm::Program) -> Option<String>;
+
 #[test]
 fn generated_source_does_not_depend_on_hash_order() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/crush");
@@ -20,7 +23,7 @@ fn generated_source_does_not_depend_on_hash_order() {
         let Ok(first) = crush_frontend::compile_crush_source(&source) else {
             continue;
         };
-        let backends: [(&str, fn(&casm::Program) -> Option<String>); 2] = [
+        let backends: [(&str, Generator); 2] = [
             ("rust", |p| crush_aot::codegen::gen_rust_source(p).ok()),
             ("c", |p| crush_aot::codegen_c::gen_c_source(p).ok()),
         ];
