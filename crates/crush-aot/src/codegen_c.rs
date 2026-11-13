@@ -14,7 +14,7 @@ use std::collections::HashMap;
 pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::UnsupportedOps> {
     crate::refuse_cosm(program, "C")?;
     crate::refuse_green_task(program, "C")?;
-    crate::refuse_ai(program, "C")?;
+    crate::refuse_host_ops(program, "C")?;
     crate::method_support::check_c(program)?;
     let mut out = String::new();
 
@@ -2061,7 +2061,7 @@ fn emit_c_instr(
         // AOT C can't perform AI queries. The JSON config is in the instruction args,
         // NOT on the stack. Push null (matching scheduler/portable VM behavior).
         // ── AI opcodes ──
-        // UNREACHABLE since CRUSH-234 (`crate::refuse_ai`). Was: CRUSH-32 follow-up: per-opcode inline stub emit (`mk_ai_stub`), so all
+        // UNREACHABLE since CRUSH-234 (`crate::refuse_host_ops`). Was: CRUSH-32 follow-up: per-opcode inline stub emit (`mk_ai_stub`), so all
         // 5 execution tiers agree at differential-cmp time. Args ride on
         // instruction args (not on the VM stack); echo is always an empty
         // Array here.
@@ -2117,6 +2117,7 @@ fn emit_c_instr(
         }
 
         // ── DOM opcodes (CRUSH-33 Commit 2) ─────────────────────────────────
+        // UNREACHABLE since #423: `crate::refuse_host_ops` rejects DOM ops before codegen.
         // Per-opcode inline stub emit (`mk_dom_stub`), so all 5 execution
         // tiers agree at differential-cmp time. Mirror of the AI per-opcode
         // arms above. Slots are 0x9A-0x9F (CRUD/nav) and 0xB5-0xB8

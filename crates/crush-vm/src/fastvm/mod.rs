@@ -325,6 +325,20 @@ pub fn resolve_host_request(
     req: &HostRequest,
     host_caps: Option<&crate::HostCaps>,
 ) -> Option<RuntimeValue> {
+    resolve_host_request_with_quotas(req, host_caps, &crate::vm::Quotas::default())
+}
+
+/// [`resolve_host_request`] under the embedder's `quotas`: its capability
+/// allowlist (`Quotas::allowed_caps`) applies to the `ai_native.*` /
+/// `dom_native.*` gate exactly as it does on the scheduler and PortableVm,
+/// and handlers get `quotas.max_wall_time_ms` as their deadline (#423). An
+/// allowlist refusal resolves to `None`, like a handler error: this seam has
+/// no error channel.
+pub fn resolve_host_request_with_quotas(
+    req: &HostRequest,
+    host_caps: Option<&crate::HostCaps>,
+    quotas: &crate::vm::Quotas,
+) -> Option<RuntimeValue> {
     let (cap_name, kind) = match req {
         HostRequest::AiQuery { .. } => ("ai_native.query", "query"),
         HostRequest::AiSynthesize { .. } => ("ai_native.synthesize", "synthesize"),
@@ -369,14 +383,13 @@ pub fn resolve_host_request(
         if crate::ai_args::stack_argc(payload) > 0 {
             return None;
         }
-        let deadline = crate::vm::Quotas::default().max_wall_time_ms;
         let value = crate::ai_args::dispatch(
             kind,
             payload,
             Vec::new(),
             Some(caps),
-            &crate::vm::Quotas::default(),
-            deadline,
+            quotas,
+            quotas.max_wall_time_ms,
         )
         .ok()?;
         return flat_value(value);
@@ -385,10 +398,8 @@ pub fn resolve_host_request(
     // to return a fixed `{ok:true,...}` string without calling it, so a failing
     // handler looked like success). A handler error is `None`: this seam has no
     // error channel, and `dom_request_denied` names the ungranted case.
-    let deadline = crate::vm::Quotas::default().max_wall_time_ms;
     let value =
-        crate::dom_args::dispatch(kind, Some(caps), &crate::vm::Quotas::default(), deadline)
-            .ok()?;
+        crate::dom_args::dispatch(kind, Some(caps), quotas, quotas.max_wall_time_ms).ok()?;
     flat_value(value)
 }
 

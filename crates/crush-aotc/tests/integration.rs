@@ -418,3 +418,38 @@ fn await_on_a_non_handle_returns_the_value() {
         "unexpected output: {out}"
     );
 }
+
+/// #423: AI and DOM ops dispatch to a granted `ai_native.*` / `dom_native.*`
+/// host capability on the VMs. crush-aotc used to drop most of them as an
+/// unhandled op (a comment in the C), so the program ran on without their
+/// result; it refuses them by name now.
+#[test]
+fn ai_and_dom_ops_are_refused() {
+    for (op, family) in [
+        ("ai_query", "ai_native"),
+        ("ai_synthesize", "ai_native"),
+        ("dom_query", "dom_native"),
+        ("dom_mutate", "dom_native"),
+        ("dom_event_listener", "dom_native"),
+    ] {
+        let mut program =
+            crush_frontend::compile_crush_source("fn main() { print(1) }").expect("compiles");
+        program.functions.get_mut("main").unwrap().body.insert(
+            0,
+            casm::Instruction {
+                op: op.into(),
+                lang: None,
+                meta: None,
+                args: serde_json::json!({}),
+            },
+        );
+        let err = AotcCompiler::new(AotcOpts::default())
+            .compile(&program)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!("`{op}`")) && err.contains(family),
+            "{op}: {err}"
+        );
+    }
+}

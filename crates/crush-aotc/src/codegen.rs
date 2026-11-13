@@ -741,6 +741,17 @@ impl AotcCompiler {
                         instr.op
                     );
                 }
+                // #423: the AI and DOM op families dispatch to a granted
+                // `ai_native.*` / `dom_native.*` host capability on the VMs
+                // (refused without one). A native binary can't be granted
+                // either, and dropping the op as unhandled would leave the
+                // program running without its result: refuse at compile time.
+                op if op.starts_with("ai_") || op.starts_with("dom_") => {
+                    anyhow::bail!(
+                        "crush-aotc: `{op}` needs a granted `{}_native.*` host capability, which a native binary cannot be given; run it on the VM instead",
+                        if op.starts_with("ai_") { "ai" } else { "dom" }
+                    );
+                }
                 _ => {
                     writeln!(out, "    /* unhandled op: {} */", instr.op)?;
                 }

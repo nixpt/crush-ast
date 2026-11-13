@@ -179,6 +179,37 @@ fn fastvm_resolve_host_request_calls_the_dom_handler() {
     assert_eq!(resolve_host_request(&req, Some(&boom)), None);
 }
 
+/// #423: the FastVM seam applies the embedder's allowlist as the scheduler and
+/// PortableVm do. Under an allowlist that leaves `dom_native.query` out, a
+/// granted handler is not called (`None`); inside it, it is.
+#[test]
+fn fastvm_resolve_host_request_applies_the_embedder_allowlist() {
+    use crush_vm::fastvm::{HostRequest, resolve_host_request_with_quotas};
+    use crush_vm::value::RuntimeValue;
+    let req = HostRequest::DomQuery {
+        args: serde_json::json!({}),
+    };
+    let mut stub = HostCaps::new();
+    stub.register(Box::new(Stub));
+    let refused = Quotas {
+        allowed_caps: Some(vec!["io.print".to_string()]),
+        ..Quotas::default()
+    };
+    assert_eq!(
+        resolve_host_request_with_quotas(&req, Some(&stub), &refused),
+        None,
+        "an op outside the allowlist must not reach the handler"
+    );
+    let allowed = Quotas {
+        allowed_caps: Some(vec!["dom_native.*".to_string()]),
+        ..Quotas::default()
+    };
+    assert_eq!(
+        resolve_host_request_with_quotas(&req, Some(&stub), &allowed),
+        Some(RuntimeValue::String("node-1".into()))
+    );
+}
+
 /// End-to-end through the standalone runner: a `.cvm1` whose only effect is
 /// a `DOM_QUERY` dies with the named refusal on stderr (`crush-vm run` has
 /// no host grant source, so its registry is empty).

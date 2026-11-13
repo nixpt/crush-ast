@@ -79,7 +79,8 @@ fn refuse_green_task(program: &casm::Program, backend: &'static str) -> Result<(
 /// the old behaviour — push a made-up `{ok, kind, echo}` stub and carry on —
 /// silently invented model output. AOT now refuses them at compile time, naming
 /// the op. Both spellings the frontend/CASM use are covered (`ai_tool_chain` /
-/// `ai_toolchain`, `ai_goal_decl` / `ai_goal_declaration`).
+/// `ai_toolchain`, `ai_goal_decl` / `ai_goal_declaration`, `ai_knowledge_share`
+/// / `ai_knowledge_sharing`).
 const AI_OPS: &[&str] = &[
     "ai_query",
     "ai_synthesize",
@@ -93,16 +94,45 @@ const AI_OPS: &[&str] = &[
     "ai_goal_decl",
     "ai_progress_update",
     "ai_knowledge_sharing",
+    "ai_knowledge_share",
 ];
 
-fn refuse_ai(program: &casm::Program, backend: &'static str) -> Result<(), UnsupportedOps> {
+/// #423: the DOM opcodes are the same kind of op — the VMs dispatch them to a
+/// granted `dom_native.*` host handler (and refuse them without one, CRUSH-378)
+/// — but AOT kept the invented `{ok: true, kind, echo}` stub, so a program the
+/// VM refuses "succeeded" natively with no grant check at all. Refused at
+/// compile time like the AI ops. Covers the CASM names the frontend emits
+/// (`dom_query`, `dom_mutate`, `dom_event_listener`) and the per-kind names
+/// the codegen had stub arms for.
+const DOM_OPS: &[&str] = &[
+    "dom_query",
+    "dom_mutate",
+    "dom_event_listener",
+    "dom_get",
+    "dom_set",
+    "dom_create",
+    "dom_remove",
+    "dom_child",
+    "dom_parent",
+    "dom_attr",
+    "dom_text",
+    "dom_event",
+];
+
+/// Refuse the host-capability op families (AI, DOM) that an AOT binary can't
+/// be granted, naming each occurrence.
+fn refuse_host_ops(program: &casm::Program, backend: &'static str) -> Result<(), UnsupportedOps> {
     let mut ops = Vec::new();
     for (name, func) in &program.functions {
         for (i, instr) in func.body.iter().enumerate() {
-            if AI_OPS.contains(&instr.op.as_str()) {
+            let op = instr.op.as_str();
+            if AI_OPS.contains(&op) {
                 ops.push(format!(
-                    "`{}` (fn {name}, instruction {i}): AI ops need a granted `ai_native.*` host capability, which AOT binaries cannot be given; run it on the VM with the AI grant instead",
-                    instr.op
+                    "`{op}` (fn {name}, instruction {i}): AI ops need a granted `ai_native.*` host capability, which AOT binaries cannot be given; run it on the VM with the AI grant instead"
+                ));
+            } else if DOM_OPS.contains(&op) {
+                ops.push(format!(
+                    "`{op}` (fn {name}, instruction {i}): DOM ops need a granted `dom_native.*` host capability, which AOT binaries cannot be given; run it on the VM with a DOM host registered instead"
                 ));
             }
         }
