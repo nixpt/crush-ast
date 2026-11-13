@@ -18,14 +18,15 @@
 - **1.0 is a compatibility promise, not a quality award.** After 1.0.0, anything in §1's
   "promised" list can only break in 2.0. So the question is not "is Crush good enough?"
   but "which surfaces are we willing to freeze?".
-- **Today (2026-11-13): 22 ✅ / 23 🟡 / 22 ❌** across 67 criteria (table in §2.9; was 18 / 26 / 23 before the rulings, 15 / 26 / 26 on 2026-10-31 and 11 / 22 / 34 on 2026-10-18). The rulings (§6) settle L6, A8, S10 and T6. R1 (no accidental 1.0) is fixed by #348. The strengths are
+- **Today (2026-11-13): 23 ✅ / 23 🟡 / 21 ❌** across 67 criteria (table in §2.9; was 18 / 26 / 23 before the rulings, 15 / 26 / 26 on 2026-10-31 and 11 / 22 / 34 on 2026-10-18). The rulings (§6) settle L6, A8, S10, T6 and R2. R1 (no accidental 1.0) is fixed by #348. The strengths are
   real: load-time version gates on CVM1/CASM/CAST, a gated polyglot capability, an MSRV
   job, a cross-backend agreement suite and a CI-verified language guide. The gaps are a
   normative spec, semver tooling, a backward-compatibility corpus, and the class of
   **silently-wrong** results that is still open across engines.
 - **Decided (2026-11-13): a partial 1.0, by area** (§3). Stable core: the language core,
   the CAST/CASM formats, the Tier-1 engines and the `crush` CLI basics. Experimental in
-  1.0: polyglot, walkers, AI ops, GPU, `spawn`, `impl`/`trait`/`@kind`.
+  1.0: polyglot, walkers, AI ops, GPU, `spawn`, `impl`/`trait`/`@kind`. **Versioning stays
+  lock-step:** the whole workspace goes to 1.0 and the experimental crates are labelled.
 - **Path (§4, renumbered 2026-11-13):** 0.12 "freeze prep" → 0.13 "feature freeze" →
   1.0.0-rc.N (≥ 4 weeks of soak, no stable-surface changes) → 1.0.0. 0.8–0.11 shipped as
   ordinary feature releases, so the old 0.8/0.9 gates moved to 0.12/0.13.
@@ -57,7 +58,9 @@
 - **Performance.** The execution *tier* a program lands on (CVM1, FastVM, JIT, AOT) is not
   part of the promise. Only the observable result is, and only on the **Tier-1 engines:
   the scheduler VM, PortableVm and FastVM**. AOT (Rust/C) is Tier-2 with documented gaps,
-  but enforces the same capability checks. The JIT is experimental and off by default.
+  but enforces the same capability checks (no step or wall-clock quota and no runtime
+  allowlist in AOT binaries are documented Tier-2 gaps). The JIT is experimental and off by
+  default. `crush-aotc` is deleted (CRUSH-452).
 - **Determinism and fuel budgets** (S10), the **LSP** (T4) and the **debugger** (T6).
 - **Walker coverage** of Python/JS/Rust/C/Go/… The walkers are best-effort lowering. What
   a walker supports can grow in a minor release. A walker that rejects code it used to
@@ -79,7 +82,7 @@ Each line: **criterion** — how to verify it — status — evidence.
 | L1 | A **normative language reference** exists and states which constructs are stable. | The doc exists and has a "stability" column per construct. | ❌ | No spec in `docs/`. `docs/cast/schema-reference.md` covers the CAST JSON schema, not surface syntax. The guide's EBNF (`crush-language-guide/src/crush/syntax.md:414`) describes itself as "the grammar the parser implements, simplified", so the parser is the authority. |
 | L2 | The reference's grammar and the **two parsers agree**: `crush-frontend` and `tree-sitter-crush`. | A CI job parses the whole example and guide corpus with both parsers. Zero ERROR nodes, zero disagreements. | 🟡 | **Partly done (2026-10-31).** CRUSH-207 (#342): the tree-sitter grammar now parses 49 of 51 `examples/crush/*.crush` without ERROR nodes (was 1/51), and `crates/tree-sitter-crush/tests/grammar_examples.rs` checks it in CI (2 files in `KNOWN_BAD`, with reasons). #347 adds slices and hex/binary literals. Still missing: a *differential* check against crush-frontend, and the guide's corpus. |
 | L3 | Every keyword is either usable or explicitly reserved-for-future, and documented. | Diff the lexer keyword table against the reference. | 🟡 | Keywords are at `crush-frontend/src/parser/lexer.rs:507-542`. `capability` is reserved with no statement form (`parser/mod.rs:542` "TODO: Parse capability declarations"). `pub`, `mcp` imports and `external` imports have no guide coverage. `let mut` is rejected. **Ruled (§6):** all of them are reserved with no form in 1.0, and documented as reserved. |
-| L4 | **No silently-wrong results** in stable-core constructs: open issues/tickets labelled silent-wrong on Tier-1 engines = 0. | Issue query. | 🟡 | Fixed and closed: #253, #254, #256, #257 (#306–#310), #267 (#319), #273 (#316). #258 (`@capabilities` ignored) and #261 (ungranted AI op → `null`) are fixed and closed (#380, #379). Open and near this line: #434 (crush-aotc compiles an unknown op to a comment) and #435 (a struct method named `pop`/`push` reroutes every `.pop()`/`.push()`). Walker silent-wrongs (#329–#331, C) are outside the stable core. FastVM is Tier-1 since the rulings, so its out-of-range reads returning `null` (#445) count here; #442 (negative-index writes dropped) has its fix in review (#448), and #425 (bitwise parity) in #449. |
+| L4 | **No silently-wrong results** in stable-core constructs: open issues/tickets labelled silent-wrong on Tier-1 engines = 0. | Issue query. | 🟡 | Fixed and closed: #253, #254, #256, #257 (#306–#310), #267 (#319), #273 (#316). #258 (`@capabilities` ignored) and #261 (ungranted AI op → `null`) are fixed and closed (#380, #379). Open and near this line: #434 (crush-aotc compiles an unknown op to a comment; moot once crush-aotc is deleted, CRUSH-452) and #435 (a struct method named `pop`/`push` reroutes every `.pop()`/`.push()`). Walker silent-wrongs (#329–#331, C) are outside the stable core. FastVM is Tier-1 since the rulings, so its out-of-range reads returning `null` (#445) count here; #442 (negative-index writes dropped) has its fix in review (#448), and #425 (bitwise parity) in #449. |
 | L5 | **Imports and modules work.** `import a.b` loads a module, or the reference says imports are not in 1.0. | Conformance test. | 🟡 | CRUSH-110 (in review): `import a.b [as x] [{ f }]` loads `a/b.crush` at compile time (`docs/design/import-system.md`, tests `crush-lang-sdk/tests/imports_cli.rs`). The language guide (`crush-language-guide`, `syntax.md`) still says imports load nothing. |
 | L6 | **Object model decided.** Either COSM K1–K2 has landed and `struct`/`impl`/`trait`/`@kind` semantics are specified, or structs are frozen at today's semantics and COSM stays experimental. | Design doc status plus tickets. | ✅ | **Decided 2026-11-13 (§6):** `struct` is frozen at today's semantics; `impl`/`trait`/`@kind` ship experimental; COSM K2 continues after 1.0. State of the work: `docs/design/object-model.md` was approved 2026-10-15; K1.2–K1.4 have landed (CRUSH-zorro-40/41/42/43 Done, #211, #214); zorro-44, K2 (protocols) and K3 (walkers) have not started, and CRUSH-251 (JS object model) is Backlog. |
 | L7 | **Error model is uniform**: `try`/`catch`/`throw` catch runtime errors on every Tier-1 engine. | Differential test. | ❌ | CRUSH-219 "runtime errors uncatchable; AOT has no try". #418 (2026-11-12): a cross-function catch on FastVM drops the callee's locals, and the JIT refuses a `try` it can't classify instead of mis-catching. Follow-ups are #427. |
@@ -169,7 +172,7 @@ Each line: **criterion** — how to verify it — status — evidence.
 | ID | Criterion | Verify by | Status | Evidence |
 |---|---|---|---|---|
 | R1 | **No accidental 1.0.** While major = 0, a `feat!:` / `BREAKING CHANGE` commit bumps *minor*. 1.0.0 is minted only on purpose. | Read `bump-version.sh`. | ✅ | **Done (#348, merged 2026-10-31):** on 0.x a breaking change (`feat!:` / `BREAKING CHANGE`) bumps minor; 1.0.0 needs `BUMPVER_ALLOW_MAJOR=1` (release.yml `allow_major`). squadron's `bump-version` template still needs the same change, or `bump-version --install` reverts it. |
-| R2 | Versioning can **differ per crate** (needed for a partial 1.0). | Tooling. | ❌ | The workspace is lock-step (`version.workspace`, `Cargo.toml:59`), and `bump-version.sh` and `publish-crates.py` assume it. |
+| R2 | Versioning can **differ per crate** (needed for a partial 1.0). | Tooling. | ✅ | **Not needed (§6):** versioning stays lock-step; the whole workspace goes to 1.0 and experimental crates are labelled instead. The workspace is already lock-step (`version.workspace`, `Cargo.toml:59`). |
 | R3 | A pre-release (`1.0.0-rc.N`) can be cut and published. | Dry run. | 🟡 | From 0.9.0 every tag gets a GitHub **pre-release** (`--prerelease --latest=false`, #346). `1.0.0-rc.N` version suffixes are still untested in `bump-version.sh` and `publish-crates.py`. |
 | R4 | Every crate in the release is publishable by CI. No manual first publish. | `publish-crates.py` plan. | 🟡 | 27 crates publish from CI (Trusted Publishing; #320 lists every crate that needs a config instead of stopping at the first). 15 never-published crates each need a manual first `cargo publish`. |
 | R5 | The CHANGELOG has a **"Breaking"** section per release, separate from the mechanical entries. | Review. | 🟡 | `CHANGELOG.md` follows Keep a Changelog "loosely". Entries are auto-appended. |
@@ -186,16 +189,19 @@ Each line: **criterion** — how to verify it — status — evidence.
 | 2.5 Tooling | 1 | 5 | 0 | 6 |
 | 2.6 Docs | 1 | 3 | 2 | 6 |
 | 2.7 Quality gates | 6 | 1 | 3 | 10 |
-| 2.8 Release engineering | 2 | 3 | 2 | 7 |
-| **Total** | **22** | **23** | **22** | **67** |
+| 2.8 Release engineering | 3 | 3 | 1 | 7 |
+| **Total** | **23** | **23** | **21** | **67** |
 ---
 
 ## 3. Scope decision: full 1.0 vs partial 1.0
 
-> **Decided 2026-11-13 (§6): partial 1.0 by area** — Option B below. Stable
-> core: the language core, the CAST/CASM formats, the Tier-1 engines and the `crush` CLI
-> basics. Experimental: polyglot, walkers, AI ops, GPU, `spawn`. The crate-by-crate list
-> and the embedder surface (facade crate vs `crush_lang_sdk::stable`) are still to ratify.
+> **Decided 2026-11-13 (§6): partial 1.0 by area**, the surface split of Option B below,
+> **with lock-step versioning**: the whole workspace goes to 1.0 and the experimental crates
+> are labelled (not kept at 0.x as Option B proposed). Stable: the language core, the
+> CAST/CASM formats, the Tier-1 engines, the `crush` CLI basics, `crush-pkg` and
+> `crush-installer`. Experimental: polyglot, walkers, AI ops, GPU, `spawn`, `crush-aot`
+> (Tier-2). The rest of the crate-by-crate list and the embedder surface (facade crate vs
+> `crush_lang_sdk::stable`) are still to ratify.
 
 ### Option A — full 1.0 (every published crate goes to 1.0.0)
 
@@ -208,7 +214,7 @@ Each line: **criterion** — how to verify it — status — evidence.
   is supposed to mean.
 - **Earliest realistic date:** after M2, M5, M6, M9 and COSM K3. Many months.
 
-### Option B — partial 1.0, by surface (chosen)
+### Option B — partial 1.0, by surface (chosen for the surface split; versioning stays lock-step)
 
 1.0 freezes **the language core, the formats, the capability contract and the `crush` CLI**
 (P1–P4, P7), plus a small set of foundation crates. Everything else keeps its own 0.x
@@ -248,6 +254,9 @@ Either way, **a stable crate must not re-export a type from a 0.x crate.** If it
 
 **Cost of B:** it needs R2 (per-crate versions in `bump-version.sh` and
 `publish-crates.py`) and a "this crate is 0.x" banner in each experimental crate's README.
+*(Ruled: lock-step instead, so R2 is not needed. Experimental crates go to 1.0 with an
+"experimental" label rather than staying 0.x. The rule above still applies in that form:
+a stable crate must not re-export a type from an experimental one.)*
 
 ### Option C — "language 1.0, crates all 0.x"
 
@@ -273,7 +282,7 @@ gates moved to 0.12 and the old 0.9 gates to 0.13.*
 | Release | Theme | Exit criteria (from §2) |
 |---|---|---|
 | **0.12.0 — freeze prep** | Tooling and the rulings land | R1 (done, #348), A2 semver-checks wired (report-only), F5 compat corpus seeded with released artifacts, F9 format-versioning doc, S1 `SECURITY.md` draft, L1 reference skeleton with stability column, Q5 conformance in CI (allowed-failures list). The §6 rulings land in code where they change behaviour (string units, `CapFailed` fatal, keyword field names, literal callees, COSM additive schema, `crush.toml` format version, JIT off by default). The scope decision (§3) and the COSM decision (L6) are made. |
-| **0.13.0 — feature freeze** | Close the stable surface | L2, L4 (zero silent-wrong on Tier-1), L5, L7, F3 (CAST/`.castb` 1.0 with magic), F4, A3, A4, A5, S3, S5, S6, S7, S8, T1, T2, D3, R2, R7 triaged. **No new syntax after 0.13.0**, except behind an experimental gate. |
+| **0.13.0 — feature freeze** | Close the stable surface | L2, L4 (zero silent-wrong on Tier-1), L5, L7, F3 (CAST/`.castb` 1.0 with magic), F4, A3, A4, A5, S3, S5, S6, S7, S8, T1, T2, D3, R7 triaged. The JIT is off by default and refuses loudly instead of truncating; crush-aotc is deleted. **No new syntax after 0.13.0**, except behind an experimental gate. |
 | **1.0.0-rc.1 … rc.N** | Soak | All ❌ in the stable scope closed or explicitly scoped out. Then only bug fixes. **Any change to a promised surface restarts the clock with a new rc.** Minimum 4 weeks from the last rc to 1.0.0. The guide (D1/D2) and website (D4) are pinned to the rc tag. A downstream canary (openko/fabric, arniko, surfer) builds against each rc. |
 | **1.0.0** | Promise starts | Tag. Changelog "Breaking since 0.x" section. Migration guide (D5). |
 
@@ -281,7 +290,7 @@ gates moved to 0.12 and the old 0.9 gates to 0.13.*
 
 | Item | Proposed 1.0 treatment |
 |---|---|
-| M2 JIT completion / M10 (CRUSH-59/60/61) | **Out (ruled).** The JIT is an experimental tier, **off by default (opt-in)**; values past 48 bits deoptimize to the VM instead of truncating. Silently-wrong output on an opt-in tier is still silently wrong, so it must deopt or refuse rather than diverge. |
+| M2 JIT completion / M10 (CRUSH-59/60/61) | **Out (ruled).** The JIT is an experimental tier, **off by default (opt-in)**. By the 0.13 freeze it refuses loudly where it would truncate past 48 bits; the full deoptimize-to-VM path lands after 1.0. Silently-wrong output on an opt-in tier is still silently wrong. |
 | M3 debugger | **Out.** |
 | M4 / M9 cross-project convergence | **Out**, except the stdlib capability set that 1.0 marks stable (P7). |
 | M5 AI-native layer (CRUSH-30) | Annotations that are already CAST nodes: **experimental**. S6 (fail-closed) is **in**. |
@@ -332,7 +341,8 @@ gates moved to 0.12 and the old 0.9 gates to 0.13.*
 
 ## 5. Questions for the captain (answered 2026-11-13)
 
-1. **Which shape: A, B or C?** → **B, partial 1.0 by area.** The external-embedder
+1. **Which shape: A, B or C?** → **B's surface split, with lock-step versioning** (the
+   whole workspace goes to 1.0; experimental crates are labelled). The external-embedder
    question (facade crate vs `crush_lang_sdk::stable`) is still open.
 2. **COSM before or after 1.0?** → **After.** `struct` is frozen as it is;
    `impl`/`trait`/`@kind` ship experimental; K2 continues after 1.0.
@@ -352,14 +362,18 @@ gates moved to 0.12 and the old 0.9 gates to 0.13.*
 ## 6. Captain's rulings (2026-11-13)
 
 Recorded by the foreman as the captain ruled, from the open-decision sweep of
-2026-11-13. "Criteria" names the rows above that each ruling settles or steers. Items not
-listed here are still open (for example COSM method dispatch, crush-aotc delete vs
-parity, augmented assignment on mutable values, string-op coercion).
+2026-11-13, including the two checkpoints of the ticket planning run that followed (the
+resulting tickets are CRUSH-452..501). "Criteria" names the rows above that each ruling
+settles or steers. Items not listed here are still open (for example COSM method
+dispatch, augmented assignment on mutable values, string-op coercion, `mat_mul`/`vec_*`
+builtins).
 
 | Ruling | Decision | Criteria |
 |---|---|---|
 | Release train | 0.12 = freeze prep (the rulings land); 0.13 = feature freeze (all old 0.9 gates); then 1.0-rc | §4.1 |
 | 1.0 scope | Partial 1.0 by area. Stable core: language core, CAST/CASM formats, Tier-1 engines, CLI basics. Experimental: polyglot, walkers, AI ops, GPU, `spawn` | §3, A1 |
+| Versioning | Lock-step: the whole workspace goes to 1.0; experimental crates are labelled. `crush-aot` is experimental (Tier-2); `crush-pkg` and `crush-installer` are stable | §3, R2, A1 |
+| crush-aotc | Deleted (CRUSH-452); #434 and the aotc API work become moot | L4 |
 | Tier-1 engines | Scheduler VM + PortableVm + FastVM. AOT Tier-2 with documented gaps; JIT experimental | §1.2, L4 |
 | Object model | `struct` frozen as it is; `impl`/`trait`/`@kind` experimental; COSM K2 after 1.0 | L6 |
 | String index units (#368) | All characters: `len`, `index_of`, `s[i]` and slices count Unicode characters; add explicit byte APIs (`byte_len`, `bytes()`) | L4, P1 |
@@ -368,10 +382,10 @@ parity, augmented assignment on mutable values, string-op coercion).
 | Bitwise operators (#425) | Int operands only, else a type error; a shift count outside 0..=63 is ArithmeticOverflow; full i64 on every engine; JS keeps refusing them | L4, L8 |
 | Float print (#393) | Keep Rust `Display` (today's behaviour on every engine); document it | L1 |
 | Polyglot sandbox | Sandboxed by default; unsandboxed needs an explicit flag; a dropped pinned dep is a loud error; polyglot stays experimental; evaluate zandbox as the backend | S5 |
-| Native AOT trust boundary | AOT enforces the same capability checks as CVM1 | S8 |
-| JIT default and width | Off by default (opt-in); values past 48 bits deoptimize to the VM instead of truncating | §4.2 M2 |
+| Native AOT trust boundary | AOT enforces the same capability checks as CVM1. The compile-time manifest check is enough for 1.0; no runtime allowlist in AOT binaries, and no step or wall-clock quota in AOT, are documented Tier-2 gaps | S8, S7 |
+| JIT default and width | Off by default (opt-in). By the 0.13 freeze it refuses loudly rather than truncating past 48 bits; the full deoptimize-to-VM path lands after 1.0 | §4.2 M2 |
 | Integer width | i64 with checked overflow for 1.0; bigint later as a separate, opt-in type | L8 |
-| Keyword field names (#428) | Allowed everywhere (literals, struct fields, member access) | L3, L2 |
+| Keyword field names (#428) | Allowed everywhere (literals, struct fields, member access), including `and`/`or`/`not` as object keys | L3, L2 |
 | Literal callees (`5(3)`, `"s"(1)`) | Rejected statically, at parse or compile time | L3 |
 | Reserved keywords | `capability`, `let mut`, `pub`, `mcp`/`external` imports: reserved, no forms in 1.0, documented as reserved | L3 |
 | Localised keywords | Experimental, outside the 1.0 syntax promise | L10 |
@@ -380,7 +394,7 @@ parity, augmented assignment on mutable values, string-op coercion).
 | COSM schema evolution | Additive, ignore unknown: a new optional field is a minor bump that old readers skip; removing or changing a field is major | F7 |
 | Silently-wrong fix after 1.0 | Patch release with a changelog note | §4.5 |
 | Deprecation policy | §4.4 ratified as written | §4.4, D5 |
-| CLI | Stable entry points fold into `crush <sub>`; other aux binaries marked unstable; LSP and debugger experimental | T1, T4, T6 |
+| CLI | Stable entry points fold into `crush <sub>` (the CASM one is `crush asm`); other aux binaries, including `crush-diff`, stay and are marked unstable; LSP and debugger experimental | T1, T4, T6 |
 | Platforms | Linux x86_64 + aarch64 Tier-1; macOS and others Tier-2 best effort; Android/RISC-V later | §1.2, Q7 |
 | Public API hygiene | Stable crates expose their own Error types (no `anyhow::Result`); no glob re-export of caison; break the `crush-cast → crush-caison → crush-vm` edge; `#[non_exhaustive]` mandatory on growable public enums | A3, A4, A5 |
 | MSRV | N-2 stable; a bump is a minor release | A8 |
