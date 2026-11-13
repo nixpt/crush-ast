@@ -1,7 +1,7 @@
 # Crush 1.0 — release criteria
 
 > **Planning doc, not a release.** The criteria and path started as a draft for the captain (nixpt);
-> the rulings recorded here (§3 decided box, §4.4, §4.5, §5 answers and §6) are ratified (2026-11-13).
+> the rulings recorded here (§3 decided box, §4.4, §4.5's silently-wrong and MSRV entries, §5 answers and §6) are ratified (2026-11-13).
 > Nothing here changes versions, tags, publishing or release workflows.
 > Ticket: [CRUSH-275](../../.jagent/planning/tickets/CRUSH-275-define-1.0-criteria.md).
 > Surveyed against `origin/main` @ `5437ed64` (2026-10-18, workspace version 0.6.0);
