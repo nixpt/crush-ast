@@ -1152,6 +1152,30 @@ static Value _neg(Value v) {
     return mk_null();
 }
 static Value _not(Value v) { return mk_bool(!_truthy(v)); }
+/* #425 (ruling H1): Int operands only; a shift count outside 0..=63 or a
+   left shift that loses bits is an overflow; right shift is arithmetic.
+   Shifting an int64_t by >= 64, or a negative value left, is UB in C, so the
+   shift is done on uint64_t after the range check. */
+static Value _bitwise(int op, Value a, Value b) {
+    if (a.tag != TAG_INT || b.tag != TAG_INT) _crush_arith_error("type error: bitwise op on non-int operands");
+    int64_t x = a.i, y = b.i;
+    switch (op) {
+    case 0: return mk_int(x & y);
+    case 1: return mk_int(x | y);
+    case 2: return mk_int(x ^ y);
+    default: break;
+    }
+    if (y < 0 || y > 63) _crush_arith_error("arithmetic overflow");
+    if (op == 4) return mk_int(x < 0 ? ~(~x >> y) : x >> y);
+    int64_t r = (int64_t)((uint64_t)x << y);
+    int64_t back = r < 0 ? ~(~r >> y) : r >> y;
+    if (back != x) _crush_arith_error("arithmetic overflow");
+    return mk_int(r);
+}
+static Value _bitnot(Value v) {
+    if (v.tag != TAG_INT) _crush_arith_error("type error: bitwise op on a non-int operand");
+    return mk_int(~v.i);
+}
 
 static void _cmp_type_error(void) {
     fprintf(stderr, "crush(aotc): type error: ordered comparison on non-numeric operands\n");
@@ -1992,24 +2016,19 @@ fn emit_c_instr(
             ));
         }
 
-        // ── Bitwise ops ──
-        "bit_and" => {
-            out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (_a.tag == TAG_INT && _b.tag == TAG_INT) {{ _push(mk_int(_a.i & _b.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
-        }
-        "bit_or" => {
-            out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (_a.tag == TAG_INT && _b.tag == TAG_INT) {{ _push(mk_int(_a.i | _b.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
-        }
-        "bit_xor" => {
-            out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (_a.tag == TAG_INT && _b.tag == TAG_INT) {{ _push(mk_int(_a.i ^ _b.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
+        // ── Bitwise ops ── (#425: Int only, checked shifts; shifts were UB)
+        "bit_and" | "bit_or" | "bit_xor" | "shl" | "shr" => {
+            let op = match instr.op.as_str() {
+                "bit_and" => 0,
+                "bit_or" => 1,
+                "bit_xor" => 2,
+                "shl" => 3,
+                _ => 4,
+            };
+            out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); _push(_bitwise({op}, _a, _b)); }} _pc={next_pc}; break;\n"));
         }
         "bit_not" => {
-            out.push_str(&format!("                {{ Value _v = _pop(); if (_v.tag == TAG_INT) {{ _push(mk_int(~_v.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
-        }
-        "shl" => {
-            out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (_a.tag == TAG_INT && _b.tag == TAG_INT) {{ _push(mk_int(_a.i << _b.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
-        }
-        "shr" => {
-            out.push_str(&format!("                {{ Value _b = _pop(); Value _a = _pop(); if (_a.tag == TAG_INT && _b.tag == TAG_INT) {{ _push(mk_int(_a.i >> _b.i)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value _v = _pop(); _push(_bitnot(_v)); }} _pc={next_pc}; break;\n"));
         }
 
         // ── Control flow ──

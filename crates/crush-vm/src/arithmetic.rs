@@ -15,6 +15,10 @@
 //!   * Int DIV truncates toward zero; int MOD is the matching remainder.
 //!   * NEG is numeric only and checks for i64::MIN overflow.
 //!   * Comparisons promote mixed int/float to float.
+//!   * Bitwise AND/OR/XOR/NOT and shifts take Int operands only (anything
+//!     else is a TypeError); a shift count outside 0..=63 and a left shift
+//!     that loses bits raise ArithmeticOverflow; right shift is arithmetic
+//!     (#425, captain's ruling H1, 2026-11-13).
 
 use crate::vm::{Value, VmError};
 
@@ -476,5 +480,60 @@ mod tests {
             compare_values(&Value::Int(2), &Value::Float(3.0), |a, b| a < b).unwrap(),
             Value::Bool(true)
         );
+    }
+}
+
+/// A binary bitwise operator (#425).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitOp {
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
+}
+
+/// The i64 core of every engine's bitwise ops (#425, ruling H1): `None` is
+/// ArithmeticOverflow — a shift count outside `0..=63`, or a left shift whose
+/// result does not fit in i64 (checked, like `+`/`*`). Right shift is
+/// arithmetic (sign-extending), as in Python, Rust and C on i64.
+pub fn int_bitwise(op: BitOp, a: i64, b: i64) -> Option<i64> {
+    match op {
+        BitOp::And => Some(a & b),
+        BitOp::Or => Some(a | b),
+        BitOp::Xor => Some(a ^ b),
+        BitOp::Shl | BitOp::Shr => {
+            let n = u32::try_from(b).ok().filter(|n| *n < 64)?;
+            if op == BitOp::Shr {
+                return Some(a >> n);
+            }
+            let r = a << n;
+            (r >> n == a).then_some(r)
+        }
+    }
+}
+
+/// `a op b` on VM values: Int operands only (#425, ruling H1).
+pub fn bitwise_values(op: BitOp, a: &Value, b: &Value) -> Result<Value, VmError> {
+    let (Value::Int(x), Value::Int(y)) = (a, b) else {
+        let bad = if matches!(a, Value::Int(_)) { b } else { a };
+        return Err(VmError::TypeError {
+            expected: "int",
+            got: bad.type_name(),
+        });
+    };
+    int_bitwise(op, *x, *y)
+        .map(Value::Int)
+        .ok_or(VmError::ArithmeticOverflow)
+}
+
+/// `~a` on a VM value: Int only (#425, ruling H1).
+pub fn bitnot_value(a: &Value) -> Result<Value, VmError> {
+    match a {
+        Value::Int(x) => Ok(Value::Int(!x)),
+        other => Err(VmError::TypeError {
+            expected: "int",
+            got: other.type_name(),
+        }),
     }
 }

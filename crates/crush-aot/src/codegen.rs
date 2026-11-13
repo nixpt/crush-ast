@@ -430,6 +430,40 @@ fn arith_type_error(a: &RuntimeValue, b: &RuntimeValue) -> ! {
     std::process::exit(1);
 }
 
+// #425 (ruling H1): bitwise ops take Int operands only; a shift count outside
+// 0..=63 or a left shift that loses bits is an overflow; right shift is
+// arithmetic. Same rules as crush_vm::arithmetic::int_bitwise.
+fn bitwise(stack: &mut Vec<RuntimeValue>, op: u8) {
+    let (a, b) = pop2(stack);
+    let (x, y) = match (&a, &b) {
+        (RuntimeValue::Int(x), RuntimeValue::Int(y)) => (*x, *y),
+        _ => {
+            eprintln!("crush(aot): type error: bitwise op on non-int operands ({:?}, {:?})", a, b);
+            std::process::exit(1);
+        }
+    };
+    let r = match op {
+        0 => x & y,
+        1 => x | y,
+        2 => x ^ y,
+        _ => {
+            let n = match u32::try_from(y) { Ok(n) if n < 64 => n, _ => arith_overflow() };
+            if op == 4 { x >> n } else { let r = x << n; if r >> n != x { arith_overflow() } r }
+        }
+    };
+    stack.push(RuntimeValue::Int(r));
+}
+
+fn bitnot(stack: &mut Vec<RuntimeValue>) {
+    match stack.pop().unwrap_or(RuntimeValue::Null) {
+        RuntimeValue::Int(x) => stack.push(RuntimeValue::Int(!x)),
+        v => {
+            eprintln!("crush(aot): type error: bitwise op on a non-int operand ({:?})", v);
+            std::process::exit(1);
+        }
+    }
+}
+
 fn bin_arith(stack: &mut Vec<RuntimeValue>, iop: fn(i64,i64)->RuntimeValue, fop: fn(f64,f64)->f64) {
     let (a, b) = pop2(stack);
     let r = match (&a, &b) {
@@ -980,29 +1014,20 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
 
-        // ── Bitwise ops ──
-        "bit_and" => {
-            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Int(x & y), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
-            out.push_str(&next_pc_str);
-        }
-        "bit_or" => {
-            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Int(x | y), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
-            out.push_str(&next_pc_str);
-        }
-        "bit_xor" => {
-            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Int(x ^ y), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+        // ── Bitwise ops ── (#425: Int only, checked shifts; a non-int used to give null)
+        "bit_and" | "bit_or" | "bit_xor" | "shl" | "shr" => {
+            let op = match instr.op.as_str() {
+                "bit_and" => 0,
+                "bit_or" => 1,
+                "bit_xor" => 2,
+                "shl" => 3,
+                _ => 4,
+            };
+            out.push_str(&format!("{ind}bitwise(&mut stack, {op});\n"));
             out.push_str(&next_pc_str);
         }
         "bit_not" => {
-            out.push_str(&format!("{ind}{{ let v=stack.pop().unwrap_or(RuntimeValue::Null); let r=match &v {{ RuntimeValue::Int(x)=>RuntimeValue::Int(!x), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
-            out.push_str(&next_pc_str);
-        }
-        "shl" => {
-            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Int(x << y), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
-            out.push_str(&next_pc_str);
-        }
-        "shr" => {
-            out.push_str(&format!("{ind}{{ let (a,b)=pop2(&mut stack); let r=match (&a,&b) {{ (RuntimeValue::Int(x),RuntimeValue::Int(y))=>RuntimeValue::Int(x >> y), _=>RuntimeValue::Null }}; stack.push(r); }}\n"));
+            out.push_str(&format!("{ind}bitnot(&mut stack);\n"));
             out.push_str(&next_pc_str);
         }
 

@@ -706,12 +706,13 @@ fn modulo_operator_compiles_to_mod_op() {
 
 #[test]
 fn unsupported_operator_is_rejected() {
-    // Regression guard for the compiler's unknown-operator path. `^` (bitwise XOR)
-    // is parsed but not lowered to any opcode.
+    // Regression guard for the compiler's unknown-operator path. `>>>` (JS's
+    // unsigned shift) has no i64 meaning and is not lowered to any opcode.
+    // (`^` used to be the example; bitwise ops compile since #425.)
     let mut compiler = Compiler::new();
     let result = compiler.compile(create_program(vec![Statement::ExprStmt {
         expr: Expression::BinaryOp {
-            operator: "^".to_string(),
+            operator: ">>>".to_string(),
             left: Box::new(int(4)),
             right: Box::new(int(2)),
             meta: meta(),
@@ -720,6 +721,36 @@ fn unsupported_operator_is_rejected() {
     }]));
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Unsupported op"));
+}
+
+#[test]
+fn bitwise_operators_compile_to_their_opcodes() {
+    // #425: `& | ^ << >>` compile to the CASM bitwise opcodes.
+    for (operator, op) in [
+        ("&", "bit_and"),
+        ("|", "bit_or"),
+        ("^", "bit_xor"),
+        ("<<", "shl"),
+        (">>", "shr"),
+    ] {
+        let mut compiler = Compiler::new();
+        let program = compiler
+            .compile(create_program(vec![Statement::ExprStmt {
+                expr: Expression::BinaryOp {
+                    operator: operator.to_string(),
+                    left: Box::new(int(4)),
+                    right: Box::new(int(2)),
+                    meta: meta(),
+                },
+                meta: meta(),
+            }]))
+            .unwrap_or_else(|e| panic!("`{operator}`: {e}"));
+        let json = serde_json::to_string(&program).unwrap();
+        assert!(
+            json.contains(&format!("\"{op}\"")),
+            "`{operator}` -> {op}: {json}"
+        );
+    }
 }
 
 #[test]

@@ -725,6 +725,14 @@ impl AotcCompiler {
                         instr.op
                     );
                 }
+                // #425: bitwise ops used to be dropped as an unhandled op (the
+                // value never computed). Refuse them; crush-aot implements them.
+                "bit_and" | "bit_or" | "bit_xor" | "bit_not" | "shl" | "shr" => {
+                    anyhow::bail!(
+                        "crush-aotc: `{}` (bitwise operators, #425) isn't supported by this backend; use crush-aot",
+                        instr.op
+                    );
+                }
                 // Function values (CRUSH-251) run on the VMs only: refuse
                 // them here rather than drop them as an unhandled op.
                 "make_closure" | "call_value" | "call_value_apply" => {
