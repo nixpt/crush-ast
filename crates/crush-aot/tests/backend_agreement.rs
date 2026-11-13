@@ -235,7 +235,7 @@ fn run_aot_print(source: &str) -> Vec<i64> {
                 .expect("{backend}: no stdout from `{source}`")
                 .trim()
                 .parse::<i64>()
-                .unwrap_or_else(|_| panic!("{backend}: expected Int output from `{source}`")),
+                .unwrap_or_else(|e| panic!("{backend}: expected Int output from `{source}`: {e}")),
         );
     }
     outs
