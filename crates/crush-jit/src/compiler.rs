@@ -495,9 +495,6 @@ fn band(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value {
 fn bor(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value {
     b.ins().bor(a, b2)
 }
-fn bnot(b: &mut FunctionBuilder, v: ir::Value) -> ir::Value {
-    b.ins().bnot(v)
-}
 /// Logical not of a 0/1 truth value (an `icmp` result). Not `bnot`: the
 /// bitwise NOT of 1 is 0xFE, which is still non-zero, so `brif`/`select` read
 /// it as true — `JumpIfNot` always jumped and `!x` was always true (CRUSH-139).
@@ -518,15 +515,6 @@ fn ishl_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value {
 }
 fn sshr_imm(b: &mut FunctionBuilder, v: ir::Value, i: i64) -> ir::Value {
     b.ins().sshr_imm(v, i)
-}
-fn ishl(b: &mut FunctionBuilder, v: ir::Value, a: ir::Value) -> ir::Value {
-    b.ins().ishl(v, a)
-}
-fn sshr(b: &mut FunctionBuilder, v: ir::Value, a: ir::Value) -> ir::Value {
-    b.ins().sshr(v, a)
-}
-fn bxor(b: &mut FunctionBuilder, a: ir::Value, b2: ir::Value) -> ir::Value {
-    b.ins().bxor(a, b2)
 }
 fn select(b: &mut FunctionBuilder, c: ir::Value, t: ir::Value, f: ir::Value) -> ir::Value {
     b.ins().select(c, t, f)
@@ -1486,27 +1474,12 @@ fn emit_one(
         }
 
         // ── Bitwise ────────────────────────────────────────────────────────
-        BitAnd => {
-            bitwise_bin(b, ctx, band);
-        }
-        BitOr => {
-            bitwise_bin(b, ctx, bor);
-        }
-        BitXor => {
-            bitwise_bin(b, ctx, bxor);
-        }
-        BitNot => {
-            let v = pop(b, ctx);
-            let ev = eint(b, v);
-            let r = bnot(b, ev);
-            let tr = tint(b, r);
-            push(b, ctx, tr);
-        }
-        Shl => {
-            bitwise_bin(b, ctx, ishl);
-        }
-        Shr => {
-            bitwise_bin(b, ctx, sshr);
+        // Not JIT-compiled (#425, ruling H1): the inline code worked on raw
+        // 48-bit tags with no operand type check (a float's bits were
+        // and-ed) and shifted by any count. `JitEngine` falls back to FastVM,
+        // which has the canonical i64 semantics.
+        op @ (BitAnd | BitOr | BitXor | BitNot | Shl | Shr) => {
+            return Err(CompileError::Unsupported(vec![op]));
         }
 
         // ── Loop control ───────────────────────────────────────────────────
@@ -1858,23 +1831,6 @@ fn arith(
     b.seal_block(ok);
     b.seal_block(err);
     b.seal_block(mb);
-}
-
-// ── Bitwise helpers ────────────────────────────────────────────────────
-
-/// Pop two values, extract ints, apply binary op, re-tag, push.
-fn bitwise_bin(
-    b: &mut FunctionBuilder,
-    ctx: ir::Value,
-    op: impl Fn(&mut FunctionBuilder, ir::Value, ir::Value) -> ir::Value,
-) {
-    let bv = pop(b, ctx);
-    let bv = eint(b, bv);
-    let av = pop(b, ctx);
-    let av = eint(b, av);
-    let r = op(b, av, bv);
-    let tagged = tint(b, r);
-    push(b, ctx, tagged);
 }
 
 // ── Math helpers ───────────────────────────────────────────────────────────

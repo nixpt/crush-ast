@@ -377,60 +377,30 @@ pub fn execute_one(
         }
 
         // ===== Bitwise =====
-        FastOp::BitAnd => {
+        FastOp::BitAnd | FastOp::BitOr | FastOp::BitXor | FastOp::Shl | FastOp::Shr => {
+            // Same semantics as CVM1 (#425, ruling H1): Int operands only,
+            // shift count 0..=63, checked left shift. Shifts used to panic
+            // (debug) or wrap (release) on a count >= 64 or < 0.
+            use crate::arithmetic::{BitOp, int_bitwise};
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    stack.push(RuntimeValue::Int(x & y));
-                }
-                _ => return Err(FastError::TypeMismatch),
-            }
-        }
-        FastOp::BitOr => {
-            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
-            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    stack.push(RuntimeValue::Int(x | y));
-                }
-                _ => return Err(FastError::TypeMismatch),
-            }
-        }
-        FastOp::BitXor => {
-            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
-            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    stack.push(RuntimeValue::Int(x ^ y));
-                }
-                _ => return Err(FastError::TypeMismatch),
-            }
+            let (RuntimeValue::Int(x), RuntimeValue::Int(y)) = (a, b) else {
+                return Err(FastError::TypeMismatch);
+            };
+            let op = match instr.op {
+                FastOp::BitAnd => BitOp::And,
+                FastOp::BitOr => BitOp::Or,
+                FastOp::BitXor => BitOp::Xor,
+                FastOp::Shl => BitOp::Shl,
+                _ => BitOp::Shr,
+            };
+            let r = int_bitwise(op, x, y).ok_or(FastError::ArithmeticOverflow)?;
+            stack.push(RuntimeValue::Int(r));
         }
         FastOp::BitNot => {
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
             match a {
                 RuntimeValue::Int(x) => stack.push(RuntimeValue::Int(!x)),
-                _ => return Err(FastError::TypeMismatch),
-            }
-        }
-        FastOp::Shl => {
-            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
-            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    stack.push(RuntimeValue::Int(x << (*y as u32)));
-                }
-                _ => return Err(FastError::TypeMismatch),
-            }
-        }
-        FastOp::Shr => {
-            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
-            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    stack.push(RuntimeValue::Int(x >> (*y as u32)));
-                }
                 _ => return Err(FastError::TypeMismatch),
             }
         }

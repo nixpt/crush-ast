@@ -3077,13 +3077,6 @@ mod tests {
             FastOp::Rot,
             FastOp::Pick,
             FastOp::Roll,
-            // Bitwise
-            FastOp::BitAnd,
-            FastOp::BitOr,
-            FastOp::BitXor,
-            FastOp::BitNot,
-            FastOp::Shl,
-            FastOp::Shr,
             // Math
             FastOp::MathSqrt,
             FastOp::MathAbs,
@@ -3154,6 +3147,13 @@ mod tests {
             FastOp::ExportVar,
             // Host interaction — not yet implemented
             FastOp::CallInterface,
+            // Bitwise — falls back to FastVM's canonical i64 semantics (#425)
+            FastOp::BitAnd,
+            FastOp::BitOr,
+            FastOp::BitXor,
+            FastOp::BitNot,
+            FastOp::Shl,
+            FastOp::Shr,
             // Polyglot — falls back to FastVM, which yields the full request (CRUSH-133)
             FastOp::ExecLang,
             FastOp::CrossLangCall,
