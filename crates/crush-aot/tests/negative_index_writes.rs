@@ -2,9 +2,9 @@
 //! `a[-1]` worked. Indexed assignment reaches the `arr_set` capability, which
 //! truncated the index to `usize` and skipped any write that fell out of
 //! range. Every engine now counts a negative index from the end, the way the
-//! read path and the `ARR_SET` opcode already did. On the engines with an
-//! error channel (both VMs and FastVM), a write out of range or with a
-//! non-Int index is an error instead of a no-op.
+//! read path and the `ARR_SET` opcode already did. On both VMs, FastVM and
+//! the JIT, a write out of range or with a non-Int index is an error instead
+//! of a no-op (AOT: #447).
 
 use crush_vm::fastvm::{FastVM, FastYield, Hal};
 use crush_vm::{InputSource, PortableVm, Quotas, RuntimeValue};
@@ -93,6 +93,9 @@ fn fastvm_and_jit_write_through_negative_indices() {
         FastYield::Finished(Some(RuntimeValue::Int(n))) => assert_eq!(n, WANT, "JIT"),
         other => panic!("JIT: {other:?}"),
     }
+    // `JitEngine::run` falls back to FastVM when it can't compile; make sure
+    // this result really came from compiled code.
+    assert_eq!(jit.compilation_count(), 1, "the JIT compiled `main`");
 }
 
 #[test]
@@ -129,10 +132,19 @@ fn a_write_out_of_range_is_an_error() {
                 "{engine}: `{write}`: want {want:?} in {e:?}"
             );
         }
-        let fast = on_fastvm(&source.replace("print(a);", "return 0;"));
+        let returning = source.replace("print(a);", "return 0;");
+        let fast = on_fastvm(&returning);
         assert!(
             matches!(fast, FastYield::Error(_)),
             "FastVM: `{write}` must fail, got {fast:?}"
+        );
+        let lowered = crush_vm::fastvm::lower_program(&casm(&returning)).expect("lowers");
+        let jit = crush_jit::JitEngine::new().expect("JitEngine::new");
+        let got = jit.run(&lowered);
+        assert_eq!(jit.compilation_count(), 1, "JIT: `{write}` compiled");
+        assert!(
+            got.is_err() || matches!(got, Ok(FastYield::Error(_))),
+            "JIT: `{write}` must fail, got {got:?}"
         );
     }
 }

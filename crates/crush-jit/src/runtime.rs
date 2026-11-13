@@ -539,14 +539,16 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
             let val = ctx.pop().unwrap_or(JitValue::null());
             let key = ctx.pop().unwrap_or(JitValue::null());
             let container = ctx.pop().unwrap_or(JitValue::null());
-            if let (Some(ref_idx), Some(idx)) = (container.to_ref(), key.to_int())
+            if let Some(ref_idx) = container.to_ref()
                 && let Some(arena) = arena_mut(ctx.arena)
                 && let Ok(Object::Array(arr)) = arena.get_mut(ref_idx)
             {
-                // #442: a negative index counts from the end. The helper has no
-                // error channel, so an out-of-range write is still dropped here.
-                if let Some(i) = wrap_index(idx, arr.len()) {
-                    arr[i] = jit_to_rtv(val);
+                // #442: a negative index counts from the end; a write out of
+                // range or with a non-Int index is an error, as on FastVM
+                // (it used to be dropped silently).
+                match key.to_int().and_then(|idx| wrap_index(idx, arr.len())) {
+                    Some(i) => arr[i] = jit_to_rtv(val),
+                    None => ctx.error = 1,
                 }
             }
             // CVM1 and FastVM push the array back (the compiler POPs it after
