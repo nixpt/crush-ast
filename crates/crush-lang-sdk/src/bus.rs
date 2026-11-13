@@ -72,7 +72,7 @@ impl BusState {
     fn recv(&self) -> Result<Message, String> {
         let mut queues = self.inner.queues.lock().unwrap();
         loop {
-            for (_topic, q) in queues.iter_mut() {
+            for q in queues.values_mut() {
                 if let Some(msg) = q.pop_front() {
                     return Ok(msg);
                 }

@@ -727,16 +727,14 @@ impl PortableVm {
         // a caught `Value::Error` instead of aborting the run — the same unwind
         // a `THROW` would do (shared with the scheduler).
         if let Err(err) = self.execute_instruction(opcode, next_ip) {
-            match crate::vm::raise_fault_to_handler(
+            let handler_ip = crate::vm::raise_fault_to_handler(
                 err,
                 &mut self.try_stack,
                 &mut self.call_stack,
                 &mut self.stack,
                 &mut self.captures,
-            ) {
-                Ok(handler_ip) => self.jump_to(handler_ip),
-                Err(err) => return Err(err),
-            }
+            )?;
+            self.jump_to(handler_ip);
         }
         if let Some(args) = self.lang_yield.take() {
             // A deferred `@lang` block: this EXEC_LANG runs again once the

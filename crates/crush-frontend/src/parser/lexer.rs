@@ -851,10 +851,7 @@ impl Lexer {
                         break;
                     }
                 }
-                match self.read_output_ident() {
-                    Some(name) => outputs.push(name),
-                    None => return None,
-                }
+                outputs.push(self.read_output_ident()?);
                 while let Some(ch) = self.peek() {
                     if ch.is_whitespace() {
                         self.advance();
