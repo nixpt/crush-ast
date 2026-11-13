@@ -31,3 +31,18 @@ fn every_compound_assignment_lowers_to_its_base_operator() {
         );
     }
 }
+
+/// `left` is both the store target and the read in the lowered form, so a
+/// target that is not a plain local would be evaluated twice (#425). Such
+/// targets are refused instead.
+#[test]
+fn compound_assignment_to_a_non_local_target_is_refused() {
+    for target in ["v[0]", "p.x"] {
+        let source = format!("fn main() {{ {target} += 1; }}");
+        let err = rust_to_cast(&source).expect_err(target);
+        assert!(
+            format!("{err:#}").contains("compound assignment to a non-local target"),
+            "{target}: {err:#}"
+        );
+    }
+}

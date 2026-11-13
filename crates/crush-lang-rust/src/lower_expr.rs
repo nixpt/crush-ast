@@ -76,6 +76,17 @@ fn lower_expr_inner(expr: &Expr, ctx: &LowerCtx<'_>) -> anyhow::Result<Expressio
                         syn::BinOp::ShrAssign(_) => ">>",
                         _ => unreachable!(),
                     };
+                    // `left` appears twice below (the store target and the
+                    // read). That is one evaluation only for a plain local;
+                    // an indexed or field target would run its parts twice
+                    // (#425), so refuse it here rather than double-evaluate.
+                    if !matches!(left, Expression::Var { .. }) {
+                        return Err(unsupported_at(
+                            e.left.span(),
+                            "compound assignment to a non-local target",
+                            "assign to a local variable, or write `x = x op y` with the parts bound to locals first",
+                        ));
+                    }
                     let mut meta = meta;
                     meta.insert("rust_compound_assign".into(), serde_json::Value::Bool(true));
                     return Ok(Expression::Call {
