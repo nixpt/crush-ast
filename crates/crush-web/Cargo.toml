@@ -27,8 +27,8 @@ crate-type = ["cdylib", "rlib"]
 # lowering + casm-to-VM-program assembly in one call — the same pipeline
 # crush-run/crushc use natively, not a separate reimplementation.
 crush-lang-sdk = { path = "../crush-lang-sdk", version = "0.11.2", default-features = false }
-# Core interpreter only — native-only backends (ONNX optimizer, dynamic
-# plugin loading, subprocess capabilities) can't cross the wasm32 boundary;
+# Core interpreter only — native-only backends (dynamic plugin loading,
+# subprocess capabilities) can't cross the wasm32 boundary;
 # see crush-vm/Cargo.toml's `native-plugins` feature.
 crush-vm = { path = "../crush-vm", version = "0.11.2", default-features = false }
 
