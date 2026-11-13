@@ -124,6 +124,26 @@ new review-exit matrices automatically.
 | CRUSH-71 | Design audit + client survey + top-win implementation | panini (persona-session s412) | **Done 2026-08-02** — merge `787e34e` |
 | CRUSH-66 | `@lang[pypi:/npm:]` deps via buckets | **Done 2026-08-01**; BUCKETS-15 merged and sandbox path verified | no gate |
 
+## Review-wave follow-ups (GitHub issues, 2026-11-12)
+
+The review of PRs #411–#421 merged all eleven, plus #430 (#422), #432 (#423)
+and #437 (#424; clippy `--all-targets -D warnings` is now a CI gate, and #438
+pins its toolchain). What it found and left open is tracked as **GitHub
+issues, not ticket files**:
+
+| Issue | Area | Scope |
+|-------|------|-------|
+| #425 | Lowering | Bitwise ops in the compiler (an engine-parity decision first: floats, shift counts, the JIT's 48-bit ints, aotc), Python `a[i] += v`, Rust compound-assign double evaluation. In progress (altair). |
+| #426 | AOT | `pop` / `chr` gaps from #417 |
+| #427 | Errors | try/catch classification follow-ups from #418 (fs-sandbox refusals, unwinder coverage) |
+| #428 | Parser | Follow-ups from #413 and #416 (keyword helper duplication, literal callees, render round-trip) |
+| #429 | Compiler | Map member calls (#420/#421): receiver-cap key names, drift test, error timing |
+| #431 | Repo | `.dejavue/timeline.jsonl` `merge=union` is ignored by GitHub, so each pair of PRs conflicts |
+| #433 | FastVM | The host seam reports an allowlist refusal like a failed handler |
+| #434 | crush-aotc | Unknown ops compile to a comment instead of being refused (silently wrong) |
+| #435 | Compiler | A struct method named `pop`/`push` reroutes every `.pop()`/`.push()` to `call_member` |
+| #436 | JIT | May run `str.ord` when the capability isn't granted (needs a repro) |
+
 ## Correctness spine (72–78) — dispatch these first
 
 The 2026-07-14 meta-finding: crush-ast repeatedly builds both ends of a feature,

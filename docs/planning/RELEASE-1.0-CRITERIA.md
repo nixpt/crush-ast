@@ -16,7 +16,7 @@
 - **1.0 is a compatibility promise, not a quality award.** After 1.0.0, anything in §1's
   "promised" list can only break in 2.0. So the question is not "is Crush good enough?"
   but "which surfaces are we willing to freeze?".
-- **Today (2026-10-31): 15 ✅ / 26 🟡 / 26 ❌** across 67 criteria (table in §2.9; was 11 / 22 / 34 on 2026-10-18). R1 (no accidental 1.0) is fixed by #348. The strengths are
+- **Today (2026-11-13): 18 ✅ / 26 🟡 / 23 ❌** across 67 criteria (table in §2.9; was 15 / 26 / 26 on 2026-10-31 and 11 / 22 / 34 on 2026-10-18). R1 (no accidental 1.0) is fixed by #348. The strengths are
   real: load-time version gates on CVM1/CASM/CAST, a gated polyglot capability, an MSRV
   job, a cross-backend agreement suite and a CI-verified language guide. The gaps are a
   normative spec, semver tooling, a backward-compatibility corpus, and the class of
@@ -76,10 +76,10 @@ Each line: **criterion** — how to verify it — status — evidence.
 | L1 | A **normative language reference** exists and states which constructs are stable. | The doc exists and has a "stability" column per construct. | ❌ | No spec in `docs/`. `docs/cast/schema-reference.md` covers the CAST JSON schema, not surface syntax. The guide's EBNF (`crush-language-guide/src/crush/syntax.md:414`) describes itself as "the grammar the parser implements, simplified", so the parser is the authority. |
 | L2 | The reference's grammar and the **two parsers agree**: `crush-frontend` and `tree-sitter-crush`. | A CI job parses the whole example and guide corpus with both parsers. Zero ERROR nodes, zero disagreements. | 🟡 | **Partly done (2026-10-31).** CRUSH-207 (#342): the tree-sitter grammar now parses 49 of 51 `examples/crush/*.crush` without ERROR nodes (was 1/51), and `crates/tree-sitter-crush/tests/grammar_examples.rs` checks it in CI (2 files in `KNOWN_BAD`, with reasons). #347 adds slices and hex/binary literals. Still missing: a *differential* check against crush-frontend, and the guide's corpus. |
 | L3 | Every keyword is either usable or explicitly reserved-for-future, and documented. | Diff the lexer keyword table against the reference. | 🟡 | Keywords are at `crush-frontend/src/parser/lexer.rs:507-542`. `capability` is reserved with no statement form (`parser/mod.rs:542` "TODO: Parse capability declarations"). `pub`, `mcp` imports and `external` imports have no guide coverage. `let mut` is rejected. |
-| L4 | **No silently-wrong results** in stable-core constructs: open issues/tickets labelled silent-wrong on Tier-1 engines = 0. | Issue query. | 🟡 | Fixed and closed: #253, #254, #256, #257 (#306–#310), #267 (#319), #273 (#316). Still open on Tier-1 engines: **#258** (`@capabilities` ignored, see S3) and **#261** (ungranted AI op → `null`, see S6). Walker silent-wrongs (#329–#331, C) are outside the stable core. |
+| L4 | **No silently-wrong results** in stable-core constructs: open issues/tickets labelled silent-wrong on Tier-1 engines = 0. | Issue query. | 🟡 | Fixed and closed: #253, #254, #256, #257 (#306–#310), #267 (#319), #273 (#316). #258 (`@capabilities` ignored) and #261 (ungranted AI op → `null`) are fixed and closed (#380, #379). Open and near this line: #434 (crush-aotc compiles an unknown op to a comment) and #435 (a struct method named `pop`/`push` reroutes every `.pop()`/`.push()`). Walker silent-wrongs (#329–#331, C) are outside the stable core. |
 | L5 | **Imports and modules work.** `import a.b` loads a module, or the reference says imports are not in 1.0. | Conformance test. | 🟡 | CRUSH-110 (in review): `import a.b [as x] [{ f }]` loads `a/b.crush` at compile time (`docs/design/import-system.md`, tests `crush-lang-sdk/tests/imports_cli.rs`). The language guide (`crush-language-guide`, `syntax.md`) still says imports load nothing. |
 | L6 | **Object model decided.** Either COSM K1–K2 has landed and `struct`/`impl`/`trait`/`@kind` semantics are specified, or structs are frozen at today's semantics and COSM stays experimental. | Design doc status plus tickets. | 🟡 | `docs/design/object-model.md` was approved 2026-10-15. K1.3/K1.4 have landed (CRUSH-zorro-42/43 Done: kind table, VM member ops). zorro-40/41/44 are Backlog, K2 (protocols) and K3 (walkers) have not started, and CRUSH-251 (JS object model) is Backlog. **This is the biggest semantic decision still open before 1.0.** |
-| L7 | **Error model is uniform**: `try`/`catch`/`throw` catch runtime errors on every Tier-1 engine. | Differential test. | ❌ | CRUSH-219 "runtime errors uncatchable; AOT has no try". |
+| L7 | **Error model is uniform**: `try`/`catch`/`throw` catch runtime errors on every Tier-1 engine. | Differential test. | ❌ | CRUSH-219 "runtime errors uncatchable; AOT has no try". #418 (2026-11-12): a cross-function catch on FastVM drops the callee's locals, and the JIT refuses a `try` it can't classify instead of mis-catching. Follow-ups are #427. |
 | L8 | **Numeric semantics specified**: int width/overflow, int↔float, division and modulo sign, and the bigint decision. | Reference section plus a test per rule. | 🟡 | Div/mod truncate toward zero (`crush-vm/src/vm.rs:5`). The bigint decision is open (CRUSH-zorro-36). |
 | L9 | **Lambda/closure syntax** is reachable and has defined capture semantics. | Conformance test. | ✅ | Lambdas and closures parse, capture and run: `|a, b| { … }`, `|x, y| => x * y`, `|x| => x + n` (verified on main 2026-10-31; CRUSH-251 steps 1–5). The guide's closures chapter is CI-verified. CRUSH-75's lambda half is done; its remaining lexer fallback (`&` lexes as an identifier) is CRUSH-343. |
 | L10 | Localised keyword sets (Nepali/CJK) are either stable and specified, or marked experimental. | Reference. | 🟡 | Aliases are in the lexer. The Nepali ones are shown in the guide; CJK is mentioned only in passing (`syntax.md:107`). |
@@ -117,12 +117,12 @@ Each line: **criterion** — how to verify it — status — evidence.
 |---|---|---|---|---|
 | S1 | A **security model doc** (`SECURITY.md` + reference chapter) states what is guaranteed, on which engines, and what is not. | Doc exists. | ❌ | No `SECURITY.md`. The model is described in code comments (`crush-vm/src/vm.rs:1-6`) and in the guide's `capabilities.md`. |
 | S2 | CVM1 enforces **declared ∩ granted** capabilities and has hard quotas (steps, stack, output, call depth). | Tests. | ✅ | `vm.rs:1-6`, `Quotas` (`vm.rs:844-890`). |
-| S3 | **Declared capabilities survive compilation.** A `.cvm1` built by `crushc`/`crush build` carries `@capabilities`, and an undeclared cap fails at compile or load. | Test. | ❌ | **#258**: crushc and `crush build` ignore `@capabilities`; the `.cvm1` loses the declaration. |
+| S3 | **Declared capabilities survive compilation.** A `.cvm1` built by `crushc`/`crush build` carries `@capabilities`, and an undeclared cap fails at compile or load. | Test. | ✅ | #258 fixed by #380 (2026-10-31): `crushc` and `crush build` enforce `@capabilities` and keep the declaration in the artifact (`crush-lang-sdk/tests/crushc_capabilities.rs`). |
 | S4 | **Polyglot is a capability**: `@lang` without a `polyglot.<lang>` grant is refused. | Test. | ✅ | `crush-lang-sdk/tests/polyglot_capability_test.rs` (7 tests, CRUSH-104 gate). |
 | S5 | A *granted* polyglot block is **sandboxed by default**, or the docs say plainly that granting `polyglot.*` means "run arbitrary code as the host user". | Default features plus a live bwrap test in CI. | ❌ | CRUSH-236: `sandboxed-polyglot` is not a default feature (`crush-vm/Cargo.toml:75,85`). CI only `cargo check`s it, and `@lang[pypi:…]` deps are dropped. |
-| S6 | Ungranted AI-native ops **fail closed and loudly** on every engine. | Test. | ❌ | **#261** / CRUSH-234: an ungranted `AI_QUERY` silently yields `null` when the host has no `ai_native` gate. |
-| S7 | **Wall-clock bounds** cover every blocking capability. | Test. | 🟡 | `EXEC_LANG` is killable. `CAP_CALL` is bounded only if the `HostCap` overrides `call_with_deadline` (`vm.rs:860-870`, CRUSH-19). CRUSH-40 is open. |
-| S8 | **Engine parity of the sandbox.** FastVM, JIT and AOT enforce the same capability checks as CVM1, *or* the docs say AOT native code runs with host authority. | Differential test per engine. | 🟡 | `crush-aot/tests/js_runtime_caps.rs` exists, and CRUSH-218 is open (FastVM cap errors). The native-AOT trust boundary is not stated anywhere. |
+| S6 | Ungranted AI-native ops **fail closed and loudly** on every engine. | Test. | ✅ | #261 / CRUSH-234 fixed by #379 (2026-10-31): the scheduler VM and PortableVm fail closed on an ungranted AI op, and AOT refuses AI ops. #432 (#423, 2026-11-12) does the same for DOM ops on AOT, makes crush-aotc refuse `ai_*`/`dom_*`, and applies the embedder's allowlist in FastVM's `resolve_host_request` (`crush-aot/tests/unsupported_ops.rs`, `crush-vm/tests/dom_fail_closed.rs`). Open: #433 (FastVM reports an allowlist refusal like a failed handler; still fails closed). |
+| S7 | **Wall-clock bounds** cover every blocking capability. | Test. | 🟡 | `EXEC_LANG` is killable. `CAP_CALL` is bounded only if the `HostCap` overrides `call_with_deadline` (`vm.rs:860-870`, CRUSH-19). CRUSH-40 is open. `parallel_map` items now share the caller's deadline on the scheduler and PortableVm (#422, fixed by #430). |
+| S8 | **Engine parity of the sandbox.** FastVM, JIT and AOT enforce the same capability checks as CVM1, *or* the docs say AOT native code runs with host authority. | Differential test per engine. | 🟡 | `crush-aot/tests/js_runtime_caps.rs` exists, and CRUSH-218 is open (FastVM cap errors). #432 (#423) closed the DOM/AI gaps on AOT, aotc and FastVM. Open: #436 (the JIT may run `str.ord` when it isn't granted). The native-AOT trust boundary is not stated anywhere. |
 | S9 | Fuzzing of the parser, CVM1 loader and JIT runs in CI (or nightly), with no open crashers. | CI job. | ❌ | No fuzz job. The JIT fuzz target disagrees with the interpreter on about 55/86 FastOps (CRUSH-59, M10). |
 | S10 | A deterministic mode and fuel budgets exist, if they are part of the 1.0 story. | — | ❌ | CRUSH-41 and CRUSH-42 are Backlog (M7). *Captain call: in scope or not?* |
 
@@ -145,7 +145,7 @@ Each line: **criterion** — how to verify it — status — evidence.
 | D3 | The guide marks every experimental feature (matching §1.2). | Review. | 🟡 | The guide uses "*not yet implemented*" and runfail markers (polyglot 4, structs 3, capabilities 3, concurrency 2, …). It has no stable/experimental labels. |
 | D4 | crushlang.org is accurate for the release and its samples run. | WEB-1 closed. | 🟡 | crushlang.org was updated 2026-10-31 (crush-website#10): runtime from crush-ast `c1cc21fb`, grants, sandboxed `@javascript`/`@python`; a 20-case headless-Chromium check passed against the live site. WEB-1 (content audit) is still Backlog. |
 | D5 | Migration guide 0.x → 1.0, plus a written deprecation policy (§4.4). | Doc. | ❌ | — |
-| D6 | Internal status docs are current. | Review. | 🟡 | The planning survey (#339, 2026-10-31) re-checked 86 ticket statuses against merged PRs and updated BACKLOG-INDEX, ROADMAP and MILESTONES. 147 Backlog tickets were not individually re-verified. |
+| D6 | Internal status docs are current. | Review. | 🟡 | The planning survey (#339, 2026-10-31) re-checked 86 ticket statuses against merged PRs and updated BACKLOG-INDEX, ROADMAP and MILESTONES. 147 Backlog tickets were not individually re-verified. 2026-11-13: S3, S6 and Q6 rows re-checked against the merged fixes, the §2.9 scoreboard recounted from the rows, and the #411–#421 review follow-ups (#425–#436) indexed in BACKLOG-INDEX. |
 ### 2.7 Quality gates (CI)
 
 | ID | Criterion | Verify by | Status | Evidence |
@@ -176,15 +176,15 @@ Each line: **criterion** — how to verify it — status — evidence.
 
 | Group | ✅ | 🟡 | ❌ | Total |
 |---|---|---|---|---|
-| 2.1 Language | 1 | 6 | 3 | 10 |
+| 2.1 Language | 1 | 7 | 2 | 10 |
 | 2.2 Formats / compat | 3 | 2 | 4 | 9 |
 | 2.3 Public Rust API | 1 | 2 | 6 | 9 |
-| 2.4 Runtime / security | 2 | 2 | 6 | 10 |
+| 2.4 Runtime / security | 4 | 2 | 4 | 10 |
 | 2.5 Tooling | 0 | 6 | 0 | 6 |
 | 2.6 Docs | 1 | 3 | 2 | 6 |
-| 2.7 Quality gates | 5 | 2 | 3 | 10 |
+| 2.7 Quality gates | 6 | 1 | 3 | 10 |
 | 2.8 Release engineering | 2 | 3 | 2 | 7 |
-| **Total** | **15** | **26** | **26** | **67** |
+| **Total** | **18** | **26** | **23** | **67** |
 ---
 
 ## 3. Scope decision: full 1.0 vs partial 1.0
