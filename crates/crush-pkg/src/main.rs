@@ -171,6 +171,7 @@ struct GrantArgs {
     max_steps: Option<usize>,
     /// Wall-clock budget for the run in milliseconds, or `unlimited`
     /// (default 30000; operator flag only, the manifest cannot lift it, #505).
+    /// `0` is a zero budget (the run stops at once), not "no limit".
     #[arg(long, value_name = "MS", value_parser = crush_vm::parse_quota_u64)]
     max_wall_ms: Option<u64>,
     /// Maximum VM stack slots.

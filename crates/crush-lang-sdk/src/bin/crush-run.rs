@@ -187,6 +187,7 @@ struct RunArgs {
     /// Wall-clock budget for the whole run in milliseconds, or `unlimited`
     /// for a long-lived program such as a server (default 30000, #505).
     /// Blocking caps (time.sleep, net.*) get what is left of it.
+    /// `0` is a zero budget (the run stops at once), not "no limit".
     #[arg(long, value_name = "MS", value_parser = crush_vm::parse_quota_u64)]
     max_wall_ms: Option<u64>,
 

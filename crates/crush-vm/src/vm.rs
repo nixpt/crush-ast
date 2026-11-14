@@ -1018,8 +1018,9 @@ impl Default for Quotas {
 }
 
 /// Parse a `--max-*` quota value from a CLI (#505): a non-negative integer,
-/// or the word `unlimited` for no limit (`u64::MAX`). `0` keeps its meaning
-/// (fail closed: no budget at all); only the explicit word lifts a limit.
+/// or the word `unlimited` for no limit (`u64::MAX`). `0` is a zero budget,
+/// not "no limit": the run is stopped at the first check (fail closed). Only
+/// the explicit word lifts a limit.
 pub fn parse_quota_u64(s: &str) -> Result<u64, String> {
     if s.eq_ignore_ascii_case("unlimited") {
         return Ok(u64::MAX);
