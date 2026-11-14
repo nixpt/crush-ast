@@ -29,6 +29,10 @@
   freeze" → 1.0.0-rc.N (≥ 4 weeks of soak, no stable-surface changes) → 1.0.0.
   *Note (2026-10-31): 0.8.0 was released 2026-10-30 and 0.9.0 is being cut 2026-10-31 as
   ordinary feature releases, so this numbering needs the captain's update (e.g. freeze prep → 0.10).*
+- **Feature freeze: 2026-12-31** (captain's ruling, 2026-11-14, decision 6 of
+  `docs/design/visibility-and-packages.md`). The freeze is a **date**, not a version number. The
+  last minor release cut on or before 2026-12-31 is the freeze release (main is 0.11.2 on
+  2026-11-14). §4.1's "0.8" and "0.9" stand for "freeze prep" and "the freeze release".
 
 ---
 
@@ -262,8 +266,8 @@ The facade crate can follow in 1.1.
 | Release | Theme | Exit criteria (from §2) |
 |---|---|---|
 | **0.7.0** | vega, in flight | Unchanged by this doc. |
-| **0.8.0 — freeze prep** | Tooling and decisions | R1 (no accidental major), A2 semver-checks wired (report-only), F5 compat corpus seeded with 0.6/0.7/0.8 artifacts, F9 format-versioning doc, S1 `SECURITY.md` draft, L1 reference skeleton with stability column, Q5 conformance in CI (allowed-failures list), the scope decision (§3) and the COSM decision (L6). |
-| **0.9.0 — beta / feature freeze** | Close the stable surface | L2, L4 (zero silent-wrong on Tier-1), L5, L7, F3, F4, A3, A4, S3, S5 (or the S5 docs), S6, T1, T2, D3, R2, R7 triaged. **No new syntax after 0.9.0**, except behind an experimental gate. |
+| **0.8.0 — freeze prep** (now: the minors before 2026-12-31) | Tooling and decisions | R1 (no accidental major), A2 semver-checks wired (report-only), F5 compat corpus seeded with 0.6/0.7/0.8 artifacts, F9 format-versioning doc, S1 `SECURITY.md` draft, L1 reference skeleton with stability column, Q5 conformance in CI (allowed-failures list), the scope decision (§3) and the COSM decision (L6). |
+| **0.9.0 — beta / feature freeze** (now: **2026-12-31**, the last minor cut on or before it) | Close the stable surface | L2, L4 (zero silent-wrong on Tier-1), L5, L7, F3, F4, A3, A4, S3, S5 (or the S5 docs), S6, T1, T2, D3, R2, R7 triaged. **No new syntax after the freeze (2026-12-31)**, except behind an experimental gate. Pre-freeze tickets carry the `freeze-2026-12-31` label (visibility: #518-#524). |
 | **1.0.0-rc.1 … rc.N** | Soak | All ❌ in the stable scope closed or explicitly scoped out. Then only bug fixes. **Any change to a promised surface restarts the clock with a new rc.** Minimum 4 weeks from the last rc to 1.0.0. The guide (D1/D2) and website (D4) are pinned to the rc tag. A downstream canary (openko/fabric, arniko, surfer) builds against each rc. |
 | **1.0.0** | Promise starts | Tag. Changelog "Breaking since 0.x" section. Migration guide (D5). |
 
@@ -278,7 +282,7 @@ The facade crate can follow in 1.1.
 | M6 walker parity (CRUSH-21/35-39), CRUSH-251 | **Out** (walkers are best-effort, §1.2). |
 | M7 runtime hardening (CRUSH-40/41/42) | CRUSH-40 (timeouts) **in** if S7 is promised. 41/42 are a captain call (S10). |
 | M8 platforms (CRUSH-22/49) | **Linux x86_64 Tier-1 at 1.0.** Others are Tier-2 with no promise. |
-| COSM K1.2/K1.5/K2 (zorro-40/41/44, K2) | Decide at 0.8 (L6). Either finish K2 before the 0.9 freeze, or ship `@kind` as experimental. |
+| COSM K1.2/K1.5/K2 (zorro-40/41/44, K2) | Decide at 0.8 (L6). Either finish K2 before the freeze (2026-12-31), or ship `@kind` as experimental. Member visibility (`priv`/`readonly`) follows the same fork: enforced in 1.0 only if K2 lands by 2026-12-31 (#525). |
 | CRUSH-207 grammar drift | **In** (L2, T4). |
 | CRUSH-110 imports | **In**, or remove `import` from the stable core. |
 | CRUSH-211 conformance, 188, 190, 184, 191, 217, 219, 236, 234 | **In.** |
