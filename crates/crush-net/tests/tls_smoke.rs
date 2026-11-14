@@ -80,6 +80,7 @@ fn net_tls_wrap_performs_handshake_and_probe() {
         conns: [(pre_id, Arc::new(Mutex::new(conn)))].into_iter().collect(),
         listeners: Default::default(),
         next_id: pre_id + 1, // next free id (NetState::next post-increments)
+        pending: Default::default(),
         #[cfg(feature = "tls")]
         tls_client_conns: Default::default(),
     }));
