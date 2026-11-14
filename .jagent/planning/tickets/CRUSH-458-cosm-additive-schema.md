@@ -4,11 +4,15 @@
 |-------|-------|
 | **ID** | CRUSH-458 |
 | **Priority** | P1 |
-| **Status** | Backlog |
+| **Status** | Superseded (2026-11-14) by decision 7 of docs/design/visibility-and-packages.md; work moves to #521 (V3a) |
 | **Phase** | 0.12 (freeze prep) |
 | **Issue** | [#458](https://github.com/nixpt/crush-ast/issues/458) |
 | **Size** | M |
 | **Dependencies** | none |
+
+## Superseded
+
+The captain ruled on 2026-11-14 (decision 7 in `docs/design/visibility-and-packages.md`): COSM stays strict by default, with `cosm_version`, the lowest-version stamp and a one-time `kt_format 2`. Only purely additive or cosmetic fields may be ignore-unknown, gated by the version or a `requires` list. Security-relevant fields (visibility) are must-understand. "Ignore unknown fields at all 9 sites" is therefore not done. Issue #521 (V3a) carries the work. The evidence below (the 9 sites, the two load paths) is still accurate and is reused there.
 
 ## Problem
 
