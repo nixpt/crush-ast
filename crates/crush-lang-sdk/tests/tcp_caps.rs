@@ -248,3 +248,123 @@ fn builder_grants_are_independent() {
         );
     }
 }
+
+/// A one-shot server that writes `chunks` with `gap` between them, then
+/// closes. Returns its port and a handle yielding what the client sent.
+fn chunked_server(chunks: Vec<Vec<u8>>, gap: Duration) -> (u16, std::thread::JoinHandle<Vec<u8>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let h = std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        s.set_nodelay(true).unwrap();
+        for c in chunks {
+            s.write_all(&c).unwrap();
+            s.flush().unwrap();
+            std::thread::sleep(gap);
+        }
+        let _ = s.shutdown(std::net::Shutdown::Write);
+        let mut got = Vec::new();
+        s.set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        let _ = s.read_to_end(&mut got);
+        got
+    });
+    (port, h)
+}
+
+/// #507: a multibyte character split across two TCP reads is reassembled,
+/// not an error, and the bytes are not lost.
+#[test]
+fn recv_reassembles_a_utf8_character_split_across_reads() {
+    let e_acute = "é".as_bytes().to_vec(); // [0xC3, 0xA9]
+    let (port, h) = chunked_server(
+        vec![vec![b'a', e_acute[0]], vec![e_acute[1], b'b']],
+        Duration::from_millis(150),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let prog = write_prog(
+        &dir,
+        "split.crush",
+        &format!(
+            r#"fn main() {{
+    let c = tcp.connect("tcp://127.0.0.1:{port}")
+    let all = ""
+    let n = 0
+    let part = tcp.recv(c)
+    while part != "" {{
+        all = all + part
+        n = n + 1
+        part = tcp.recv(c)
+    }}
+    io.print(all)
+    tcp.close(c)
+}}
+"#
+        ),
+    );
+    let out = crush_run(&["run", "--tcp", &prog]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "aéb\n");
+    h.join().unwrap();
+}
+
+/// #507: `tcp.recv(c, {timeout_ms})` fails catchably and loses nothing: the
+/// data that arrives later is read by the next call. Also: tcp.send takes
+/// a bytes value.
+#[test]
+fn recv_timeout_is_catchable_and_send_takes_bytes() {
+    let (port, h) = chunked_server(vec![vec![], b"late".to_vec()], Duration::from_millis(600));
+    let dir = tempfile::tempdir().unwrap();
+    let prog = write_prog(
+        &dir,
+        "timeout.crush",
+        &format!(
+            r#"fn main() {{
+    let c = tcp.connect("tcp://127.0.0.1:{port}")
+    tcp.send(c, bytes.from_string("hi"))
+    try {{ tcp.recv(c, {{ timeout_ms: 150 }}) }} catch e {{ io.print("caught: " + conv.to_str(e)) }}
+    io.print(tcp.recv(c, {{ timeout_ms: 5000 }}))
+    tcp.close(c)
+}}
+"#
+        ),
+    );
+    let out = crush_run(&["run", "--tcp", &prog]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("tcp.recv: timed out after 150 ms"), "{text}");
+    assert!(text.ends_with("late\n"), "{text}");
+    assert_eq!(h.join().unwrap(), b"hi");
+}
+
+/// #507: `tcp.accept(l, {timeout_ms})` gives up catchably when no client
+/// comes; bad opts are refused with the key named.
+#[test]
+fn accept_timeout_is_catchable_and_opts_are_checked() {
+    let port = free_port();
+    let dir = tempfile::tempdir().unwrap();
+    let prog = write_prog(
+        &dir,
+        "accept.crush",
+        &format!(
+            r#"fn main() {{
+    let l = tcp.listen("tcp://127.0.0.1:{port}")
+    try {{ tcp.accept(l, {{ timeout_ms: 150 }}) }} catch e {{ io.print("caught: " + conv.to_str(e)) }}
+    try {{ tcp.accept(l, {{ timeout: 150 }}) }} catch e {{ io.print("bad: " + conv.to_str(e)) }}
+    io.print("done")
+}}
+"#
+        ),
+    );
+    let start = Instant::now();
+    let out = crush_run(&["run", "--tcp-listen", &prog]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("tcp.accept: timed out after 150 ms"),
+        "{text}"
+    );
+    assert!(text.contains("unknown opts key 'timeout'"), "{text}");
+    assert!(text.ends_with("done\n"), "{text}");
+    assert!(start.elapsed() < Duration::from_secs(5));
+}
