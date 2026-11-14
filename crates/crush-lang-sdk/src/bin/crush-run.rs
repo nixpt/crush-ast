@@ -609,15 +609,20 @@ fn list_caps() {
         println!("Raw TCP client capabilities (enable with --tcp; NOT granted by --net):");
         println!("  tcp.connect URI        connect to tcp://IP:PORT, return a connection id");
         println!("  tcp.tls_wrap ID SNI    upgrade a connection to TLS (client side)");
-        println!("  tcp.send ID DATA       write a string, return bytes written");
-        println!("  tcp.recv ID            blocking read, return a string");
+        println!("  tcp.send ID DATA       write a string or bytes, return bytes written");
+        println!(
+            "  tcp.recv ID [OPTS]     blocking read, return a string (may be partial: loop; \"\" = closed)"
+        );
         println!("  tcp.close ID           drop the connection");
         println!("  tcp.ping X             returns \"pong\"");
         println!(
             "Raw TCP server capabilities (enable with --tcp-listen; a separate, stronger grant):"
         );
         println!("  tcp.listen URI         bind tcp://IP:PORT, return a listener id");
-        println!("  tcp.accept LISTENER    blocking accept, return a connection id");
+        println!("  tcp.accept LISTENER [OPTS]  blocking accept, return a connection id");
+        println!(
+            "  OPTS for tcp.recv / tcp.accept: {{timeout_ms: N}} (a catchable error after N ms)"
+        );
         println!("  (tcp.send/recv/close/ping also work under --tcp-listen; tcp.connect does not)");
     }
     #[cfg(feature = "db")]

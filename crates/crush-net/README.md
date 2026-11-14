@@ -19,11 +19,17 @@ own grant.
 | `tcp.connect` | `"tcp://IP:PORT"` | connection id (Int) | `--tcp` | `register_client` |
 | `tcp.tls_wrap` | connection id, SNI host | TLS connection id (`tls` feature) | `--tcp` | `register_client` |
 | `tcp.listen` | `"tcp://IP:PORT"` | listener id | `--tcp-listen` | `register_listen` |
-| `tcp.accept` | listener id | connection id (blocks) | `--tcp-listen` | `register_listen` |
-| `tcp.send` | connection id, string | bytes written | `--tcp` or `--tcp-listen` | `register_io` |
-| `tcp.recv` | connection id | string (blocks; UTF-8) | `--tcp` or `--tcp-listen` | `register_io` |
+| `tcp.accept` | listener id, opts? `{timeout_ms}` | connection id (blocks; past `timeout_ms` a catchable error) | `--tcp-listen` | `register_listen` |
+| `tcp.send` | connection id, string or bytes | bytes written | `--tcp` or `--tcp-listen` | `register_io` |
+| `tcp.recv` | connection id, opts? `{timeout_ms}` | string (blocks; UTF-8; `""` only at end of stream) | `--tcp` or `--tcp-listen` | `register_io` |
 | `tcp.close` | connection id | - | `--tcp` or `--tcp-listen` | `register_io` |
 | `tcp.ping` | anything | `"pong"` | `--tcp` or `--tcp-listen` | `register_io` |
+
+`tcp.recv` returns whatever one read delivered (at most 16 KiB), minus an
+incomplete UTF-8 character at the end, which is held back and returned at the
+start of the next call (#507). A message can therefore arrive over several
+calls: **loop until you have it** (a delimiter, a `Content-Length`, or `""`).
+A timed-out `tcp.recv` loses nothing; the data is read by the next call.
 
 Addresses are literal IPs (no DNS lookup). `--tcp-listen` is the stronger grant:
 it makes the program reachable from other hosts, and it does **not** include
