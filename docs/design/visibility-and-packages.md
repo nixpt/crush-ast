@@ -1,7 +1,7 @@
 # Visibility and packages for Crush (CRUSH-509): design note
 
-altair (crush lane), 2026-11-14, asked for by the captain through vega. **Design only. Nothing here is built
-until the captain picks.** Every decision below has options and a recommendation. The ones the captain
+altair (crush lane), 2026-11-14, asked for by the captain through vega. **Design only.** The captain ruled on
+decisions 1-5 on 2026-11-14 (see **Rulings**); decision 6 (the freeze date) is still open. Every decision below has options and a recommendation. The ones the captain
 must rule on are collected under **Decisions**.
 
 ## What exists today (checked on main 30d6d581)
@@ -267,6 +267,19 @@ V0 needs no decision and can start now. V1, V2, V4 and V5 need decisions 1, 3 an
    numbering is stale. `pub struct`, the visibility error flip and (under C1) `priv`/`readonly` all have to
    land before the freeze, so the freeze needs a date.
 
+## Rulings (captain, 2026-11-14, via vega)
+
+| # | Ruling |
+|---|---|
+| 1 | **Approved: C.** Module visibility is per package, with the package taken from the file's path; `pub` exports. Staged: the `W-VIS01` warning first, then an error at a pre-1.0 minor bump. |
+| 2 | **Approved: C.** Member visibility is VM-enforced, public by default, with opt-in contextual modifiers. **Spelling: `priv` and `readonly`.** Shipped as **C2** (no syntax in 1.0, listed as experimental) unless K2 lands before the freeze, in which case **C1**. |
+| 3 | **Approved.** Kinds become per-module (§3 B, owner fields) after the #515 fix. Inherent impls are allowed only inside the declaring package. |
+| 4 | **Approved.** No directory modules: the package entry is the directory module. Concatenation is retired only for multi-file or with-deps packages whose entry has no `import`. |
+| 5 | **Approved.** F7: `cosm_version`, each blob stamped with the lowest version that can express it, and a one-time `kt_format 2` bump. This lands **before any other schema change**. |
+| 6 | **Open.** The freeze date is not decided. Nothing that depends on it starts yet. |
+
+Order: V0 (#515) first, then V3a (F7) before any schema-touching ticket.
+
 ## Advisor
 
 chanakya (claude-fable-5-2, quick ask, 2026-11-14, logged in `consults.jsonl`). Confidence: medium. It
@@ -305,7 +318,10 @@ It also raised:
 **Its NOT CHECKED list, which is my to-verify list:**
 - **Serde `flatten` with an unknown key: not run.** V3a's test settles it.
 - **`kt_format` gate:** verified in `bytecode.rs:11-24` ("an unknown one is an error").
-- **casm's map-compatible rule and its COSM version gate** (`casm/src/lib.rs:870-916, 1046-1085`): **not read yet.** It must be read before V3a/V6 are written as tickets.
+- **casm's map-compatible rule and version gate:** read after the consult.
+  - The Maps-level rule is the single function `kind_unsupported_strategies` (`casm/src/lib.rs:902-946`), which lists what a plain map cannot honour (value semantics, identity equality, constructors, hooks, accessors, field defaults). V6 adds "a non-public member" to that list, and that is the whole gate.
+  - CASM carries the same `crush_cosm::CosmModule` (`Program.cosm`, through `cosm_serde`, `lib.rs:1163-1187`), so a `cosm_version` gate in `CosmModule::from_json` covers CASM and CVM1 together.
+  - CASM's own `check_version` (`lib.rs:796-813`) accepts any `1.x`. So V3b's per-function package id on CASM must be checked: a new field that an old CASM reader ignores would drop ownership silently. Either the field goes inside the COSM module (gated by `cosm_version`), or it is a must-understand CASM change.
 - **Whether `struct P { priv y: Int }` parses, and the `priv` field-name clash:** probed. A field named `priv` is legal today, so the modifiers are contextual.
 - **crush-pkg test layouts that need package-private access:** not checked. Under the per-file rule, a package's `tests/` sit under the root package only when the test is the entry.
 - **Reads on 30d6d581 versus probes on 7e6696db:** the only difference between them is #509 (`net.*` options), which touches none of the import, parser or COSM code read here.
