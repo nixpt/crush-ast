@@ -32,8 +32,9 @@ pub use catalogue::{CatalogueError, Strategy};
 pub use mro::{KindLookup, Linearizer, ModuleSet, MroError, c3_mro, resolution_order};
 pub use schema::{
     Conformance, Const, Construct, CosmModule, Equality, FieldDecl, FnRef, HookImpl, Hooks,
-    InterfaceDecl, InterfaceMember, InterfaceRef, KindDecl, KindRef, Member, MemberDecl, Op, Param,
-    Receiver, Resolution, Satisfaction, Semantics, StaticValue, Storage, ValueMode,
+    IGNORABLE_MEMBER_KEYS, InterfaceDecl, InterfaceMember, InterfaceRef, KindDecl, KindRef, Member,
+    MemberDecl, Op, Param, Receiver, Resolution, Satisfaction, Semantics, StaticValue, Storage,
+    ValueMode,
 };
 pub use span::{Diagnostic, DiagnosticCode, Span};
 pub use types::CosmType;

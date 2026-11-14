@@ -103,7 +103,8 @@ from decisions 5 and 7 of `docs/design/visibility-and-packages.md`:
   express the module** (`CosmModule::required_version`) and omits `cosm_version` at the base
   version, so a program that uses nothing new is written exactly as before and loads on an old
   runtime.
-- A purely additive or cosmetic field may be declared ignorable (still with a minor bump).
+- A purely additive or cosmetic field may be declared ignorable (still with a minor bump) by listing it
+  in `IGNORABLE_MEMBER_KEYS`.
   **Nothing is ignorable today**; visibility and owner fields never will be.
 - In CVM1, a kind table whose module needs more than the base version is written with kind-table
   format `2` (format `1` otherwise). Runtimes from before this rule refuse format 2 by name, since

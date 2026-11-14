@@ -96,15 +96,44 @@ pub struct CosmModule {
 }
 
 /// The wire form of [`CosmModule`]: strict, plus the optional version stamp.
+///
+/// `kinds` and `interfaces` are held raw and typed only after the version
+/// check, so a module from a newer writer is refused for its version (which
+/// says what to do) and never for whichever new key the typed parse would
+/// meet first, wherever `cosm_version` sits in the input.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CosmModuleRepr {
     #[serde(default)]
     cosm_version: Option<String>,
     #[serde(default)]
-    kinds: Vec<KindDecl>,
+    kinds: Option<serde_json::Value>,
     #[serde(default)]
-    interfaces: Vec<InterfaceDecl>,
+    interfaces: Option<serde_json::Value>,
+}
+
+/// Prefix of a typed-body error from [`CosmModuleRepr`]: `at `PATH`: MSG`.
+/// [`CosmModule::from_json`] lifts the path back out.
+const BODY_ERROR_PREFIX: &str = "at `";
+
+fn typed<T: serde::de::DeserializeOwned + Default>(
+    field: &str,
+    v: Option<serde_json::Value>,
+) -> Result<T, String> {
+    let Some(v) = v else {
+        return Ok(T::default());
+    };
+    serde_path_to_error::deserialize(v).map_err(|e| {
+        let inner = e.path().to_string();
+        let path = if inner == "." {
+            field.to_string()
+        } else if inner.starts_with('[') {
+            format!("{field}{inner}")
+        } else {
+            format!("{field}.{inner}")
+        };
+        format!("{BODY_ERROR_PREFIX}{path}`: {}", e.into_inner())
+    })
 }
 
 impl TryFrom<CosmModuleRepr> for CosmModule {
@@ -114,8 +143,8 @@ impl TryFrom<CosmModuleRepr> for CosmModule {
             crate::check_readable(v)?;
         }
         Ok(CosmModule {
-            kinds: r.kinds,
-            interfaces: r.interfaces,
+            kinds: typed("kinds", r.kinds)?,
+            interfaces: typed("interfaces", r.interfaces)?,
         })
     }
 }
@@ -303,6 +332,13 @@ struct MemberDeclRepr {
     member: Member,
 }
 
+/// Member keys a reader may skip without understanding them: the explicit
+/// list of purely additive or cosmetic fields that decision 7 allows to be
+/// ignore-unknown. Adding one still bumps the minor of
+/// [`COSM_VERSION`](crate::COSM_VERSION). **Empty today.** Visibility, owner
+/// ids and any other security-relevant field must never be listed here.
+pub const IGNORABLE_MEMBER_KEYS: &[&str] = &[];
+
 impl MemberDecl {
     /// The keys a member of `kind` may carry, besides `name`, `span`, `kind`.
     fn variant_keys(kind: &str) -> Option<&'static [&'static str]> {
@@ -326,8 +362,9 @@ impl MemberDecl {
             return Ok(());
         };
         for key in map.keys() {
-            let known =
-                matches!(key.as_str(), "name" | "span" | "kind") || variant.contains(&key.as_str());
+            let known = matches!(key.as_str(), "name" | "span" | "kind")
+                || variant.contains(&key.as_str())
+                || IGNORABLE_MEMBER_KEYS.contains(&key.as_str());
             if !known {
                 let name = map.get("name").and_then(|n| n.as_str()).unwrap_or("?");
                 return Err(format!(
@@ -617,9 +654,20 @@ impl CosmModule {
     /// Parse COSM JSON. Errors name the JSON path that failed.
     pub fn from_json(json: &str) -> Result<Self, crate::CosmError> {
         let de = &mut serde_json::Deserializer::from_str(json);
-        serde_path_to_error::deserialize(de).map_err(|e| crate::CosmError::Json {
-            path: e.path().to_string(),
-            message: e.into_inner().to_string(),
+        serde_path_to_error::deserialize(de).map_err(|e| {
+            let path = e.path().to_string();
+            let message = e.into_inner().to_string();
+            // A typed-body error carries its own path (see `CosmModuleRepr`).
+            if path == "."
+                && let Some(rest) = message.strip_prefix(BODY_ERROR_PREFIX)
+                && let Some((inner, msg)) = rest.split_once("`: ")
+            {
+                return crate::CosmError::Json {
+                    path: inner.to_string(),
+                    message: msg.to_string(),
+                };
+            }
+            crate::CosmError::Json { path, message }
         })
     }
 

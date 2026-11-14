@@ -133,3 +133,35 @@ fn serialization_is_unchanged_while_nothing_needs_a_newer_version() {
     let stamped = CosmModule::from_json(&with_version(json!("0.1.0"))).unwrap();
     assert_eq!(stamped.to_json(), out);
 }
+
+#[test]
+fn a_private_method_from_a_newer_writer_is_refused_by_this_reader() {
+    // #521's required case: a reader that predates visibility (this one)
+    // gets a module from a writer that has it, with a private method. Both
+    // the stamp and the unknown key refuse it; neither alone is relied on.
+    let mut m = fixture();
+    m["kinds"][0]["members"][1]
+        .as_object_mut()
+        .unwrap()
+        .insert("visibility".into(), json!("priv"));
+    m["cosm_version"] = json!("0.2.0");
+    let err = CosmModule::from_json(&m.to_string())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("needs COSM 0.2.0"),
+        "the stamp refuses it: {err}"
+    );
+
+    // A writer that forgot to stamp is still caught by the member key check.
+    m.as_object_mut().unwrap().remove("cosm_version");
+    let err = CosmModule::from_json(&m.to_string())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("unknown key `visibility`"), "{err}");
+}
+
+#[test]
+fn no_member_key_is_ignorable_today() {
+    assert!(crush_cosm::IGNORABLE_MEMBER_KEYS.is_empty());
+}

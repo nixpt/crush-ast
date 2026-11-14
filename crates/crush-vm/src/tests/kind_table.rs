@@ -189,6 +189,28 @@ fn a_kind_table_needing_a_newer_cosm_is_refused_at_load() {
 }
 
 #[test]
+fn a_cvm1_blob_with_a_private_method_is_refused_at_load() {
+    // #521: what a visibility-aware writer would emit (stamped, format 2,
+    // a `priv` member) is refused by this runtime, which predates visibility.
+    let mut v: serde_json::Value = serde_json::from_str(POINT_FIXTURE).unwrap();
+    v["kinds"][0]["members"][1]["visibility"] = serde_json::json!("priv");
+    v["cosm_version"] = serde_json::json!("0.2.0");
+    let e = Program::from_blob(&blob_with_section(
+        KIND_TABLE_FORMAT_JSON_VERSIONED,
+        &v.to_string(),
+    ))
+    .unwrap_err();
+    assert!(matches!(e, crate::Error::BadKindTable(_)), "{e:?}");
+    assert!(e.to_string().contains("needs COSM 0.2.0"), "{e}");
+
+    // Unstamped, in format 1, the member key check still refuses it.
+    v.as_object_mut().unwrap().remove("cosm_version");
+    let e =
+        Program::from_blob(&blob_with_section(KIND_TABLE_FORMAT_JSON, &v.to_string())).unwrap_err();
+    assert!(e.to_string().contains("unknown key `visibility`"), "{e}");
+}
+
+#[test]
 fn a_newer_container_version_is_still_refused() {
     let mut blob = program_with(None).to_blob();
     blob[4] = VERSION_KIND_TABLE + 1;
