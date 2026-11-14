@@ -7,6 +7,14 @@
 //! deadline: a request still running when the VM's `max_wall_time_ms` runs
 //! out is abandoned and reported as `CapTimeout`.
 //!
+//! Every verb takes an optional trailing `opts` map (#508):
+//! `{ timeout_ms: N }` bounds that one request. A request that outlives its
+//! own `timeout_ms` fails with a catchable error (`… timed out after N ms`);
+//! the VM's wall budget still applies on top and stays uncatchable.
+//! `net.http_request` returns `{status, reason, headers, body}`; `headers` is
+//! a map of lower-cased response header names (repeated headers joined with
+//! `, `). `status` and `body` are unchanged from CRUSH-153.
+//!
 //! One name per capability: exosphere's `http.*` spellings are deliberately
 //! not aliased (CRUSH-153).
 
@@ -32,15 +40,16 @@ pub fn register(caps: &mut HostCaps, max_response_bytes: usize) {
 /// request.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Verb {
-    /// `net.http_get(url)` → body
+    /// `net.http_get(url, opts?)` → body
     Get,
-    /// `net.http_post(url, body)` → body
+    /// `net.http_post(url, body, opts?)` → body
     Post,
-    /// `net.http_put(url, body)` → body
+    /// `net.http_put(url, body, opts?)` → body
     Put,
-    /// `net.http_delete(url)` → body
+    /// `net.http_delete(url, opts?)` → body
     Delete,
-    /// `net.http_request(method, url, body, headers)` → `{status, body}`
+    /// `net.http_request(method, url, body, headers, opts?)` →
+    /// `{status, reason, headers, body}`
     Request,
 }
 
@@ -55,11 +64,20 @@ impl Verb {
         }
     }
 
+    /// Required argument count; one more (the `opts` map) is optional.
     fn argc(self) -> usize {
         match self {
             Verb::Get | Verb::Delete => 1,
             Verb::Post | Verb::Put => 2,
             Verb::Request => 4,
+        }
+    }
+
+    fn signature(self) -> &'static str {
+        match self {
+            Verb::Get | Verb::Delete => "url, opts?",
+            Verb::Post | Verb::Put => "url, body, opts?",
+            Verb::Request => "method, url, body, headers, opts?",
         }
     }
 }
@@ -75,7 +93,8 @@ impl HostCap for NetHttpCap {
     fn spec(&self) -> HostCapSpec {
         HostCapSpec {
             name: self.verb.name().to_string(),
-            argc: Some(self.verb.argc()),
+            // argc or argc + 1 (trailing `opts`); `request` checks the count.
+            argc: None,
             returns: true,
         }
     }
@@ -108,6 +127,16 @@ fn request(
 ) -> Result<Option<Value>, HostCapError> {
     let cap = verb.name();
     let text = crate::caps::value_as_text;
+    let need = verb.argc();
+    if args.len() != need && args.len() != need + 1 {
+        return Err(HostCapError::Message(format!(
+            "{cap}: expected {need} or {} arguments ({}), got {}",
+            need + 1,
+            verb.signature(),
+            args.len()
+        )));
+    }
+    let timeout_ms = request_timeout(cap, args.get(need))?;
     let (method, url, body, headers) = match verb {
         Verb::Get => ("GET".to_string(), text(&args[0]), None, Vec::new()),
         Verb::Delete => ("DELETE".to_string(), text(&args[0]), None, Vec::new()),
@@ -136,8 +165,27 @@ fn request(
         }
     };
 
+    // The per-request bound wins only when it is tighter than the VM's wall
+    // budget; then a timeout is this request's own (catchable) failure.
+    let own_bound = match (timeout_ms, deadline_ms) {
+        (Some(t), Some(d)) => t < d,
+        (Some(_), None) => true,
+        (None, _) => false,
+    };
+    let limit = match (timeout_ms, deadline_ms) {
+        (Some(t), Some(d)) => Some(t.min(d)),
+        (t, d) => t.or(d),
+    };
+    let timed_out = || -> HostCapError {
+        match (own_bound, timeout_ms) {
+            (true, Some(t)) => {
+                HostCapError::Message(format!("{cap} {url}: timed out after {t} ms"))
+            }
+            _ => HostCapError::Timeout,
+        }
+    };
     let mut agent = ureq::AgentBuilder::new();
-    if let Some(ms) = deadline_ms {
+    if let Some(ms) = limit {
         agent = agent.timeout(Duration::from_millis(ms.max(1)));
     }
     let mut req = agent.build().request(&method, &url);
@@ -152,20 +200,70 @@ fn request(
         Ok(r) => r,
         // The general verb reports the status instead of failing on it.
         Err(ureq::Error::Status(_, r)) if verb == Verb::Request => r,
+        Err(e) if is_timeout(&e) => return Err(timed_out()),
         Err(e) => return Err(transport_error(cap, &url, e)),
     };
     let status = response.status();
+    let reason = response.status_text().to_string();
+    let response_headers = response_header_map(&response);
     let body = read_limited(response, max_bytes).map_err(|e| match e {
-        ReadError::TimedOut => HostCapError::Timeout,
+        ReadError::TimedOut => timed_out(),
         ReadError::Other(m) => HostCapError::Message(format!("{cap} {url}: {m}")),
     })?;
     Ok(Some(match verb {
         Verb::Request => Value::new_map(HashMap::from([
             ("status".to_string(), Value::Int(i64::from(status))),
+            ("reason".to_string(), Value::Str(reason)),
+            ("headers".to_string(), response_headers),
             ("body".to_string(), Value::Str(body)),
         ])),
         _ => Value::Str(body),
     }))
+}
+
+/// The optional trailing `opts` map: null/absent, or `{ timeout_ms: N }`
+/// with N a positive integer. Unknown keys are refused, so a typo like
+/// `timeout` is not silently ignored.
+fn request_timeout(cap: &str, opts: Option<&Value>) -> Result<Option<u64>, HostCapError> {
+    let map = match opts {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Map(m)) => m.borrow(),
+        Some(other) => {
+            return Err(format!("{cap}: opts must be a map or null, got {other}").into());
+        }
+    };
+    let mut timeout = None;
+    for (k, v) in map.iter() {
+        match (k.as_str(), v) {
+            ("timeout_ms", Value::Int(n)) if *n > 0 => timeout = Some(*n as u64),
+            ("timeout_ms", Value::Null) => {}
+            ("timeout_ms", other) => {
+                return Err(format!(
+                    "{cap}: opts.timeout_ms must be a positive integer, got {other}"
+                )
+                .into());
+            }
+            (key, _) => {
+                return Err(format!("{cap}: unknown opts key '{key}' (known: timeout_ms)").into());
+            }
+        }
+    }
+    Ok(timeout)
+}
+
+/// Response headers as a map: lower-cased names, repeated values joined
+/// with `, ` (RFC 9110 §5.3).
+fn response_header_map(response: &ureq::Response) -> Value {
+    let mut out: HashMap<String, Value> = HashMap::new();
+    for name in response.headers_names() {
+        let key = name.to_ascii_lowercase();
+        if out.contains_key(&key) {
+            continue;
+        }
+        let joined = response.all(&name).join(", ");
+        out.insert(key, Value::Str(joined));
+    }
+    Value::new_map(out)
 }
 
 /// `headers` for `net.http_request`: a map of name → value, or null for none.
@@ -290,7 +388,8 @@ mod tests {
     fn http_get_spec() {
         let cap = NetHttpGetCap::new(4096);
         assert_eq!(cap.spec().name, "net.http_get");
-        assert_eq!(cap.spec().argc, Some(1));
+        // url + optional opts: the cap checks the count itself (#508).
+        assert_eq!(cap.spec().argc, None);
         assert!(cap.spec().returns);
     }
 
@@ -444,6 +543,144 @@ mod tests {
                 "{name} waited out the server"
             );
         }
+    }
+
+    #[test]
+    fn request_reports_reason_and_response_headers() {
+        let caps = caps();
+        let (url, _seen) = serve_once(404, "nope", Duration::ZERO);
+        let out = caps
+            .get("net.http_request")
+            .unwrap()
+            .call(vec![s("GET"), s(&url), Value::Null, Value::Null])
+            .unwrap();
+        let Some(Value::Map(m)) = out else {
+            panic!("expected a map, got {out:?}");
+        };
+        let m = m.borrow();
+        assert_eq!(m["status"], Value::Int(404));
+        assert_eq!(m["reason"], s("X"));
+        assert_eq!(m["body"], s("nope"));
+        let Value::Map(h) = &m["headers"] else {
+            panic!("headers must be a map, got {:?}", m["headers"]);
+        };
+        // Lower-cased names, whatever the server sent.
+        assert_eq!(h.borrow()["content-length"], s("4"));
+        assert_eq!(h.borrow()["connection"], s("close"));
+    }
+
+    #[test]
+    fn timeout_ms_is_a_catchable_per_request_failure() {
+        let caps = caps();
+        let opts = || Value::new_map(HashMap::from([("timeout_ms".to_string(), Value::Int(150))]));
+        let cases: [(&str, Vec<Value>); 5] = [
+            ("net.http_get", vec![]),
+            ("net.http_post", vec![s("b")]),
+            ("net.http_put", vec![s("b")]),
+            ("net.http_delete", vec![]),
+            ("net.http_request", vec![]),
+        ];
+        for (name, extra) in cases {
+            let (url, _seen) = serve_once(200, "late", Duration::from_secs(3));
+            let mut args = if name == "net.http_request" {
+                vec![s("GET"), s(&url), Value::Null, Value::Null]
+            } else {
+                std::iter::once(s(&url)).chain(extra).collect()
+            };
+            args.push(opts());
+            let start = std::time::Instant::now();
+            // The wall budget (30 s) is far away: the request's own bound fires.
+            let result = caps.get(name).unwrap().call_with_deadline(args, 30_000);
+            match result {
+                Err(HostCapError::Message(m)) => {
+                    assert!(m.contains("timed out after 150 ms"), "{name}: {m}")
+                }
+                _ => panic!("{name}: expected a catchable timeout message"),
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "{name} waited out the server"
+            );
+        }
+    }
+
+    #[test]
+    fn wall_deadline_tighter_than_timeout_ms_stays_a_wall_timeout() {
+        let (url, _seen) = serve_once(200, "late", Duration::from_secs(3));
+        let opts = Value::new_map(HashMap::from([(
+            "timeout_ms".to_string(),
+            Value::Int(5_000),
+        )]));
+        let result = caps()
+            .get("net.http_get")
+            .unwrap()
+            .call_with_deadline(vec![s(&url), opts], 150);
+        assert!(matches!(result, Err(HostCapError::Timeout)));
+    }
+
+    #[test]
+    fn opts_and_arity_are_checked() {
+        let caps = caps();
+        let get = caps.get("net.http_get").unwrap();
+        let (url, _seen) = serve_once(200, "ok", Duration::ZERO);
+        // Null opts behaves like no opts.
+        assert_eq!(get.call(vec![s(&url), Value::Null]), Ok(Some(s("ok"))));
+        let bad = |k: &str, v: Value| Value::new_map(HashMap::from([(k.to_string(), v)]));
+        let err = get
+            .call(vec![
+                s("http://127.0.0.1:9/"),
+                bad("timeout", Value::Int(5)),
+            ])
+            .unwrap_err();
+        assert!(err.contains("unknown opts key 'timeout'"), "{err}");
+        let err = get
+            .call(vec![
+                s("http://127.0.0.1:9/"),
+                bad("timeout_ms", Value::Int(0)),
+            ])
+            .unwrap_err();
+        assert!(err.contains("positive integer"), "{err}");
+        let err = get
+            .call(vec![s("http://127.0.0.1:9/"), s("x")])
+            .unwrap_err();
+        assert!(err.contains("opts must be a map or null"), "{err}");
+        let err = get.call(vec![]).unwrap_err();
+        assert!(
+            err.contains("expected 1 or 2 arguments (url, opts?), got 0"),
+            "{err}"
+        );
+        let err = caps
+            .get("net.http_request")
+            .unwrap()
+            .call(vec![s("GET"), s("u"), Value::Null])
+            .unwrap_err();
+        assert!(err.contains("expected 4 or 5 arguments"), "{err}");
+    }
+
+    // Source → VM: a per-request timeout is caught by try/catch, and the
+    // response map carries reason + headers.
+    #[test]
+    fn timeout_and_headers_through_the_source_pipeline() {
+        let (slow, _s1) = serve_once(200, "late", Duration::from_secs(3));
+        let (fast, _s2) = serve_once(201, "made", Duration::ZERO);
+        let source = format!(
+            "fn main() {{\n\
+             try {{ net.http_get(\"{slow}\", {{ timeout_ms: 100 }}) }} catch e {{ print(\"caught\") }}\n\
+             let r = net.http_request(\"POST\", \"{fast}\", \"x\", null, {{ timeout_ms: 2000 }})\n\
+             print(r.status)\n\
+             print(r.reason)\n\
+             print(r.headers[\"content-length\"])\n\
+             print(r.body)\n\
+             }}\n"
+        );
+        let prog = crate::compile::compile_crush_source(&source).expect("compile");
+        let caps = crate::HostCapsBuilder::new()
+            .net(true)
+            .net_max_response_bytes(4096)
+            .build();
+        let result =
+            crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&caps)).unwrap();
+        assert_eq!(result.output, "caught\n201\nX\n4\nmade\n");
     }
 
     // Source → VM: `net.http_put` from Crush, against a local listener.
