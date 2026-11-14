@@ -14,6 +14,12 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- `net.*` HTTP verbs take an optional trailing `opts` map, `{ timeout_ms: N }`. A request
+  that outlives its own `timeout_ms` fails with a catchable error (`… timed out after N ms`);
+  the VM wall budget still applies and stays uncatchable. `net.http_request` now returns
+  `{status, reason, headers, body}`: `headers` maps lower-cased response header names to
+  values (repeats joined with `, `). Existing calls and fields are unchanged (#508).
+
 ## [0.11.2] - 2026-11-07
 
 - Merge pull request #410 from nixpt/agent/altair/CRUSH-372-374-followups

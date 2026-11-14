@@ -601,7 +601,10 @@ fn list_caps() {
         println!("  net.http_put URL BODY  HTTP PUT request");
         println!("  net.http_delete URL    HTTP DELETE request");
         println!(
-            "  net.http_request METHOD URL BODY HEADERS  any method; returns {{status, body}}"
+            "  net.http_request METHOD URL BODY HEADERS  any method; returns {{status, reason, headers, body}}"
+        );
+        println!(
+            "  every net.* verb takes a last optional OPTS map: {{timeout_ms: N}} (a catchable error after N ms)"
         );
     }
     #[cfg(feature = "tcp")]
