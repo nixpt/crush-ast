@@ -14,6 +14,11 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- COSM has a version rule (F7, #521). A kind table may carry `cosm_version`; a runtime loads the
+  same major and a minor no greater than its own and refuses a newer one by name. Member objects
+  are now must-understand like the rest of COSM: an unknown key on a member is a load error
+  instead of being silently dropped. CVM1 gains kind-table format 2 for modules that need a
+  newer COSM. Nothing is stamped yet, so every program is written byte for byte as before.
 - `net.*` HTTP verbs take an optional trailing `opts` map, `{ timeout_ms: N }`. A request
   that outlives its own `timeout_ms` fails with a catchable error (`… timed out after N ms`);
   the VM wall budget still applies and stays uncatchable. `net.http_request` now returns

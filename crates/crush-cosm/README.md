@@ -77,8 +77,9 @@ Serde JSON, like CAST. Strategy names are the design doc's spellings, `snake_cas
   hook, ordering is `cmp`);
 - **types** are `CastType`'s JSON: `"Int"`, `"Any"`, `{"Array": "Float"}`, `{"Struct": "Point"}`;
 - **spans** are `{"file"?, "line", "col", "end_line"?, "end_col"?}` (1-based), optional everywhere;
-- empty lists, empty hooks and absent options are omitted; unknown fields are rejected (except
-  inside a member, where `kind` is the tag). Parse errors name the JSON path
+- empty lists, empty hooks and absent options are omitted; unknown fields are rejected everywhere,
+  members included (a member may carry only `name`, `span`, `kind` and its kind's own keys).
+  Parse errors name the JSON path
   (`invalid COSM JSON at `kinds[0].resolution`: unknown variant `mro`, …`).
 
 Full examples — the design doc's worked examples — are in `tests/fixtures/`:
@@ -86,6 +87,30 @@ Full examples — the design doc's worked examples — are in `tests/fixtures/`:
 [`python_animals.cosm.json`](tests/fixtures/python_animals.cosm.json) (validated against
 [`python_prelude.cosm.json`](tests/fixtures/python_prelude.cosm.json), which declares `object`),
 [`crush_point.cosm.json`](tests/fixtures/crush_point.cosm.json).
+
+## Versioning (F7)
+
+COSM is **must-understand**: a reader refuses what it does not know instead of dropping it, so a
+security-relevant field (member visibility first) can never be lost on an old runtime. The rule,
+from decisions 5 and 7 of `docs/design/visibility-and-packages.md`:
+
+- A module may carry a top-level `"cosm_version": "MAJOR.MINOR.PATCH"`. Absent means
+  `COSM_BASE_VERSION` (`0.1.0`, the schema before the rule).
+- A reader takes the **same major** and a **minor no greater than its own** (`COSM_VERSION`); the
+  patch is ignored, and 0.x is no exception. Anything newer is refused by name:
+  `this module needs COSM 0.2.0, but this runtime reads COSM up to 0.1.0 …` (`check_readable`).
+- Every new field or strategy **bumps the minor**. The writer stamps the **lowest version that can
+  express the module** (`CosmModule::required_version`) and omits `cosm_version` at the base
+  version, so a program that uses nothing new is written exactly as before and loads on an old
+  runtime.
+- A purely additive or cosmetic field may be declared ignorable (still with a minor bump).
+  **Nothing is ignorable today**; visibility and owner fields never will be.
+- In CVM1, a kind table whose module needs more than the base version is written with kind-table
+  format `2` (format `1` otherwise). Runtimes from before this rule refuse format 2 by name, since
+  they predate the `cosm_version` check.
+
+The gate sits in `CosmModule`'s deserializer, so it covers every load path: `CosmModule::from_json`,
+CVM1's kind table and CASM's `cosm` field (JSON and binary). Tests: `tests/evolution.rs`.
 
 ## Validation
 
