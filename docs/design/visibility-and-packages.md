@@ -237,14 +237,14 @@ still collide.
 
 | Ticket | Delivers | Closes / moves |
 |---|---|---|
-| **V0** (S) | Corpus sweep for duplicate kind names, then a kind-name clash is a compile error (§3 A). `import-system.md`: deps-as-roots marked done; `pub` documented as "accepted, not yet enforced". The guide gets a `pub` section. | #515; L3's `pub` item (the row stays 🟡: `capability`, `mcp`/external imports and `let mut` remain) |
-| **V1** (M) | §1 stage 1: `pub` recorded on `fn`/`struct`/`trait`, the per-file package rule, `W-VIS01`, the legacy all-public note and the first-`pub` warning | L5 (modules have an interface) |
-| **V2** (S, other repos) | `pub` added in facet, crush-http, polish, examples, the guide and awesome-crush | — |
-| **V3a** (S-M) | F7: `cosm_version` in `CosmModule`, `kt_format 2`, the reader gate and its by-name error, the lowest-version stamp, docs, and the private-method refusal test. **Before every schema-touching ticket.** | **F7** ✅ |
-| **V3b** (M) | Owner ids: `module`/`package` on `KindDecl`, and a package id per function in CASM/CVM1 (refused by name on old runtimes) | F4/F9 inputs (the format change is documented) |
-| **V4** (M) | §3 B per-module kinds, the foreign-`impl` rule, and shape-parsed cross-file struct literals with `a.P { … }` in both grammars | L5 (the "Not yet" items); keeps L2 |
-| **V5** (M) | §1 stage 3, plus the narrow concatenation retirement: `W-VIS01` becomes an error at a minor bump | — |
-| **V6** (L, with or after K2) | §2: the `visibility` schema field and contextual `priv`/`readonly`. The VM enforces it on the scheduler and portable VMs. Kinds with private members are not map-compatible. The side doors are closed or documented. FastVM/JIT/AOT are exact-or-loud. Under C2, the syntax stays experimental until this ships. | L6 ✅ when combined with K2 |
+| **V0** #518 (S) | Corpus sweep for duplicate kind names, then a kind-name clash is a compile error (§3 A). `import-system.md`: deps-as-roots marked done; `pub` documented as "accepted, not yet enforced". The guide gets a `pub` section. | #515; L3's `pub` item (the row stays 🟡: `capability`, `mcp`/external imports and `let mut` remain) |
+| **V1** #519 (M) | §1 stage 1: `pub` recorded on `fn`/`struct`/`trait`, the per-file package rule, `W-VIS01`, the legacy all-public note and the first-`pub` warning | L5 (modules have an interface) |
+| **V2** #520 (S, other repos) | `pub` added in facet, crush-http, polish, examples, the guide and awesome-crush | — |
+| **V3a** #521 (S-M) | F7: `cosm_version` in `CosmModule`, `kt_format 2`, the reader gate and its by-name error, the lowest-version stamp, docs, and the private-method refusal test. **Before every schema-touching ticket.** | **F7** ✅ |
+| **V3b** #522 (M) | Owner ids: `module`/`package` on `KindDecl`, and a package id per function in CASM/CVM1 (refused by name on old runtimes) | F4/F9 inputs (the format change is documented) |
+| **V4** #523 (M) | §3 B per-module kinds, the foreign-`impl` rule, and shape-parsed cross-file struct literals with `a.P { … }` in both grammars | L5 (the "Not yet" items); keeps L2 |
+| **V5** #524 (M) | §1 stage 3, plus the narrow concatenation retirement: `W-VIS01` becomes an error at a minor bump | — |
+| **V6** #525 (L, with or after K2) | §2: the `visibility` schema field and contextual `priv`/`readonly`. The VM enforces it on the scheduler and portable VMs. Kinds with private members are not map-compatible. The side doors are closed or documented. FastVM/JIT/AOT are exact-or-loud. Under C2, the syntax stays experimental until this ships. | L6 ✅ when combined with K2 |
 | **K3** (existing) | Walker mapping per the §2 table: JS `#x` uses `private: kind`, Python `__x` is mangled, Rust/Go visibility is recorded as metadata | — |
 
 V0 needs no decision and can start now. V1, V2, V4 and V5 need decisions 1, 3 and 4. V3a needs decision 5
