@@ -85,6 +85,13 @@ pub fn deadline_in(limit_ms: u64) -> Option<Instant> {
     }
 }
 
+/// `Instant::now() + ms`, or `None` when that is not representable (an
+/// unlimited wall budget hands caps `u64::MAX`, #505): the caller then waits
+/// without a bound instead of panicking on `Instant + Duration` overflow.
+pub fn instant_after(ms: u64) -> Option<Instant> {
+    Instant::now().checked_add(Duration::from_millis(ms))
+}
+
 /// Error for a run that outlived `Quotas::max_wall_time_ms`.
 pub fn expired(limit_ms: u64) -> VmError {
     VmError::WallTimeQuota(limit_ms)

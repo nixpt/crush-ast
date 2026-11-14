@@ -180,9 +180,15 @@ struct RunArgs {
     #[arg(long, value_name = "PATH")]
     db: Option<PathBuf>,
 
-    /// Maximum instruction steps.
-    #[arg(long, value_name = "N")]
+    /// Maximum instruction steps, or `unlimited` (default 1000000).
+    #[arg(long, value_name = "N", value_parser = crush_vm::parse_quota_usize)]
     max_steps: Option<usize>,
+
+    /// Wall-clock budget for the whole run in milliseconds, or `unlimited`
+    /// for a long-lived program such as a server (default 30000, #505).
+    /// Blocking caps (time.sleep, net.*) get what is left of it.
+    #[arg(long, value_name = "MS", value_parser = crush_vm::parse_quota_u64)]
+    max_wall_ms: Option<u64>,
 
     /// Maximum stack slots.
     #[arg(long, value_name = "N")]
@@ -695,6 +701,9 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
     let mut quotas = Quotas::default();
     if let Some(n) = args.max_steps {
         quotas.max_steps = n;
+    }
+    if let Some(ms) = args.max_wall_ms {
+        quotas.max_wall_time_ms = ms;
     }
     if let Some(n) = args.max_stack {
         quotas.max_stack = n;

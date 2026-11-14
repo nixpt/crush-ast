@@ -78,18 +78,24 @@ fn parse_crush_text(s: &str) -> Value {
     if s.starts_with("error(") && s.ends_with(')') {
         return Value::Error(s[6..s.len() - 1].to_string());
     }
-    if s.starts_with('<') && s.ends_with(" bytes>")
-        && let Ok(n) = s[1..s.len() - 7].parse::<usize>() {
-            return Value::Bytes(vec![0; n]);
-        }
-    if s.starts_with("<handle ") && s.ends_with('>')
-        && let Ok(id) = s[8..s.len() - 1].parse::<u64>() {
-            return Value::Handle(id);
-        }
-    if s.starts_with("<foreign ") && s.ends_with('>')
-        && let Ok(id) = s[9..s.len() - 1].parse::<u64>() {
-            return Value::Foreign(id);
-        }
+    if s.starts_with('<')
+        && s.ends_with(" bytes>")
+        && let Ok(n) = s[1..s.len() - 7].parse::<usize>()
+    {
+        return Value::Bytes(vec![0; n]);
+    }
+    if s.starts_with("<handle ")
+        && s.ends_with('>')
+        && let Ok(id) = s[8..s.len() - 1].parse::<u64>()
+    {
+        return Value::Handle(id);
+    }
+    if s.starts_with("<foreign ")
+        && s.ends_with('>')
+        && let Ok(id) = s[9..s.len() - 1].parse::<u64>()
+    {
+        return Value::Foreign(id);
+    }
 
     Value::Str(s.to_string())
 }

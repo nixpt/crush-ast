@@ -185,7 +185,9 @@ fn request(
         }
     };
     let mut agent = ureq::AgentBuilder::new();
-    if let Some(ms) = limit {
+    // An unlimited wall budget (#505) arrives as u64::MAX: no agent timeout
+    // then, rather than a Duration ureq would overflow adding to `now`.
+    if let Some(ms) = limit.filter(|&ms| crush_vm::wall::instant_after(ms).is_some()) {
         agent = agent.timeout(Duration::from_millis(ms.max(1)));
     }
     let mut req = agent.build().request(&method, &url);
@@ -616,6 +618,18 @@ mod tests {
             .unwrap()
             .call_with_deadline(vec![s(&url), opts], 150);
         assert!(matches!(result, Err(HostCapError::Timeout)));
+    }
+
+    // An unlimited wall budget (#505) reaches caps as u64::MAX; that must mean
+    // "no agent timeout", not a Duration overflow inside ureq.
+    #[test]
+    fn unlimited_wall_deadline_does_not_overflow() {
+        let (url, _seen) = serve_once(200, "ok", Duration::ZERO);
+        let out = caps()
+            .get("net.http_get")
+            .unwrap()
+            .call_with_deadline(vec![s(&url)], u64::MAX);
+        assert!(matches!(out, Ok(Some(Value::Str(ref b))) if b == "ok"));
     }
 
     #[test]
