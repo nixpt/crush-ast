@@ -1,7 +1,7 @@
 # Visibility and packages for Crush (CRUSH-509): design note
 
 altair (crush lane), 2026-11-14, asked for by the captain through vega. **Design only.** The captain ruled on
-decisions 1-5 on 2026-11-14 (see **Rulings**); decision 6 (the freeze date) is still open. Every decision below has options and a recommendation. The ones the captain
+all six decisions on 2026-11-14 (see **Rulings**). The 1.0 feature freeze is 2026-12-31. Every decision below has options and a recommendation. The ones the captain
 must rule on are collected under **Decisions**.
 
 ## What exists today (checked on main 30d6d581)
@@ -276,9 +276,11 @@ V0 needs no decision and can start now. V1, V2, V4 and V5 need decisions 1, 3 an
 | 3 | **Approved.** Kinds become per-module (§3 B, owner fields) after the #515 fix. Inherent impls are allowed only inside the declaring package. |
 | 4 | **Approved.** No directory modules: the package entry is the directory module. Concatenation is retired only for multi-file or with-deps packages whose entry has no `import`. |
 | 5 | **Approved.** F7: `cosm_version`, each blob stamped with the lowest version that can express it, and a one-time `kt_format 2` bump. This lands **before any other schema change**. |
-| 6 | **Open.** The freeze date is not decided. Nothing that depends on it starts yet. |
+| 6 | **The Crush 1.0 feature freeze is 2026-12-31** (ruled 2026-11-14). "No new syntax after the freeze" applies, so `pub struct`/`pub trait` (V1), the qualified literal `a.P { … }` (V4), the F7 rule and the owner ids (V3a, V3b), and the `W-VIS01` error flip (V5, after V2) must land before it. Decision 2 resolves on this date: **C1 only if K2 lands by 2026-12-31**, otherwise C2. |
 
 Order: V0 (#515) first, then V3a (F7) before any schema-touching ticket.
+
+**Pre-freeze (by 2026-12-31):** V0 #518, V1 #519, V2 #520, V3a #521, V3b #522, V4 #523, V5 #524. **Conditional:** V6 #525 is pre-freeze only under C1 (K2 by 2026-12-31); under C2 it ships after 1.0 as experimental.
 
 ## Advisor
 
