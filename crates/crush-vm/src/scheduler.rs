@@ -214,12 +214,13 @@ pub(crate) fn run_with_wall_clock_limit(
         buf
     });
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(limit_ms);
+    // `None` for an unlimited budget (#505): wait for the child without a bound.
+    let deadline = crate::wall::instant_after(limit_ms);
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break Some(status);
         }
-        if std::time::Instant::now() >= deadline {
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
             break None;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));

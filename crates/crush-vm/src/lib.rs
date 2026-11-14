@@ -73,7 +73,10 @@ pub use scheduler::run_scheduled_with_transcript;
 pub use scheduler::{polyglot_gate_name, resolve_lang_binary};
 #[cfg(feature = "transcript")]
 pub use transcript::{TRANSCRIPT_VERSION, Transcript, TranscriptDigest};
-pub use vm::{LangFailurePhase, Quotas, VmError, VmResult, run, run_with_caps};
+pub use vm::{
+    LangFailurePhase, Quotas, VmError, VmResult, parse_quota_u64, parse_quota_usize, run,
+    run_with_caps,
+};
 
 /// Whether this build runs `@lang[deps]` blocks in a buckets-provisioned bwrap
 /// sandbox (cargo feature `sandboxed-polyglot`). Lets host tooling report it.
