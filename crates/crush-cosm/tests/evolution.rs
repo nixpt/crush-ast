@@ -165,3 +165,20 @@ fn a_private_method_from_a_newer_writer_is_refused_by_this_reader() {
 fn no_member_key_is_ignorable_today() {
     assert!(crush_cosm::IGNORABLE_MEMBER_KEYS.is_empty());
 }
+
+#[test]
+fn an_explicit_null_body_is_still_a_type_error() {
+    for field in ["kinds", "interfaces"] {
+        let mut m = fixture();
+        m[field] = Value::Null;
+        let err = CosmModule::from_json(&m.to_string())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(field) && err.contains("invalid type: null"),
+            "{err}"
+        );
+    }
+    // Absent still means empty.
+    assert_eq!(CosmModule::from_json("{}").unwrap(), CosmModule::default());
+}

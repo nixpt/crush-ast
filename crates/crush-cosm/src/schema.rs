@@ -101,15 +101,26 @@ pub struct CosmModule {
 /// check, so a module from a newer writer is refused for its version (which
 /// says what to do) and never for whichever new key the typed parse would
 /// meet first, wherever `cosm_version` sits in the input.
+///
+/// Holding the body as JSON values means a non-finite float constant (NaN,
+/// ±inf) read from a non-JSON format (CAST CBOR) loads as `null`, which is
+/// what JSON, and so every CVM1 and CASM kind table, already stores for it.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CosmModuleRepr {
     #[serde(default)]
     cosm_version: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present")]
     kinds: Option<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present")]
     interfaces: Option<serde_json::Value>,
+}
+
+/// `Some` for any present value, `null` included, so an explicit `null` is
+/// still a type error (as when these fields were typed `Vec`s) and only an
+/// absent field means empty.
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<serde_json::Value>, D::Error> {
+    serde_json::Value::deserialize(d).map(Some)
 }
 
 /// Prefix of a typed-body error from [`CosmModuleRepr`]: `at `PATH`: MSG`.
