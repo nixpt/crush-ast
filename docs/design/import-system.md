@@ -62,7 +62,10 @@ $ crush-run run examples/crush/imports/main.crush
   of other Crush modules. The module's `main` is ignored. Any other top-level statement — `let`, a call,
   `use @…` — is a compile error naming file and line: a module has no init code, so there is no hidden
   init order. (`Parser::parse_module` keeps the top-level statements apart for this check.) Kind names
-  (`struct` / `trait`) are **not** mangled: Kinds are one global namespace.
+  (`struct` / `trait`) are **not** mangled: Kinds are one global namespace, so the same name declared
+  in two different files (two modules, or a module and the importer) is a compile error naming both
+  (#515). A redeclaration inside one file keeps its old behaviour. Per-module Kinds are planned (#523,
+  `docs/design/visibility-and-packages.md` §3).
 - **Graph.** Each file is loaded once per compile (keyed by canonical path, so a diamond shares one
   copy); a cycle is a compile error showing it (`ca.crush → cb.crush → ca.crush`); nesting is capped at
   `ImportOptions::max_depth` (64).
@@ -102,8 +105,6 @@ for later lines. `crushc --emit ast` dumps the file as written (imports unresolv
 
 ## Not yet
 
-- **crush-pkg dependencies as search roots.** crush-pkg should resolve its dep graph to directories and
-  pass them as `ImportOptions::search_paths` (ahead of `CRUSH_PATH`) to `compile_crush_file*`.
 - **Remote / external imports** (`import @http/@git/@file`) and **`use @mcp`**: refused at compile time.
 - **`use @lang` / `use @cap` inside an imported module**: refused (a top-level statement).
 - **Top-level constants** in modules: write a function (`fn pi() { return 3.14159 }`).
@@ -111,5 +112,13 @@ for later lines. `crushc --emit ast` dumps the file as written (imports unresolv
   struct literal only for structs declared in the same file; build values through module functions.
 - **Source maps** of imported functions carry the module's line numbers but not its file, so a debugger
   break inside one shows the importer's file name.
-- **Visibility**: every function of a module is importable (no `pub`/private distinction; the `__` prefix
-  is only a convention, hidden from "it defines: …" lists).
+- **Visibility**: every function of a module is importable today. `pub fn` is **accepted and not yet
+  enforced** (the parser drops `pub`), and the `__` prefix is only a convention, hidden from "it defines:
+  …" lists. The design is ruled (`docs/design/visibility-and-packages.md`): per-package visibility with
+  `pub` exporting, a `W-VIS01` warning first (#519), then an error before the 1.0 freeze (#524).
+
+## Done since the first version
+
+- **crush-pkg dependencies are import roots** (CRUSH-367): `ImportOptions::packages`. `import facet`
+  loads a dependency's entry, and `import facet.env` loads `env.crush` in its root. A package name wins
+  over the search path.
