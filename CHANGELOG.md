@@ -14,6 +14,11 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- COSM has a version rule (F7, #521). A kind table may carry `cosm_version`; a runtime loads the
+  same major and a minor no greater than its own and refuses a newer one by name. Member objects
+  are now must-understand like the rest of COSM: an unknown key on a member is a load error
+  instead of being silently dropped. CVM1 gains kind-table format 2 for modules that need a
+  newer COSM. Nothing is stamped yet, so every program is written byte for byte as before.
 - fix: the same `struct` or `trait` name declared in two different files of one program (two
   imported modules, or a module and the importer) is now a compile error naming both files
   (`E-IM01`). It used to compile, and the later declaration silently replaced the earlier one, so
