@@ -123,7 +123,9 @@ fn granted_caps(args: Vec<String>, grants: &[String]) -> Result<HostCaps, String
     let builder = crush_lang_sdk::HostCapsBuilder::new().args(args).env(granted("env"));
     // `fs` (crush-run's `--fs`): the file caps over an empty in-memory root of
     // this run's own, with the same results and errors as an empty --fs-root.
-    let builder = if granted("fs") { builder.fs_memory() } else { builder };
+    // Its modification times come from the browser's clock: the SDK default
+    // reads `SystemTime::now()`, which aborts wasm32 (#534).
+    let builder = if granted("fs") { builder.fs_memory_with_clock(clock::system_time) } else { builder };
     #[cfg(feature = "stdlib")]
     let builder = builder.stdlib(true);
     let mut caps = builder.build();
