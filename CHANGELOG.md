@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix: a failing host cap's error shows the cap name once. `VmError::CapFailed` displays as
+  `{cap}: {message}` and most caps also start their message with their own name, so users saw
+  `tcp.recv: tcp.recv: timed out after 500 ms`. Where `CapFailed` is built (the scheduler VM and
+  PortableVm cap dispatch, and the shared `ai_native.*` / `dom_native.*` dispatch FastVM calls)
+  one leading `"{cap}: "` or `"{cap} "` is now stripped, through `VmError::cap_failed`. Only the
+  exact cap name is stripped, once, case-sensitively. Caps keep their own prefix when called
+  directly through `HostCap::call()`. Error kinds and codes are unchanged (#514).
 - COSM has a version rule (F7, #521). A kind table may carry `cosm_version`; a runtime loads the
   same major and a minor no greater than its own and refuses a newer one by name. Member objects
   are now must-understand like the rest of COSM: an unknown key on a member is a load error
