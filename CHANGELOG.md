@@ -27,6 +27,7 @@ add its entry after yours.
   takes any `1.x`. Recorded only; member visibility (#525) will enforce it. `--emit cast` of a
   program that imports a module with `struct` / `impl` / `trait` now shows `module` and
   `module_prefix` in those declarations' meta, as functions already showed `module`.
+- fix: `crush update` no longer reads an install as "installed: none" when running `crush --version` fails once with "text file busy" (ETXTBSY). The version probe retries a few times (about 100 ms in all) before giving up, and an exec error other than "not found" is reported on stderr when `CRUSH_UPDATE_DEBUG` is set. Output and exit codes are unchanged. The updater's tests also write their fake binaries to a temp name and rename them into place (#517).
 - fix: a failing host cap's error shows the cap name once. `VmError::CapFailed` displays as
   `{cap}: {message}` and most caps also start their message with their own name, so users saw
   `tcp.recv: tcp.recv: timed out after 500 ms`. Where `CapFailed` is built (the scheduler VM and
