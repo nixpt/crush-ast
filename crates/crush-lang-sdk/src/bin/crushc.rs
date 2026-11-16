@@ -280,13 +280,19 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
 
     // `--emit ast` dumps the file as written; everything else compiles the
     // program with its imports resolved and merged (CRUSH-110).
+    // The import graph's visibility findings (V1, #519: `W-VIS01`
+    // warnings, `N-VIS01` notes) join the annotation warnings below.
+    let mut visibility = Vec::new();
     if cli.emit != EmitKind::Ast {
         let imports =
             crush_frontend::import_system::ImportOptions::with_crush_path(cli.lib_paths.clone());
-        if let Err(e) =
-            crush_frontend::import_system::resolve_imports(&mut program, &cli.input, &imports)
-        {
-            report_import_error(cli, &e);
+        match crush_frontend::import_system::resolve_imports_reporting(
+            &mut program,
+            &cli.input,
+            &imports,
+        ) {
+            Ok(found) => visibility = found,
+            Err(e) => report_import_error(cli, &e),
         }
     }
 
@@ -296,14 +302,18 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     if cli.emit != EmitKind::Ast {
         let mut checked = program.clone();
         crush_frontend::cast_enrich::enrich_cast(&mut checked);
-        let warnings = crush_lang_sdk::compile::annotation_diagnostics(
-            &checked,
-            &cli.input.display().to_string(),
-        );
+        let input = cli.input.display().to_string();
+        let mut warnings =
+            crush_lang_sdk::compile::compiler_diagnostics(std::mem::take(&mut visibility), &input);
+        warnings.extend(crush_lang_sdk::compile::annotation_diagnostics(
+            &checked, &input,
+        ));
         crush_lang_sdk::compile::print_annotation_diagnostics(
             &warnings,
             matches!(cli.message_format, MessageFormat::Json),
         );
+        // Notes (`N-VIS01`) are information: they never fail a build.
+        warnings.retain(|d| d.level != "note");
         if cli.deny_warnings && !warnings.is_empty() {
             if matches!(cli.message_format, MessageFormat::Text) {
                 eprintln!(
