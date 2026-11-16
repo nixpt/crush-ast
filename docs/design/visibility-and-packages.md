@@ -281,25 +281,52 @@ V0 needs no decision and can start now. V1, V2, V4 and V5 need decisions 1, 3 an
   since V3a and both load paths (CVM1's kind table, CASM's `cosm`) go through
   `CosmModule::from_json`. So an old runtime refuses ownership by name, never runs without it.
 - **Schema** (COSM `0.2.0`, `COSM_OWNERS_VERSION`): `KindDecl.module` (the declaring module's import
-  path), `KindDecl.package`, `CosmModule.fn_packages`. All are omitted for the root package and the
-  program's own file, so a one-package program is written exactly as before (COSM `0.1.0`,
-  `kt_format 1`); any of them stamps `0.2.0` and `kt_format 2`. An explicit `null`, an empty id or
-  `"root"` spelled out is a load error, and none of them is ignorable.
+  path), `KindDecl.package`, `CosmModule.fn_packages`. All are omitted for the root package, so a
+  one-package program is written exactly as before (COSM `0.1.0`, `kt_format 1`), however many
+  files it has; any of them stamps `0.2.0` and `kt_format 2`. `module` is written only together
+  with a non-root `package`. None of them is ignorable.
+- **One owner-id rule** (`crush_cosm::owner_id_problem`): a package id is `pkg:<name>` or
+  `dir:<label>`, with no `/` or `\` and never empty; the root package is never spelled out; a module
+  id is a non-empty import path without separators. The reader refuses, the writer refuses to write
+  (CASM returns the error, CVM1's infallible writer panics) and `validate` reports
+  (`cosm::invalid_owner_id`) the same ids; the frontend checks what it compiles.
+- **`module` is the import path as first written** (`geo`, `lib.geo`), not a canonical identity:
+  two import paths can reach one file. V4 must not treat it as unique; the package plus the file is
+  what identifies a module.
+- **Owners of synthesised code.** A function a pass creates from another takes its owner
+  (`cosm_lower::inherit_owner`): lifted methods take their `impl`/`trait`'s, lowered polyglot blocks
+  and their helpers take the enclosing function's, and what the compiler lifts (nested `fn`s,
+  lambdas, async bodies) is recorded under the function it came from. A merged `struct`/`impl`/
+  `trait` carries its module's merge prefix and takes the package of that module's functions
+  (`inherit_declaration_owners`); a module whose functions disagree, or a declaration that disagrees
+  with them, is an internal compiler error. A module that declares types and **no** function has
+  nothing to derive from: its declarations need V1's own stamp (#537 stamps functions only today).
 - **A program with no Kinds** still gets a kind-table section when it has owners
   (`Program::cosm_section`); `kind_table()` keeps meaning "declares Kinds or interfaces", so the
   engines' checks are unchanged.
 - **Package ids in artifacts.** `root` (omitted), `pkg:<name>` (a crush-pkg package, kept), and
   `dir:<label>` for a library directory: the directory's last path component, numbered `#2`, `#3`, …
   when two directories of one program share it. A user's absolute directory never reaches an
-  artifact. The frontend reads `meta["package"]`, which V1 (#519) records; until V1 lands only
-  `module` is filled from source, and the package stays empty.
+  artifact. A directory written `.` or `..` is labelled by the directory it names (resolved on
+  disk), not `dir`. The frontend reads `meta["package"]`, which V1 (#519) records; until V1 lands
+  nothing is filled from source.
 - **Run time.** The scheduler VM and the portable VM read `fn_packages` at load
-  (`KindTable::function_package` / `package_at`, `PortableVm::current_function_package`) and a
+  (`KindTable::function_package`, `KindTable::code_owners` (a sorted entry index, binary-searched),
+  `PortableVm::current_function_package`) and a
   Kind's owner (`Kind::module` / `package`). FastVM, the JIT and AOT run such programs as before:
   owners are inert until V6 (#525) enforces them.
+- **Compatibility.** A compiled artifact with owners needs a runtime that reads COSM `0.2.0`;
+  released 0.11.x refuses it (CVM1 by name, `unknown kind-table format 2`; CASM JSON with a serde
+  unknown-field error). That happens only when a program uses code from another package. Source
+  programs are unaffected.
 - **Not as the note had it:** §2 says "each function in CASM/CVM1 (its package id)"; it is in COSM, as
-  above. A Kind from an imported module now records `module`, so such a program is stamped `0.2.0`
-  and an older runtime refuses it, even before V1 gives it a package.
+  above.
+- **Ruling (altair, 2026-11-16, on independent review):** a Kind of the root package records no
+  owner, wherever it is declared. The first build recorded `module` for every Kind of an imported
+  module, which stamped ordinary multi-file programs `0.2.0` and made old runtimes refuse them
+  before any program had a second package. Now nothing is stamped until a program has one, and the
+  CASM of a one-package program is unchanged (tested against the same program with the stamps
+  removed).
 
 ## Rulings (captain, 2026-11-14, via vega)
 

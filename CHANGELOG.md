@@ -14,15 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
-- **Format:** owner ids, COSM `0.2.0` (V3b, #522). A kind may record the module and package that
-  declare it (`module`, `package`), and the COSM module records the package of each function
-  outside the root package (`fn_packages`). They are must-understand: a runtime that reads only
-  COSM `0.1.0` refuses such a program by name (`this module needs COSM 0.2.0 …`), and one from
-  before #521 refuses its `kt_format 2`. A one-package program is written byte for byte as before.
-  A program whose Kinds come from an **imported module** now records that module, so it is stamped
-  `0.2.0` and needs this runtime. Package ids carry no local path (`pkg:<name>`, `dir:<last
-  component>`). Function ownership lives in COSM, not CASM, because CASM's own gate takes any
-  `1.x`. Recorded only; member visibility (#525) will enforce it.
+- **Format:** owner ids, COSM `0.2.0` (V3b, #522). A kind may record the package that declares
+  it (`package`, and with it `module`), and the COSM module records the package of each function
+  outside the root package (`fn_packages`). **When:** only when a program uses code from another
+  package. A program of one package, however many files and imported modules it has, is written
+  byte for byte as before and runs on released runtimes. **What it needs:** a compiled artifact
+  with owners needs a runtime that reads COSM `0.2.0`. Released 0.11.x refuses it: CVM1 by name
+  (`unknown kind-table format 2`), CASM JSON with a serde unknown-field error. Source programs are
+  unaffected. Owner ids are `pkg:<name>` or `dir:<label>` (a directory's last component, never a
+  local path); one rule refuses anything else on read, on write and in `validate`
+  (`cosm::invalid_owner_id`). Function ownership lives in COSM, not CASM, because CASM's own gate
+  takes any `1.x`. Recorded only; member visibility (#525) will enforce it.
 
 - **Behaviour change:** `str.starts_with` and `str.ends_with` now return Bool (`true`/`false`) on
   every engine, as `str.contains` already did. They returned Int `1`/`0`, so

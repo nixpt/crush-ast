@@ -33,8 +33,8 @@ pub use mro::{KindLookup, Linearizer, ModuleSet, MroError, c3_mro, resolution_or
 pub use schema::{
     Conformance, Const, Construct, CosmModule, Equality, FieldDecl, FnRef, HookImpl, Hooks,
     IGNORABLE_MEMBER_KEYS, InterfaceDecl, InterfaceMember, InterfaceRef, KindDecl, KindRef, Member,
-    MemberDecl, Op, OwnerId, Param, Receiver, Resolution, Satisfaction, Semantics, StaticValue, Storage,
-    ValueMode, owner_id_problem,
+    MemberDecl, Op, OwnerId, Param, Receiver, Resolution, Satisfaction, Semantics, StaticValue,
+    Storage, ValueMode, owner_id_problem,
 };
 pub use span::{Diagnostic, DiagnosticCode, Span};
 pub use types::CosmType;

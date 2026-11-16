@@ -198,7 +198,10 @@ fn the_writer_and_validate_refuse_what_the_reader_refuses() {
 
         let mut m = point();
         m.fn_packages.insert(FnRef::new("f"), bad.into());
-        assert!(m.try_to_json().unwrap_err().contains("fn_packages.f"), "{bad:?}");
+        assert!(
+            m.try_to_json().unwrap_err().contains("fn_packages.f"),
+            "{bad:?}"
+        );
     }
     let mut m = point();
     m.kinds[0].module = Some("a/b".into());

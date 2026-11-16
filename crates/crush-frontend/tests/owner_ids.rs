@@ -49,7 +49,12 @@ fn a_kind_from_an_imported_module_of_the_root_package_records_no_owner() {
     let cosm = cosm.expect("kinds");
     assert_eq!(casm.cosm.as_ref(), Some(&cosm));
     for k in &cosm.kinds {
-        assert_eq!((k.module.as_deref(), k.package.as_deref()), (None, None), "{}", k.name);
+        assert_eq!(
+            (k.module.as_deref(), k.package.as_deref()),
+            (None, None),
+            "{}",
+            k.name
+        );
     }
     assert!(!cosm.has_owners());
     assert_eq!(cosm.required_version(), crush_cosm::COSM_BASE_VERSION);
@@ -80,8 +85,14 @@ fn owner_stamps_leave_the_casm_of_a_one_package_program_unchanged() {
     let trait_mod = "trait Shape {\n    fn area(self);\n    fn describe(self) {\n        return \"shape\"\n    }\n}\n";
     let trait_main = "import t\nstruct P { x: Int }\nimpl Shape for P {\n    fn area(self) {\n        return self.x\n    }\n}\nfn main() {\n    let p = P { x: 2 }\n    io.print(p.area())\n    io.print(p.describe())\n}\n";
     for (tag, files) in [
-        ("casm-trait", vec![("t.crush", trait_mod), ("main.crush", trait_main)]),
-        ("casm-struct", vec![("geo.crush", GEO), ("main.crush", GEO_MAIN)]),
+        (
+            "casm-trait",
+            vec![("t.crush", trait_mod), ("main.crush", trait_main)],
+        ),
+        (
+            "casm-struct",
+            vec![("geo.crush", GEO), ("main.crush", GEO_MAIN)],
+        ),
     ] {
         let stamped = parse_tree(tag, &files);
         let plain = without_owner_stamps(stamped.clone());
@@ -132,12 +143,29 @@ fn a_module_split_across_packages_is_an_internal_error() {
     let two = "struct P { x: Int }\nfn make() {\n    return P { x: 1 }\n}\nfn other() {\n    return 2\n}\n";
     let mut program = parse_tree(
         "split",
-        &[("geo.crush", two), ("main.crush", "import geo\nfn main() {\n    io.print(geo.other())\n}\n")],
+        &[
+            ("geo.crush", two),
+            (
+                "main.crush",
+                "import geo\nfn main() {\n    io.print(geo.other())\n}\n",
+            ),
+        ],
     );
-    set_package(&mut program.functions.get_mut("geo::make").unwrap().meta, "pkg:x");
-    set_package(&mut program.functions.get_mut("geo::other").unwrap().meta, "pkg:y");
-    let err = crush_frontend::compile_cast_with_cosm(program).map(|_| ()).unwrap_err();
-    assert!(format!("{err:#}").contains("internal compiler error"), "{err:#}");
+    set_package(
+        &mut program.functions.get_mut("geo::make").unwrap().meta,
+        "pkg:x",
+    );
+    set_package(
+        &mut program.functions.get_mut("geo::other").unwrap().meta,
+        "pkg:y",
+    );
+    let err = crush_frontend::compile_cast_with_cosm(program)
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        format!("{err:#}").contains("internal compiler error"),
+        "{err:#}"
+    );
 }
 
 #[test]
@@ -164,7 +192,8 @@ fn a_method_s_own_raw_package_is_normalized_before_it_is_recorded() {
 #[test]
 fn a_walker_module_with_an_invalid_owner_id_does_not_compile() {
     for bad in ["root", "lib", "pkg:a/b", "dir:"] {
-        let mut program = crush_frontend::parse_source("fn main() {\n    io.print(1)\n}\n").unwrap();
+        let mut program =
+            crush_frontend::parse_source("fn main() {\n    io.print(1)\n}\n").unwrap();
         let mut k = crush_cosm::KindDecl::crush("W");
         k.package = Some(bad.to_string());
         program.cosm = Some(crush_cosm::CosmModule {
@@ -174,7 +203,10 @@ fn a_walker_module_with_an_invalid_owner_id_does_not_compile() {
         let err = crush_frontend::compile_cast_with_cosm(program)
             .map(|_| ())
             .unwrap_err();
-        assert!(format!("{err:#}").contains("invalid_owner_id"), "{bad}: {err:#}");
+        assert!(
+            format!("{err:#}").contains("invalid_owner_id"),
+            "{bad}: {err:#}"
+        );
     }
 }
 
@@ -333,12 +365,23 @@ fn main() {
 #[test]
 fn a_dot_directory_is_labelled_by_the_directory_it_names() {
     let mut program = crush_frontend::parse_source(SRC).unwrap();
-    set_package(&mut program.functions.get_mut("helper").unwrap().meta, "dir:.");
-    set_package(&mut program.functions.get_mut("other").unwrap().meta, "dir:./..");
+    set_package(
+        &mut program.functions.get_mut("helper").unwrap().meta,
+        "dir:.",
+    );
+    set_package(
+        &mut program.functions.get_mut("other").unwrap().meta,
+        "dir:./..",
+    );
     crush_frontend::cosm_lower::normalize_package_ids(&mut program).unwrap();
     let cwd = std::env::current_dir().unwrap();
     let name = |p: &std::path::Path| format!("dir:{}", p.file_name().unwrap().to_str().unwrap());
-    let id = |f: &str| program.functions[f].meta["package"].as_str().unwrap().to_string();
+    let id = |f: &str| {
+        program.functions[f].meta["package"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
     assert_eq!(id("helper"), name(&cwd));
     assert_eq!(id("other"), name(cwd.parent().unwrap()));
 }
