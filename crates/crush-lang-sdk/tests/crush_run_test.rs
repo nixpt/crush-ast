@@ -759,3 +759,73 @@ fn crush_run_caps_lists_pop_and_str_ord_chr_as_ambient() {
         "none of the repro's capabilities may be refused any more, got: {text}"
     );
 }
+
+/// `--max-wall-ms` (#505): a bounded run is killed at its own budget, `0`
+/// stays fail-closed, `unlimited` runs blocking caps without overflowing a
+/// deadline, and a bad value is a usage error.
+#[test]
+fn crush_run_max_wall_ms_bounds_lifts_and_validates() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("sleep.crush");
+    std::fs::write(&src, "fn main() { time.sleep(400)\n print(\"woke\") }\n").unwrap();
+    let path = src.to_str().unwrap();
+    let run = |wall: &str| {
+        Command::new(crush_run_bin())
+            .args(["run", "--time", "--max-wall-ms", wall, path])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("failed to execute crush-run")
+    };
+
+    let bounded = run("150");
+    assert!(
+        !bounded.status.success(),
+        "a 400 ms sleep must not fit 150 ms"
+    );
+    let err = String::from_utf8_lossy(&bounded.stderr);
+    assert!(err.contains("150ms wall-clock quota"), "stderr: {err}");
+
+    let zero = run("0");
+    assert!(!zero.status.success(), "0 is no budget, not unlimited");
+
+    for wall in ["unlimited", "UNLIMITED", "5000"] {
+        let ok = run(wall);
+        assert!(
+            ok.status.success(),
+            "--max-wall-ms {wall}: {}",
+            String::from_utf8_lossy(&ok.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&ok.stdout), "woke\n");
+    }
+
+    let bad = run("forever");
+    assert!(!bad.status.success());
+    let err = String::from_utf8_lossy(&bad.stderr);
+    assert!(err.contains("`unlimited`"), "stderr: {err}");
+}
+
+/// `--max-steps unlimited` (#505) lifts the step quota; a loop that needs more
+/// than the 1M default finishes.
+#[test]
+fn crush_run_max_steps_unlimited() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("count.crush");
+    std::fs::write(
+        &src,
+        "fn main() { let i = 0\n while i < 400000 { i = i + 1 }\n print(i) }\n",
+    )
+    .unwrap();
+    let path = src.to_str().unwrap();
+    let default = run_crush_run(&["run", path]);
+    assert!(
+        !default.status.success(),
+        "the loop must exceed the default step quota"
+    );
+    let lifted = run_crush_run(&["run", "--max-steps", "unlimited", path]);
+    assert!(
+        lifted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lifted.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&lifted.stdout), "400000\n");
+}

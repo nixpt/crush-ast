@@ -285,7 +285,11 @@ pub fn resolve_imports(program: &mut Program, origin: &Path, opts: &ImportOption
         stack: Vec::new(),
         functions: Vec::new(),
         defs: Vec::new(),
+        kinds: HashMap::new(),
     };
+    for stmt in &main.body {
+        resolver.note_kind(stmt, &origin_display)?;
+    }
     let root_dir = parent_dir(origin);
     let root_names: BTreeSet<String> = program.functions.keys().cloned().collect();
     let root_fn_lines: HashMap<String, Option<(usize, usize)>> = program
@@ -379,9 +383,46 @@ struct Resolver<'a> {
     functions: Vec<(String, Function)>,
     /// Merged module `struct` / `impl` / `trait` declarations.
     defs: Vec<Statement>,
+    /// Every Kind name (`struct` / `trait`) declared so far, with the file and
+    /// position of its first declaration: Kinds are one global namespace, so
+    /// the same name from two different files is an error (#515).
+    kinds: HashMap<String, (String, Option<(usize, usize)>)>,
 }
 
 impl Resolver<'_> {
+    /// Record the Kind a `struct` / `trait` declaration in `file` names. The
+    /// same name declared in a *different* file is a compile error naming both:
+    /// Kind names are one global namespace, and a silent replacement made the
+    /// first file's code fail at run time (#515). A redeclaration inside one
+    /// file is left to `cosm_lower`, as before.
+    fn note_kind(&mut self, stmt: &Statement, file: &str) -> Result<()> {
+        let (what, name) = match stmt {
+            Statement::StructDef { name, .. } => ("struct", name),
+            Statement::TraitDef { name, .. } => ("trait", name),
+            _ => return Ok(()),
+        };
+        let at = statement_span(stmt);
+        match self.kinds.get(name) {
+            Some((first_file, _)) if first_file == file => Ok(()),
+            Some((first_file, first_at)) => Err(import_error(
+                file,
+                at,
+                format!(
+                    "{what} `{name}` is also declared in {first_file}{}: struct and trait names \
+                     are one global namespace across imports, so two files cannot both declare \
+                     `{name}` (rename one; per-module Kinds are planned, #523)",
+                    first_at
+                        .map(|(l, c)| format!(":{l}:{c}"))
+                        .unwrap_or_default()
+                ),
+            )),
+            None => {
+                self.kinds.insert(name.clone(), (file.to_string(), at));
+                Ok(())
+            }
+        }
+    }
+
     /// The file `import module_path` (written in `file`, in `dir`) names: in
     /// a package when the first segment is a package name, else on the
     /// search path.
@@ -669,6 +710,7 @@ impl Resolver<'_> {
                 .push((self.modules[idx].mangled(&name), func));
         }
         for mut def in defs {
+            self.note_kind(&def, &display)?;
             rewrite_statement(&mut def, &scope, &self.modules, &display)?;
             self.defs.push(def);
         }

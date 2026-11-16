@@ -31,6 +31,10 @@
 - **Path (§4, renumbered 2026-11-13):** 0.12 "freeze prep" → 0.13 "feature freeze" →
   1.0.0-rc.N (≥ 4 weeks of soak, no stable-surface changes) → 1.0.0. 0.8–0.11 shipped as
   ordinary feature releases, so the old 0.8/0.9 gates moved to 0.12/0.13.
+- **Feature freeze: 2026-12-31** (captain's ruling, 2026-11-14, decision 6 of
+  `docs/design/visibility-and-packages.md`). The freeze is a **date**, not a version number. The
+  last minor release cut on or before 2026-12-31 is the freeze release (main is 0.11.2 on
+  2026-11-14). §4.1's "0.12" and "0.13" stand for "freeze prep" and "the freeze release".
 
 ---
 
@@ -288,8 +292,8 @@ gates moved to 0.12 and the old 0.9 gates to 0.13.*
 
 | Release | Theme | Exit criteria (from §2) |
 |---|---|---|
-| **0.12.0 — freeze prep** | Tooling and the rulings land | R1 (done, #348), A2 semver-checks wired (report-only), F5 compat corpus seeded with released artifacts, F9 format-versioning doc, S1 `SECURITY.md` draft, L1 reference skeleton with stability column, Q5 conformance in CI (allowed-failures list). The §6 rulings land in code where they change behaviour (string units, `CapFailed` fatal, keyword field names, literal callees, COSM additive schema, `crush.toml` format version, JIT off by default). The scope decision (§3) and the COSM decision (L6) are made (done 2026-11-13, §6). Experimental crates get their label (R2). |
-| **0.13.0 — feature freeze** | Close the stable surface | L2, L4 (zero silent-wrong on Tier-1), L5, L7, F3 (CAST/`.castb` 1.0 with magic), F4, A3, A4, A5, S3, S5, S6, S7, S8, T1, T2, D3, R7 triaged. The JIT is off by default and refuses loudly instead of truncating; crush-aotc is deleted. **No new syntax after 0.13.0**, except behind an experimental gate. |
+| **0.12.0 — freeze prep** (now: the minors before 2026-12-31) | Tooling and the rulings land | R1 (done, #348), A2 semver-checks wired (report-only), F5 compat corpus seeded with released artifacts, F9 format-versioning doc, S1 `SECURITY.md` draft, L1 reference skeleton with stability column, Q5 conformance in CI (allowed-failures list). The §6 rulings land in code where they change behaviour (string units, `CapFailed` fatal, keyword field names, literal callees, COSM additive schema, `crush.toml` format version, JIT off by default). The scope decision (§3) and the COSM decision (L6) are made (done 2026-11-13, §6). Experimental crates get their label (R2). |
+| **0.13.0 — feature freeze** (now: **2026-12-31**, the last minor cut on or before it) | Close the stable surface | L2, L4 (zero silent-wrong on Tier-1), L5, L7, F3 (CAST/`.castb` 1.0 with magic), F4, A3, A4, A5, S3, S5, S6, S7, S8, T1, T2, D3, R7 triaged. The JIT is off by default and refuses loudly instead of truncating; crush-aotc is deleted. **No new syntax after the freeze (2026-12-31)**, except behind an experimental gate. Pre-freeze tickets carry the `freeze-2026-12-31` label (visibility: #518-#524). |
 | **1.0.0-rc.1 … rc.N** | Soak | All ❌ in the stable scope closed or explicitly scoped out. Then only bug fixes. **Any change to a promised surface restarts the clock with a new rc.** Minimum 4 weeks from the last rc to 1.0.0. The guide (D1/D2) and website (D4) are pinned to the rc tag. A downstream canary (openko/fabric, arniko, surfer) builds against each rc. |
 | **1.0.0** | Promise starts | Tag. Changelog "Breaking since 0.x" section. Migration guide (D5). |
 
@@ -304,7 +308,7 @@ gates moved to 0.12 and the old 0.9 gates to 0.13.*
 | M6 walker parity (CRUSH-21/35-39), CRUSH-251 | **Out** (walkers are best-effort, §1.2). |
 | M7 runtime hardening (CRUSH-40/41/42) | CRUSH-40 (timeouts) **in** (S7 is promised). 41/42 **out** (S10, experimental, later). |
 | M8 platforms (CRUSH-22/49) | **Linux x86_64 + aarch64 Tier-1 at 1.0** (ruled). macOS and others Tier-2, best effort; Android/RISC-V later. |
-| COSM K1.5/K2 (zorro-44, K2) | **Decided (L6):** `struct` frozen; `impl`/`trait`/`@kind` experimental; K2 continues after 1.0. (K1.2 zorro-40/41 are Done, #211/#214.) |
+| COSM K1.5/K2 (zorro-44, K2) | **Decided (L6):** `struct` frozen; `impl`/`trait`/`@kind` experimental; K2 continues after 1.0. (K1.2 zorro-40/41 are Done, #211/#214.) Member visibility (`priv`/`readonly`) follows K2: enforced in 1.0 only if K2 lands by 2026-12-31, otherwise experimental (#525). |
 | CRUSH-207 grammar drift | **In** (L2). The LSP (T4) is experimental. |
 | CRUSH-110 imports | **In**, or remove `import` from the stable core. |
 | CRUSH-211 conformance, 188, 190, 184, 191, 217, 219, 236, 234 | **In.** |
