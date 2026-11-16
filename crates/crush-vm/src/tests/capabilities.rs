@@ -244,8 +244,56 @@ fn failing_registered_capability_is_reported_as_cap_and_message() {
     );
     assert_eq!(
         error.to_string(),
-        "test.boom: test.boom target.txt: permission denied"
+        "test.boom: target.txt: permission denied"
     );
+}
+
+// ── #514: a cap error shows the cap name once, on every engine ──────────────
+
+/// A cap named `test.dup` whose failure text starts with its own name, as most
+/// real host caps' do (`tcp.recv: timed out after 500 ms`).
+fn dup_caps() -> crate::host::HostCaps {
+    struct Dup;
+    impl crate::host::HostCap for Dup {
+        fn spec(&self) -> crate::host::HostCapSpec {
+            crate::host::HostCapSpec {
+                name: "test.dup".to_string(),
+                argc: None,
+                returns: false,
+            }
+        }
+        fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+            Err("test.dup: timed out after 500 ms".to_string())
+        }
+    }
+    let mut caps = crate::host::HostCaps::new();
+    caps.register(Box::new(Dup));
+    caps
+}
+
+#[test]
+fn scheduler_shows_the_cap_name_once() {
+    let program = assemble("CAP_CALL \"test.dup\" 0\nHALT", Some(&["test.dup"]), None).unwrap();
+    let caps = dup_caps();
+    let error = crate::vm::run_with_caps(&program, &Quotas::default(), Some(&caps)).unwrap_err();
+    assert!(
+        matches!(error, crate::vm::VmError::CapFailed { .. }),
+        "{error:?}"
+    );
+    assert_eq!(error.to_string(), "test.dup: timed out after 500 ms");
+}
+
+#[test]
+fn portable_vm_shows_the_cap_name_once() {
+    let program = assemble("CAP_CALL \"test.dup\" 0\nHALT", Some(&["test.dup"]), None).unwrap();
+    let mut vm = crate::portable_vm::PortableVm::new(program);
+    vm.set_host_caps(dup_caps());
+    let error = vm.run().unwrap_err();
+    assert!(
+        matches!(error, crate::vm::VmError::CapFailed { .. }),
+        "{error:?}"
+    );
+    assert_eq!(error.to_string(), "test.dup: timed out after 500 ms");
 }
 
 // ── CRUSH-391: `pop` (the a.pop() method form) and str.ord / str.chr ────────
