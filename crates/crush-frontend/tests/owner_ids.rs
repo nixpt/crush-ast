@@ -27,34 +27,155 @@ fn set_package(meta: &mut HashMap<String, Value>, id: &str) {
     meta.insert("package".to_string(), json!(id));
 }
 
-#[test]
-fn a_kind_from_an_imported_module_records_its_module() {
-    let dir = tree(
-        "module",
-        &[
-            (
-                "geo.crush",
-                "struct P { x: Int }\nimpl P {\n    fn get(self) {\n        return self.x\n    }\n}\nfn make() {\n    return P { x: 1 }\n}\n",
-            ),
-            (
-                "main.crush",
-                "import geo\nstruct Q { y: Int }\nfn main() {\n    io.print(geo.make())\n}\n",
-            ),
-        ],
-    );
+const GEO: &str = "struct P { x: Int }\nimpl P {\n    fn get(self) {\n        return self.x\n    }\n}\nfn make() {\n    return P { x: 1 }\n}\n";
+const GEO_MAIN: &str =
+    "import geo\nstruct Q { y: Int }\nfn main() {\n    io.print(geo.make().get())\n}\n";
+
+fn parse_tree(tag: &str, files: &[(&str, &str)]) -> crush_cast::Program {
+    let dir = tree(tag, files);
     let program =
         crush_frontend::parse_file(&dir.join("main.crush"), &ImportOptions::default()).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
+    program
+}
+
+/// Ruling on independent review (altair, 2026-11-16): a Kind of the root
+/// package records no owner, wherever it is declared, so a one-package
+/// multi-file program is written as before and old runtimes still run it.
+#[test]
+fn a_kind_from_an_imported_module_of_the_root_package_records_no_owner() {
+    let program = parse_tree("module", &[("geo.crush", GEO), ("main.crush", GEO_MAIN)]);
     let (casm, cosm) = crush_frontend::compile_cast_with_cosm(program).unwrap();
     let cosm = cosm.expect("kinds");
     assert_eq!(casm.cosm.as_ref(), Some(&cosm));
+    for k in &cosm.kinds {
+        assert_eq!((k.module.as_deref(), k.package.as_deref()), (None, None), "{}", k.name);
+    }
+    assert!(!cosm.has_owners());
+    assert_eq!(cosm.required_version(), crush_cosm::COSM_BASE_VERSION);
+    assert!(!cosm.to_json().contains("cosm_version"));
+}
+
+/// Strip what this PR's import system adds to merged declarations.
+fn without_owner_stamps(mut program: crush_cast::Program) -> crush_cast::Program {
+    for f in program.functions.values_mut() {
+        for stmt in &mut f.body {
+            if let Statement::StructDef { meta, .. }
+            | Statement::ImplBlock { meta, .. }
+            | Statement::TraitDef { meta, .. } = stmt
+            {
+                meta.remove("module");
+                meta.remove(crush_frontend::cosm_lower::MODULE_PREFIX_META);
+            }
+        }
+    }
+    program
+}
+
+/// satya's L1: the declaration stamps must not reach compiled output of a
+/// program without owners. A trait-only and a struct+impl imported module
+/// compile to the same CASM (JSON and binary) with and without them.
+#[test]
+fn owner_stamps_leave_the_casm_of_a_one_package_program_unchanged() {
+    let trait_mod = "trait Shape {\n    fn area(self);\n    fn describe(self) {\n        return \"shape\"\n    }\n}\n";
+    let trait_main = "import t\nstruct P { x: Int }\nimpl Shape for P {\n    fn area(self) {\n        return self.x\n    }\n}\nfn main() {\n    let p = P { x: 2 }\n    io.print(p.area())\n    io.print(p.describe())\n}\n";
+    for (tag, files) in [
+        ("casm-trait", vec![("t.crush", trait_mod), ("main.crush", trait_main)]),
+        ("casm-struct", vec![("geo.crush", GEO), ("main.crush", GEO_MAIN)]),
+    ] {
+        let stamped = parse_tree(tag, &files);
+        let plain = without_owner_stamps(stamped.clone());
+        let a = crush_frontend::compile_cast(&stamped).unwrap();
+        let b = crush_frontend::compile_cast(&plain).unwrap();
+        // CASM keeps functions in a HashMap, so its bytes follow hash order
+        // even between two compiles of one program: compare the documents.
+        let value = |p: &casm::Program, format| -> Value {
+            let back = casm::Program::deserialize(&p.serialize(format).unwrap(), format).unwrap();
+            serde_json::from_slice(&back.serialize(casm::Format::Json).unwrap()).unwrap()
+        };
+        for format in [casm::Format::Json, casm::Format::Binary] {
+            assert_eq!(value(&a, format), value(&b, format), "{tag} {format:?}");
+        }
+        let text = String::from_utf8(a.serialize(casm::Format::Json).unwrap()).unwrap();
+        assert!(!text.contains("module_prefix"), "{tag}");
+        assert!(!text.contains("cosm_version"), "{tag}");
+    }
+}
+
+/// The V1 seam: the resolver stamps the module's functions with a package
+/// (here by hand, after the import system ran). The struct and impl of the
+/// same module get it too (`inherit_declaration_owners`), so the Kind and
+/// every lifted method are owned by `pkg:x`, and the Kind records its module.
+#[test]
+fn a_module_s_types_take_the_package_of_its_functions() {
+    let mut program = parse_tree("seam", &[("geo.crush", GEO), ("main.crush", GEO_MAIN)]);
+    for (name, f) in program.functions.iter_mut() {
+        if name.starts_with("geo::") {
+            set_package(&mut f.meta, "pkg:x");
+        }
+    }
+    let (_, cosm) = crush_frontend::compile_cast_with_cosm(program).unwrap();
+    let cosm = cosm.unwrap();
     let p = cosm.kind("P").unwrap();
+    assert_eq!(p.package.as_deref(), Some("pkg:x"));
     assert_eq!(p.module.as_deref(), Some("geo"));
-    assert_eq!(p.package, None, "no package source on main yet (V1, #519)");
     let q = cosm.kind("Q").unwrap();
     assert_eq!((q.module.as_deref(), q.package.as_deref()), (None, None));
+    assert_eq!(cosm.function_package("geo::make"), Some("pkg:x"));
+    assert_eq!(cosm.function_package("P::get"), Some("pkg:x"));
+    assert_eq!(cosm.function_package("main"), None);
     assert_eq!(cosm.required_version(), crush_cosm::COSM_OWNERS_VERSION);
-    assert!(cosm.fn_packages.is_empty());
+}
+
+#[test]
+fn a_module_split_across_packages_is_an_internal_error() {
+    let two = "struct P { x: Int }\nfn make() {\n    return P { x: 1 }\n}\nfn other() {\n    return 2\n}\n";
+    let mut program = parse_tree(
+        "split",
+        &[("geo.crush", two), ("main.crush", "import geo\nfn main() {\n    io.print(geo.other())\n}\n")],
+    );
+    set_package(&mut program.functions.get_mut("geo::make").unwrap().meta, "pkg:x");
+    set_package(&mut program.functions.get_mut("geo::other").unwrap().meta, "pkg:y");
+    let err = crush_frontend::compile_cast_with_cosm(program).map(|_| ()).unwrap_err();
+    assert!(format!("{err:#}").contains("internal compiler error"), "{err:#}");
+}
+
+#[test]
+fn a_method_s_own_raw_package_is_normalized_before_it_is_recorded() {
+    // CAST JSON may put a package on a method itself; it goes through the
+    // same normalization as everything else.
+    let src = "struct P { x: Int }\nimpl P {\n    fn get(self) {\n        return self.x\n    }\n}\nfn main() {\n    let p = P { x: 1 }\n    io.print(p.get())\n}\n";
+    let mut program = crush_frontend::parse_source(src).unwrap();
+    for f in program.functions.values_mut() {
+        for stmt in &mut f.body {
+            if let Statement::ImplBlock { methods, .. } = stmt {
+                for m in methods {
+                    set_package(&mut m.meta, "dir:/opt/someone/lib");
+                }
+            }
+        }
+    }
+    let (casm, cosm) = crush_frontend::compile_cast_with_cosm(program).unwrap();
+    assert_eq!(cosm.unwrap().function_package("P::get"), Some("dir:lib"));
+    let text = String::from_utf8(casm.serialize(casm::Format::Json).unwrap()).unwrap();
+    assert!(!text.contains("/opt/someone"), "{text}");
+}
+
+#[test]
+fn a_walker_module_with_an_invalid_owner_id_does_not_compile() {
+    for bad in ["root", "lib", "pkg:a/b", "dir:"] {
+        let mut program = crush_frontend::parse_source("fn main() {\n    io.print(1)\n}\n").unwrap();
+        let mut k = crush_cosm::KindDecl::crush("W");
+        k.package = Some(bad.to_string());
+        program.cosm = Some(crush_cosm::CosmModule {
+            kinds: vec![k],
+            ..Default::default()
+        });
+        let err = crush_frontend::compile_cast_with_cosm(program)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("invalid_owner_id"), "{bad}: {err:#}");
+    }
 }
 
 #[test]
@@ -207,4 +328,17 @@ fn main() {
     assert_eq!(p.package.as_deref(), Some("pkg:geom"));
     assert_eq!(cosm.function_package("P::get"), Some("pkg:geom"));
     assert_eq!(cosm.function_package("main"), None);
+}
+
+#[test]
+fn a_dot_directory_is_labelled_by_the_directory_it_names() {
+    let mut program = crush_frontend::parse_source(SRC).unwrap();
+    set_package(&mut program.functions.get_mut("helper").unwrap().meta, "dir:.");
+    set_package(&mut program.functions.get_mut("other").unwrap().meta, "dir:./..");
+    crush_frontend::cosm_lower::normalize_package_ids(&mut program).unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    let name = |p: &std::path::Path| format!("dir:{}", p.file_name().unwrap().to_str().unwrap());
+    let id = |f: &str| program.functions[f].meta["package"].as_str().unwrap().to_string();
+    assert_eq!(id("helper"), name(&cwd));
+    assert_eq!(id("other"), name(cwd.parent().unwrap()));
 }

@@ -555,8 +555,11 @@ fn prepare_blocks(
         warnings: &mut warnings,
         crush_functions: program.functions.keys().cloned().collect(),
         lowered: Vec::new(),
+        owner: HashMap::new(),
     };
     for (name, func) in program.functions.iter_mut() {
+        // What this function's blocks become is owned like it (V3b, #522).
+        pass.owner = func.meta.clone();
         let mut known_locals: HashSet<String> =
             func.params.iter().map(|(name, _)| name.clone()).collect();
         let mut uses = if name == "main" {
@@ -615,6 +618,11 @@ struct Pass<'a> {
     crush_functions: HashSet<String>,
     /// Functions made from lowered blocks, added to the program at the end.
     lowered: Vec<(String, crush_cast::Function)>,
+    /// The meta of the function whose blocks are being lowered: a lowered
+    /// block and its helpers take its owner (`package` / `module`, V3b #522),
+    /// so a block inside another package's function never runs as the root
+    /// package's code.
+    owner: HashMap<String, serde_json::Value>,
 }
 
 /// For a build without the block language's analyzer (its `polyglot-*`
@@ -992,11 +1000,13 @@ fn lower_block(
         &format!("{fname}__"),
     )
     .map_err(|e| refuse(format!("{e:#}")))?;
+    let owner = &pass.owner;
     let mark = |f: &mut crush_cast::Function| {
         f.meta
             .insert("polyglot_block_line".to_string(), serde_json::json!(line));
         f.meta
             .insert("polyglot_block_lang".to_string(), serde_json::json!(lang));
+        crush_frontend::cosm_lower::inherit_owner(owner, &mut f.meta);
     };
     mark(&mut function);
     pass.crush_functions.insert(fname.clone());
