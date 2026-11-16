@@ -14,6 +14,15 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Module visibility, stage 1 (V1, #519). `pub` is recorded on `fn`, `async fn`, `struct` and
+  `trait` (`pub struct` / `pub trait` used to fail with `Undefined variable: pub`); `pub` stays a
+  contextual identifier. Every file belongs to a package (the longest of: the entry's directory,
+  each crush-pkg package root, each `-L` / `CRUSH_PATH` directory). A cross-package use of a
+  function that is not `pub` (`q.f(…)`, `q.f`, `import a { f }`) is the warning `W-VIS01`; a module
+  with no `pub` anywhere stays all-public and gets one `N-VIS01` note when another package uses it;
+  `pub fn __x` is `W-VIS02`. Warnings go to stderr; programs compile and run exactly as before.
+  `crushc --deny-warnings` fails on `W-VIS01` / `W-VIS02`, never on a note. Kinds are recorded
+  only (per-module kinds are #523). tree-sitter-crush parses `pub struct`.
 - COSM has a version rule (F7, #521). A kind table may carry `cosm_version`; a runtime loads the
   same major and a minor no greater than its own and refuses a newer one by name. Member objects
   are now must-understand like the rest of COSM: an unknown key on a member is a load error

@@ -60,6 +60,27 @@
 //! - **Graph.** Each file is loaded once per compile (a diamond shares one
 //!   copy); a cycle is a compile error that shows the cycle; nesting deeper
 //!   than [`ImportOptions::max_depth`] is a compile error.
+//! - **Visibility** (stage 1, V1 #519; `docs/design/visibility-and-packages.md`
+//!   §1). Every file belongs to one **package**: its canonical path is
+//!   matched against the known roots and the longest root containing it
+//!   wins (on a tie, the first listed): the entry file's directory and
+//!   [`ImportOptions::home_package`]'s root (both the root package), each
+//!   other [`ImportOptions::packages`] root, each search directory (`-L`,
+//!   then `CRUSH_PATH`). A file under no root, or an entry with no real file
+//!   (the REPL), is in the root package. The file decides, not the route, so
+//!   a diamond or a file reached both relatively and through `-L` has one
+//!   package. Merged functions record it in `meta["package"]` (`root`,
+//!   `pkg:<name>` or `dir:<directory>`). The parser records `pub` as
+//!   `meta["pub"]` on `fn`, `struct` and `trait`. A **cross-package** use of
+//!   a module function that is not `pub` (the call `q.f(…)`, the value
+//!   `q.f`, or `import a { f }`, reported at the import) is the warning
+//!   `W-VIS01`; the first such use per module also lists every name the
+//!   module's `pub` keeps private. A module with no `pub` anywhere (no `pub
+//!   fn`, `pub struct` or `pub trait`) is all-public, the legacy rule, and
+//!   gets one `N-VIS01` note, at the first cross-package use of it. A
+//!   same-package use never reports. Kinds are not checked yet (per-module
+//!   kinds are #523). The findings never stop a compile; they come back from
+//!   [`resolve_imports_reporting`].
 //! - **Positions.** Errors raised while loading carry the file they are in
 //!   ([`ImportError`]); every merged function records its file in
 //!   `meta["source_file"]`, which the semantic checker attaches to its errors
