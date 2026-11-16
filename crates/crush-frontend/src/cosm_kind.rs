@@ -107,6 +107,16 @@ fn kind_decl(ty: &TypePlan) -> std::result::Result<KindDecl, Vec<String>> {
     let mut errors = Vec::new();
     let mut k = KindDecl::crush(ty.name.clone());
     k.span = span(&ty.meta);
+    // The owner (V3b, #522): the declaring module's import path, stamped by
+    // `import_system` on a merged declaration, and its package (the V1 seam,
+    // see `cosm_lower::normalize_package_ids`). Absent for the program's own
+    // file and the root package, so a one-file program's table is unchanged.
+    k.module = ty
+        .meta
+        .get("module")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    k.package = crate::cosm_lower::package_of(&ty.meta);
     let fields: Vec<FieldDecl> = ty
         .fields
         .iter()

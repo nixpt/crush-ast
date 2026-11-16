@@ -124,6 +124,7 @@ pub(crate) struct Plan {
 /// is left untouched). Every problem found is reported in one error, one
 /// line per problem, each with its source position.
 pub fn lower(program: &mut Program) -> Result<Option<crush_cosm::CosmModule>> {
+    normalize_package_ids(program)?;
     let Some(plan) = plan(program)? else {
         return Ok(None);
     };
@@ -145,7 +146,7 @@ pub fn merge_walker_module(
     walker: Option<crush_cosm::CosmModule>,
     derived: Option<crush_cosm::CosmModule>,
 ) -> Result<Option<crush_cosm::CosmModule>> {
-    let Some(walker) = walker.filter(|m| !m.kinds.is_empty() || !m.interfaces.is_empty()) else {
+    let Some(walker) = walker.filter(|m| !m.is_empty()) else {
         return Ok(derived);
     };
     let Some(mut module) = derived else {
@@ -174,6 +175,7 @@ pub fn merge_walker_module(
     }
     module.kinds.extend(walker.kinds);
     module.interfaces.extend(walker.interfaces);
+    module.fn_packages.extend(walker.fn_packages);
     validate_module(&module)?;
     Ok(Some(module))
 }
@@ -325,7 +327,10 @@ pub(crate) fn plan(program: &mut Program) -> Result<Option<Plan>> {
     for t in &traits {
         for m in &t.methods {
             if let Some(body) = &m.body {
-                lifted.push((trait_default_fn_name(&t.name, &m.name), lift(m, body)));
+                lifted.push((
+                    trait_default_fn_name(&t.name, &m.name),
+                    lift(m, body, &t.meta),
+                ));
             }
         }
     }
@@ -365,7 +370,7 @@ pub(crate) fn plan(program: &mut Program) -> Result<Option<Plan>> {
                     inherent_seen.insert(key, m.meta.clone());
                     let function = inherent_fn_name(type_name, &m.name);
                     if let Some(body) = &m.body {
-                        lifted.push((function.clone(), lift(m, body)));
+                        lifted.push((function.clone(), lift(m, body, meta)));
                     }
                     types[ty_idx].inherent.push(MemberPlan {
                         name: m.name.clone(),
@@ -435,7 +440,7 @@ pub(crate) fn plan(program: &mut Program) -> Result<Option<Plan>> {
                         (Some(m), _) => {
                             let f = trait_impl_fn_name(type_name, trait_name, &m.name);
                             if let Some(body) = &m.body {
-                                lifted.push((f.clone(), lift(m, body)));
+                                lifted.push((f.clone(), lift(m, body, meta)));
                             }
                             f
                         }
@@ -549,14 +554,130 @@ fn check_methods(what: &str, methods: &[MethodDef], errors: &mut Vec<String>) {
     }
 }
 
-fn lift(m: &MethodDef, body: &[Statement]) -> Function {
+/// A method as a program function. It belongs to whoever declared the
+/// `impl` / `trait` (`owner`): their `module` and `package` meta carry over
+/// (V3b, #522), so a method of an imported module's type is owned by that
+/// module's package.
+fn lift(m: &MethodDef, body: &[Statement], owner: &HashMap<String, Value>) -> Function {
+    let mut meta = m.meta.clone();
+    for key in OWNER_META_KEYS {
+        if let Some(v) = owner.get(*key) {
+            meta.entry(key.to_string()).or_insert_with(|| v.clone());
+        }
+    }
     Function {
         params: m.params.clone(),
         body: body.to_vec(),
-        meta: m.meta.clone(),
+        meta,
         is_async: m.is_async,
         annotations: None,
     }
+}
+
+/// The CAST meta keys that say who owns a declaration (V3b, #522).
+pub(crate) const OWNER_META_KEYS: &[&str] = &["module", "package"];
+
+/// The package id a CAST node's `meta["package"]` names, as it goes into an
+/// artifact; `None` for the root package (absent, or `"root"`). Only valid
+/// after [`normalize_package_ids`].
+pub(crate) fn package_of(meta: &HashMap<String, Value>) -> Option<String> {
+    match meta.get("package")?.as_str()? {
+        crush_cosm::ROOT_PACKAGE => None,
+        p => Some(p.to_string()),
+    }
+}
+
+/// Rewrite every `meta["package"]` in `program` to the id that goes into a
+/// shipped artifact (V3b, #522).
+///
+/// **This is the seam V1 (#519) plugs into.** Main records no package yet; the
+/// V1 resolver stamps `meta["package"]` on each merged function (and must
+/// stamp it on each merged `struct` / `impl` / `trait` too, beside
+/// `meta["module"]` in `import_system`) as `root`, `pkg:<name>` or
+/// `dir:<directory>`. A directory is whatever the user passed (`-L`,
+/// `CRUSH_PATH`), often absolute, and must not reach an artifact: that would
+/// make builds depend on where the source sits and leak local directory
+/// names. So:
+///
+/// - `root` stays `root` (written as an absent owner);
+/// - `pkg:<name>` stays as it is: a crush-pkg package name is already stable;
+/// - `dir:<directory>` becomes `dir:<its last path component>` (`dir:lib`).
+///   Two different directories with the same last component in one program
+///   are told apart by `#2`, `#3`, … in the order of their full spelling, so
+///   distinct packages never share an id.
+///
+/// Anything else is a compile error, so an unexpected spelling never reaches
+/// the artifact unchecked. Idempotent: a rewritten id maps to itself.
+pub fn normalize_package_ids(program: &mut Program) -> Result<()> {
+    fn metas(program: &mut Program) -> Vec<&mut HashMap<String, Value>> {
+        let mut out = Vec::new();
+        for f in program.functions.values_mut() {
+            out.push(&mut f.meta);
+            for stmt in &mut f.body {
+                if let Statement::StructDef { meta, .. }
+                | Statement::ImplBlock { meta, .. }
+                | Statement::TraitDef { meta, .. } = stmt
+                {
+                    out.push(meta);
+                }
+            }
+        }
+        out
+    }
+    let mut dirs: BTreeSet<String> = BTreeSet::new();
+    for meta in metas(program) {
+        let Some(v) = meta.get("package") else {
+            continue;
+        };
+        let Some(id) = v.as_str() else {
+            bail!("a package id must be a string, got {v}");
+        };
+        if id == crush_cosm::ROOT_PACKAGE {
+            continue;
+        }
+        if let Some(name) = id.strip_prefix("pkg:") {
+            if name.is_empty() || name.contains(['/', '\\']) {
+                bail!("package id `{id}`: a crush-pkg package name has no path in it");
+            }
+        } else if let Some(dir) = id.strip_prefix("dir:") {
+            dirs.insert(dir.to_string());
+        } else {
+            bail!("unknown package id `{id}` (expected `root`, `pkg:<name>` or `dir:<directory>`)");
+        }
+    }
+    if dirs.is_empty() {
+        return Ok(());
+    }
+    // Directory → its label: its last path component (split on `/` and `\\`
+    // alike, so the id doesn't depend on the host), numbered from `#2` when
+    // that id is already taken.
+    let mut assigned: BTreeSet<String> = BTreeSet::new();
+    let mut label: HashMap<String, String> = HashMap::new();
+    for dir in &dirs {
+        let last = dir
+            .rsplit(['/', '\\'])
+            .find(|c| !c.is_empty() && *c != "." && *c != "..")
+            .unwrap_or("dir");
+        let mut id = format!("dir:{last}");
+        let mut n = 2;
+        while assigned.contains(&id) {
+            id = format!("dir:{last}#{n}");
+            n += 1;
+        }
+        assigned.insert(id.clone());
+        label.insert(dir.clone(), id);
+    }
+    for meta in metas(program) {
+        if let Some(dir) = meta
+            .get("package")
+            .and_then(Value::as_str)
+            .and_then(|id| id.strip_prefix("dir:"))
+            && let Some(id) = label.get(dir)
+        {
+            meta.insert("package".to_string(), Value::String(id.clone()));
+        }
+    }
+    Ok(())
 }
 
 fn describe_pos(meta: &HashMap<String, Value>) -> String {

@@ -712,6 +712,17 @@ impl Resolver<'_> {
         for mut def in defs {
             self.note_kind(&def, &display)?;
             rewrite_statement(&mut def, &scope, &self.modules, &display)?;
+            // The owner of what this declares (V3b, #522): the Kind's
+            // `module`, and the module of the methods an `impl` / `trait`
+            // lifts. The owning *package* is read from `meta["package"]`
+            // when the resolver records one (V1, #519, not on main yet);
+            // that stamp belongs here, beside this one.
+            if let Statement::StructDef { meta, .. }
+            | Statement::ImplBlock { meta, .. }
+            | Statement::TraitDef { meta, .. } = &mut def
+            {
+                meta.insert("module".to_string(), Value::String(module_path.to_string()));
+            }
             self.defs.push(def);
         }
         self.by_file.insert(canonical, idx);

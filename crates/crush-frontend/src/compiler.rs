@@ -430,7 +430,22 @@ impl Compiler {
         // build cache is keyed on the code generated from it).
         let mut functions: Vec<_> = program.functions.into_iter().collect();
         functions.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        // V3b (#522): the owning package of every CASM function outside the
+        // root package. A function's own CAST meta says (the V1 seam, see
+        // `cosm_lower::normalize_package_ids`); what compiling it lifts out
+        // (nested `fn`s, lambdas, an async body) belongs to the same package.
+        let mut fn_packages: std::collections::BTreeMap<crush_cosm::FnRef, String> =
+            Default::default();
         for (name, func) in functions {
+            let owner = crate::cosm_lower::package_of(&func.meta);
+            let known_before: Option<HashSet<String>> = owner.as_ref().map(|_| {
+                casm_program
+                    .functions
+                    .keys()
+                    .chain(self.lambdas.keys())
+                    .cloned()
+                    .collect()
+            });
             let mut instrs = Vec::new();
             self.lambda_aliases.push(HashMap::new());
             self.rebound = rebound_names(&func.params, &func.body);
@@ -651,11 +666,28 @@ impl Compiler {
                 );
             }
             self.lambda_aliases.pop();
+            if let (Some(owner), Some(known)) = (owner, known_before) {
+                for f in casm_program
+                    .functions
+                    .keys()
+                    .chain(self.lambdas.keys())
+                    .filter(|f| !known.contains(*f))
+                {
+                    fn_packages.insert(crush_cosm::FnRef::new(f.clone()), owner.clone());
+                }
+            }
         }
 
         // Merge lambdas
         for (name, func) in self.lambdas.drain() {
             casm_program.functions.insert(name, func);
+        }
+        if !fn_packages.is_empty() {
+            casm_program
+                .cosm
+                .get_or_insert_with(Default::default)
+                .fn_packages
+                .extend(fn_packages);
         }
 
         if !self.all_permissions.is_empty() {
