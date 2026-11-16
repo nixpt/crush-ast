@@ -8,7 +8,12 @@
 use crush_cast::manifest::SourceLoc;
 
 /// Severity level of a compiler diagnostic.
+///
+/// `#[non_exhaustive]`: more levels may be added. A consumer should treat a
+/// level it does not know as the least severe one (like `Note`: shown, never
+/// failing a build).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DiagnosticSeverity {
     /// Information only: never fails a build, not even under
     /// `--deny-warnings` (the legacy all-public module note, `N-VIS01`).

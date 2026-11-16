@@ -449,9 +449,9 @@ pub fn annotation_diagnostics(
 
 /// [`annotation_diagnostics`]' record shape for any compiler findings, such
 /// as the import graph's visibility findings
-/// (`crush_frontend::parse_file_reporting`, V1 #519). A `Note` stays
-/// `level: "note"` (it never fails a build, not even under
-/// `--deny-warnings`); every other severity is `"warning"`.
+/// (`crush_frontend::parse_file_reporting`, V1 #519). `Warning` and `Error`
+/// are `level: "warning"`; a `Note`, and a level this build does not know,
+/// is `"note"` (it never fails a build, not even under `--deny-warnings`).
 pub fn compiler_diagnostics(
     diags: Vec<crush_frontend::diagnostics::CompilerDiagnostic>,
     file: &str,
@@ -464,9 +464,13 @@ pub fn compiler_diagnostics(
             } else {
                 d.location.file.as_str()
             };
+            // A warning stays a warning (CRUSH-369 also reports the passes'
+            // errors as warnings here); `Note`, and any level this build does
+            // not know (`DiagnosticSeverity` is non_exhaustive), is a note.
             let level = match d.severity {
-                crush_frontend::diagnostics::DiagnosticSeverity::Note => "note",
-                _ => "warning",
+                crush_frontend::diagnostics::DiagnosticSeverity::Warning
+                | crush_frontend::diagnostics::DiagnosticSeverity::Error => "warning",
+                _ => "note",
             };
             crate::theme::JsonDiagnostic {
                 code: d.code,
