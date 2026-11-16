@@ -82,8 +82,8 @@ pub fn call(name: &str, args: &[Input<'_>]) -> Result<Output, String> {
         "str.trim" => Output::Text(a.trim().to_owned()),
         "str.replace" => Output::Text(a.replace(text(args, 1)?, text(args, 2)?)),
         "str.contains" => Output::Bool(a.contains(text(args, 1)?)),
-        "str.starts_with" => Output::Int(i64::from(a.starts_with(text(args, 1)?))),
-        "str.ends_with" => Output::Int(i64::from(a.ends_with(text(args, 1)?))),
+        "str.starts_with" => Output::Bool(a.starts_with(text(args, 1)?)),
+        "str.ends_with" => Output::Bool(a.ends_with(text(args, 1)?)),
         "rust.str.starts_with" => Output::Bool(a.starts_with(text(args, 1)?)),
         "rust.str.ends_with" => Output::Bool(a.ends_with(text(args, 1)?)),
         _ => unreachable!(),
@@ -193,7 +193,7 @@ mod tests {
         );
         assert_eq!(
             call("str.starts_with", &[Input::Text("a"), Input::Text("")]),
-            Ok(Output::Int(1))
+            Ok(Output::Bool(true))
         );
         assert_eq!(
             call("rust.str.ends_with", &[Input::Text("a"), Input::Text("")]),
