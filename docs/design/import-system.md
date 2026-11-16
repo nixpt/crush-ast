@@ -69,7 +69,7 @@ $ crush-run run examples/crush/imports/main.crush
 - **Graph.** Each file is loaded once per compile (keyed by canonical path, so a diamond shares one
   copy); a cycle is a compile error showing it (`ca.crush → cb.crush → ca.crush`); nesting is capped at
   `ImportOptions::max_depth` (64).
-- **Placement.** Imports go at the top level of a file. One inside a function or block is refused.
+- **Placement.** Imports go at the top level of a file. One inside a function (`fn main` included) or block is refused.
 
 ## Diagnostics
 

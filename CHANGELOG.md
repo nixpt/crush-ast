@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Behaviour change:** `import` inside `fn main` is now refused, like in any other function:
+  `` `import` inside `fn main`: imports go at the top level of a file `` (with the file, line and
+  column). It was accepted by accident: a file's top-level statements are merged into `main`, so the
+  placement check skipped `main` and could not tell the two apart. The same now holds for an
+  imported module's `fn main` (its `main` is ignored, so the import used to vanish unseen) and for
+  any other function of a module (it got the generic "not resolved" text). Migration: move the
+  import to the top of the file (#535).
 - **Behaviour change:** `str.starts_with` and `str.ends_with` now return Bool (`true`/`false`) on
   every engine, as `str.contains` already did. They returned Int `1`/`0`, so
   `str.starts_with("ab", "a") == true` was silently false and `print` showed `1`. Code that

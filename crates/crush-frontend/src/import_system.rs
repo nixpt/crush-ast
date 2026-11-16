@@ -76,6 +76,10 @@ use anyhow::Result;
 use crush_cast::{Function, ImportStatement, Program, Statement};
 use serde_json::Value;
 
+/// Statement-meta key the parser sets on a Crush import written inside `fn main` (as
+/// opposed to the file's own top-level imports, which are merged into `main`'s body).
+pub const IN_FN_MAIN: &str = "in_fn_main";
+
 /// Default for [`ImportOptions::max_depth`].
 pub const DEFAULT_MAX_IMPORT_DEPTH: usize = 64;
 
@@ -240,16 +244,18 @@ pub(crate) fn source_file(func: &Function) -> Option<String> {
 /// directory); only its parent directory is searched.
 pub fn resolve_imports(program: &mut Program, origin: &Path, opts: &ImportOptions) -> Result<()> {
     let origin_display = origin.display().to_string();
-    // Imports anywhere but the top level of the file are not resolved.
-    for (name, func) in &program.functions {
-        if name == "main" {
-            continue;
-        }
+    // Imports anywhere but the top level of the file are not resolved. The file's own
+    // top-level statements live in `main`'s body; the parser marks an import the user
+    // wrote inside `fn main` ([`IN_FN_MAIN`]), so `main` is checked like any function.
+    let mut names: Vec<&String> = program.functions.keys().collect();
+    names.sort();
+    for name in names {
+        let func = &program.functions[name];
         if let Some(meta) = func.body.iter().find_map(|s| match s {
             Statement::Import {
                 import: ImportStatement::CrushModule { .. },
                 meta,
-            } => Some(meta),
+            } if name != "main" || meta.contains_key(IN_FN_MAIN) => Some(meta),
             _ => None,
         }) {
             return Err(import_error(
@@ -639,6 +645,23 @@ impl Resolver<'_> {
                 let pos = errs.first().and_then(parse_error_pos);
                 import_error(&display, pos, crate::ParseErrors(errs).to_string())
             })?;
+        // A module's `main` is ignored, but an import in it is still refused like one in
+        // any other function: dropping it unseen would hide the mistake.
+        let mut fn_names: Vec<&String> = parsed.functions.keys().collect();
+        fn_names.sort();
+        for name in fn_names {
+            if let Some(meta) = parsed.functions[name]
+                .body
+                .iter()
+                .find_map(crush_module_import_meta)
+            {
+                return Err(import_error(
+                    &display,
+                    span(meta),
+                    format!("`import` inside `fn {name}`: imports go at the top level of a file"),
+                ));
+            }
+        }
         parsed.functions.remove("main");
 
         // `.` is not allowed in a function name: the compiler reads
@@ -938,6 +961,17 @@ fn import_error(file: &str, pos: Option<(usize, usize)>, message: String) -> any
 
 fn span(meta: &HashMap<String, Value>) -> Option<(usize, usize)> {
     crate::cosm_lower::span_of(meta)
+}
+
+/// The meta of a Crush module import statement, else `None`.
+fn crush_module_import_meta(stmt: &Statement) -> Option<&HashMap<String, Value>> {
+    match stmt {
+        Statement::Import {
+            import: ImportStatement::CrushModule { .. },
+            meta,
+        } => Some(meta),
+        _ => None,
+    }
 }
 
 fn statement_span(stmt: &Statement) -> Option<(usize, usize)> {
