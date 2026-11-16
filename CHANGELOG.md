@@ -14,6 +14,12 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(vm): an explicit `arr_get(a, i)` call on the scheduler VM and PortableVm now behaves like
+  `a[i]` (#446). A negative index counts from the end (`arr_get([1, 2, 3], -1)` is `3`; it was
+  `null`). Out of range raises `array index out of range: 9 (len 3)` (it was `null`). A non-Int
+  index raises `array index must be int, got str` (it read slot 0, so `arr_get(a, "x")` was
+  `a[0]`). Both errors are catchable. The capability and the `ARR_GET` opcode now share one
+  helper on both engines. `arr_get` on a map is unchanged.
 - fix(web): a crush-web session granted `fs` no longer aborts with `RuntimeError: unreachable`
   (#534). The in-memory filesystem (`MemFs`, since 0.11.0) stamped modification times with
   `SystemTime::now()`, which panics on `wasm32-unknown-unknown`, and it did so while the
