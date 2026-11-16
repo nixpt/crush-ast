@@ -90,7 +90,7 @@ fn main() {
 fn function_packages_are_recorded_with_stable_ids() {
     let mut program = crush_frontend::parse_source(SRC).unwrap();
     for (f, id) in [
-        ("helper", "dir:/home/someone/proj/lib"),
+        ("helper", "dir:/opt/someone/proj/lib"),
         ("other", "dir:/srv/other/lib"),
         ("third", "pkg:facet"),
         ("main", "root"),
@@ -119,7 +119,7 @@ fn function_packages_are_recorded_with_stable_ids() {
 
     // Nothing of the local directories reaches the artifact.
     let text = String::from_utf8(casm.serialize(casm::Format::Json).unwrap()).unwrap();
-    assert!(!text.contains("/home/someone"), "{text}");
+    assert!(!text.contains("/opt/someone"), "{text}");
     assert!(!text.contains("/srv/other"), "{text}");
     assert!(text.contains(r#""cosm_version": "0.2.0""#), "{text}");
 }
