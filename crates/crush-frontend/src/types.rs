@@ -55,6 +55,24 @@ impl std::fmt::Display for Type {
     }
 }
 
+/// The bare container names a type annotation may use (#504): `Array`, `List`,
+/// `Set` and `Map`, each with its lowercase twin (as every scalar name has),
+/// meaning the container with an `Any` element type. The parser cannot tell a
+/// declared struct of the same name apart, so it keeps the name as a
+/// `CastType::TypeRef`; the semantic pass and the kind table call this only
+/// when no declared kind has that name (a declared kind wins).
+pub(crate) fn bare_container(name: &str) -> Option<crush_cast::CastType> {
+    use crush_cast::CastType;
+    let any = || Box::new(CastType::Any);
+    match name {
+        "Array" | "array" => Some(CastType::Array(any())),
+        "List" | "list" => Some(CastType::List(any())),
+        "Set" | "set" => Some(CastType::Set(any())),
+        "Map" | "map" => Some(CastType::Map(any())),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Type;

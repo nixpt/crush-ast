@@ -14,6 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- A type annotation can now name a container: `Array`, `List`, `Set` and `Map` (and the lowercase
+  `array`, `list`, `set`, `map`) are accepted wherever a type is, with an `Any` element type, so
+  `cells: Array` in a struct field, a parameter or a `let` compiles instead of "Unknown type:
+  Array" (#504). They are checked like the scalar names are: by the compiler, for `let` and call
+  arguments (`fn f(x: Array)` refuses `f(5)`); engines never check annotations, and struct field
+  types are not checked at construction. A declared struct or trait with one of these names keeps its
+  old result, so no existing program changes meaning. `Array<Int>`, `Map<String, Int>` and `[Int]` are
+  still not syntax, but the parse error now says that container element types have no annotation
+  syntax yet and to write the bare `Array` (it used to read `Expected } but found <`). `Tuple`,
+  `Vector` have no bare spelling. The kind table needs no format change: a bare container field
+  is `{"Array":"Any"}` etc., a shape COSM already has.
 - **Behaviour change:** `str.starts_with` and `str.ends_with` now return Bool (`true`/`false`) on
   every engine, as `str.contains` already did. They returned Int `1`/`0`, so
   `str.starts_with("ab", "a") == true` was silently false and `print` showed `1`. Code that

@@ -45,6 +45,12 @@ pub const KIND_KEYS: &[&str] = &[
 ];
 
 pub(crate) fn build_module(plan: &Plan) -> Result<CosmModule> {
+    let declared: BTreeSet<&str> = plan
+        .types
+        .iter()
+        .map(|t| t.name.as_str())
+        .chain(plan.traits.iter().map(|t| t.name.as_str()))
+        .collect();
     let mut errors = Vec::new();
     let mut module = CosmModule::new();
     for trait_plan in &plan.traits {
@@ -65,7 +71,7 @@ pub(crate) fn build_module(plan: &Plan) -> Result<CosmModule> {
                         .skip(usize::from(m.has_self()))
                         .map(|(n, t)| Param {
                             name: n.clone(),
-                            ty: cosm_type(t),
+                            ty: cosm_type(t, &declared),
                         })
                         .collect(),
                     returns: CosmType::Any,
@@ -81,7 +87,7 @@ pub(crate) fn build_module(plan: &Plan) -> Result<CosmModule> {
         });
     }
     for ty in &plan.types {
-        match kind_decl(ty) {
+        match kind_decl(ty, &declared) {
             Ok(k) => module.kinds.push(k),
             Err(e) => errors.extend(e),
         }
@@ -103,14 +109,17 @@ pub(crate) fn build_module(plan: &Plan) -> Result<CosmModule> {
     Ok(module)
 }
 
-fn kind_decl(ty: &TypePlan) -> std::result::Result<KindDecl, Vec<String>> {
+fn kind_decl(
+    ty: &TypePlan,
+    declared: &BTreeSet<&str>,
+) -> std::result::Result<KindDecl, Vec<String>> {
     let mut errors = Vec::new();
     let mut k = KindDecl::crush(ty.name.clone());
     k.span = span(&ty.meta);
     let fields: Vec<FieldDecl> = ty
         .fields
         .iter()
-        .map(|(n, t)| FieldDecl::new(n.clone(), cosm_type(t)))
+        .map(|(n, t)| FieldDecl::new(n.clone(), cosm_type(t, declared)))
         .collect();
     k.storage = Storage::Sealed {
         fields: fields.clone(),
@@ -342,7 +351,16 @@ fn span(meta: &HashMap<String, Value>) -> Option<Span> {
 
 /// `CastType` → its COSM twin (same JSON shape by design, see
 /// `crush_cosm::types`).
-fn cosm_type(t: &CastType) -> CosmType {
+///
+/// A bare `Array` / `List` / `Set` / `Map` (parsed as a `TypeRef`, #504) is the
+/// container with an `Any` element type unless a declared kind has that name.
+fn cosm_type(t: &CastType, declared: &BTreeSet<&str>) -> CosmType {
+    if let CastType::TypeRef(name) = t
+        && !declared.contains(name.as_str())
+        && let Some(container) = crate::types::bare_container(name)
+    {
+        return cosm_type(&container, declared);
+    }
     serde_json::to_value(t)
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())

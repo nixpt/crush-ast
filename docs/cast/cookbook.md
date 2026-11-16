@@ -75,6 +75,14 @@ exosphere's CLI and don't exist here.)
   `{"Array": "Int"}`, `{"Struct": "Point"}`,
   `{"Lambda": {"params": ["Int"], "returns": "Int"}}` — lowercase `"string"`
   fails validation.
+- **In Crush source**, an annotation (`x: Int`) accepts `Int`, `Float`, `String`, `Bool`,
+  `Null`, `Any` (with lowercase and short aliases such as `int`, `str`, `i64`), the bare
+  container names `Array`, `List`, `Set` and `Map` (and their lowercase twins; element type
+  `Any`), and the name of a declared struct. A declared struct named `Array`, `List`, `Set`
+  or `Map` wins over the container meaning. Element types (`Array<Int>`, `[Int]`) have no
+  source syntax yet and are a parse error that says so. Annotations are checked by the
+  compiler (a `let` annotation, a call argument), not by the engines; a struct's field
+  types are not checked at construction.
 - **No assignment statement** — rebind with another `VarDecl` of the same name.
 - **For-loop variables type as `Any`**: comparisons against them compile,
   arithmetic on them does not yet.
