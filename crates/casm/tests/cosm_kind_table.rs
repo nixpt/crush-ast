@@ -223,3 +223,84 @@ fn casm_json_whose_kind_table_needs_a_newer_cosm_is_refused() {
     let back = Program::deserialize(v.to_string().as_bytes(), Format::Json).unwrap();
     assert_eq!(back.cosm, Some(point_module()));
 }
+
+/// The Point fixture with owner ids (V3b, #522): `Point` declared in module
+/// `geo` of package `pkg:geom`, and one function of that package.
+fn owned_module() -> CosmModule {
+    let mut m = point_module();
+    m.kinds[0].module = Some("geo".into());
+    m.kinds[0].package = Some("pkg:geom".into());
+    m.fn_packages
+        .insert(crush_cosm::FnRef::new("Point::norm2"), "pkg:geom".into());
+    m
+}
+
+/// V3b (#522): function ownership lives inside the COSM module, not in a
+/// per-function CASM field, because CASM's own gate takes any 1.x and would
+/// let an old reader drop such a field. Through COSM it is stamped, and both
+/// CASM encodings carry it and gate it.
+#[test]
+fn owner_ids_round_trip_through_casm_json_and_binary() {
+    let p = program(Some(owned_module()));
+    for format in [Format::Json, Format::Binary] {
+        let bytes = p.serialize(format).unwrap();
+        let back = Program::deserialize(&bytes, format).unwrap();
+        let cosm = back.cosm.expect("kind table");
+        assert_eq!(cosm, owned_module(), "{format:?}");
+        assert_eq!(cosm.function_package("Point::norm2"), Some("pkg:geom"));
+    }
+    let v: serde_json::Value = serde_json::from_slice(&p.serialize(Format::Json).unwrap()).unwrap();
+    assert_eq!(v["cosm"]["cosm_version"], serde_json::json!("0.2.0"));
+    // CASM's own version is unchanged: the gate that matters is COSM's.
+    assert_eq!(v["version"], serde_json::json!(casm::CASM_VERSION));
+}
+
+#[test]
+fn casm_with_owner_ids_from_a_newer_cosm_is_refused_in_both_encodings() {
+    let mut v: serde_json::Value = serde_json::from_slice(
+        &program(Some(owned_module()))
+            .serialize(Format::Json)
+            .unwrap(),
+    )
+    .unwrap();
+    v["cosm"]["cosm_version"] = serde_json::json!("0.3.0");
+    let err = Program::deserialize(v.to_string().as_bytes(), Format::Json)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("needs COSM 0.3.0"), "{err}");
+
+    // Binary CASM embeds the module as its COSM JSON text: same gate.
+    v["cosm"] = serde_json::Value::String(v["cosm"].to_string());
+    let bin = rmp_serde::to_vec_named(&v).unwrap();
+    let err = Program::deserialize(&bin, Format::Binary)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("needs COSM 0.3.0"), "{err}");
+}
+
+/// A program of several packages with no Kinds still carries its owners; it
+/// has no kind table in the sense the engines check (`kind_table()`).
+#[test]
+fn owners_without_kinds_travel_in_cosm_but_are_no_kind_table() {
+    let mut m = CosmModule::new();
+    m.fn_packages
+        .insert(crush_cosm::FnRef::new("geo::f"), "pkg:geom".into());
+    let p = program(Some(m.clone()));
+    assert!(p.kind_table().is_none());
+    for format in [Format::Json, Format::Binary] {
+        let back = Program::deserialize(&p.serialize(format).unwrap(), format).unwrap();
+        assert_eq!(back.cosm.as_ref(), Some(&m), "{format:?}");
+    }
+}
+
+/// FastVM, the JIT and AOT check kind tables at `CosmSupport::Maps`: owner ids
+/// change nothing there (nothing enforces them yet, V6 #525), so a map-
+/// compatible Kind with owners runs on them exactly as without.
+#[test]
+fn owner_ids_do_not_change_what_a_map_engine_refuses() {
+    assert!(program(Some(owned_module())).refuse_cosm("X").is_ok());
+    assert_eq!(
+        casm::cosm_unsupported_reason(&owned_module(), "X"),
+        casm::cosm_unsupported_reason(&point_module(), "X")
+    );
+}

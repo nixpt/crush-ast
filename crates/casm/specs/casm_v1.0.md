@@ -47,6 +47,12 @@ CASM (Crush Assembly) is the low-level bytecode format for the Crush Virtual Mac
 - `lang` (string, optional): Source language
 - `functions` (object): Map of function name to Function
 - `manifest` (object, optional): Capability permissions
+- `cosm` (object, optional; added with COSM K1.3, after this spec was frozen): the program's COSM
+  module, i.e. its kind table and, since COSM `0.2.0` (#522), the owning package of each function
+  outside the root package (`fn_packages`). It is versioned by its own `cosm_version`, not by
+  `version`: CASM's gate takes any `1.x`, so anything a reader must not drop (owner ids, member
+  visibility) lives here, where an older reader refuses it by name. See
+  `crates/crush-cosm/README.md` §Versioning.
 
 ### Function Format
 

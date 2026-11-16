@@ -981,6 +981,29 @@ impl Resolver<'_> {
         for mut def in defs {
             self.note_kind(&def, &display)?;
             rewrite_statement(&mut def, &scope, &self.modules, &display, &mut self.uses)?;
+            // Where this declaration comes from (V3b, #522): its module's
+            // import path, its merge prefix and its package (stamped like the
+            // module's functions above, so a module with types and no
+            // function is owned too). `cosm_lower` also checks it against the
+            // package of the module's functions (`inherit_declaration_owners`),
+            // so a type's Kind and methods can't end up in another package
+            // than the module's functions; a `root` stamp is removed there. Neither key reaches compiled output: a struct
+            // compiles to nothing, an impl / trait is lifted, and a Kind
+            // records its module only with a non-root package.
+            if let Statement::StructDef { meta, .. }
+            | Statement::ImplBlock { meta, .. }
+            | Statement::TraitDef { meta, .. } = &mut def
+            {
+                meta.insert("module".to_string(), Value::String(module_path.to_string()));
+                meta.insert(
+                    crate::cosm_lower::MODULE_PREFIX_META.to_string(),
+                    Value::String(self.modules[idx].prefix.clone()),
+                );
+                meta.insert(
+                    "package".to_string(),
+                    Value::String(self.packages[package].id.clone()),
+                );
+            }
             self.defs.push(def);
         }
         self.by_file.insert(canonical, idx);

@@ -356,6 +356,7 @@ pub fn lower_boa(ast: BoaAst, ctx: &LowerCtx) -> anyhow::Result<Program> {
     // this program declares, as COSM. Absent when it declares none, so a
     // class-less program's CAST is unchanged.
     let cosm = (!lower.kinds.is_empty()).then(|| crush_cosm::CosmModule {
+        fn_packages: Default::default(),
         kinds: std::mem::take(&mut lower.kinds),
         interfaces: Vec::new(),
     });

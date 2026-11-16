@@ -1168,7 +1168,12 @@ pub mod cosm_serde {
         if s.is_human_readable() {
             v.serialize(s)
         } else {
-            v.as_ref().map(CosmModule::to_json).serialize(s)
+            // An invalid owner id is a write error here, not a panic.
+            v.as_ref()
+                .map(CosmModule::try_to_json)
+                .transpose()
+                .map_err(serde::ser::Error::custom)?
+                .serialize(s)
         }
     }
 

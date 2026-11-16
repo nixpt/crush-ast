@@ -33,8 +33,8 @@ pub use mro::{KindLookup, Linearizer, ModuleSet, MroError, c3_mro, resolution_or
 pub use schema::{
     Conformance, Const, Construct, CosmModule, Equality, FieldDecl, FnRef, HookImpl, Hooks,
     IGNORABLE_MEMBER_KEYS, InterfaceDecl, InterfaceMember, InterfaceRef, KindDecl, KindRef, Member,
-    MemberDecl, Op, Param, Receiver, Resolution, Satisfaction, Semantics, StaticValue, Storage,
-    ValueMode,
+    MemberDecl, Op, OwnerId, Param, Receiver, Resolution, Satisfaction, Semantics, StaticValue,
+    Storage, ValueMode, owner_id_problem,
 };
 pub use span::{Diagnostic, DiagnosticCode, Span};
 pub use types::CosmType;
@@ -65,7 +65,20 @@ pub struct ReadmeDoctests;
 ///   with kind-table format 2, which runtimes from before this rule refuse.
 /// - A purely additive or cosmetic field may be declared ignorable (it still
 ///   bumps the minor). Nothing is ignorable today.
-pub const COSM_VERSION: &str = "0.1.0";
+///
+/// # Versions
+///
+/// - `0.1.0` ([`COSM_BASE_VERSION`]): the schema before the rule.
+/// - `0.2.0` ([`COSM_OWNERS_VERSION`], V3b #522): owner ids. A [`KindDecl`] may
+///   carry `module` and `package`, and the module may carry `fn_packages`, the
+///   owning package of each function outside the root package. All three are
+///   must-understand.
+pub const COSM_VERSION: &str = "0.2.0";
+
+/// The first version with owner ids (`KindDecl.module` / `KindDecl.package`
+/// and `CosmModule.fn_packages`, V3b #522). A module that uses any of them is
+/// stamped with it.
+pub const COSM_OWNERS_VERSION: &str = "0.2.0";
 
 /// The version an absent `cosm_version` means: the schema as it was before
 /// the evolution rule.
@@ -81,22 +94,39 @@ fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
 /// [`COSM_VERSION`]'s major and a minor no greater than its own. The error
 /// names both versions.
 pub fn check_readable(v: &str) -> Result<(), String> {
+    check_readable_by(v, COSM_VERSION)
+}
+
+/// [`check_readable`] for a reader whose newest version is `reader`: the same
+/// gate, so a test can ask what a reader of an earlier version (e.g.
+/// [`COSM_BASE_VERSION`]) does with a stamp written today.
+pub fn check_readable_by(v: &str, reader: &str) -> Result<(), String> {
     let Some((major, minor, _)) = parse_version(v) else {
         return Err(format!(
             "cosm_version `{v}` is not a MAJOR.MINOR.PATCH version"
         ));
     };
-    let (own_major, own_minor, _) = parse_version(COSM_VERSION).expect("COSM_VERSION parses");
+    let Some((own_major, own_minor, _)) = parse_version(reader) else {
+        return Err(format!(
+            "reader version `{reader}` is not a MAJOR.MINOR.PATCH version"
+        ));
+    };
     if major == own_major && minor <= own_minor {
         Ok(())
     } else {
         Err(format!(
-            "this module needs COSM {v}, but this runtime reads COSM up to {COSM_VERSION} \
+            "this module needs COSM {v}, but this runtime reads COSM up to {reader} \
              (same major, minor no greater); use a toolchain that reads COSM {v}, or recompile \
              the program with this one"
         ))
     }
 }
+
+/// The package id an absent owner means: the program's own package (the
+/// entry file's). It is never written: an owner field or `fn_packages` entry
+/// is omitted for it, and a reader refuses it spelled out, so each package
+/// has one spelling.
+pub const ROOT_PACKAGE: &str = "root";
 
 /// Errors reading COSM.
 #[derive(Debug, Clone, PartialEq, Eq)]

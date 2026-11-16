@@ -25,6 +25,19 @@ add its entry after yours.
   `Execution error: array index out of range: …` / `Type mismatch`. A FastVM program that read
   past the end and got `null` now stops with an error (or enters its `catch`). JIT and AOT are
   unchanged.
+- **Format:** owner ids, COSM `0.2.0` (V3b, #522). A kind may record the package that declares
+  it (`package`, and with it `module`), and the COSM module records the package of each function
+  outside the root package (`fn_packages`). **When:** only when a program uses code from another
+  package. A program of one package, however many files and imported modules it has, is written
+  byte for byte as before and runs on released runtimes. **What it needs:** a compiled artifact
+  with owners needs a runtime that reads COSM `0.2.0`. Released 0.11.x refuses it: CVM1 by name
+  (`unknown kind-table format 2`), CASM JSON with a serde unknown-field error. Source programs are
+  unaffected. Owner ids are `pkg:<name>` or `dir:<label>` (a directory's last component, never a
+  local path); one rule refuses anything else on read, on write and in `validate`
+  (`cosm::invalid_owner_id`). Function ownership lives in COSM, not CASM, because CASM's own gate
+  takes any `1.x`. Recorded only; member visibility (#525) will enforce it. `--emit cast` of a
+  program that imports a module with `struct` / `impl` / `trait` now shows `module` and
+  `module_prefix` in those declarations' meta, as functions already showed `module`.
 - Visibility, the gate for stage 2 (V1.5, #539). `crushc --check --deny-legacy-visibility` fails
   (exit 1) while an exported function relies on the legacy rule: `W-VIS01` becomes an error, and a
   module with no `pub` whose functions another package uses is one `E-VIS01` error naming every

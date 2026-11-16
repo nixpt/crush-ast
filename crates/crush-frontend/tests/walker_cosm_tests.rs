@@ -33,6 +33,8 @@ fn program_with_cosm(cosm: Option<CosmModule>) -> Program {
 
 fn kind(name: &str, resolution: Resolution) -> KindDecl {
     KindDecl {
+        module: None,
+        package: None,
         name: name.to_string(),
         home_lang: "javascript".to_string(),
         span: None,
@@ -53,6 +55,7 @@ fn kind(name: &str, resolution: Resolution) -> KindDecl {
 
 fn module(kinds: Vec<KindDecl>) -> CosmModule {
     CosmModule {
+        fn_packages: Default::default(),
         kinds,
         interfaces: vec![],
     }

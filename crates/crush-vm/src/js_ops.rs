@@ -358,6 +358,7 @@ mod tests {
     fn strict_equality_of_records_and_kinds_is_identity() {
         let mut program = crate::assembler::assemble(".func main\n    HALT\n", None, None).unwrap();
         program.cosm = Some(crush_cosm::CosmModule {
+            fn_packages: Default::default(),
             kinds: vec![crush_cosm::KindDecl::crush("A")],
             interfaces: vec![],
         });
@@ -373,6 +374,7 @@ mod tests {
         let mut other_program =
             crate::assembler::assemble(".func main\n    HALT\n", None, None).unwrap();
         other_program.cosm = Some(crush_cosm::CosmModule {
+            fn_packages: Default::default(),
             kinds: vec![crush_cosm::KindDecl::crush("A")],
             interfaces: vec![],
         });

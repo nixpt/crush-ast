@@ -15,11 +15,14 @@
 //!                 before the COSM evolution rule (#521) refuse format 2 by name;
 //!                 newer ones read both and check `cosm_version` itself. A module
 //!                 that needs nothing newer is still written as format 1, byte for
-//!                 byte.
+//!                 byte. The first such feature is owner ids (COSM 0.2.0, V3b
+//!                 #522): a Kind's `module`/`package` and the module's
+//!                 `fn_packages`.
 //!
 //! Versioning: the container version says whether the section is present.
 //! [`Program::to_blob`] writes version [`VERSION_KIND_TABLE`] (3) only when
-//! the program has a non-empty kind table; every other program is written
+//! the program has a non-empty kind table (a Kind, an interface, or an owner
+//! id: [`Program::cosm_section`]); every other program is written
 //! exactly as before, as version [`VERSION_NO_KIND_TABLE`] (2), byte for
 //! byte. Versions 1 and 2 have no kind table and load with `cosm = None`. A
 //! runtime that predates the section rejects a version-3 blob as an
@@ -492,6 +495,15 @@ impl Program {
         self.cosm.as_ref().filter(|m| !casm::cosm_is_empty(m))
     }
 
+    /// What the kind-table section carries: the COSM module when it has
+    /// anything at all (a Kind, an interface, or an owner id — a program of
+    /// several packages with no Kinds still records `fn_packages`, V3b #522).
+    /// [`Program::kind_table`] answers "does the program declare Kinds";
+    /// this answers "is there a section to write".
+    pub fn cosm_section(&self) -> Option<&crush_cosm::CosmModule> {
+        self.cosm.as_ref().filter(|m| !m.is_empty())
+    }
+
     /// `Err(message)` when the kind table declares a Kind that can't run as
     /// a plain map yet — the rule every engine shares
     /// ([`casm::cosm_unsupported_reason`], see [`casm::Program::refuse_cosm`]).
@@ -509,7 +521,7 @@ impl Program {
     pub fn to_blob(&self) -> Vec<u8> {
         let manifest_json = serde_json::to_string(&self.manifest).expect("manifest serialization");
         let mb = manifest_json.as_bytes();
-        let kind_table = self.kind_table().map(|m| {
+        let kind_table = self.cosm_section().map(|m| {
             let format = if m.required_version() == crush_cosm::COSM_BASE_VERSION {
                 KIND_TABLE_FORMAT_JSON
             } else {
