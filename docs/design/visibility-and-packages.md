@@ -311,18 +311,21 @@ the legacy rule. Nothing changes without it. There are two gates, and a library 
   directory, walked recursively in path order; hidden directories, `target/` and symlinked
   directories are skipped): the library author's view, with no foreign user needed. Without the
   flag it lists, per module, `pub: …` and `private: …`, or `legacy: no pub, everything public` with
-  the names. With it, every **importable** legacy module fails (`E-VIS01`), kinds included. Exempt,
-  and printed as `program (exempt from the gate: …)`: a file with top-level statements (it cannot
-  be imported) and a file that defines nothing besides `main`. A file with `fn main` **and** other
+  the names. With it, every **importable** legacy module fails (`E-VIS01`), kinds included. Exempt:
+  a file with top-level statements other than definitions and Crush module imports (a `let`, a
+  call, a `use @lang`: the resolver refuses to import it) and a file that defines nothing besides
+  `main`; this listing prints them as `program (exempt from the gate: …)`. A file with `fn main` **and** other
   definitions is importable (the resolver drops a module's `main`), so a library with a demo `main`
   fails. A file that does not parse, or a file argument without the `.crush` extension, exits 1; a
   directory with no `.crush` file prints "no .crush files" and exits 0, with or without the flag.
-- **`crush-pkg build --deny-legacy-visibility`**: both, for a package. The package's sources are the
-  entry's directory; when that is the package root, its `tests/` and `examples/` are left out. Every
-  importable legacy module there fails, even when nobody imports it, except the **entry file of a
-  package that is not a library**: a package is a library when `[capsule] category = "library"`;
-  with any other category, or none, the entry is treated as an application's and exempt. The compile
-  then runs under the compile gate. A concatenation-mode package (entry without `import`) that has
+- **`crush-pkg build --deny-legacy-visibility`**: both, for a package. It is a **library gate**. The
+  package's sources are the entry's directory; when that is the package root, its `tests/` and
+  `examples/` are left out. Every importable legacy module there fails, the entry included, even
+  when nobody imports it; the same two exemptions apply (top-level statements, or nothing besides
+  `main`). An application does not need this gate: legacy inside one package stays fine at every
+  stage. An application that runs it anyway must mark its importable modules `pub`, entry included
+  (an entry with helpers beside `main` is importable). The failing modules are printed with their
+  names; the compile then runs under the compile gate. A concatenation-mode package (entry without `import`) that has
   dependencies fails: concatenation reaches every name of a dependency by the legacy rule.
 - **crush-pkg prints the findings** (`W-VIS01`, `N-VIS01`, `W-VIS02`) on stderr for every import-mode
   compile: `build`, `check`, `run`, the bare build-then-run, and `PackageBuilder::build_file`

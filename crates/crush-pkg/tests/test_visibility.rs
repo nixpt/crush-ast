@@ -144,7 +144,9 @@ fn the_gate_fails_a_library_with_a_legacy_module_nobody_imports() {
 }
 
 #[test]
-fn the_gate_passes_an_app_with_no_pub_in_one_package() {
+fn the_package_gate_checks_the_entry_like_any_module() {
+    // A library gate: the entry is checked too. A main-only entry passes;
+    // an entry with helpers is importable and fails.
     let tmp = tempfile::tempdir().unwrap();
     let app = tmp.path().join("app");
     write(
@@ -156,13 +158,49 @@ fn the_gate_passes_an_app_with_no_pub_in_one_package() {
             ),
             (
                 "src/main.crush",
-                "import util\n\nfn shout(x) {\n    return x + \"!\"\n}\n\nfn main() {\n    io.print(shout(util.hi()))\n}\n",
+                "import util\n\nfn main() {\n    io.print(util.hi())\n}\n",
             ),
             ("src/util.crush", "pub fn hi() {\n    return \"hi\"\n}\n"),
         ],
     );
     let out = crush_pkg(&app, &["build", "--deny-legacy-visibility"]);
-    assert!(out.status.success(), "{}", text(&out));
+    assert!(out.status.success(), "main-only entry: {}", text(&out));
+    write(
+        &app,
+        &[(
+            "src/main.crush",
+            "import util\n\nfn shout(x) {\n    return x + \"!\"\n}\n\nfn main() {\n    io.print(shout(util.hi()))\n}\n",
+        )],
+    );
+    let out = crush_pkg(&app, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "entry with helpers: {}", text(&out));
+    assert!(stderr(&out).contains("main.crush"), "{}", text(&out));
+    // Without the gate it builds as before.
+    let plain = crush_pkg(&app, &["build"]);
+    assert!(plain.status.success(), "{}", text(&plain));
+}
+
+#[test]
+fn an_uncategorised_library_entry_with_exported_functions_fails_the_gate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = tmp.path().join("geo");
+    write(
+        &lib,
+        &[
+            (
+                "capsule.toml",
+                "[capsule]\nname = \"geo\"\nversion = \"0.1.0\"\nentry = \"src/geo.crush\"\nlanguage = \"crush\"\n",
+            ),
+            ("src/geo.crush", LEGACY_GEO),
+        ],
+    );
+    let out = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    assert!(
+        stderr(&out).contains("geo.crush: legacy: no pub, everything public"),
+        "{}",
+        text(&out)
+    );
 }
 
 #[test]
@@ -303,4 +341,30 @@ fn json_mode_keeps_the_findings_off_stdout() {
         "findings are not on stdout: {stdout}"
     );
     assert!(stderr(&out).contains("[W-VIS01]"), "{}", text(&out));
+}
+
+#[test]
+fn json_mode_keeps_the_gate_errors_off_stdout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app_with_lib(
+        tmp.path(),
+        LEGACY_GEO,
+        "import geo\n\nfn main() {\n    io.print(geo.area(2, 3))\n}\n",
+    );
+    let out = crush_pkg(
+        &app,
+        &[
+            "--message-format",
+            "json",
+            "build",
+            "--deny-legacy-visibility",
+        ],
+    );
+    assert!(!out.status.success(), "{}", text(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("VIS0"),
+        "findings are not on stdout: {stdout}"
+    );
+    assert!(stderr(&out).contains("[E-VIS01]"), "{}", text(&out));
 }

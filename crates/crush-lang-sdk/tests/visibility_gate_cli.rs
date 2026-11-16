@@ -264,7 +264,7 @@ fn the_gate_refuses_emit_ast() {
             "main.crush",
         ],
     );
-    assert!(!out.status.success(), "{}", stderr(&out));
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
     assert!(stderr(&out).contains("--emit ast"), "{}", stderr(&out));
     assert!(stdout(&out).is_empty(), "nothing emitted: {}", stdout(&out));
     let plain = crushc(dir.path(), &["--emit", "ast", "-L", "lib", "main.crush"]);

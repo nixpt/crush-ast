@@ -23,8 +23,9 @@ add its entry after yours.
   kinds included (a file with top-level statements, or with nothing besides `main`, is exempt; a
   library with a demo `main` is not). Use both on a library: the compile gate on its users, the
   directory gate on its own directory. `crush-pkg build --deny-legacy-visibility` does both for a
-  package (sources only; the entry of a non-`library` package is exempt; concatenation with
-  dependencies fails). crush-pkg builds and test compiles now print `W-VIS01` / `N-VIS01` /
+  package: a library gate over its sources, entry included (an application does not need it, and
+  one that runs it must mark its importable modules, entry included); concatenation with
+  dependencies fails. crush-pkg builds and test compiles now print `W-VIS01` / `N-VIS01` /
   `W-VIS02` on stderr (nothing new fails without the flag). Without the flag, crushc's output is
   unchanged. API: `ImportOptions::deny_legacy_visibility`, `import_system::E_VIS01`,
   `visibility_check::{ModuleSurface, module_surface, surfaces, render_surface}`,

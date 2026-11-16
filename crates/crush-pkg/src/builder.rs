@@ -655,9 +655,9 @@ impl PackageBuilder {
     /// module of the package's sources that has no `pub` fails, even when no
     /// other package imports it. The sources are the entry's directory; when
     /// that is the package root, its `tests/` and `examples/` are left out
-    /// (hidden directories and `target/` always are). The entry file itself
-    /// is exempt unless the package is a library (`[capsule] category =
-    /// "library"`): an application's entry is not imported. Each failing
+    /// (hidden directories and `target/` always are). The entry file is
+    /// checked like the rest: this is a library gate (an application needs
+    /// none, since legacy inside one package stays fine). Each failing
     /// module is printed with its names.
     fn check_package_surface(&self, entry: &Path) -> anyhow::Result<()> {
         let src_dir = entry
@@ -666,8 +666,6 @@ impl PackageBuilder {
             .unwrap_or_else(|| self.root_dir.clone());
         let at_root =
             std::fs::canonicalize(&src_dir).ok() == std::fs::canonicalize(&self.root_dir).ok();
-        let library = self.manifest.capsule.category.as_deref() == Some("library");
-        let entry_canon = std::fs::canonicalize(entry).ok();
         let mut legacy = Vec::new();
         for (file, surface) in crush_frontend::visibility_check::surfaces(&src_dir)? {
             if at_root
@@ -678,10 +676,6 @@ impl PackageBuilder {
                     .is_some_and(|first| {
                         rel_is(first.as_os_str(), "tests") || rel_is(first.as_os_str(), "examples")
                     })
-            {
-                continue;
-            }
-            if !library && entry_canon.is_some() && std::fs::canonicalize(&file).ok() == entry_canon
             {
                 continue;
             }

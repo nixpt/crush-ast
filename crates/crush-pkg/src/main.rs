@@ -275,15 +275,18 @@ enum Commands {
     },
     /// Build the current package
     Build {
-        /// The visibility stage-2 gate (#539): fail while any exported
-        /// function relies on the legacy rule (a module with no `pub` is
-        /// all-public). Fails on every importable module of the package's
-        /// sources with no `pub` (kinds included; the entry of a package
-        /// whose category is not `library` is exempt), on a cross-package
-        /// use of a function that is not `pub` (`W-VIS01`), and on a module
-        /// with no `pub` whose functions another package uses (`E-VIS01`;
-        /// the compile sees function uses only, not kinds). Without it the
-        /// visibility findings are printed and never fail.
+        /// The visibility stage-2 gate (#539), a library gate: fail while
+        /// any exported function relies on the legacy rule (a module with no
+        /// `pub` is all-public). Fails on every importable module of the
+        /// package's sources with no `pub`, the entry included (kinds count;
+        /// a file with top-level statements, or with nothing besides `main`,
+        /// is exempt), on a cross-package use of a function that is not
+        /// `pub` (`W-VIS01`), and on a module with no `pub` whose functions
+        /// another package uses (`E-VIS01`; the compile sees function uses
+        /// only, not kinds). An application does not need it: legacy inside
+        /// one package stays fine at every stage; one that runs it must mark
+        /// its importable modules, entry included. Without it the visibility
+        /// findings are printed and never fail.
         #[arg(long = "deny-legacy-visibility")]
         deny_legacy_visibility: bool,
     },

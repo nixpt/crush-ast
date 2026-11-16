@@ -13,7 +13,7 @@
 
 use crate::diagnostics::{CompilerDiagnostic, DiagnosticSeverity};
 use crush_cast::manifest::SourceLoc;
-use crush_cast::{Program, Statement};
+use crush_cast::{ImportStatement, Program, Statement};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -92,8 +92,9 @@ pub struct ModuleSurface {
     /// It has an explicit `fn main`. The import resolver ignores a module's
     /// `main`, so this alone does not stop the file being imported.
     pub has_main: bool,
-    /// It has a top-level statement that runs (a `let`, a call, …). Such a
-    /// file cannot be imported: a module has no init code.
+    /// It has a top-level statement other than a definition or a Crush
+    /// module import (a `let`, a call, a `use @lang`, …). Such a file cannot
+    /// be imported: the resolver refuses it.
     pub has_toplevel_code: bool,
 }
 
@@ -122,8 +123,7 @@ impl ModuleSurface {
 
     /// What the stage-2 gate refuses in a directory or package (V1.5, #539):
     /// an importable legacy module, including one with a demo `fn main` (the
-    /// resolver drops the `main` and exports the rest). The one more
-    /// exemption, a non-library package's entry file, is crush-pkg's.
+    /// resolver drops the `main` and exports the rest).
     pub fn fails_gate(&self) -> bool {
         self.is_legacy() && self.is_importable()
     }
@@ -190,7 +190,14 @@ pub fn module_surface(source: &str) -> Result<ModuleSurface, String> {
             Statement::StructDef { name, meta, .. } | Statement::TraitDef { name, meta, .. } => {
                 surface.kinds.insert(name.clone(), is_pub(meta));
             }
-            Statement::Import { .. } | Statement::ImplBlock { .. } => {}
+            // Only a Crush module import is allowed in a module; any other
+            // top-level statement (a `use @python`, `import @http`, a `let`,
+            // a call) makes the resolver refuse to import the file.
+            Statement::Import {
+                import: ImportStatement::CrushModule { .. },
+                ..
+            }
+            | Statement::ImplBlock { .. } => {}
             _ => surface.has_toplevel_code = true,
         }
     }

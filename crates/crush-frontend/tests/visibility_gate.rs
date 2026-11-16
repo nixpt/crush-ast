@@ -211,6 +211,39 @@ fn a_file_with_top_level_statements_cannot_be_imported_and_is_exempt() {
 }
 
 #[test]
+fn a_use_lang_at_the_top_level_makes_the_file_unimportable_as_the_resolver_says() {
+    // The resolver refuses a module with a `use @lang` (only Crush module
+    // imports are allowed), so the gate must not call it importable.
+    let src = "use @lang python \"math\"\nfn helper() { return 1 }\n";
+    let s = module_surface(src).unwrap();
+    assert!(
+        s.has_toplevel_code && !s.is_importable() && !s.fails_gate(),
+        "{s:?}"
+    );
+    // And the resolver does refuse it.
+    let dir = tree(
+        "use-lang",
+        &[
+            ("lib/m.crush", src),
+            (
+                "main.crush",
+                "import m\nfn main() {\n    print(m.helper())\n}\n",
+            ),
+        ],
+    );
+    let err = crush_frontend::parse_file_reporting(
+        &dir.join("main.crush"),
+        &ImportOptions::new([dir.join("lib")]),
+    )
+    .unwrap_err();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(format!("{err:#}").contains("use @"), "{err:#}");
+    // A Crush module import is not top-level code.
+    let s = module_surface("import other\nfn helper() { return 1 }\n").unwrap();
+    assert!(s.is_importable() && s.fails_gate(), "{s:?}");
+}
+
+#[test]
 fn a_main_only_file_exports_nothing_and_is_exempt() {
     let s = module_surface("fn main() { print(1) }\n").unwrap();
     assert!(!s.is_legacy() && !s.fails_gate(), "{s:?}");
