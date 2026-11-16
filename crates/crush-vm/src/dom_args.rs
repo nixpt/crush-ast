@@ -67,7 +67,7 @@ pub fn dispatch(
             cap: gate,
             limit_ms: deadline_ms,
         }),
-        Err(HostCapError::Message(message)) => Err(VmError::CapFailed { cap: gate, message }),
+        Err(HostCapError::Message(message)) => Err(VmError::cap_failed(gate, message)),
         Err(HostCapError::Exit(code)) => Err(VmError::Exit(code)),
     }
 }

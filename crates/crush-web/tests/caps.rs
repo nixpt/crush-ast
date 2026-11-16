@@ -135,7 +135,7 @@ fn time_grant_gives_the_clock() {
     // Word for word what `crush-run --time` reports.
     assert_eq!(
         bad.error.as_deref(),
-        Some("runtime error: time.sleep: time.sleep: expected non-negative int milliseconds, got -1")
+        Some("runtime error: time.sleep: expected non-negative int milliseconds, got -1")
     );
 }
 
