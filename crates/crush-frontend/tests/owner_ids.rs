@@ -466,3 +466,15 @@ fn compile_lowered_refuses_an_invalid_owner_id() {
         "{err:#}"
     );
 }
+
+/// Normalization refuses a bad id itself (by `owner_id_problem`), before the
+/// compiler's own check would see it.
+#[test]
+fn normalization_refuses_an_invalid_package_id() {
+    for bad in ["/abs/lib", "pkg:a/b", "pkg:", "lib"] {
+        let mut program = crush_frontend::parse_source(SRC).unwrap();
+        set_package(&mut program.functions.get_mut("other").unwrap().meta, bad);
+        let err = crush_frontend::cosm_lower::normalize_package_ids(&mut program).unwrap_err();
+        assert!(format!("{err:#}").contains("package id"), "{bad}: {err:#}");
+    }
+}
