@@ -144,7 +144,33 @@ pub enum VmError {
     Cosm(String),
 }
 
+/// Drop one leading `"{cap}: "` or `"{cap} "` from a host cap's error message
+/// (#514). `VmError::CapFailed` already displays as `{cap}: {message}`, and most
+/// caps start their own message with their name, so users saw it twice
+/// (`tcp.recv: tcp.recv: timed out after 500 ms`).
+///
+/// Only the exact cap name followed by `": "` or `" "` is stripped: a longer
+/// name that merely starts with it (`net.http` vs `net.http_get ...`) is left
+/// alone, it is stripped once, matching is case-sensitive, and a message that
+/// is only the cap name stays as is. Caps keep their own prefix, because the
+/// direct `HostCap::call()` path has no wrapper to add the name.
+pub fn strip_cap_prefix<'a>(cap: &str, message: &'a str) -> &'a str {
+    message
+        .strip_prefix(cap)
+        .and_then(|rest| rest.strip_prefix(": ").or_else(|| rest.strip_prefix(' ')))
+        .unwrap_or(message)
+}
+
 impl VmError {
+    /// Build a [`VmError::CapFailed`] from a host cap's error `message`, with
+    /// the cap's own leading name stripped (see [`strip_cap_prefix`]). Every
+    /// engine builds `CapFailed` through this so the rule lives in one place.
+    pub fn cap_failed(cap: impl Into<String>, message: impl AsRef<str>) -> Self {
+        let cap = cap.into();
+        let message = strip_cap_prefix(&cap, message.as_ref()).to_string();
+        VmError::CapFailed { cap, message }
+    }
+
     /// Whether a `try` frame may catch this fault (CRUSH-369). A catchable
     /// fault raised while a `try` handler is active in the current task
     /// unwinds to that handler as a caught `Value::Error` (see
@@ -1297,5 +1323,79 @@ mod quota_parse_tests {
                 .unwrap_err()
                 .contains("`unlimited`")
         );
+    }
+}
+
+#[cfg(test)]
+mod cap_prefix_tests {
+    use super::{VmError, strip_cap_prefix};
+
+    #[test]
+    fn strips_the_issue_examples() {
+        assert_eq!(
+            VmError::cap_failed(
+                "tcp.recv",
+                "tcp.recv: utf8: incomplete utf-8 byte sequence from index 16383"
+            )
+            .to_string(),
+            "tcp.recv: utf8: incomplete utf-8 byte sequence from index 16383"
+        );
+        assert_eq!(
+            VmError::cap_failed(
+                "net.http_get",
+                "net.http_get http://x.test/: timed out after 300 ms"
+            )
+            .to_string(),
+            "net.http_get: http://x.test/: timed out after 300 ms"
+        );
+        assert_eq!(
+            VmError::cap_failed("tcp.recv", "tcp.recv: timed out after 500 ms").to_string(),
+            "tcp.recv: timed out after 500 ms"
+        );
+    }
+
+    #[test]
+    fn strips_colon_space_or_space() {
+        assert_eq!(strip_cap_prefix("a.b", "a.b: oops"), "oops");
+        assert_eq!(strip_cap_prefix("a.b", "a.b oops"), "oops");
+    }
+
+    #[test]
+    fn a_longer_name_that_starts_with_the_cap_is_not_stripped() {
+        assert_eq!(
+            strip_cap_prefix("net.http", "net.http_get x: failed"),
+            "net.http_get x: failed"
+        );
+        assert_eq!(strip_cap_prefix("a.b", "a.bc: oops"), "a.bc: oops");
+    }
+
+    #[test]
+    fn strips_once_only() {
+        assert_eq!(strip_cap_prefix("a.b", "a.b: a.b: oops"), "a.b: oops");
+        assert_eq!(strip_cap_prefix("a.b", "a.b a.b oops"), "a.b oops");
+    }
+
+    #[test]
+    fn a_message_that_is_just_the_cap_name_stays() {
+        assert_eq!(strip_cap_prefix("a.b", "a.b"), "a.b");
+    }
+
+    #[test]
+    fn matching_is_case_sensitive_and_leading_only() {
+        assert_eq!(strip_cap_prefix("a.b", "A.B: oops"), "A.B: oops");
+        assert_eq!(
+            strip_cap_prefix("a.b", "while a.b: oops"),
+            "while a.b: oops"
+        );
+        assert_eq!(strip_cap_prefix("a.b", "a.b:oops"), "a.b:oops");
+    }
+
+    #[test]
+    fn a_message_without_the_prefix_is_untouched_and_kind_is_cap_failed() {
+        let e = VmError::cap_failed("fs.read", "No such file");
+        assert!(
+            matches!(&e, VmError::CapFailed { cap, message } if cap == "fs.read" && message == "No such file")
+        );
+        assert_eq!(e.to_string(), "fs.read: No such file");
     }
 }

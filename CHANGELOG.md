@@ -14,6 +14,16 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix: a failing host cap's error shows the cap name once. `VmError::CapFailed` displays as
+  `{cap}: {message}` and most caps also start their message with their own name, so users saw
+  `tcp.recv: tcp.recv: timed out after 500 ms`. Where `CapFailed` is built (the scheduler VM and
+  PortableVm cap dispatch, and the shared `ai_native.*` / `dom_native.*` dispatch FastVM calls)
+  one leading `"{cap}: "` or `"{cap} "` is now stripped, through `VmError::cap_failed`. Only the
+  exact cap name is stripped, once, case-sensitively. Caps keep their own prefix when called
+  directly through `HostCap::call()`. Error kinds and codes are unchanged. A program that
+  catches a failing cap sees the same change in the caught value's text
+  (`error(tcp.recv: timed out after 500 ms)`), so a script that matched the doubled text must
+  be updated (#514).
 - Module visibility, stage 1 (V1, #519). `pub` is recorded on `fn`, `async fn`, `struct` and
   `trait` (`pub struct` / `pub trait` used to fail with `Undefined variable: pub`); `pub` stays a
   contextual identifier. Every file belongs to a package (the longest of: the entry's directory,
