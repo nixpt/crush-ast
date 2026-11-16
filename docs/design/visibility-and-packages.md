@@ -1,7 +1,10 @@
 # Visibility and packages for Crush (CRUSH-509): design note
 
 altair (crush lane), 2026-11-14, asked for by the captain through vega. **Design only.** The captain ruled on
-all six decisions on 2026-11-14 (see **Rulings**). The 1.0 feature freeze is 2026-12-31. Every decision below has options and a recommendation. The ones the captain
+all six decisions on 2026-11-14 (see **Rulings**). **Status: V1 (#519) implemented**: §1 stage 1 as
+described in `docs/design/import-system.md` "Visibility"; where the code had to choose, that section says
+what it does (notes only for a module another package uses; the first-`pub` listing rides on the first
+`W-VIS01` per module). The 1.0 feature freeze is 2026-12-31. Every decision below has options and a recommendation. The ones the captain
 must rule on are collected under **Decisions**.
 
 ## What exists today (checked on main 30d6d581)
