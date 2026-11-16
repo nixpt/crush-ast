@@ -590,8 +590,8 @@ pub fn execute_one(
                 match arena.get(ptr) {
                     Some(Object::Array(items)) => {
                         if let RuntimeValue::Int(idx) = key {
-                            let val = items
-                                .get(idx as usize)
+                            let val = wrap_index(idx, items.len())
+                                .and_then(|i| items.get(i))
                                 .cloned()
                                 .unwrap_or(RuntimeValue::Null);
                             stack.push(val);
@@ -614,7 +614,9 @@ pub fn execute_one(
                     }
                     Some(Object::Str(s)) => {
                         if let RuntimeValue::Int(idx) = key {
-                            if let Some(c) = s.chars().nth(idx as usize) {
+                            if let Some(c) =
+                                wrap_index(idx, s.chars().count()).and_then(|i| s.chars().nth(i))
+                            {
                                 let c_ptr = arena.alloc(Object::Str(c.to_string()));
                                 stack.push(RuntimeValue::Ref(c_ptr));
                             } else {
@@ -876,12 +878,19 @@ pub fn execute_one(
                 };
                 match arena.get_mut(ptr) {
                     Ok(Object::Array(arr)) => {
-                        if let RuntimeValue::Int(idx) = key {
-                            let i = idx as usize;
-                            if i < arr.len() {
-                                arr[i] = val;
-                            }
-                        }
+                        // #442: a negative index counts from the end, and a
+                        // write out of range or with a non-Int index is an
+                        // error, as on CVM1 (it used to be dropped silently).
+                        let RuntimeValue::Int(idx) = key else {
+                            return Err(FastError::TypeMismatch);
+                        };
+                        let Some(i) = wrap_index(idx, arr.len()) else {
+                            return Err(FastError::ExecutionError(format!(
+                                "array index out of range: {idx} (len {})",
+                                arr.len()
+                            )));
+                        };
+                        arr[i] = val;
                     }
                     Ok(Object::Map(map)) => {
                         let Some(k) = map_key else {
@@ -1396,4 +1405,12 @@ pub fn execute_one(
     }
 
     Ok(None)
+}
+
+/// A Python-style index into a sequence of `len` items: a negative index
+/// counts from the end. `None` when it is out of range (#442).
+fn wrap_index(idx: i64, len: usize) -> Option<usize> {
+    let ilen = i64::try_from(len).ok()?;
+    let i = if idx < 0 { idx.checked_add(ilen)? } else { idx };
+    (0..ilen).contains(&i).then_some(i as usize)
 }
