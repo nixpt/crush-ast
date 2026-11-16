@@ -948,30 +948,21 @@ pub fn execute_one(
             let delim_val = stack.pop().ok_or(FastError::StackUnderflow)?;
             let str_val = stack.pop().ok_or(FastError::StackUnderflow)?;
 
-            let delim = match delim_val {
-                RuntimeValue::Ref(p) => match arena.get(p) {
-                    Some(Object::Str(s)) => s.clone(),
-                    _ => return Err(FastError::TypeMismatch),
-                },
-                _ => return Err(FastError::TypeMismatch),
-            };
+            // #444: both arguments render as text the way the scheduler VM
+            // renders them (`Display`), through FastVM's io.print formatter,
+            // which mirrors it; an empty delimiter splits into chars. Parity
+            // only: whether non-strings should be refused is the open H4.
+            let delim = crate::io_print::runtime_value_to_text(&delim_val, arena);
+            let target_string = crate::io_print::runtime_value_to_text(&str_val, arena);
 
-            let target_string = if let RuntimeValue::Ref(ptr) = str_val {
-                if let Some(Object::Str(s)) = arena.get(ptr) {
-                    s.clone()
-                } else {
-                    return Err(FastError::TypeMismatch);
-                }
+            let pieces: Vec<String> = if delim.is_empty() {
+                target_string.chars().map(|c| c.to_string()).collect()
             } else {
-                return Err(FastError::TypeMismatch);
+                target_string.split(&delim).map(str::to_string).collect()
             };
-
-            let parts: Vec<RuntimeValue> = target_string
-                .split(&delim)
-                .map(|p| {
-                    let sp = arena.alloc(Object::Str(p.to_string()));
-                    RuntimeValue::Ref(sp)
-                })
+            let parts: Vec<RuntimeValue> = pieces
+                .into_iter()
+                .map(|p| RuntimeValue::Ref(arena.alloc(Object::Str(p))))
                 .collect();
             let ptr = arena.alloc(Object::Array(parts));
             stack.push(RuntimeValue::Ref(ptr));

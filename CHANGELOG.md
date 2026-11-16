@@ -14,6 +14,16 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- `str.split` engine parity (#444, ruling: parity only, the scheduler VM is the reference). FastVM's
+  `StrSplit` (the `str_split` opcode, which CAST `"str.split"` calls from the Python frontend and the
+  shell walker lower to) now renders a non-string target or delimiter as text the way the scheduler
+  does (`split(1020304, 0)` is `["1", "2", "3", "4"]`) instead of failing with `Type mismatch`, and
+  an empty delimiter splits into chars (`split("abc", "")` was `["", "a", "b", "c", ""]`). PortableVm's
+  two `str.split` arms (opcode and capability) render through `Display` like the scheduler instead
+  of their own `value_to_text` (same output today). New differential test
+  `crush-lang-sdk/tests/tier1_str_split.rs`. Unchanged: Crush source `str.split(a, b)` is a
+  capability call that FastVM needs its host to supply (no built-in one), and whether string ops
+  should refuse non-strings (H4) is still open.
 - Visibility, the gate for stage 2 (V1.5, #539). `crushc --check --deny-legacy-visibility` fails
   (exit 1) while an exported function relies on the legacy rule: `W-VIS01` becomes an error, and a
   module with no `pub` whose functions another package uses is one `E-VIS01` error naming every

@@ -1874,8 +1874,9 @@ impl PortableVm {
             STR_SPLIT => {
                 let delim = self.pop()?;
                 let s = self.pop()?;
-                let text = value_to_text(&s);
-                let d = value_to_text(&delim);
+                // #444: `Display`, as the scheduler VM's STR_SPLIT does.
+                let text = s.to_string();
+                let d = delim.to_string();
                 let parts: Vec<Value> = if d.is_empty() {
                     text.chars().map(|c| Value::Str(c.to_string())).collect()
                 } else {
@@ -2420,8 +2421,9 @@ impl PortableVm {
                     .map(Some)
                     .map_err(VmError::Io),
                 "str.split" => {
-                    let s = value_to_text(&args[0]);
-                    let delim = value_to_text(&args[1]);
+                    // #444: `Display`, as the scheduler VM's `str.split` does.
+                    let s = args[0].to_string();
+                    let delim = args[1].to_string();
                     let parts: Vec<Value> = if delim.is_empty() {
                         s.chars().map(|c| Value::Str(c.to_string())).collect()
                     } else {
