@@ -8,7 +8,9 @@
   `?auto`: plays one scripted round through `Session` and the same answers
   through `execute_with({ stdin })`, runs an @python block lowered into the
   program (`execute_with(..., { polyglot: "lower" })`, CRUSH-272: no grant, no
-  executor) and one the walker can't lower, then publishes
+  executor) and one the walker can't lower, runs a `Session` granted `fs`
+  that writes, reads and stats a file (#534: MemFs used to read
+  `SystemTime::now()`, which aborts wasm32 with "unreachable"), then publishes
   window.__crushResults for scripts/browser_test.py.
 -->
 <html lang="en">
@@ -53,6 +55,15 @@ const REFUSED = `fn main() {
 }
 `;
 
+// #534: a session granted `fs`; `fs.stat`'s `modified` is the browser's clock.
+const FS_PROGRAM = `print(1)
+fs.write("note.txt", "hello")
+print(fs.read("note.txt"))
+let st = fs.stat("note.txt")
+print(st["size"])
+print(st["modified"])
+`;
+
 await init();
 const source = await (await fetch("fixtures/blackjack_interactive.crush")).text();
 const term = document.getElementById("term");
@@ -66,12 +77,22 @@ if (new URLSearchParams(location.search).has("auto")) {
     reports.push(session.provide(answer));
   }
   const oneShot = execute_with(source, { stdin: ANSWERS.join("\n") + "\n" });
+  // Last: before #534 this aborted the wasm instance ("unreachable").
+  let fsSession;
+  try {
+    const before = Date.now();
+    const report = new Session(FS_PROGRAM, { grants: ["fs"] }).run();
+    fsSession = { report, before, after: Date.now() };
+  } catch (e) {
+    fsSession = { thrown: String(e) };
+  }
   window.__crushResults = {
     answers: ANSWERS,
     session: { reports, transcript: session.transcript() },
     executeWith: oneShot,
     lowered: execute_with(LOWERED, { polyglot: "lower" }),
     loweredRefused: execute_with(REFUSED, { polyglot: "lower" }),
+    fsSession,
   };
   term.textContent = session.transcript();
 } else {

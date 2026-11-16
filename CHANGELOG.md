@@ -25,6 +25,14 @@ add its entry after yours.
   syntax yet and to write the bare name (it used to be a plain parse error such as `Expected } but found <`); any other `Name<...>` says type arguments have no annotation syntax. `Tuple`,
   `Vector` have no bare spelling. The kind table needs no format change: a bare container field
   is `{"Array":"Any"}` etc., a shape COSM already has.
+- fix(web): a crush-web session granted `fs` no longer aborts with `RuntimeError: unreachable`
+  (#534). The in-memory filesystem (`MemFs`, since 0.11.0) stamped modification times with
+  `SystemTime::now()`, which panics on `wasm32-unknown-unknown`, and it did so while the
+  registry was built, so every `fs`-granted browser run died before its first instruction.
+  `MemFs` now takes its clock from the host: `MemFs::with_clock` /
+  `HostCapsBuilder::fs_memory_with_clock`, and crush-web passes the browser's `Date.now()`, so
+  `fs.stat` reports real times there. Native behaviour is unchanged (`fs_memory()` still uses
+  the system clock). The crush-web headless-Chromium job now runs an `fs`-granted session.
 - fix: `crush update` no longer reads an install as "installed: none" when running `crush --version` fails once with "text file busy" (ETXTBSY). The version probe retries a few times (about 100 ms in all) before giving up, and an exec error other than "not found" is reported on stderr when `CRUSH_UPDATE_DEBUG` is set. Output and exit codes are unchanged. The updater's tests also write their fake binaries to a temp name and rename them into place (#517).
 - fix: a failing host cap's error shows the cap name once. `VmError::CapFailed` displays as
   `{cap}: {message}` and most caps also start their message with their own name, so users saw

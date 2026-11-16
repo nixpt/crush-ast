@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Play blackjack_interactive.crush in headless Chromium via crush-web, and
-run a lowered @python block (CRUSH-272).
+"""Play blackjack_interactive.crush in headless Chromium via crush-web, run a
+lowered @python block (CRUSH-272), and run a session granted `fs` (#534).
 
 usage: browser_test.py <site-dir>   (a dir holding index.html, pkg/, fixtures/;
                                      scripts/browser-test.sh stages one)
@@ -83,6 +83,22 @@ def main(site):
         failures.append(f"lowered @python block: {lowered}")
     if refused["ok"] or "class definitions" not in refused.get("error", ""):
         failures.append(f"unlowerable @python block was not refused: {refused}")
+    # #534: a session granted `fs` runs (it used to abort with "unreachable"),
+    # and `fs.stat`'s modified time is the browser's clock, not a constant.
+    fs_run = data["fsSession"]
+    print("# fs session:", json.dumps(fs_run))
+    report = fs_run.get("report")
+    if report is None:
+        failures.append(f"fs session threw: {fs_run.get('thrown')}")
+    elif report["status"] != "done" or not report["output"].startswith("1\nhello\n5\n"):
+        failures.append(f"fs session: {report}")
+    else:
+        modified = int(report["output"].split("\n")[3])
+        if not fs_run["before"] // 1000 <= modified <= fs_run["after"] // 1000:
+            failures.append(
+                f"fs.stat modified {modified} is not the browser clock "
+                f"({fs_run['before'] // 1000}..{fs_run['after'] // 1000})"
+            )
     for f in failures:
         print("FAIL", f, file=sys.stderr)
     print("PASS" if not failures else f"{len(failures)} failure(s)", file=sys.stderr)
