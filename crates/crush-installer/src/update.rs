@@ -520,15 +520,62 @@ pub fn resolve_dir(
     default_prefix().join("bin")
 }
 
+/// Exec attempts the version probe makes while the binary is busy.
+const PROBE_ATTEMPTS: u32 = 1;
+/// Pause before retry `n` (1-based) is `n * PROBE_BACKOFF`: 10 + 20 + 30 + 40 =
+/// 100 ms in all.
+const PROBE_BACKOFF: Duration = Duration::from_millis(10);
+
+/// `ETXTBSY` ("Text file busy"): exec of a file some process holds open for
+/// writing. Linux raises it for a moment after a write when another thread
+/// forked while the write fd was open, so it is transient.
+#[cfg(unix)]
+fn is_text_file_busy(e: &io::Error) -> bool {
+    e.raw_os_error() == Some(26)
+}
+#[cfg(not(unix))]
+fn is_text_file_busy(_: &io::Error) -> bool {
+    false
+}
+
+/// Run `path --version`, retrying (bounded) while exec reports a busy binary.
+fn run_version_probe(path: &Path) -> io::Result<std::process::Output> {
+    let mut attempt = 1;
+    loop {
+        let r = Command::new(path)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+        match r {
+            Err(e) if is_text_file_busy(&e) && attempt < PROBE_ATTEMPTS => {
+                std::thread::sleep(PROBE_BACKOFF * attempt);
+                attempt += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
 /// The version `dir/crush --version` reports, `None` when there is no
-/// runnable `crush` there.
+/// runnable `crush` there. A transient "text file busy" exec failure is
+/// retried a few times before it counts as "not runnable". An exec error
+/// other than "not found" is still `None` (the output is unchanged) but is
+/// reported on stderr when `CRUSH_UPDATE_DEBUG` is set, so it can be told
+/// apart from a missing install.
 pub fn installed_version(dir: &Path) -> Option<Version> {
-    let out = Command::new(dir.join(binary_name("crush")))
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let path = dir.join(binary_name("crush"));
+    let out = match run_version_probe(&path) {
+        Ok(o) => o,
+        Err(e) => {
+            if e.kind() != io::ErrorKind::NotFound
+                && std::env::var_os("CRUSH_UPDATE_DEBUG").is_some()
+            {
+                eprintln!("crush update: cannot run '{}' --version: {e}", path.display());
+            }
+            return None;
+        }
+    };
     if !out.status.success() {
         return None;
     }
@@ -1029,15 +1076,54 @@ mod tests {
     fn old_install(ver: &str) -> TempDir {
         let d = TempDir::new().unwrap();
         for b in all_bins() {
+            // Write under a temp name, close, chmod, then rename into place:
+            // the final path is never open for writing, so it cannot be
+            // "text file busy" for an exec.
             let p = d.path().join(b);
-            fs::write(&p, script(b, ver)).unwrap();
+            let tmp = d.path().join(format!(".{b}.tmp"));
+            fs::write(&tmp, script(b, ver)).unwrap();
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+                fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755)).unwrap();
             }
+            fs::rename(&tmp, &p).unwrap();
         }
         d
+    }
+
+    /// An install whose `crush` is open for writing: exec fails with ETXTBSY
+    /// until the returned handle is dropped.
+    #[cfg(unix)]
+    fn busy_install(ver: &str) -> (TempDir, File) {
+        let d = old_install(ver);
+        let p = d.path().join(binary_name("crush"));
+        let held = fs::OpenOptions::new().append(true).open(&p).unwrap();
+        // The raw error is what the probe has to cope with.
+        let e = Command::new(&p).arg("--version").output().unwrap_err();
+        assert_eq!(e.raw_os_error(), Some(26), "expected ETXTBSY, got {e}");
+        (d, held)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn probe_retries_while_the_binary_is_text_file_busy() {
+        let (d, held) = busy_install("0.8.0");
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            drop(held);
+        });
+        assert_eq!(installed_version(d.path()), Some(v("0.8.0")));
+        releaser.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn probe_gives_up_when_the_binary_stays_busy() {
+        let (d, _held) = busy_install("0.8.0");
+        let t = std::time::Instant::now();
+        assert_eq!(installed_version(d.path()), None);
+        assert!(t.elapsed() < Duration::from_secs(2));
     }
 
     fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
