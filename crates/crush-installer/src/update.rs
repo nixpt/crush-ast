@@ -561,15 +561,15 @@ fn run_version_probe(path: &Path) -> io::Result<std::process::Output> {
 /// runnable `crush` there. A transient "text file busy" exec failure is
 /// retried a few times before it counts as "not runnable". An exec error
 /// other than "not found" is still `None` (the output is unchanged) but is
-/// reported on stderr when `CRUSH_UPDATE_DEBUG` is set, so it can be told
-/// apart from a missing install.
+/// reported on stderr when `CRUSH_UPDATE_DEBUG` is set (to anything but empty
+/// or `0`, like `CRUSH_DEBUG`), so it can be told apart from a missing install.
 pub fn installed_version(dir: &Path) -> Option<Version> {
     let path = dir.join(binary_name("crush"));
     let out = match run_version_probe(&path) {
         Ok(o) => o,
         Err(e) => {
             if e.kind() != io::ErrorKind::NotFound
-                && std::env::var_os("CRUSH_UPDATE_DEBUG").is_some()
+                && std::env::var_os("CRUSH_UPDATE_DEBUG").is_some_and(|v| !v.is_empty() && v != "0")
             {
                 eprintln!(
                     "crush update: cannot run '{}' --version: {e}",
