@@ -133,7 +133,10 @@ module.exports = grammar({
             optional(seq(':', field('type', $.identifier)))
         ),
 
+        // `pub struct P { … }` (V1, #519): `pub` is recorded by the frontend.
+        // `trait` has no rule here yet, so `pub trait` has none either.
         struct_def: $ => seq(
+            optional('pub'),
             'struct',
             field('name', $.identifier),
             '{',
