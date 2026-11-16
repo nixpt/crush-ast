@@ -22,6 +22,8 @@ fn sp(line: u32, col: u32) -> Option<Span> {
 /// ```
 pub fn rust_point() -> CosmModule {
     let mut point = KindDecl {
+        module: None,
+        package: None,
         name: "Point".into(),
         home_lang: "rust".into(),
         span: sp(2, 1),
@@ -76,6 +78,7 @@ pub fn rust_point() -> CosmModule {
         satisfaction: Satisfaction::Nominal,
     };
     CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![point],
         interfaces: vec![shape],
     }
@@ -84,7 +87,10 @@ pub fn rust_point() -> CosmModule {
 /// Python's root: what a Python program's module is validated against.
 pub fn python_prelude() -> CosmModule {
     CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![KindDecl {
+            module: None,
+            package: None,
             name: "object".into(),
             home_lang: "python".into(),
             span: None,
@@ -119,6 +125,8 @@ pub fn python_prelude() -> CosmModule {
 /// ```
 pub fn python_animals() -> CosmModule {
     let python_class = |name: &str, parent: &str, line: u32| KindDecl {
+        module: None,
+        package: None,
         name: name.into(),
         home_lang: "python".into(),
         span: sp(line, 1),
@@ -155,6 +163,7 @@ pub fn python_animals() -> CosmModule {
     dog.hooks.hash = Some(HookImpl::Disabled);
 
     CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![animal, dog],
         interfaces: vec![],
     }
@@ -201,6 +210,7 @@ pub fn crush_point() -> CosmModule {
         satisfaction: Satisfaction::Nominal,
     };
     CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![point],
         interfaces: vec![shape],
     }

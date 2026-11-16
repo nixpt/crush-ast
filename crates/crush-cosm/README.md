@@ -45,7 +45,7 @@ point.storage = Storage::Sealed {
     fields: vec![FieldDecl::new("x", CosmType::Int), FieldDecl::new("y", CosmType::Int)],
 };
 point.members.push(MemberDecl::method("norm2", "Point::norm2"));
-let module = CosmModule { kinds: vec![point], interfaces: vec![] };
+let module = CosmModule { kinds: vec![point], ..CosmModule::default() };
 
 assert!(validate(&module).is_empty());
 assert_eq!(module.kind("Point").unwrap().field_slot("y"), Some(1));
@@ -77,6 +77,12 @@ Serde JSON, like CAST. Strategy names are the design doc's spellings, `snake_cas
   hook, ordering is `cmp`);
 - **types** are `CastType`'s JSON: `"Int"`, `"Any"`, `{"Array": "Float"}`, `{"Struct": "Point"}`;
 - **spans** are `{"file"?, "line", "col", "end_line"?, "end_col"?}` (1-based), optional everywhere;
+- **owners** (COSM 0.2.0, V3b #522): a kind may carry `"module"` (the declaring module's import
+  path, e.g. `"geo"`) and `"package"` (`"pkg:<name>"` for a crush-pkg package, `"dir:<label>"` for
+  a library directory); the module may carry `"fn_packages": {"<function>": "<package>", …}`, the
+  owning package of each function outside the root package. Absent means the program's own file
+  and the **root package**; `"root"` is never written, and an empty id, an explicit `null` or a
+  spelled-out `"root"` is a load error;
 - empty lists, empty hooks and absent options are omitted; unknown fields are rejected everywhere,
   members included (a member may carry only `name`, `span`, `kind` and its kind's own keys).
   Parse errors name the JSON path
@@ -109,6 +115,15 @@ from decisions 5 and 7 of `docs/design/visibility-and-packages.md`:
 - In CVM1, a kind table whose module needs more than the base version is written with kind-table
   format `2` (format `1` otherwise). Runtimes from before this rule refuse format 2 by name, since
   they predate the `cosm_version` check.
+
+| `cosm_version` | adds | written when |
+|---|---|---|
+| `0.1.0` (absent) | the schema before the rule | nothing below is used |
+| `0.2.0` | owner ids (V3b, #522): `KindDecl.module`, `KindDecl.package`, `fn_packages`; all must-understand | a kind has an owner field, or a function is outside the root package |
+
+Owner ids are recorded, not enforced: member visibility (V6, #525) is what will compare a member's
+owner with the package of the executing function. A module that only records `fn_packages` (a
+program of several packages without kinds) is still a kind-table section in CVM1.
 
 The gate sits in `CosmModule`'s deserializer, so it covers every load path: `CosmModule::from_json`,
 CVM1's kind table and CASM's `cosm` field (JSON and binary). Tests: `tests/evolution.rs`.
