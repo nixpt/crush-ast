@@ -20,7 +20,10 @@ add its entry after yours.
   PortableVm cap dispatch, and the shared `ai_native.*` / `dom_native.*` dispatch FastVM calls)
   one leading `"{cap}: "` or `"{cap} "` is now stripped, through `VmError::cap_failed`. Only the
   exact cap name is stripped, once, case-sensitively. Caps keep their own prefix when called
-  directly through `HostCap::call()`. Error kinds and codes are unchanged (#514).
+  directly through `HostCap::call()`. Error kinds and codes are unchanged. A program that
+  catches a failing cap sees the same change in the caught value's text
+  (`error(tcp.recv: timed out after 500 ms)`), so a script that matched the doubled text must
+  be updated (#514).
 - COSM has a version rule (F7, #521). A kind table may carry `cosm_version`; a runtime loads the
   same major and a minor no greater than its own and refuses a newer one by name. Member objects
   are now must-understand like the rest of COSM: an unknown key on a member is a load error
