@@ -13,6 +13,7 @@ pub mod parser;
 pub mod render;
 pub mod semantics;
 pub mod types;
+pub mod visibility_check;
 mod walker_intrinsics;
 pub mod wip_check;
 
@@ -120,10 +121,32 @@ pub fn parse_source_with_imports(
     origin: &std::path::Path,
     opts: &import_system::ImportOptions,
 ) -> Result<crush_cast::Program> {
+    Ok(parse_source_with_imports_reporting(source, origin, opts)?.0)
+}
+
+/// [`parse_file`], also returning the import graph's visibility findings
+/// (`W-VIS01` warnings, `N-VIS01` notes; V1, #519). They never fail the
+/// parse; the CLIs print them with the other compile warnings.
+pub fn parse_file_reporting(
+    path: &std::path::Path,
+    opts: &import_system::ImportOptions,
+) -> Result<(crush_cast::Program, Vec<diagnostics::CompilerDiagnostic>)> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("cannot read '{}': {e}", path.display()))?;
+    parse_source_with_imports_reporting(&source, path, opts)
+}
+
+/// [`parse_source_with_imports`], also returning the visibility findings
+/// (see [`parse_file_reporting`]).
+pub fn parse_source_with_imports_reporting(
+    source: &str,
+    origin: &std::path::Path,
+    opts: &import_system::ImportOptions,
+) -> Result<(crush_cast::Program, Vec<diagnostics::CompilerDiagnostic>)> {
     let mut program = parser::Parser::parse(source).map_err(ParseErrors)?;
-    import_system::resolve_imports(&mut program, origin, opts)?;
+    let findings = import_system::resolve_imports_reporting(&mut program, origin, opts)?;
     cast_enrich::enrich_cast(&mut program);
-    Ok(program)
+    Ok((program, findings))
 }
 
 /// Parse Crush source, enrich the CAST, and run all compiler analysis passes.
@@ -150,6 +173,7 @@ pub fn check_program(program: &crush_cast::Program) -> Vec<diagnostics::Compiler
     diags.extend(wip_check::check_wip(program));
     diags.extend(wip_check::check_temporaries(program));
     diags.extend(mutation_check::check_mutation_ordering(program));
+    diags.extend(visibility_check::check_pub_internal(program));
     diags
 }
 
