@@ -299,16 +299,23 @@ V0 needs no decision and can start now. V1, V2, V4 and V5 need decisions 1, 3 an
   lambdas, async bodies) is recorded under the function it came from. A merged `struct`/`impl`/
   `trait` carries its module's merge prefix and takes the package of that module's functions
   (`inherit_declaration_owners`); a module whose functions disagree, or a declaration that disagrees
-  with them, is an internal compiler error. A module that declares types and **no** function has
-  nothing to derive from: its declarations need V1's own stamp (#537 stamps functions only today).
+  with them, is an internal compiler error. A `"root"` stamp (V1 puts one on every merged function)
+  is removed in the same lowering step, before anything copies meta, so it changes no output.
+- **Open, must close before V6 (#525):** a module that declares types and **no** function has
+  nothing to derive an owner from, so its Kinds stay root-owned until the resolver stamps
+  declarations itself (#537 stamps functions only today). Recorded-only owners make that harmless
+  now; once V6 enforces visibility it would let such a module's members be read as the root
+  package's.
 - **A program with no Kinds** still gets a kind-table section when it has owners
   (`Program::cosm_section`); `kind_table()` keeps meaning "declares Kinds or interfaces", so the
   engines' checks are unchanged.
 - **Package ids in artifacts.** `root` (omitted), `pkg:<name>` (a crush-pkg package, kept), and
   `dir:<label>` for a library directory: the directory's last path component, numbered `#2`, `#3`, …
   when two directories of one program share it. A user's absolute directory never reaches an
-  artifact. A directory written `.` or `..` is labelled by the directory it names (resolved on
-  disk), not `dir`. The frontend reads `meta["package"]`, which V1 (#519) records; until V1 lands
+  artifact. The label comes from the spelling alone, never the filesystem or the working
+  directory, so the same source compiles to the same owners in any checkout: a directory written
+  `.` or `..` has no real component and is labelled `dir` (`#N` on a clash). The resolver (V1) is
+  the place to pass a meaningful directory spelling. The frontend reads `meta["package"]`, which V1 (#519) records; until V1 lands
   nothing is filled from source.
 - **Run time.** The scheduler VM and the portable VM read `fn_packages` at load
   (`KindTable::function_package`, `KindTable::code_owners` (a sorted entry index, binary-searched),

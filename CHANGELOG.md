@@ -24,7 +24,9 @@ add its entry after yours.
   unaffected. Owner ids are `pkg:<name>` or `dir:<label>` (a directory's last component, never a
   local path); one rule refuses anything else on read, on write and in `validate`
   (`cosm::invalid_owner_id`). Function ownership lives in COSM, not CASM, because CASM's own gate
-  takes any `1.x`. Recorded only; member visibility (#525) will enforce it.
+  takes any `1.x`. Recorded only; member visibility (#525) will enforce it. `--emit cast` of a
+  program that imports a module with `struct` / `impl` / `trait` now shows `module` and
+  `module_prefix` in those declarations' meta, as functions already showed `module`.
 
 - **Behaviour change:** `str.starts_with` and `str.ends_with` now return Bool (`true`/`false`) on
   every engine, as `str.contains` already did. They returned Int `1`/`0`, so
