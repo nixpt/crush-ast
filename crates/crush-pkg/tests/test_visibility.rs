@@ -368,3 +368,35 @@ fn json_mode_keeps_the_gate_errors_off_stdout() {
     );
     assert!(stderr(&out).contains("[E-VIS01]"), "{}", text(&out));
 }
+
+/// The package gate walks what the resolver sees (#545 review): an import
+/// goes through a symlinked `src/vendor/`, so a legacy module behind the
+/// link fails the gate like one in a real directory.
+#[cfg(unix)]
+#[test]
+fn the_package_gate_follows_a_symlinked_source_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = tmp.path().join("geo");
+    write(
+        &lib,
+        &[("capsule.toml", LIB_TOML), ("src/geo.crush", PUB_GEO)],
+    );
+    write(tmp.path(), &[("shared/old.crush", LEGACY_GEO)]);
+    let ok = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
+    assert!(ok.status.success(), "no link yet: {}", text(&ok));
+
+    std::os::unix::fs::symlink("../../shared", lib.join("src/vendor")).unwrap();
+    // A loop beside it does not hang the walk.
+    std::os::unix::fs::symlink("..", lib.join("src/up")).unwrap();
+    let out = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("vendor/old.crush: legacy: no pub, everything public") && err.contains("area"),
+        "lists the module behind the link: {err}"
+    );
+    assert!(
+        err.contains("1 module(s) of package `geo`"),
+        "and only that one: {err}"
+    );
+}

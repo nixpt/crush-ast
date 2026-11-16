@@ -655,7 +655,8 @@ impl PackageBuilder {
     /// module of the package's sources that has no `pub` fails, even when no
     /// other package imports it. The sources are the entry's directory; when
     /// that is the package root, its `tests/` and `examples/` are left out
-    /// (hidden directories and `target/` always are). The entry file is
+    /// (hidden directories and `target/` always are; a symlinked directory
+    /// is followed, as an import follows it). The entry file is
     /// checked like the rest: this is a library gate (an application needs
     /// none, since legacy inside one package stays fine). Each failing
     /// module is printed with its names.

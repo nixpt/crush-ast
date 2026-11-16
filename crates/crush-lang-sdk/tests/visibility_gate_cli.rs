@@ -306,3 +306,130 @@ fn e_vis01_json_level_is_error() {
     assert_eq!(v["code"], "E-VIS01");
     assert_eq!(v["level"], "error");
 }
+
+/// The directory walk sees what the import resolver sees (#545 review). The
+/// resolver looks `import vendor.old` up as `<root>/vendor/old.crush` and
+/// goes through a symlinked `vendor/`, so the walk follows it too.
+#[cfg(unix)]
+mod symlinked_dirs {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn a_legacy_module_behind_a_symlinked_directory_is_listed_and_fails_the_gate() {
+        let dir = tree(&[
+            ("src/geo.crush", PUB_GEO),
+            ("shared/old.crush", LEGACY),
+            (
+                "main.crush",
+                "import vendor.old\nfn main() {\n    print(old.area(2, 3))\n}\n",
+            ),
+        ]);
+        symlink("../shared", dir.path().join("src/vendor")).unwrap();
+
+        // The resolver reaches the module through the link ...
+        let check = crushc(dir.path(), &["--check", "-L", "src", "main.crush"]);
+        assert!(check.status.success(), "{}", stderr(&check));
+
+        // ... so the listing shows it, under the path an import would use ...
+        let out = crushc(dir.path(), &["--list-exports", "src"]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "src/geo.crush: pub\n  pub: area\n  private: helper\n\
+             src/vendor/old.crush: legacy: no pub, everything public\n  public: area, helper\n"
+        );
+        // ... and the directory gate fails it.
+        let gated = crushc(
+            dir.path(),
+            &["--list-exports", "--deny-legacy-visibility", "src"],
+        );
+        assert_eq!(gated.status.code(), Some(1), "{}", stderr(&gated));
+        let err = stderr(&gated);
+        assert!(err.contains("[E-VIS01] src/vendor/old.crush"), "{err}");
+        assert!(
+            err.contains("1 legacy module(s) fail the stage-2 gate"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_symlink_loop_terminates_and_lists_each_directory_once() {
+        let dir = tree(&[("src/geo.crush", PUB_GEO), ("src/sub/old.crush", LEGACY)]);
+        let src = dir.path().join("src");
+        // A link to the directory it sits in, a link back up from below, and
+        // two links that point at each other (they resolve to nothing).
+        symlink(".", src.join("self")).unwrap();
+        symlink("..", src.join("sub/up")).unwrap();
+        symlink("pong", src.join("ping")).unwrap();
+        symlink("ping", src.join("pong")).unwrap();
+        // The same directory again, beside the real one: listed once, under
+        // the real path.
+        symlink("sub", src.join("alias")).unwrap();
+
+        let out = crushc(dir.path(), &["--list-exports", "src"]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(
+            stdout(&out),
+            "src/geo.crush: pub\n  pub: area\n  private: helper\n\
+             src/sub/old.crush: legacy: no pub, everything public\n  public: area, helper\n"
+        );
+        let gated = crushc(
+            dir.path(),
+            &["--list-exports", "--deny-legacy-visibility", "src"],
+        );
+        assert_eq!(gated.status.code(), Some(1), "{}", stderr(&gated));
+        assert!(
+            stderr(&gated).contains("1 legacy module(s) fail the stage-2 gate"),
+            "{}",
+            stderr(&gated)
+        );
+    }
+
+    /// A hidden directory stays out of the walk because the resolver cannot
+    /// reach it either: a module path is made of identifiers, and none
+    /// starts with `.`. That holds for a real one and for a link.
+    #[test]
+    fn a_hidden_directory_is_skipped_because_no_import_can_name_it() {
+        let dir = tree(&[
+            ("src/geo.crush", PUB_GEO),
+            ("src/.cache/old.crush", LEGACY),
+            ("shared/old.crush", LEGACY),
+            (
+                "main.crush",
+                "import .cache.old\nfn main() {\n    print(1)\n}\n",
+            ),
+        ]);
+        symlink("../shared", dir.path().join("src/.vendor")).unwrap();
+
+        let check = crushc(dir.path(), &["--check", "-L", "src", "main.crush"]);
+        assert!(
+            !check.status.success(),
+            "`import .cache.old` must not resolve: {}",
+            stderr(&check)
+        );
+
+        let gated = crushc(
+            dir.path(),
+            &["--list-exports", "--deny-legacy-visibility", "src"],
+        );
+        assert!(gated.status.success(), "{}", stderr(&gated));
+        assert_eq!(
+            stdout(&gated),
+            "src/geo.crush: pub\n  pub: area\n  private: helper\n"
+        );
+
+        // Named as the root, it is walked: a hidden directory can be a search
+        // root (`-L src/.cache`), and the root is never filtered.
+        let root = crushc(
+            dir.path(),
+            &["--list-exports", "--deny-legacy-visibility", "src/.cache"],
+        );
+        assert_eq!(root.status.code(), Some(1), "{}", stderr(&root));
+        assert!(
+            stderr(&root).contains("[E-VIS01] src/.cache/old.crush"),
+            "{}",
+            stderr(&root)
+        );
+    }
+}
