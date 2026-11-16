@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(web): a crush-web session granted `fs` no longer aborts with `RuntimeError: unreachable`
+  (#534). The in-memory filesystem (`MemFs`, since 0.11.0) stamped modification times with
+  `SystemTime::now()`, which panics on `wasm32-unknown-unknown`, and it did so while the
+  registry was built, so every `fs`-granted browser run died before its first instruction.
+  `MemFs` now takes its clock from the host: `MemFs::with_clock` /
+  `HostCapsBuilder::fs_memory_with_clock`, and crush-web passes the browser's `Date.now()`, so
+  `fs.stat` reports real times there. Native behaviour is unchanged (`fs_memory()` still uses
+  the system clock). The crush-web headless-Chromium job now runs an `fs`-granted session.
 - **Behaviour change:** `str.starts_with` and `str.ends_with` now return Bool (`true`/`false`) on
   every engine, as `str.contains` already did. They returned Int `1`/`0`, so
   `str.starts_with("ab", "a") == true` was silently false and `print` showed `1`. Code that
