@@ -143,6 +143,7 @@ one known (member → conformance → field → declaration).
 | `field_shadowed_by_member` | a method/accessor/static member named like a sealed field |
 | `undeclared_field` · `empty_accessor` | a `field` member on a sealed kind must be a declared field; an accessor needs `get` or `set` |
 | `value_semantics_with_open_storage` | `value(copy)`/`value(move)` with `open_dict`/`open_dict_with_slots` |
+| `invalid_owner_id` | a kind's `module` / `package` or a `fn_packages` value breaks the owner-id rule (`owner_id_problem`); the reader and the writer refuse the same ids |
 | `parent_arity` | `none` takes no parents; `single`/`prototype_chain` at most one |
 | `duplicate_base` · `inconsistent_mro` | C3 failures, with CPython's exact `TypeError` message |
 | `inheritance_cycle` · `incompatible_parent` | a kind inherits from itself; an `embedding_promotion` kind used as a linear parent |

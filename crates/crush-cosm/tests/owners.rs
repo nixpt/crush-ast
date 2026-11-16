@@ -176,3 +176,46 @@ fn owner_fields_are_never_ignorable() {
         assert!(!crush_cosm::IGNORABLE_MEMBER_KEYS.contains(&key));
     }
 }
+
+/// The owner-id rule is one check on every route: what the reader refuses,
+/// the writer refuses to write and `validate` reports.
+#[test]
+fn the_writer_and_validate_refuse_what_the_reader_refuses() {
+    for bad in ["root", "", "lib", "pkg:", "dir:", "pkg:a/b", "dir:x\\y"] {
+        let mut m = point();
+        m.kinds[0].package = Some(bad.into());
+        let err = m.try_to_json().unwrap_err();
+        assert!(err.contains("kinds[0].package"), "{bad:?}: {err}");
+        let d = crush_cosm::validate(&m);
+        assert!(
+            d.iter()
+                .any(|d| d.code == crush_cosm::DiagnosticCode::InvalidOwnerId),
+            "{bad:?}: {d:?}"
+        );
+        let mut v = json_of(&owned());
+        v["kinds"][0]["package"] = json!(bad);
+        assert!(load(&v).is_err(), "{bad:?} must not load");
+
+        let mut m = point();
+        m.fn_packages.insert(FnRef::new("f"), bad.into());
+        assert!(m.try_to_json().unwrap_err().contains("fn_packages.f"), "{bad:?}");
+    }
+    let mut m = point();
+    m.kinds[0].module = Some("a/b".into());
+    assert!(m.try_to_json().is_err());
+    for good in ["pkg:facet", "dir:lib", "dir:lib#2"] {
+        let mut m = point();
+        m.kinds[0].package = Some(good.into());
+        let back = CosmModule::from_json(&m.try_to_json().unwrap()).unwrap();
+        assert_eq!(back, m);
+        assert!(crush_cosm::validate(&m).is_empty(), "{good}");
+    }
+}
+
+#[test]
+#[should_panic(expected = "kinds[0].package")]
+fn to_json_panics_on_an_invalid_owner_id() {
+    let mut m = point();
+    m.kinds[0].package = Some("root".into());
+    let _ = m.to_json();
+}
