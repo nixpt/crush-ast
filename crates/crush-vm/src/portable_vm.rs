@@ -59,6 +59,9 @@
 
 use crate::bytecode::{Program, instruction_size};
 use crate::host::HostCaps;
+use crate::scheduler::{
+    need_array, need_array_index, need_list, need_set, need_tuple, need_vector,
+};
 use crate::vm::{Quotas, Value, VmError, VmResult};
 
 /// A host-provided runner for `@lang` blocks (#91): `(lang, code, env)` →
@@ -1054,8 +1057,8 @@ impl PortableVm {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.push(match opcode {
-                    AND => Value::Bool(value_is_truthy(&a) && value_is_truthy(&b)),
-                    OR => Value::Bool(value_is_truthy(&a) || value_is_truthy(&b)),
+                    AND => Value::Bool(a.is_truthy() && b.is_truthy()),
+                    OR => Value::Bool(a.is_truthy() || b.is_truthy()),
                     _ => unreachable!(),
                 });
             }
@@ -1079,12 +1082,12 @@ impl PortableVm {
             }
             NOT => {
                 let a = self.pop()?;
-                self.push(Value::Bool(!value_is_truthy(&a)));
+                self.push(Value::Bool(!a.is_truthy()));
             }
             TYPEOF => {
                 let v = self.pop()?;
-                let name = crate::cosm_rt::type_name(&v)
-                    .unwrap_or_else(|| value_type_name(&v).to_string());
+                let name =
+                    crate::cosm_rt::type_name(&v).unwrap_or_else(|| v.type_name().to_string());
                 self.push(Value::Str(name));
             }
             CAST => {
@@ -1120,7 +1123,7 @@ impl PortableVm {
                             _ => Value::Float(0.0),
                         });
                     }
-                    "bool" => self.push(Value::Bool(value_is_truthy(&v))),
+                    "bool" => self.push(Value::Bool(v.is_truthy())),
                     _ => self.push(v),
                 }
             }
@@ -1155,8 +1158,8 @@ impl PortableVm {
                 }
                 let take = match opcode {
                     JMP => true,
-                    JZ => !value_is_truthy(&self.pop()?),
-                    JNZ => value_is_truthy(&self.pop()?),
+                    JZ => !self.pop()?.is_truthy(),
+                    JNZ => self.pop()?.is_truthy(),
                     _ => unreachable!(),
                 };
                 if take {
@@ -1650,7 +1653,7 @@ impl PortableVm {
                     other => {
                         return Err(VmError::TypeError {
                             expected: "map",
-                            got: value_type_name(&other),
+                            got: other.type_name(),
                         });
                     }
                 };
@@ -1682,7 +1685,7 @@ impl PortableVm {
                     other => {
                         return Err(VmError::TypeError {
                             expected: "map",
-                            got: value_type_name(&other),
+                            got: other.type_name(),
                         });
                     }
                 };
@@ -1780,7 +1783,7 @@ impl PortableVm {
                 let Value::Record(r) = &target else {
                     return Err(VmError::TypeError {
                         expected: "record",
-                        got: value_type_name(&target),
+                        got: target.type_name(),
                     });
                 };
                 match val {
@@ -1900,7 +1903,7 @@ impl PortableVm {
                     other => {
                         return Err(VmError::TypeError {
                             expected: "array",
-                            got: value_type_name(&other),
+                            got: other.type_name(),
                         });
                     }
                 }
@@ -2439,7 +2442,7 @@ impl PortableVm {
                         }
                         other => Err(VmError::TypeError {
                             expected: "array",
-                            got: value_type_name(other),
+                            got: other.type_name(),
                         }),
                     }
                 }
@@ -2449,7 +2452,7 @@ impl PortableVm {
                         other => {
                             return Err(VmError::TypeError {
                                 expected: "int",
-                                got: value_type_name(other),
+                                got: other.type_name(),
                             });
                         }
                     };
@@ -2468,7 +2471,7 @@ impl PortableVm {
                         other => {
                             return Err(VmError::TypeError {
                                 expected: "string",
-                                got: value_type_name(other),
+                                got: other.type_name(),
                             });
                         }
                     };
@@ -2916,66 +2919,6 @@ fn need_num(v: Value) -> Result<Value, VmError> {
     }
 }
 
-/// Helper functions for array operations.
-fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
-    match v {
-        Value::Array(a) => Ok(a),
-        other => Err(VmError::TypeError {
-            expected: "array",
-            got: value_type_name(&other),
-        }),
-    }
-}
-
-fn need_tuple(v: Value) -> Result<Vec<Value>, VmError> {
-    match v {
-        Value::Tuple(t) => Ok(t),
-        other => Err(VmError::TypeError {
-            expected: "tuple",
-            got: value_type_name(&other),
-        }),
-    }
-}
-
-fn need_list(
-    v: Value,
-) -> Result<std::rc::Rc<std::cell::RefCell<std::collections::LinkedList<Value>>>, VmError> {
-    match v {
-        Value::List(l) => Ok(l),
-        other => Err(VmError::TypeError {
-            expected: "list",
-            got: value_type_name(&other),
-        }),
-    }
-}
-
-fn need_vector(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
-    match v {
-        Value::Vector(v_rc) => Ok(v_rc),
-        other => Err(VmError::TypeError {
-            expected: "vector",
-            got: value_type_name(&other),
-        }),
-    }
-}
-
-fn need_set(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
-    match v {
-        Value::Set(s) => Ok(s),
-        other => Err(VmError::TypeError {
-            expected: "set",
-            got: value_type_name(&other),
-        }),
-    }
-}
-
-fn need_array_index(v: &Value) -> Result<i64, VmError> {
-    match v {
-        Value::Int(i) => Ok(*i),
-        _ => Err(VmError::BadIndex(value_type_name(v))),
-    }
-}
-
 fn wrap_index(idx: i64, len: usize) -> Result<usize, VmError> {
     if idx < 0 {
         let wrapped = (idx + len as i64) as usize;
@@ -2998,31 +2941,6 @@ fn to_f64_p(v: &Value) -> f64 {
         Value::Int(i) => *i as f64,
         Value::Float(f) => *f,
         _ => 0.0,
-    }
-}
-
-/// Get a human-readable type name for a Value.
-fn value_type_name(v: &Value) -> &'static str {
-    match v {
-        Value::Null => "null",
-        Value::Bool(_) => "bool",
-        Value::Int(_) => "int",
-        Value::Float(_) => "float",
-        Value::Str(_) => "str",
-        Value::Array(_) => "array",
-        Value::Tuple(_) => "tuple",
-        Value::List(_) => "list",
-        Value::Vector(_) => "vector",
-        Value::Set(_) => "set",
-        Value::Map(_) => "map",
-        Value::Error(_) => "error",
-        Value::Bytes(_) => "bytes",
-        Value::Handle(_) => "handle",
-        Value::Foreign(_) => "foreign",
-        Value::Func(_) => "function",
-        Value::Cell(_) => "cell",
-        Value::Record(_) => "record",
-        Value::Kind(_) => "kind",
     }
 }
 
@@ -3079,12 +2997,6 @@ pub fn value_to_text(v: &Value) -> String {
         }
         Value::Kind(k) => format!("<kind {}>", k.name()),
     }
-}
-
-/// Truthiness — the one canonical rule lives on `Value::is_truthy`
-/// (shared with the scheduler; CRUSH-134).
-fn value_is_truthy(v: &Value) -> bool {
-    v.is_truthy()
 }
 
 #[cfg(test)]
