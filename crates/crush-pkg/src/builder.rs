@@ -21,6 +21,11 @@ pub struct BuildOutput {
     pub source_files: Vec<PathBuf>,
     pub functions: Vec<String>,
     pub deps: Vec<DepResolution>,
+    /// The visibility findings of the compile (#539): `W-VIS01`, `N-VIS01`
+    /// (or, under the stage-2 gate, `E-VIS01`) from the import graph, and
+    /// `W-VIS02`. Already printed to stderr by the builder; here for front
+    /// ends that report them their own way. Empty in concatenation mode.
+    pub visibility: Vec<crush_frontend::diagnostics::CompilerDiagnostic>,
 }
 
 pub struct PackageBuilder {
@@ -31,6 +36,8 @@ pub struct PackageBuilder {
     /// Don't print the per-stage detail lines (`compiled …`, `wrote …`):
     /// for front ends such as squeeze that print their own status.
     quiet: bool,
+    /// The visibility stage-2 gate (#539, `--deny-legacy-visibility`).
+    deny_legacy_visibility: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +414,11 @@ fn read_dep_source(root: &Path, dep: &crate::manifest::Dependency) -> Option<Str
     std::fs::read_to_string(dep_path.join(&dep_manifest.capsule.entry)).ok()
 }
 
+/// `name` is exactly `want` (a path component).
+fn rel_is(name: &std::ffi::OsStr, want: &str) -> bool {
+    name == std::ffi::OsStr::new(want)
+}
+
 /// The name a package is imported by: its `capsule.toml` name with `-`
 /// turned into `_` (`my-lib` → `import my_lib`), as cargo does for crates.
 pub fn import_name(package: &str) -> String {
@@ -435,7 +447,18 @@ impl PackageBuilder {
             root_dir,
             offline: false,
             quiet: false,
+            deny_legacy_visibility: false,
         }
+    }
+
+    /// The visibility stage-2 gate (#539): [`build`](Self::build) fails on a
+    /// module of the package (in the entry's directory) that has no `pub`
+    /// and is not a program, and every compile fails on a `W-VIS01` or an
+    /// `E-VIS01` (a module with no `pub` that another package imports).
+    /// Off by default: the findings are printed and never fail.
+    pub fn deny_legacy_visibility(mut self, deny: bool) -> Self {
+        self.deny_legacy_visibility = deny;
+        self
     }
 
     /// Resolve git dependencies from `capsule.lock` and the local cache only.
@@ -486,11 +509,26 @@ impl PackageBuilder {
     ///   calls of a dependency's functions resolve, as before imports existed.
     pub fn build(&self) -> anyhow::Result<BuildOutput> {
         let entry = self.root_dir.join(&self.manifest.capsule.entry);
+        if self.deny_legacy_visibility {
+            self.check_package_surface(&entry)?;
+        }
         if entry.is_file() && uses_imports(&entry) {
             let deps = self.resolve_deps()?;
             return self.compile_file(&entry, deps);
         }
         let deps = self.resolve_deps()?;
+        if self.deny_legacy_visibility && !deps.is_empty() {
+            // Concatenation pastes each dependency's entry into one program,
+            // so every one of its names is reached by the legacy rule.
+            let names: Vec<&str> = deps.iter().map(|d| d.name.as_str()).collect();
+            anyhow::bail!(
+                "package `{}` reaches its dependencies ({}) by concatenation (its entry has no \
+                 `import`), so it relies on every name of theirs being public; this fails the \
+                 stage-2 gate (--deny-legacy-visibility). Import them: `import <dependency>`",
+                self.manifest.capsule.name,
+                names.join(", ")
+            );
+        }
         let sources = self.collect_all_sources()?;
 
         let has_entry = sources.iter().any(|(p, _)| p == &entry);
@@ -547,6 +585,7 @@ impl PackageBuilder {
             source_files: all_source_paths,
             functions,
             deps,
+            visibility: Vec::new(),
         })
     }
 
@@ -560,10 +599,31 @@ impl PackageBuilder {
     }
 
     fn compile_file(&self, file: &Path, deps: Vec<DepResolution>) -> anyhow::Result<BuildOutput> {
-        let imports = self.import_options(&deps);
-        let (casm, warnings) = crush_lang_sdk::compile::compile_crush_file_to_casm(
-            file,
-            &imports,
+        let mut imports = self.import_options(&deps);
+        imports.deny_legacy_visibility = self.deny_legacy_visibility;
+        // The same compile as `compile_crush_file_to_casm`, through the
+        // reporting parse so the visibility findings are printed (#539).
+        let (parsed, mut visibility) = crush_frontend::parse_file_reporting(file, &imports)?;
+        visibility.extend(crush_frontend::visibility_check::check_pub_internal(
+            &parsed,
+        ));
+        let shown = file.display().to_string();
+        crush_lang_sdk::compile::print_annotation_diagnostics(
+            &crush_lang_sdk::compile::visibility_diagnostics(visibility.clone(), &shown),
+            false,
+        );
+        let gate = visibility
+            .iter()
+            .filter(|d| d.severity == crush_frontend::diagnostics::DiagnosticSeverity::Error)
+            .count();
+        if gate > 0 {
+            anyhow::bail!(
+                "{gate} visibility finding(s) in {shown} fail the stage-2 gate \
+                 (--deny-legacy-visibility)"
+            );
+        }
+        let (casm, warnings) = crush_lang_sdk::compile::compile_cast_to_casm(
+            parsed,
             &crush_lang_sdk::compile::CompileOptions::default(),
         )?;
         let mut program = crush_lang_sdk::compile::casm_to_vm(&casm)?;
@@ -587,7 +647,62 @@ impl PackageBuilder {
             source_files: vec![file.to_path_buf()],
             functions,
             deps,
+            visibility,
         })
+    }
+
+    /// The stage-2 gate's package check (#539): every importable `.crush`
+    /// module of the package's sources that has no `pub` fails, even when no
+    /// other package imports it. The sources are the entry's directory; when
+    /// that is the package root, its `tests/` and `examples/` are left out
+    /// (hidden directories and `target/` always are). The entry file is
+    /// checked like the rest: this is a library gate (an application needs
+    /// none, since legacy inside one package stays fine). Each failing
+    /// module is printed with its names.
+    fn check_package_surface(&self, entry: &Path) -> anyhow::Result<()> {
+        let src_dir = entry
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.root_dir.clone());
+        let at_root =
+            std::fs::canonicalize(&src_dir).ok() == std::fs::canonicalize(&self.root_dir).ok();
+        let mut legacy = Vec::new();
+        for (file, surface) in crush_frontend::visibility_check::surfaces(&src_dir)? {
+            if at_root
+                && file
+                    .strip_prefix(&src_dir)
+                    .ok()
+                    .and_then(|rel| rel.components().next())
+                    .is_some_and(|first| {
+                        rel_is(first.as_os_str(), "tests") || rel_is(first.as_os_str(), "examples")
+                    })
+            {
+                continue;
+            }
+            let surface = surface.map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+            if surface.fails_gate() {
+                eprint!(
+                    "{}",
+                    crush_frontend::visibility_check::render_surface(
+                        &file.display().to_string(),
+                        &surface
+                    )
+                );
+                legacy.push(file.display().to_string());
+            }
+        }
+        if !legacy.is_empty() {
+            anyhow::bail!(
+                "{} module(s) of package `{}` have no `pub`, so every name in them is public by \
+                 the legacy rule, and fail the stage-2 gate (--deny-legacy-visibility): {} (mark \
+                 their exports `pub`; before 1.0 a module with no `pub` stops being all-public, \
+                 #524)",
+                legacy.len(),
+                self.manifest.capsule.name,
+                legacy.join(", ")
+            );
+        }
+        Ok(())
     }
 
     /// Where an import-mode compile looks for modules: the entry file's
