@@ -6,6 +6,11 @@ must rule on are collected under **Decisions**.
 
 ## What exists today (checked on main 30d6d581)
 
+*These facts are the state on 2026-11-14, before V3a (#529) merged. Since #529, `MemberDecl` rejects
+unknown keys (`check_keys`), `cosm_version` is read on every load, and a versioned kind table is written as
+`kt_format 2`. Where this note says "today" about those three (this table, §2 "Schema change", and the
+advisor's NOT CHECKED list), read "before #529"; decision 7 below describes what was built.*
+
 | Fact | Where | Checked how |
 |---|---|---|
 | `pub fn` and `pub async fn` parse, and `pub` is thrown away. `pub` is not a keyword: the parser matches the identifier `pub` before `fn`. | `crates/crush-frontend/src/parser/mod.rs:648-700` | read |
