@@ -847,15 +847,21 @@ fn run_file(args: &RunArgs) -> anyhow::Result<()> {
             // CRUSH-369: annotation warnings (stale @wip, expired @temporary,
             // wildcard in an exhaustive match, @must-call-after): advisory,
             // stderr, in the same format as the other messages.
+            // V1 (#519): the import graph's visibility findings (`W-VIS01`
+            // warnings, `N-VIS01` notes) come first, in the same stream.
             if format == InputFormat::Crush
-                && let Ok(parsed) =
-                    crush_frontend::parse_file(&args.path, &import_options(&args.lib_paths))
+                && let Ok((parsed, visibility)) = crush_frontend::parse_file_reporting(
+                    &args.path,
+                    &import_options(&args.lib_paths),
+                )
             {
+                let file = args.path.display().to_string();
+                let mut diags = crush_lang_sdk::compile::compiler_diagnostics(visibility, &file);
+                diags.extend(crush_lang_sdk::compile::annotation_diagnostics(
+                    &parsed, &file,
+                ));
                 crush_lang_sdk::compile::print_annotation_diagnostics(
-                    &crush_lang_sdk::compile::annotation_diagnostics(
-                        &parsed,
-                        &args.path.display().to_string(),
-                    ),
+                    &diags,
                     matches!(args.message_format, MessageFormat::Json),
                 );
             }

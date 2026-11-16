@@ -71,6 +71,41 @@ $ crush-run run examples/crush/imports/main.crush
   `ImportOptions::max_depth` (64).
 - **Placement.** Imports go at the top level of a file. One inside a function (`fn main` included) or block is refused.
 
+## Visibility (stage 1: implemented, #519)
+
+The design is `docs/design/visibility-and-packages.md` §1 (ruling 1: per package, Go style, `pub`
+exports). Stage 1 warns; it changes no program's behaviour.
+
+- **`pub` is recorded.** `pub fn`, `pub async fn`, `pub struct` and `pub trait` (also `@kind(…) pub
+  struct`) set `meta["pub"]` on the CAST node. `pub` is contextual, not a keyword: a variable, field or
+  function named `pub` keeps working.
+- **Package = a property of the file.** The file's canonical path is matched against the known roots,
+  and the longest root containing it wins: the entry file's directory (the **root package**), each
+  crush-pkg package root (its entry's directory), each `-L` / `CRUSH_PATH` directory. A tie goes to the
+  root package, then named packages, then search directories, so `-L .` beside the entry changes
+  nothing. Inputs with no file (the REPL, `parse_source` and the string entry points, crush-web) are the
+  root package. crush-pkg marks the package being built as the root package
+  (`ImportOptions::home_package`), so a package's `tests/*.crush` share its `src/` package. Merged
+  functions record it in `meta["package"]` beside `meta["source_file"]`. Several unrelated libraries in
+  one `-L` directory form one package; give each its own directory, as crush-pkg does.
+- **`W-VIS01`** (warning): a cross-package use of a function that is not `pub`, on all three paths: the
+  call `q.f(…)`, the function value `q.f`, and `import a { f }` (reported once, at the import). It
+  names the function, the module's file and package, the using package and the fix (add `pub`).
+  Same-package use never warns.
+- **Legacy rule, `N-VIS01`** (note): a module with no `pub` anywhere is all-public. It gets one note,
+  at the first cross-package use of it; a module only its own package uses gets none.
+- **First `pub`.** One `pub` (on a function, struct or trait) makes the module's other functions private
+  to its package. A compiler sees one build, not the edit that added the `pub`, so the listing the
+  design asks for is attached to the **first `W-VIS01` per module**: it names every function the
+  module's `pub` keeps private and the ones it exports. A correctly annotated library that is used
+  correctly reports nothing.
+- **`W-VIS02`** (warning): `pub fn __x` exports a name marked internal.
+
+None of these stops a compile. `crushc` and `crush-run` print them on stderr with the annotation
+warnings (`--message-format json`: `level` `"warning"` or `"note"`); `crushc --deny-warnings` fails on
+the warnings and never on a note. crush-pkg builds and the REPL do not print them yet. API:
+`import_system::resolve_imports_reporting`, `crush_frontend::parse_file_reporting`.
+
 ## Diagnostics
 
 - Loading errors (not found, cycle, bad name, collision, top-level statement, syntax error in a module)
@@ -112,10 +147,9 @@ for later lines. `crushc --emit ast` dumps the file as written (imports unresolv
   struct literal only for structs declared in the same file; build values through module functions.
 - **Source maps** of imported functions carry the module's line numbers but not its file, so a debugger
   break inside one shows the importer's file name.
-- **Visibility**: every function of a module is importable today. `pub fn` is **accepted and not yet
-  enforced** (the parser drops `pub`), and the `__` prefix is only a convention, hidden from "it defines:
-  …" lists. The design is ruled (`docs/design/visibility-and-packages.md`): per-package visibility with
-  `pub` exporting, a `W-VIS01` warning first (#519), then an error before the 1.0 freeze (#524).
+- **Visibility, stage 3** (#524): `W-VIS01` becomes an error, and "no `pub` anywhere" stops meaning
+  all-public. **Kinds** are not checked yet: `pub struct` / `pub trait` are recorded, but per-module
+  kinds are #523, so a cross-package use of a non-`pub` kind does not warn.
 
 ## Done since the first version
 

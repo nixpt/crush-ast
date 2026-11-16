@@ -703,4 +703,118 @@ fn import_inside_a_block_stays_refused() {
             ],
         );
     }
+/// V1 (#519): a cross-package use of a name that is not `pub` is the warning
+/// `W-VIS01` on stderr; the program still runs and its stdout is what it was
+/// before visibility existed. A module with no `pub` gets one `N-VIS01` note.
+#[test]
+fn visibility_findings_go_to_stderr_and_change_no_output() {
+    let d = tree(&[
+        (
+            "lib/geo.crush",
+            "pub fn area(w, h) { return w * h }\nfn helper(x) { return x + 1 }\n",
+        ),
+        ("old/legacy.crush", "fn twice(x) { return x * 2 }\n"),
+        (
+            "main.crush",
+            "import geo\nimport legacy\nfn main() {\n    io.print(geo.area(2, 3))\n    io.print(geo.helper(1))\n    io.print(legacy.twice(4))\n    io.print(legacy.twice(5))\n}\n",
+        ),
+    ]);
+    let o = run_in(d.path(), &["main.crush", "-L", "lib", "-L", "old"]);
+    assert_prints(&o, &["6", "2", "8", "10"]);
+    let err = stderr(&o);
+    assert_eq!(err.matches("[W-VIS01]").count(), 1, "{err}");
+    assert!(err.contains("`helper` is not `pub`"), "{err}");
+    assert_eq!(
+        err.matches("[N-VIS01]").count(),
+        1,
+        "one note per module: {err}"
+    );
+    assert!(!stdout(&o).contains("VIS"), "findings never reach stdout");
+
+    // NDJSON: the note keeps level "note".
+    let o = Command::new(bin("crushc"))
+        .args([
+            "main.crush",
+            "-L",
+            "lib",
+            "-L",
+            "old",
+            "--message-format",
+            "json",
+        ])
+        .args(["-o", "out.cvm1"])
+        .current_dir(d.path())
+        .env_remove("CRUSH_PATH")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", stderr(&o));
+    let err = stderr(&o);
+    assert!(
+        err.contains(r#"{"code":"W-VIS01","level":"warning""#),
+        "{err}"
+    );
+    assert!(err.contains(r#"{"code":"N-VIS01","level":"note""#), "{err}");
+
+    // --deny-warnings fails on the warning ...
+    let deny = |main: &str| {
+        Command::new(bin("crushc"))
+            .args([
+                main,
+                "-L",
+                "lib",
+                "-L",
+                "old",
+                "--deny-warnings",
+                "-o",
+                "out.cvm1",
+            ])
+            .current_dir(d.path())
+            .env_remove("CRUSH_PATH")
+            .output()
+            .unwrap()
+    };
+    assert_eq!(deny("main.crush").status.code(), Some(1));
+    // ... and not on a note alone.
+    std::fs::write(
+        d.path().join("only_legacy.crush"),
+        "import legacy\nfn main() {\n    io.print(legacy.twice(4))\n}\n",
+    )
+    .unwrap();
+    let o = deny("only_legacy.crush");
+    assert!(
+        o.status.success(),
+        "a note never fails a build: {}",
+        stderr(&o)
+    );
+    assert!(stderr(&o).contains("[N-VIS01]"), "{}", stderr(&o));
+}
+
+/// V1 (#519): `pub fn __x` is `W-VIS02` through `crushc`, and
+/// `--deny-warnings` fails on it.
+#[test]
+fn pub_dunder_is_w_vis02_on_the_cli_and_denied() {
+    let d = tree(&[(
+        "main.crush",
+        "pub fn __leak() { return 1 }\nfn main() {\n    io.print(__leak())\n}\n",
+    )]);
+    let crushc = |extra: &[&str]| {
+        Command::new(bin("crushc"))
+            .args(["main.crush", "-o", "out.cvm1"])
+            .args(extra)
+            .current_dir(d.path())
+            .env_remove("CRUSH_PATH")
+            .output()
+            .unwrap()
+    };
+    let o = crushc(&[]);
+    assert!(
+        o.status.success(),
+        "a warning, not an error: {}",
+        stderr(&o)
+    );
+    assert!(stderr(&o).contains("[W-VIS02]"), "{}", stderr(&o));
+    assert!(stderr(&o).contains("`pub fn __leak`"), "{}", stderr(&o));
+    let o = crushc(&["--deny-warnings"]);
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert_prints(&run_in(d.path(), &["main.crush"]), &["1"]);
 }

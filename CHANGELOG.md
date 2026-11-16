@@ -21,6 +21,18 @@ add its entry after yours.
   imported module's `fn main` (its `main` is ignored, so the import used to vanish unseen) and for
   any other function of a module (it got the generic "not resolved" text). Migration: move the
   import to the top of the file (#535).
+- Module visibility, stage 1 (V1, #519). `pub` is recorded on `fn`, `async fn`, `struct` and
+  `trait` (`pub struct` / `pub trait` used to fail with `Undefined variable: pub`); `pub` stays a
+  contextual identifier. Every file belongs to a package (the longest of: the entry's directory,
+  each crush-pkg package root, each `-L` / `CRUSH_PATH` directory). A cross-package use of a
+  function that is not `pub` (`q.f(…)`, `q.f`, `import a { f }`) is the warning `W-VIS01`; a module
+  with no `pub` anywhere stays all-public and gets one `N-VIS01` note when another package uses it;
+  `pub fn __x` is `W-VIS02`. Warnings go to stderr; programs compile and run exactly as before.
+  `crushc --deny-warnings` fails on `W-VIS01` / `W-VIS02`, never on a note. Kinds are recorded
+  only (per-module kinds are #523). tree-sitter-crush parses `pub struct`.
+  API: `DiagnosticSeverity` gains `Note` and is now `#[non_exhaustive]` (treat an unknown level
+  as a note); `ImportOptions` gains `home_package`, so struct literals need
+  `..Default::default()`.
 - **Behaviour change:** `str.starts_with` and `str.ends_with` now return Bool (`true`/`false`) on
   every engine, as `str.contains` already did. They returned Int `1`/`0`, so
   `str.starts_with("ab", "a") == true` was silently false and `print` showed `1`. Code that

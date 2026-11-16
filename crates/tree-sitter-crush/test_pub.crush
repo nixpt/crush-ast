@@ -1,0 +1,11 @@
+// `pub` on items (V1, #519); the frontend records it as meta["pub"].
+pub struct Point { x: Int, y: Int }
+struct Plain { v }
+pub fn area(w, h) { return w * h }
+pub async fn later() { return 1 }
+fn helper() { return 2 }
+fn main() {
+    let pub = 3
+    print(pub)
+    print(area(2, pub))
+}
