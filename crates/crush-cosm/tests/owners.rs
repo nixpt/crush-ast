@@ -80,7 +80,8 @@ fn each_owner_field_alone_raises_the_version() {
 fn a_module_with_only_function_owners_is_not_empty() {
     let mut m = CosmModule::new();
     assert!(m.is_empty());
-    m.fn_packages.insert(FnRef::new("geo::f"), "pkg:geom".into());
+    m.fn_packages
+        .insert(FnRef::new("geo::f"), "pkg:geom".into());
     assert!(!m.is_empty());
     assert_eq!(
         m.to_json(),

@@ -460,7 +460,10 @@ fn a_reader_before_owner_ids_refuses_the_blob_by_name() {
 fn the_disassembler_keeps_owners_only_modules() {
     let p = two_fn_program(Some(owners_only()));
     let text = disassemble(&p);
-    assert!(text.contains("functions outside the root package: 1"), "{text}");
+    assert!(
+        text.contains("functions outside the root package: 1"),
+        "{text}"
+    );
     let back = assemble(&text, None, None).expect("reassembles");
     assert_eq!(back.cosm, Some(owners_only()));
 }
@@ -527,7 +530,10 @@ fn the_scheduler_vm_loads_owners_and_runs_as_before() {
     }
     let kinds = crate::cosm_rt::KindTable::load(&two_fn_program(Some(owned_point()))).unwrap();
     let point = kinds.get("Point").unwrap();
-    assert_eq!((point.module(), point.package()), (Some("geo"), Some("pkg:geom")));
+    assert_eq!(
+        (point.module(), point.package()),
+        (Some("geo"), Some("pkg:geom"))
+    );
 }
 
 #[test]
@@ -536,8 +542,6 @@ fn fastvm_runs_owner_ids_as_before() {
     // program with them exactly as without: the shared rule doesn't look at
     // them.
     for module in [owned_point(), owners_only()] {
-        assert!(
-            crate::fastvm::lower_bytecode_program(&two_fn_program(Some(module))).is_ok()
-        );
+        assert!(crate::fastvm::lower_bytecode_program(&two_fn_program(Some(module))).is_ok());
     }
 }

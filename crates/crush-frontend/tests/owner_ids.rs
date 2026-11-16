@@ -155,7 +155,12 @@ fn package_ids_normalize_idempotently() {
     let ids = |p: &crush_cast::Program| -> Vec<String> {
         ["helper", "other", "third"]
             .iter()
-            .map(|f| p.functions[*f].meta["package"].as_str().unwrap().to_string())
+            .map(|f| {
+                p.functions[*f].meta["package"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
             .collect()
     };
     let once = ids(&program);
@@ -164,7 +169,10 @@ fn package_ids_normalize_idempotently() {
     unique.sort();
     unique.dedup();
     assert_eq!(unique.len(), 3, "{once:?}");
-    assert!(once.iter().all(|id| !id.contains('/') && !id.contains('\\')));
+    assert!(
+        once.iter()
+            .all(|id| !id.contains('/') && !id.contains('\\'))
+    );
     crush_frontend::cosm_lower::normalize_package_ids(&mut program).unwrap();
     assert_eq!(ids(&program), once);
 }
