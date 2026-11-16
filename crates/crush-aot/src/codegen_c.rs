@@ -284,6 +284,46 @@ static void _obj_index_set(Value o, Value k, Value v) {
     _obj_set(obj, key, v);
 }
 
+/* The VM's name for a value's type, for error messages that match it. */
+static const char* _vm_type_name(Value v) {
+    switch (v.tag) {
+        case TAG_INT: return "int";
+        case TAG_FLOAT: return "float";
+        case TAG_BOOL: return "bool";
+        case TAG_NULL: return "null";
+        case TAG_STRING: return "str";
+        case TAG_ARRAY: return "array";
+        case TAG_OBJECT: return "map";
+        default: return "unset";
+    }
+}
+
+/* `arr_set` (opcode and capability): an out-of-range or non-Int index on an
+   array is the VMs' error, not a skipped write (#447). The index is checked
+   as int64, so a huge index can't truncate into range. Negative indices count
+   from the end (#442). An object takes a string key, as before. */
+static void _arr_store(Value arr, Value idx, Value val) {
+    char msg[96];
+    if (arr.tag == TAG_ARRAY) {
+        if (idx.tag != TAG_INT) {
+            snprintf(msg, sizeof msg, "array index must be int, got %s", _vm_type_name(idx));
+            _crush_arith_error(msg);
+        }
+        int ai = arr.array_idx;
+        if (ai < 0 || ai >= _array_count) return;
+        CrushArray* a = &_arrays[ai];
+        int64_t len = (int64_t)a->len;
+        int64_t w = idx.i < 0 ? idx.i + len : idx.i;
+        if (w < 0 || w >= len) {
+            snprintf(msg, sizeof msg, "array index out of range: %lld (len %lld)", (long long)idx.i, (long long)len);
+            _crush_arith_error(msg);
+        }
+        a->data[w] = val;
+    } else if (arr.tag == TAG_OBJECT && arr.obj_idx >= 0 && arr.obj_idx < _object_count) {
+        _obj_index_set(arr, idx, val);
+    }
+}
+
 // ── AI stub helper (CRUSH-32 follow-up) ─────────────────────────────
 // Mirrors the {ok, kind, echo} shape used by `crush_lang_sdk::ai_native` so
 // emitted C programs agree with the 5 VM tiers at differential-cmp time.
@@ -2222,7 +2262,7 @@ fn emit_c_instr(
             out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else if (__arr_v.tag == TAG_STRING && __idx_v.tag == TAG_INT) {{ _push(_str_char_at(__arr_v.s, __idx_v.i)); }} else if (__arr_v.tag == TAG_OBJECT && __arr_v.obj_idx >= 0 && __arr_v.obj_idx < _object_count) {{ _push(_obj_index(__arr_v, __idx_v)); }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
         }
         "arr_set" => {
-            out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ __a->data[__wi] = __val_v; }} }} }} else if (__arr_v.tag == TAG_OBJECT && __arr_v.obj_idx >= 0 && __arr_v.obj_idx < _object_count) {{ _obj_index_set(__arr_v, __idx_v, __val_v); }} }} _pc={next_pc}; break;\n"));
+            out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); _arr_store(__arr_v, __idx_v, __val_v); }} _pc={next_pc}; break;\n"));
         }
         "arr_len" | "len" => {
             out.push_str(&format!("                {{ Value __v = _pop(); if (__v.tag == TAG_ARRAY) {{ int __ai = __v.array_idx; _push(mk_int(__ai >= 0 && __ai < _array_count ? (int64_t)_arrays[__ai].len : 0LL)); }} else if (__v.tag == TAG_STRING) {{ _push(mk_int((int64_t)strlen(__v.s))); }} else if (__v.tag == TAG_OBJECT && __v.obj_idx >= 0 && __v.obj_idx < _object_count) {{ _push(mk_int((int64_t)_objects[__v.obj_idx].field_count)); }} else {{ _push(mk_int(0LL)); }} }} _pc={next_pc}; break;\n"));
@@ -2300,7 +2340,7 @@ fn emit_c_instr(
                     out.push_str(&format!("                {{ Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ _push(__a->data[__wi]); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break; // cap_call arr_get\n"));
                 }
                 "arr_set" => {
-                    out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); if (__arr_v.tag == TAG_ARRAY && __idx_v.tag == TAG_INT) {{ int __ai = __arr_v.array_idx; if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx_v.i, __a->len); if (__wi >= 0) {{ __a->data[__wi] = __val_v; }} }} }} else if (__arr_v.tag == TAG_OBJECT && __arr_v.obj_idx >= 0 && __arr_v.obj_idx < _object_count) {{ _obj_index_set(__arr_v, __idx_v, __val_v); }} }} _pc={next_pc}; break; // cap_call arr_set\n"));
+                    out.push_str(&format!("                {{ Value __val_v = _pop(); Value __idx_v = _pop(); Value __arr_v = _pop(); _arr_store(__arr_v, __idx_v, __val_v); }} _pc={next_pc}; break; // cap_call arr_set\n"));
                 }
                 "make_range" => {
                     // Variadic: 0, 1, or 2 args �� args pushed left-to-right, top of stack = last arg

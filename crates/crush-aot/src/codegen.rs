@@ -605,6 +605,46 @@ fn wrap_index(idx: i64, len: usize) -> Option<usize> {
     if wrapped >= 0 && wrapped < ilen { Some(wrapped as usize) } else { None }
 }
 
+// The VM's name for a value's type, for error messages that match it.
+fn vm_type_name(v: &RuntimeValue) -> &'static str {
+    match v {
+        RuntimeValue::Int(_) => "int",
+        RuntimeValue::Float(_) => "float",
+        RuntimeValue::Bool(_) => "bool",
+        RuntimeValue::Null => "null",
+        RuntimeValue::String(_) => "str",
+        RuntimeValue::Array(_) => "array",
+        RuntimeValue::Object(_) => "map",
+    }
+}
+
+// `arr_set` (opcode and capability): an out-of-range or non-Int index on an
+// array is the VMs' error, not a skipped write (#447). Negative indices count
+// from the end (#442). An object takes a string key, as before.
+fn arr_store(arr: Option<RuntimeValue>, idx: RuntimeValue, val: RuntimeValue) {
+    match arr {
+        Some(RuntimeValue::Array(a)) => {
+            let i = match idx {
+                RuntimeValue::Int(i) => i,
+                other => {
+                    eprintln!("crush(aot): array index must be int, got {}", vm_type_name(&other));
+                    std::process::exit(1);
+                }
+            };
+            let mut a = a.borrow_mut();
+            match wrap_index(i, a.len()) {
+                Some(j) => a[j] = val,
+                None => {
+                    eprintln!("crush(aot): array index out of range: {} (len {})", i, a.len());
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some(RuntimeValue::Object(m)) => map_index_set(&mut m.borrow_mut(), idx, val),
+        _ => {}
+    }
+}
+
 /// Read one line from stdin using the same LF/CRLF stripping and EOF-empty
 /// convention as `crush_vm::io_read`.
 fn io_read_line() -> String {
@@ -1163,7 +1203,7 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
         "arr_set" => {
-            out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ if let RuntimeValue::Int(i) = __idx {{ let mut a = a.borrow_mut(); if let Some(j) = wrap_index(i, a.len()) {{ a[j] = __val; }} }} }} else if let Some(RuntimeValue::Object(ref m)) = __arr {{ map_index_set(&mut m.borrow_mut(), __idx, __val); }} }}\n"));
+            out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); arr_store(__arr, __idx, __val); }}\n"));
             out.push_str(&next_pc_str);
         }
         "arr_len" | "len" => {
@@ -1248,7 +1288,7 @@ fn emit_body(
                     out.push_str(&next_pc_str);
                 }
                 "arr_set" => {
-                    out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); if let Some(RuntimeValue::Array(ref a)) = __arr {{ if let RuntimeValue::Int(i) = __idx {{ let mut a = a.borrow_mut(); if let Some(j) = wrap_index(i, a.len()) {{ a[j] = __val; }} }} }} else if let Some(RuntimeValue::Object(ref m)) = __arr {{ map_index_set(&mut m.borrow_mut(), __idx, __val); }} }}\n"));
+                    out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __arr = stack.pop(); arr_store(__arr, __idx, __val); }}\n"));
                     out.push_str(&next_pc_str);
                 }
                 "make_range" => {

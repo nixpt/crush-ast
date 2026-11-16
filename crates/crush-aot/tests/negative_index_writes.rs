@@ -4,7 +4,7 @@
 //! range. Every engine now counts a negative index from the end, the way the
 //! read path and the `ARR_SET` opcode already did. On both VMs, FastVM and
 //! the JIT, a write out of range or with a non-Int index is an error instead
-//! of a no-op (AOT: #447).
+//! of a no-op (AOT too since #447: see `differential_aot.rs`).
 
 use crush_vm::fastvm::{FastVM, FastYield, Hal};
 use crush_vm::{InputSource, PortableVm, Quotas, RuntimeValue};
