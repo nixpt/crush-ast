@@ -64,14 +64,23 @@ impl std::fmt::Display for Type {
 pub(crate) fn bare_container(name: &str) -> Option<crush_cast::CastType> {
     use crush_cast::CastType;
     let any = || Box::new(CastType::Any);
+    let name = LOWERCASE_TWINS
+        .iter()
+        .find(|(twin, _)| *twin == name)
+        .map_or(name, |(_, canonical)| *canonical);
     match name {
-        "Array" | "array" => Some(CastType::Array(any())),
-        "List" | "list" => Some(CastType::List(any())),
-        "Set" | "set" => Some(CastType::Set(any())),
-        "Map" | "map" => Some(CastType::Map(any())),
+        "Array" => Some(CastType::Array(any())),
+        "List" => Some(CastType::List(any())),
+        "Set" => Some(CastType::Set(any())),
+        "Map" => Some(CastType::Map(any())),
         _ => None,
     }
 }
+
+/// The lowercase twins of the container names (as `Int`/`int` for the scalars).
+/// Set this to `&[]` to drop them: it is the only place they are spelled.
+#[rustfmt::skip]
+const LOWERCASE_TWINS: &[(&str, &str)] = &[("array", "Array"), ("list", "List"), ("set", "Set"), ("map", "Map")];
 
 #[cfg(test)]
 mod tests {

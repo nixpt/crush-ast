@@ -355,16 +355,40 @@ fn span(meta: &HashMap<String, Value>) -> Option<Span> {
 /// A bare `Array` / `List` / `Set` / `Map` (parsed as a `TypeRef`, #504) is the
 /// container with an `Any` element type unless a declared kind has that name.
 fn cosm_type(t: &CastType, declared: &BTreeSet<&str>) -> CosmType {
-    if let CastType::TypeRef(name) = t
-        && !declared.contains(name.as_str())
-        && let Some(container) = crate::types::bare_container(name)
-    {
-        return cosm_type(&container, declared);
-    }
-    serde_json::to_value(t)
+    serde_json::to_value(resolve_bare_containers(t, declared))
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or(CosmType::Any)
+}
+
+/// `t` with every bare container name replaced by its container, at any depth
+/// (the semantic pass resolves nested ones, so the kind table must too).
+fn resolve_bare_containers(t: &CastType, declared: &BTreeSet<&str>) -> CastType {
+    let r = |t: &CastType| Box::new(resolve_bare_containers(t, declared));
+    match t {
+        CastType::TypeRef(name) if !declared.contains(name.as_str()) => {
+            crate::types::bare_container(name).unwrap_or_else(|| t.clone())
+        }
+        CastType::Tensor(i) => CastType::Tensor(r(i)),
+        CastType::Array(i) => CastType::Array(r(i)),
+        CastType::List(i) => CastType::List(r(i)),
+        CastType::Vector(i) => CastType::Vector(r(i)),
+        CastType::Set(i) => CastType::Set(r(i)),
+        CastType::Map(i) => CastType::Map(r(i)),
+        CastType::Tuple(ts) => CastType::Tuple(
+            ts.iter()
+                .map(|x| resolve_bare_containers(x, declared))
+                .collect(),
+        ),
+        CastType::Lambda { params, returns } => CastType::Lambda {
+            params: params
+                .iter()
+                .map(|x| resolve_bare_containers(x, declared))
+                .collect(),
+            returns: r(returns),
+        },
+        _ => t.clone(),
+    }
 }
 
 pub(crate) fn receiver_method_names(module: &CosmModule) -> BTreeSet<String> {

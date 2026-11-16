@@ -139,6 +139,8 @@ impl SemanticAnalyzer {
     }
 
     pub fn check(&mut self, program: &Program) -> Result<()> {
+        // Before lowering, which removes the `trait` nodes.
+        self.collect_declared_kinds(program);
         // A program that still has `impl` / `trait` nodes is checked as it
         // will be compiled: lowered, with the methods as functions (COSM
         // K1.2). `compile_cast_owned` lowers before checking, so this is only
@@ -191,14 +193,23 @@ impl SemanticAnalyzer {
         self.check_expr(expr)
     }
 
-    fn collect_definitions(&mut self, program: &Program) -> Result<()> {
+    /// Every struct, trait and kind name the program body declares, so a bare
+    /// `Array` / `List` / `Set` / `Map` annotation never overrides one (#504).
+    fn collect_declared_kinds(&mut self, program: &Program) {
         for func in program.functions.values() {
             for stmt in &func.body {
-                if let Statement::StructDef { name, .. } = stmt {
-                    self.declared_kinds.insert(name.clone());
+                match stmt {
+                    Statement::StructDef { name, .. } | Statement::TraitDef { name, .. } => {
+                        self.declared_kinds.insert(name.clone());
+                    }
+                    _ => {}
                 }
             }
         }
+    }
+
+    fn collect_definitions(&mut self, program: &Program) -> Result<()> {
+        self.collect_declared_kinds(program);
         for func in program.functions.values() {
             for stmt in &func.body {
                 if let Statement::StructDef { name, fields, .. } = stmt {

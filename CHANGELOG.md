@@ -22,7 +22,7 @@ add its entry after yours.
   types are not checked at construction. A declared struct or trait with one of these names keeps its
   old result, so no existing program changes meaning. `Array<Int>`, `Map<String, Int>` and `[Int]` are
   still not syntax, but the parse error now says that container element types have no annotation
-  syntax yet and to write the bare `Array` (it used to read `Expected } but found <`). `Tuple`,
+  syntax yet and to write the bare name (it used to be a plain parse error such as `Expected } but found <`); any other `Name<...>` says type arguments have no annotation syntax. `Tuple`,
   `Vector` have no bare spelling. The kind table needs no format change: a bare container field
   is `{"Array":"Any"}` etc., a shape COSM already has.
 - **Behaviour change:** `str.starts_with` and `str.ends_with` now return Bool (`true`/`false`) on

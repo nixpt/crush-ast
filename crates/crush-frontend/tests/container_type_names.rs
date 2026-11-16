@@ -238,3 +238,123 @@ fn type_annotations_that_parsed_before_still_parse() {
     compile_ok("fn f(x: Int) -> Int { return x }\nfn main() { return f(1) < 2 }\n");
     compile_ok("fn main() { let x: Int = 1\n return x < 2 }\n");
 }
+
+#[test]
+fn error_for_type_arguments_suggests_the_bare_name_only_for_a_container() {
+    // Each container name suggests itself, at the `<`'s line and column.
+    for (src, name) in [
+        ("struct S { cells: List<Int> }\n", "List"),
+        ("struct S { cells: Map<String, Int> }\n", "Map"),
+        ("struct S { cells: Set<Int> }\n", "Set"),
+    ] {
+        let e = parse_err(src);
+        assert!(
+            e.contains(&format!("Write the bare `{name}`")),
+            "{src}: {e}"
+        );
+        assert!(!e.contains("bare `Array`") || name == "Array", "{e}");
+    }
+    // Any other name: no container suggestion at all.
+    for src in [
+        "struct S { cells: Option<Int> }\n",
+        "struct S { cells: Tuple<Int, Bool> }\n",
+        "fn f(x: Foo<T>) { return x }\n",
+    ] {
+        let e = parse_err(src);
+        assert!(
+            e.contains("type arguments have no annotation syntax yet"),
+            "{src}: {e}"
+        );
+        assert!(!e.contains("Array") && !e.contains("bare"), "{src}: {e}");
+    }
+    // Positions: `<` is at line 1, column 25; `[` at line 1, column 20.
+    let e = parse_err("struct S { cells: List<Int> }\n");
+    assert!(e.contains("line 1, column 23"), "{e}");
+    let e = parse_err("struct S { cells: [Int] }\n");
+    assert!(e.contains("line 1, column 19"), "{e}");
+}
+
+#[test]
+fn a_trait_wins_on_the_direct_check_path_too() {
+    use crush_frontend::semantics::SemanticAnalyzer;
+    let src = "trait List { fn len(self); }\nstruct S { l: List }\nfn main() { return 1 }\n";
+    let program = Parser::parse(src).unwrap();
+    let e = SemanticAnalyzer::new().check(&program).unwrap_err();
+    assert!(format!("{e:#}").contains("Unknown type: List"), "{e:#}");
+    // And a program without the trait resolves the container on that path.
+    let program = Parser::parse("struct S { l: List }\nfn main() { return 1 }\n").unwrap();
+    SemanticAnalyzer::new().check(&program).unwrap();
+}
+
+#[test]
+fn nested_bare_names_resolve_the_same_in_the_kind_table_and_the_checker() {
+    use crush_cast::{CastType, Statement};
+    let mut program = Parser::parse("struct S { l: Int }\nfn main() { return 1 }\n").unwrap();
+    for stmt in &mut program.functions.get_mut("main").unwrap().body {
+        if let Statement::StructDef { fields, .. } = stmt {
+            fields[0].1 = CastType::Array(Box::new(CastType::TypeRef("List".into())));
+        }
+    }
+    let (_, module) = crush_frontend::compile_cast_with_cosm(program.clone()).unwrap();
+    assert_eq!(
+        field_type(&module.unwrap(), "S", "l"),
+        CosmType::Array(Box::new(CosmType::List(Box::new(CosmType::Any))))
+    );
+    // A declared `List` stays a reference at depth, in both.
+    let mut program =
+        Parser::parse("struct List { n: Int }\nstruct S { l: Int }\nfn main() { return 1 }\n")
+            .unwrap();
+    for stmt in &mut program.functions.get_mut("main").unwrap().body {
+        if let Statement::StructDef { name, fields, .. } = stmt
+            && name == "S"
+        {
+            fields[0].1 = CastType::Array(Box::new(CastType::TypeRef("List".into())));
+        }
+    }
+    let (_, module) = crush_frontend::compile_cast_with_cosm(program).unwrap();
+    assert_eq!(
+        field_type(&module.unwrap(), "S", "l"),
+        CosmType::Array(Box::new(CosmType::TypeRef("List".into())))
+    );
+}
+
+#[test]
+fn a_struct_declared_in_an_imported_file_wins() {
+    let dir = std::env::temp_dir().join(format!("crush-504-import-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("shapes.crush"), "struct List { n: Int }\n").unwrap();
+    std::fs::write(
+        dir.join("main.crush"),
+        "import shapes\nfn take(x: List) { return 1 }\nfn main() { return take([1, 2]) }\n",
+    )
+    .unwrap();
+    let program = crush_frontend::parse_file(
+        &dir.join("main.crush"),
+        &crush_frontend::import_system::ImportOptions::default(),
+    )
+    .unwrap();
+    let err = crush_frontend::compile_cast_owned(program);
+    let _ = std::fs::remove_dir_all(&dir);
+    // `List` is the imported struct, so an array argument is refused.
+    let e = format!("{:#}", err.expect_err("array is not the imported struct"));
+    assert!(e.contains("wrong type"), "{e}");
+}
+
+#[test]
+fn a_lowercase_user_struct_keeps_its_meaning() {
+    let src = "struct map { n: Int }\nfn take(x: map) { return x.n }\n\
+               fn main(a) { return take(a) }\n";
+    compile_ok(src);
+    let e = compile_err(&src.replace(
+        "fn main(a) { return take(a) }",
+        "fn main() { return take([1]) }",
+    ));
+    assert!(e.contains("wrong type"), "{e}");
+}
+
+#[test]
+fn a_lambda_parameter_annotation_accepts_a_bare_container() {
+    compile_ok("fn main() { let f = |x: Array| 1\n return f([1]) }\n");
+    compile_ok("fn main() { let f = |x: List, y: Map| 1\n return f([1], {\"a\": 1}) }\n");
+}

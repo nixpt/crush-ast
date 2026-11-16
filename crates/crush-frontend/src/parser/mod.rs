@@ -1019,17 +1019,17 @@ impl Parser {
     fn refuse_container_syntax(&mut self, after: Option<&str>) -> Result<(), ()> {
         let (line, col) = self.get_location(self.peek());
         let msg = match (after, self.peek()) {
-            (Some(name), Token::Lt(_)) => {
-                let bare = match name {
-                    "Array" | "List" | "Set" | "Map" | "array" | "list" | "set" | "map" => name,
-                    _ => "Array",
-                };
+            (Some(name), Token::Lt(_)) if crate::types::bare_container(name).is_some() => {
                 format!(
                     "container element types have no annotation syntax yet, so `{name}<...>` \
-                     cannot be written. Write the bare `{bare}` (elements are then unchecked) \
+                     cannot be written. Write the bare `{name}` (elements are then unchecked) \
                      or leave the annotation off"
                 )
             }
+            (Some(name), Token::Lt(_)) => format!(
+                "type arguments have no annotation syntax yet, so `{name}<...>` cannot be \
+                 written. Write the plain name `{name}` or leave the annotation off"
+            ),
             (None, Token::LBracket(_)) => "container element types have no annotation syntax \
                  yet, so `[T]` cannot be written. Write the bare `Array` (elements are then \
                  unchecked) or leave the annotation off"
