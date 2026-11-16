@@ -1769,6 +1769,21 @@ impl Compiler {
                 }
                 self.compile_expr(left, instrs)?;
                 self.compile_expr(right, instrs)?;
+                // Bitwise operators (#425, ruling H1): Int operands only, a
+                // shift count outside 0..=63 is ArithmeticOverflow, i64 on
+                // every engine. They used to fail here as `Unsupported op`.
+                let bitwise = match operator.as_str() {
+                    "&" => Some("bit_and"),
+                    "|" => Some("bit_or"),
+                    "^" => Some("bit_xor"),
+                    "<<" => Some("shl"),
+                    ">>" => Some("shr"),
+                    _ => None,
+                };
+                if let Some(op) = bitwise {
+                    instrs.push(self.create_instr(op, serde_json::json!({}), meta));
+                    return Ok(());
+                }
                 let opcode = match operator.as_str() {
                     "+" => OpCode::Add,
                     "-" => OpCode::Sub,
@@ -1795,6 +1810,11 @@ impl Compiler {
                     "-" => OpCode::Neg,
                     "not" | "!" => {
                         instrs.push(self.create_instr("not", serde_json::json!({}), meta));
+                        return Ok(());
+                    }
+                    // Bitwise NOT (#425, ruling H1): Int only.
+                    "~" => {
+                        instrs.push(self.create_instr("bit_not", serde_json::json!({}), meta));
                         return Ok(());
                     }
                     _ => bail!("Unsupported op: {}", operator),

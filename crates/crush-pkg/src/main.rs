@@ -165,10 +165,15 @@ struct GrantArgs {
         requires = "rust_plugin"
     )]
     plugin_exports: Vec<String>,
-    /// Maximum VM instruction steps (default: the manifest's
-    /// `[resources] gas`, else the VM default).
-    #[arg(long, value_name = "N")]
+    /// Maximum VM instruction steps, or `unlimited` (default: the
+    /// manifest's `[resources] gas`, else the VM default).
+    #[arg(long, value_name = "N", value_parser = crush_vm::parse_quota_usize)]
     max_steps: Option<usize>,
+    /// Wall-clock budget for the run in milliseconds, or `unlimited`
+    /// (default 30000; operator flag only, the manifest cannot lift it, #505).
+    /// `0` is a zero budget (the run stops at once), not "no limit".
+    #[arg(long, value_name = "MS", value_parser = crush_vm::parse_quota_u64)]
+    max_wall_ms: Option<u64>,
     /// Maximum VM stack slots.
     #[arg(long, value_name = "N")]
     max_stack: Option<usize>,
@@ -199,6 +204,9 @@ impl GrantArgs {
         }
         if let Some(n) = self.max_steps {
             quotas.max_steps = n;
+        }
+        if let Some(ms) = self.max_wall_ms {
+            quotas.max_wall_time_ms = ms;
         }
         if let Some(n) = self.max_stack {
             quotas.max_stack = n;

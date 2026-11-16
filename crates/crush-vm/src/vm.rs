@@ -1017,6 +1017,28 @@ impl Default for Quotas {
     }
 }
 
+/// Parse a `--max-*` quota value from a CLI (#505): a non-negative integer,
+/// or the word `unlimited` for no limit (`u64::MAX`). `0` is a zero budget,
+/// not "no limit": the run is stopped at the first check (fail closed). Only
+/// the explicit word lifts a limit.
+pub fn parse_quota_u64(s: &str) -> Result<u64, String> {
+    if s.eq_ignore_ascii_case("unlimited") {
+        return Ok(u64::MAX);
+    }
+    s.parse::<u64>()
+        .map_err(|_| format!("expected a non-negative integer or `unlimited`, got `{s}`"))
+}
+
+/// [`parse_quota_u64`] for `usize` quotas (`--max-steps`): `unlimited` is
+/// `usize::MAX`.
+pub fn parse_quota_usize(s: &str) -> Result<usize, String> {
+    if s.eq_ignore_ascii_case("unlimited") {
+        return Ok(usize::MAX);
+    }
+    s.parse::<usize>()
+        .map_err(|_| format!("expected a non-negative integer or `unlimited`, got `{s}`"))
+}
+
 impl Quotas {
     /// Add an `allowed_caps` entry that stops matching at `until` (CRUSH-164).
     pub fn allow_cap_until(mut self, entry: impl Into<String>, until: std::time::Instant) -> Self {
@@ -1256,5 +1278,24 @@ impl CrushResultExt for Result<crate::fastvm::FastYield, crate::fastvm::FastErro
                     crate::RuntimeValue::Null
                 )))
         )
+    }
+}
+
+#[cfg(test)]
+mod quota_parse_tests {
+    use super::{parse_quota_u64, parse_quota_usize};
+
+    #[test]
+    fn quota_values_parse_and_only_the_word_lifts_a_limit() {
+        assert_eq!(parse_quota_u64("30000"), Ok(30_000));
+        assert_eq!(parse_quota_u64("0"), Ok(0));
+        assert_eq!(parse_quota_u64("unlimited"), Ok(u64::MAX));
+        assert_eq!(parse_quota_usize("Unlimited"), Ok(usize::MAX));
+        assert!(parse_quota_u64("-1").is_err());
+        assert!(
+            parse_quota_usize("inf")
+                .unwrap_err()
+                .contains("`unlimited`")
+        );
     }
 }

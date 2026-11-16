@@ -10,6 +10,12 @@
 //!
 //!   kind_table = kt_format(1) | kt_len(4 BE) | kt_bytes
 //!   kt_format 1 = the module's canonical COSM JSON (`CosmModule::to_json`)
+//!   kt_format 2 = the same, for a module that needs a COSM newer than
+//!                 `COSM_BASE_VERSION` (it carries `cosm_version`). Runtimes from
+//!                 before the COSM evolution rule (#521) refuse format 2 by name;
+//!                 newer ones read both and check `cosm_version` itself. A module
+//!                 that needs nothing newer is still written as format 1, byte for
+//!                 byte.
 //!
 //! Versioning: the container version says whether the section is present.
 //! [`Program::to_blob`] writes version [`VERSION_KIND_TABLE`] (3) only when
@@ -61,6 +67,9 @@ pub const VERSION_NO_KIND_TABLE: u8 = 2;
 pub const VERSION_KIND_TABLE: u8 = 3;
 /// Kind-table encoding: the module's canonical COSM JSON.
 pub const KIND_TABLE_FORMAT_JSON: u8 = 1;
+/// Kind-table encoding: canonical COSM JSON of a module that needs a COSM newer
+/// than the base (it carries `cosm_version`; #521).
+pub const KIND_TABLE_FORMAT_JSON_VERSIONED: u8 = 2;
 
 pub const NOP: u8 = 0x00;
 pub const PUSH: u8 = 0x01;
@@ -500,7 +509,14 @@ impl Program {
     pub fn to_blob(&self) -> Vec<u8> {
         let manifest_json = serde_json::to_string(&self.manifest).expect("manifest serialization");
         let mb = manifest_json.as_bytes();
-        let kind_table = self.kind_table().map(crush_cosm::CosmModule::to_json);
+        let kind_table = self.kind_table().map(|m| {
+            let format = if m.required_version() == crush_cosm::COSM_BASE_VERSION {
+                KIND_TABLE_FORMAT_JSON
+            } else {
+                KIND_TABLE_FORMAT_JSON_VERSIONED
+            };
+            (format, m.to_json())
+        });
         let mut out = Vec::new();
         out.extend_from_slice(MAGIC);
         out.push(if kind_table.is_some() {
@@ -518,8 +534,8 @@ impl Program {
         }
         out.extend_from_slice(&(self.code.len() as u32).to_be_bytes());
         out.extend_from_slice(&self.code);
-        if let Some(json) = kind_table {
-            out.push(KIND_TABLE_FORMAT_JSON);
+        if let Some((format, json)) = kind_table {
+            out.push(format);
             out.extend_from_slice(&(json.len() as u32).to_be_bytes());
             out.extend_from_slice(json.as_bytes());
         }
@@ -584,7 +600,7 @@ impl Program {
             }
             let format = blob[off];
             off += 1;
-            if format != KIND_TABLE_FORMAT_JSON {
+            if format != KIND_TABLE_FORMAT_JSON && format != KIND_TABLE_FORMAT_JSON_VERSIONED {
                 return Err(crate::Error::BadKindTable(format!(
                     "unknown kind-table format {format}"
                 )));

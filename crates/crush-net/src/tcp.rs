@@ -18,6 +18,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -102,6 +103,18 @@ impl TcpConnection {
         let n = s.read(buf)?;
         s.set_nonblocking(true)?;
         Ok(n)
+    }
+
+    /// Blocking read that gives up after `timeout` (`None`: no bound) with
+    /// `WouldBlock`/`TimedOut` (#507). The socket's timeout is reset after.
+    pub fn read_timeout(&self, buf: &mut [u8], timeout: Option<Duration>) -> io::Result<usize> {
+        let mut s = self.stream.lock().unwrap();
+        s.set_nonblocking(false)?;
+        s.set_read_timeout(timeout.map(|t| t.max(Duration::from_millis(1))))?;
+        let n = s.read(buf);
+        s.set_read_timeout(None)?;
+        s.set_nonblocking(true)?;
+        n
     }
 
     pub fn blocking_write(&self, buf: &[u8]) -> io::Result<usize> {
@@ -218,6 +231,30 @@ impl TcpListener {
             Ok((stream, _addr)) => Ok(Some(stream)),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
             Err(e) => Err(e),
+        }
+    }
+
+    /// Accept, polling the non-blocking listener until `deadline` (`None`:
+    /// wait forever). `Ok(None)` when the deadline passed first (#507).
+    pub fn accept_until(&self, deadline: Option<Instant>) -> io::Result<Option<TcpConnection>> {
+        loop {
+            let got = {
+                let std_l = self.inner.lock().unwrap();
+                std_l.set_nonblocking(true)?;
+                match std_l.accept() {
+                    Ok((stream, _addr)) => Some(stream),
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => None,
+                    Err(e) => return Err(e),
+                }
+            };
+            if let Some(stream) = got {
+                stream.set_nonblocking(true)?;
+                return Ok(Some(TcpConnection::wrap(stream, Arc::clone(&self.reactor))));
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                return Ok(None);
+            }
+            std::thread::sleep(Duration::from_millis(5));
         }
     }
 

@@ -1495,7 +1495,12 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 UnaryOp::Minus => "-",
                 UnaryOp::Plus => "+",
                 UnaryOp::Bang => "!",
-                UnaryOp::Tilde => "~",
+                // JS `~` is ToInt32-based; crush's is i64 (#425).
+                UnaryOp::Tilde => {
+                    return Err(unsupported(
+                        "bitwise operator `~` (JS 32-bit semantics, #425)",
+                    ));
+                }
                 UnaryOp::TypeOf => "typeof",
                 UnaryOp::Void => "void",
                 UnaryOp::Delete => "delete",
@@ -1542,6 +1547,14 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
             // JS semantics as `js.*` capabilities (crush-vm js_core); crush's
             // own operators are unchanged.
             match operator {
+                // JS bitwise ops work on ToInt32 (32-bit) values; crush's are
+                // i64, so `(1 << 31)` or `-1 >>> 0` would come out different.
+                // Refused until a JS-semantics implementation exists (#425).
+                "&" | "|" | "^" | "<<" | ">>" | ">>>" => {
+                    return Err(unsupported(&format!(
+                        "bitwise operator `{operator}` (JS 32-bit semantics, #425)"
+                    )));
+                }
                 "/" => return Ok(js_div(left, right, m)),
                 "+" if !numeric => return Ok(js_cap("js.add", vec![left, right], m)),
                 "==" => return Ok(js_cap("js.loose_eq", vec![left, right], m)),
@@ -1813,6 +1826,16 @@ pub fn lower_expr(expr: &Expr, ctx: &LowerCtx) -> anyhow::Result<Expression> {
                 AssignOp::Assign => right,
                 AssignOp::AndAssign | AssignOp::OrAssign | AssignOp::NullishAssign => {
                     anyhow::bail!("logical assignment (`&&=`, `||=`, `??=`) is not supported yet")
+                }
+                AssignOp::LShiftAssign
+                | AssignOp::RShiftAssign
+                | AssignOp::ZeroFillRShiftAssign
+                | AssignOp::BitOrAssign
+                | AssignOp::BitXorAssign
+                | AssignOp::BitAndAssign => {
+                    return Err(unsupported(
+                        "bitwise compound assignment (JS 32-bit semantics, #425)",
+                    ));
                 }
                 AssignOp::DivAssign => js_div(current(), right, m.clone()),
                 AssignOp::AddAssign => js_cap("js.add", vec![current(), right], m.clone()),
