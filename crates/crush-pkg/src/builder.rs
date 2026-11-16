@@ -619,6 +619,9 @@ impl PackageBuilder {
                 entry: dep.source_file.clone(),
             });
         }
+        // The package being built is the root package for visibility (V1,
+        // #519): its `tests/*.crush` and its `src/` share one package.
+        opts.home_package = Some(own.clone());
         opts.packages.push(ImportPackage {
             name: own,
             root: src_dir,
