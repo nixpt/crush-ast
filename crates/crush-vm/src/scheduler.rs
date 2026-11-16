@@ -2257,7 +2257,7 @@ fn execute_one(
 // ---- helper functions (inlined from vm.rs for independence) ----
 
 
-fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
+pub(crate) fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Array(a) => Ok(a),
         other => Err(VmError::TypeError {
@@ -2267,7 +2267,7 @@ fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, V
     }
 }
 
-fn need_tuple(v: Value) -> Result<Vec<Value>, VmError> {
+pub(crate) fn need_tuple(v: Value) -> Result<Vec<Value>, VmError> {
     match v {
         Value::Tuple(t) => Ok(t),
         other => Err(VmError::TypeError {
@@ -2277,7 +2277,7 @@ fn need_tuple(v: Value) -> Result<Vec<Value>, VmError> {
     }
 }
 
-fn need_list(
+pub(crate) fn need_list(
     v: Value,
 ) -> Result<std::rc::Rc<std::cell::RefCell<std::collections::LinkedList<Value>>>, VmError> {
     match v {
@@ -2289,7 +2289,9 @@ fn need_list(
     }
 }
 
-fn need_vector(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
+pub(crate) fn need_vector(
+    v: Value,
+) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Vector(v_rc) => Ok(v_rc),
         other => Err(VmError::TypeError {
@@ -2299,7 +2301,7 @@ fn need_vector(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, 
     }
 }
 
-fn need_set(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
+pub(crate) fn need_set(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
         Value::Set(s) => Ok(s),
         other => Err(VmError::TypeError {
@@ -2309,7 +2311,7 @@ fn need_set(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmE
     }
 }
 
-fn need_array_index(v: &Value) -> Result<i64, VmError> {
+pub(crate) fn need_array_index(v: &Value) -> Result<i64, VmError> {
     match v {
         Value::Int(i) => Ok(*i),
         other => Err(VmError::BadIndex(other.type_name())),
