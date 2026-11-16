@@ -703,6 +703,8 @@ fn import_inside_a_block_stays_refused() {
             ],
         );
     }
+}
+
 /// V1 (#519): a cross-package use of a name that is not `pub` is the warning
 /// `W-VIS01` on stderr; the program still runs and its stdout is what it was
 /// before visibility existed. A module with no `pub` gets one `N-VIS01` note.
