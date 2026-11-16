@@ -377,60 +377,30 @@ pub fn execute_one(
         }
 
         // ===== Bitwise =====
-        FastOp::BitAnd => {
+        FastOp::BitAnd | FastOp::BitOr | FastOp::BitXor | FastOp::Shl | FastOp::Shr => {
+            // Same semantics as CVM1 (#425, ruling H1): Int operands only,
+            // shift count 0..=63, checked left shift. Shifts used to panic
+            // (debug) or wrap (release) on a count >= 64 or < 0.
+            use crate::arithmetic::{BitOp, int_bitwise};
             let b = stack.pop().ok_or(FastError::StackUnderflow)?;
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    stack.push(RuntimeValue::Int(x & y));
-                }
-                _ => return Err(FastError::TypeMismatch),
-            }
-        }
-        FastOp::BitOr => {
-            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
-            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    stack.push(RuntimeValue::Int(x | y));
-                }
-                _ => return Err(FastError::TypeMismatch),
-            }
-        }
-        FastOp::BitXor => {
-            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
-            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    stack.push(RuntimeValue::Int(x ^ y));
-                }
-                _ => return Err(FastError::TypeMismatch),
-            }
+            let (RuntimeValue::Int(x), RuntimeValue::Int(y)) = (a, b) else {
+                return Err(FastError::TypeMismatch);
+            };
+            let op = match instr.op {
+                FastOp::BitAnd => BitOp::And,
+                FastOp::BitOr => BitOp::Or,
+                FastOp::BitXor => BitOp::Xor,
+                FastOp::Shl => BitOp::Shl,
+                _ => BitOp::Shr,
+            };
+            let r = int_bitwise(op, x, y).ok_or(FastError::ArithmeticOverflow)?;
+            stack.push(RuntimeValue::Int(r));
         }
         FastOp::BitNot => {
             let a = stack.pop().ok_or(FastError::StackUnderflow)?;
             match a {
                 RuntimeValue::Int(x) => stack.push(RuntimeValue::Int(!x)),
-                _ => return Err(FastError::TypeMismatch),
-            }
-        }
-        FastOp::Shl => {
-            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
-            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    stack.push(RuntimeValue::Int(x << (*y as u32)));
-                }
-                _ => return Err(FastError::TypeMismatch),
-            }
-        }
-        FastOp::Shr => {
-            let b = stack.pop().ok_or(FastError::StackUnderflow)?;
-            let a = stack.pop().ok_or(FastError::StackUnderflow)?;
-            match (&a, &b) {
-                (RuntimeValue::Int(x), RuntimeValue::Int(y)) => {
-                    stack.push(RuntimeValue::Int(x >> (*y as u32)));
-                }
                 _ => return Err(FastError::TypeMismatch),
             }
         }
@@ -590,8 +560,8 @@ pub fn execute_one(
                 match arena.get(ptr) {
                     Some(Object::Array(items)) => {
                         if let RuntimeValue::Int(idx) = key {
-                            let val = items
-                                .get(idx as usize)
+                            let val = wrap_index(idx, items.len())
+                                .and_then(|i| items.get(i))
                                 .cloned()
                                 .unwrap_or(RuntimeValue::Null);
                             stack.push(val);
@@ -614,7 +584,9 @@ pub fn execute_one(
                     }
                     Some(Object::Str(s)) => {
                         if let RuntimeValue::Int(idx) = key {
-                            if let Some(c) = s.chars().nth(idx as usize) {
+                            if let Some(c) =
+                                wrap_index(idx, s.chars().count()).and_then(|i| s.chars().nth(i))
+                            {
                                 let c_ptr = arena.alloc(Object::Str(c.to_string()));
                                 stack.push(RuntimeValue::Ref(c_ptr));
                             } else {
@@ -876,12 +848,19 @@ pub fn execute_one(
                 };
                 match arena.get_mut(ptr) {
                     Ok(Object::Array(arr)) => {
-                        if let RuntimeValue::Int(idx) = key {
-                            let i = idx as usize;
-                            if i < arr.len() {
-                                arr[i] = val;
-                            }
-                        }
+                        // #442: a negative index counts from the end, and a
+                        // write out of range or with a non-Int index is an
+                        // error, as on CVM1 (it used to be dropped silently).
+                        let RuntimeValue::Int(idx) = key else {
+                            return Err(FastError::TypeMismatch);
+                        };
+                        let Some(i) = wrap_index(idx, arr.len()) else {
+                            return Err(FastError::ExecutionError(format!(
+                                "array index out of range: {idx} (len {})",
+                                arr.len()
+                            )));
+                        };
+                        arr[i] = val;
                     }
                     Ok(Object::Map(map)) => {
                         let Some(k) = map_key else {
@@ -1396,4 +1375,12 @@ pub fn execute_one(
     }
 
     Ok(None)
+}
+
+/// A Python-style index into a sequence of `len` items: a negative index
+/// counts from the end. `None` when it is out of range (#442).
+fn wrap_index(idx: i64, len: usize) -> Option<usize> {
+    let ilen = i64::try_from(len).ok()?;
+    let i = if idx < 0 { idx.checked_add(ilen)? } else { idx };
+    (0..ilen).contains(&i).then_some(i as usize)
 }

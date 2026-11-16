@@ -214,12 +214,13 @@ pub(crate) fn run_with_wall_clock_limit(
         buf
     });
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(limit_ms);
+    // `None` for an unlimited budget (#505): wait for the child without a bound.
+    let deadline = crate::wall::instant_after(limit_ms);
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break Some(status);
         }
-        if std::time::Instant::now() >= deadline {
+        if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
             break None;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1256,29 +1257,22 @@ fn execute_one(
             });
         }
         BITAND | BITOR | BITXOR | SHL | SHR => {
-            let b = need_num!(pop!());
-            let a = need_num!(pop!());
-            let ai = to_i64(&a);
-            let bi = to_i64(&b);
-            let result = match opcode {
-                BITAND => Value::Int(ai & bi),
-                BITOR => Value::Int(ai | bi),
-                BITXOR => Value::Int(ai ^ bi),
-                SHL => Value::Int(
-                    ai.checked_shl(bi as u32)
-                        .ok_or(VmError::ArithmeticOverflow)?,
-                ),
-                SHR => Value::Int(
-                    ai.checked_shr(bi as u32)
-                        .ok_or(VmError::ArithmeticOverflow)?,
-                ),
-                _ => unreachable!(),
+            // Int operands only; shift count 0..=63, checked left shift (#425).
+            use crate::arithmetic::BitOp;
+            let b = pop!();
+            let a = pop!();
+            let op = match opcode {
+                BITAND => BitOp::And,
+                BITOR => BitOp::Or,
+                BITXOR => BitOp::Xor,
+                SHL => BitOp::Shl,
+                _ => BitOp::Shr,
             };
-            push!(result);
+            push!(crate::arithmetic::bitwise_values(op, &a, &b)?);
         }
         BITNOT => {
-            let a = need_num!(pop!());
-            push!(Value::Int(!to_i64(&a)));
+            let a = pop!();
+            push!(crate::arithmetic::bitnot_value(&a)?);
         }
         NOT => {
             let v = pop!();
@@ -2262,14 +2256,6 @@ fn execute_one(
 
 // ---- helper functions (inlined from vm.rs for independence) ----
 
-#[inline]
-fn to_i64(v: &Value) -> i64 {
-    match v {
-        Value::Int(i) => *i,
-        Value::Float(f) => *f as i64,
-        _ => 0,
-    }
-}
 
 fn need_array(v: Value) -> Result<std::rc::Rc<std::cell::RefCell<Vec<Value>>>, VmError> {
     match v {
@@ -2716,14 +2702,14 @@ fn dispatch_cap(
                 }
                 match &args[0] {
                     Value::Array(elems) => {
-                        let idx = match &args[1] {
-                            Value::Int(i) => *i as usize,
-                            _ => 0,
-                        };
+                        // Same contract as the ARR_SET opcode (#442): a negative
+                        // index counts from the end, out of range is a bounds error
+                        // and a non-Int index is BadIndex. This used to truncate the
+                        // index to usize and drop the write silently.
+                        let idx = need_array_index(&args[1])?;
                         let mut arr = elems.borrow_mut();
-                        if idx < arr.len() {
-                            arr[idx] = args[2].clone();
-                        }
+                        let actual = wrap_index(idx, arr.len())?;
+                        arr[actual] = args[2].clone();
                         Ok(Some(args[0].clone()))
                     }
                     Value::Map(map) => {

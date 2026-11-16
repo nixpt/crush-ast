@@ -84,13 +84,99 @@ name_ref! {
 
 /// The COSM half of a lowered program: every object declaration, beside the
 /// CAST functions they reference by [`FnRef`].
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// On the wire it may also carry `cosm_version` (see [`crate::COSM_VERSION`]
+/// for the evolution rule): checked on every load path, and written only when
+/// the module needs more than [`crate::COSM_BASE_VERSION`].
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(try_from = "CosmModuleRepr")]
 pub struct CosmModule {
-    #[serde(default)]
     pub kinds: Vec<KindDecl>,
-    #[serde(default)]
     pub interfaces: Vec<InterfaceDecl>,
+}
+
+/// The wire form of [`CosmModule`]: strict, plus the optional version stamp.
+///
+/// `kinds` and `interfaces` are held raw and typed only after the version
+/// check, so a module from a newer writer is refused for its version (which
+/// says what to do) and never for whichever new key the typed parse would
+/// meet first, wherever `cosm_version` sits in the input.
+///
+/// Holding the body as JSON values means a non-finite float constant (NaN,
+/// ±inf) read from a non-JSON format (CAST CBOR) loads as `null`, which is
+/// what JSON, and so every CVM1 and CASM kind table, already stores for it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CosmModuleRepr {
+    #[serde(default)]
+    cosm_version: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    kinds: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    interfaces: Option<serde_json::Value>,
+}
+
+/// `Some` for any present value, `null` included, so an explicit `null` is
+/// still a type error (as when these fields were typed `Vec`s) and only an
+/// absent field means empty.
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<serde_json::Value>, D::Error> {
+    serde_json::Value::deserialize(d).map(Some)
+}
+
+/// Prefix of a typed-body error from [`CosmModuleRepr`]: `at `PATH`: MSG`.
+/// [`CosmModule::from_json`] lifts the path back out.
+const BODY_ERROR_PREFIX: &str = "at `";
+
+fn typed<T: serde::de::DeserializeOwned + Default>(
+    field: &str,
+    v: Option<serde_json::Value>,
+) -> Result<T, String> {
+    let Some(v) = v else {
+        return Ok(T::default());
+    };
+    serde_path_to_error::deserialize(v).map_err(|e| {
+        let inner = e.path().to_string();
+        let path = if inner == "." {
+            field.to_string()
+        } else if inner.starts_with('[') {
+            format!("{field}{inner}")
+        } else {
+            format!("{field}.{inner}")
+        };
+        format!("{BODY_ERROR_PREFIX}{path}`: {}", e.into_inner())
+    })
+}
+
+impl TryFrom<CosmModuleRepr> for CosmModule {
+    type Error = String;
+    fn try_from(r: CosmModuleRepr) -> Result<Self, String> {
+        if let Some(v) = &r.cosm_version {
+            crate::check_readable(v)?;
+        }
+        Ok(CosmModule {
+            kinds: typed("kinds", r.kinds)?,
+            interfaces: typed("interfaces", r.interfaces)?,
+        })
+    }
+}
+
+impl Serialize for CosmModule {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Out<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            cosm_version: Option<&'a str>,
+            kinds: &'a [KindDecl],
+            interfaces: &'a [InterfaceDecl],
+        }
+        let v = self.required_version();
+        Out {
+            cosm_version: (v != crate::COSM_BASE_VERSION).then_some(v),
+            kinds: &self.kinds,
+            interfaces: &self.interfaces,
+        }
+        .serialize(s)
+    }
 }
 
 // ─── kinds ──────────────────────────────────────────────────────────────────
@@ -232,13 +318,88 @@ pub enum Construct {
 }
 
 /// A member of a Kind (or of a conformance's impl table).
+///
+/// Must-understand like the rest of COSM: `member` is flattened, which serde
+/// can't combine with `deny_unknown_fields`, so loading checks the keys
+/// itself ([`MemberDecl::check_keys`]). Without that, an old reader would
+/// silently drop a member key it doesn't know (e.g. a future `visibility`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "serde_json::Map<String, serde_json::Value>")]
 pub struct MemberDecl {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub span: Option<Span>,
     #[serde(flatten)]
     pub member: Member,
+}
+
+/// The wire form of [`MemberDecl`], read after the key check.
+#[derive(Deserialize)]
+struct MemberDeclRepr {
+    name: String,
+    #[serde(default)]
+    span: Option<Span>,
+    #[serde(flatten)]
+    member: Member,
+}
+
+/// Member keys a reader may skip without understanding them: the explicit
+/// list of purely additive or cosmetic fields that decision 7 allows to be
+/// ignore-unknown. Adding one still bumps the minor of
+/// [`COSM_VERSION`](crate::COSM_VERSION). **Empty today.** Visibility, owner
+/// ids and any other security-relevant field must never be listed here.
+pub const IGNORABLE_MEMBER_KEYS: &[&str] = &[];
+
+impl MemberDecl {
+    /// The keys a member of `kind` may carry, besides `name`, `span`, `kind`.
+    fn variant_keys(kind: &str) -> Option<&'static [&'static str]> {
+        Some(match kind {
+            "method" => &["fn", "receiver"],
+            "field" => &[],
+            "accessor" => &["get", "set"],
+            "static" => &["value"],
+            _ => return None,
+        })
+    }
+
+    /// Refuse a key this reader doesn't know. An unknown or missing `kind` is
+    /// left to the typed parse, which names the valid ones.
+    fn check_keys(map: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+        let Some(variant) = map
+            .get("kind")
+            .and_then(|k| k.as_str())
+            .and_then(Self::variant_keys)
+        else {
+            return Ok(());
+        };
+        for key in map.keys() {
+            let known = matches!(key.as_str(), "name" | "span" | "kind")
+                || variant.contains(&key.as_str())
+                || IGNORABLE_MEMBER_KEYS.contains(&key.as_str());
+            if !known {
+                let name = map.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+                return Err(format!(
+                    "unknown key `{key}` on member `{name}`: this COSM reader doesn't \
+                     understand it (COSM is must-understand; a newer toolchain wrote this)"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<serde_json::Map<String, serde_json::Value>> for MemberDecl {
+    type Error = String;
+    fn try_from(map: serde_json::Map<String, serde_json::Value>) -> Result<Self, String> {
+        Self::check_keys(&map)?;
+        let r: MemberDeclRepr =
+            serde_json::from_value(serde_json::Value::Object(map)).map_err(|e| e.to_string())?;
+        Ok(MemberDecl {
+            name: r.name,
+            span: r.span,
+            member: r.member,
+        })
+    }
 }
 
 /// What a member is.
@@ -504,10 +665,29 @@ impl CosmModule {
     /// Parse COSM JSON. Errors name the JSON path that failed.
     pub fn from_json(json: &str) -> Result<Self, crate::CosmError> {
         let de = &mut serde_json::Deserializer::from_str(json);
-        serde_path_to_error::deserialize(de).map_err(|e| crate::CosmError::Json {
-            path: e.path().to_string(),
-            message: e.into_inner().to_string(),
+        serde_path_to_error::deserialize(de).map_err(|e| {
+            let path = e.path().to_string();
+            let message = e.into_inner().to_string();
+            // A typed-body error carries its own path (see `CosmModuleRepr`).
+            if path == "."
+                && let Some(rest) = message.strip_prefix(BODY_ERROR_PREFIX)
+                && let Some((inner, msg)) = rest.split_once("`: ")
+            {
+                return crate::CosmError::Json {
+                    path: inner.to_string(),
+                    message: msg.to_string(),
+                };
+            }
+            crate::CosmError::Json { path, message }
         })
+    }
+
+    /// The lowest COSM version that can express this module: what the writer
+    /// stamps as `cosm_version` (omitted at [`crate::COSM_BASE_VERSION`]). A
+    /// feature newer than the base raises it, e.g. the owner fields (#522) and
+    /// member visibility (#525) when they land.
+    pub fn required_version(&self) -> &'static str {
+        crate::COSM_BASE_VERSION
     }
 
     /// Compact JSON.

@@ -5,7 +5,8 @@
 
 use crate::assembler::{assemble, disassemble};
 use crate::bytecode::{
-    KIND_TABLE_FORMAT_JSON, MAGIC, Program, VERSION_KIND_TABLE, VERSION_NO_KIND_TABLE,
+    KIND_TABLE_FORMAT_JSON, KIND_TABLE_FORMAT_JSON_VERSIONED, MAGIC, Program, VERSION_KIND_TABLE,
+    VERSION_NO_KIND_TABLE,
 };
 use crate::vm::{Quotas, Value, VmError, run};
 use crush_cosm::{CosmModule, Semantics, ValueMode};
@@ -144,6 +145,69 @@ fn a_v3_blob_must_carry_a_well_formed_section() {
     bad.extend_from_slice(b"{]");
     let e = Program::from_blob(&bad).unwrap_err().to_string();
     assert!(e.starts_with("malformed kind table"), "{e}");
+}
+
+/// A v3 blob whose kind-table section is `format | len | json`, laid out by hand.
+fn blob_with_section(format: u8, json: &str) -> Vec<u8> {
+    let mut b = program_with(None).to_blob();
+    b[4] = VERSION_KIND_TABLE;
+    b.push(format);
+    b.extend_from_slice(&(json.len() as u32).to_be_bytes());
+    b.extend_from_slice(json.as_bytes());
+    b
+}
+
+#[test]
+fn kt_format_2_loads_and_today_s_tables_are_still_written_as_format_1() {
+    // V3a (#521): format 2 is the stamped-COSM section a newer writer emits
+    // once a module needs COSM above the base version; this reader takes it.
+    let mut v: serde_json::Value = serde_json::from_str(POINT_FIXTURE).unwrap();
+    v["cosm_version"] = serde_json::json!(crush_cosm::COSM_BASE_VERSION);
+    let p = Program::from_blob(&blob_with_section(
+        KIND_TABLE_FORMAT_JSON_VERSIONED,
+        &v.to_string(),
+    ))
+    .expect("kt_format 2 loads");
+    assert_eq!(p.cosm, Some(point_module()));
+
+    // Nothing needs a newer COSM yet, so the writer keeps format 1.
+    let good = program_with(Some(point_module())).to_blob();
+    let v2_len = program_with(None).to_blob().len();
+    assert_eq!(good[v2_len], KIND_TABLE_FORMAT_JSON);
+}
+
+#[test]
+fn a_kind_table_needing_a_newer_cosm_is_refused_at_load() {
+    let mut v: serde_json::Value = serde_json::from_str(POINT_FIXTURE).unwrap();
+    v["cosm_version"] = serde_json::json!("0.9.0");
+    for format in [KIND_TABLE_FORMAT_JSON, KIND_TABLE_FORMAT_JSON_VERSIONED] {
+        let e = Program::from_blob(&blob_with_section(format, &v.to_string())).unwrap_err();
+        assert!(matches!(e, crate::Error::BadKindTable(_)), "{e:?}");
+        let msg = e.to_string();
+        assert!(msg.contains("needs COSM 0.9.0"), "{msg}");
+    }
+}
+
+#[test]
+fn a_cvm1_blob_with_a_private_method_is_refused_at_load() {
+    // #521: what a visibility-aware writer would emit (stamped, format 2,
+    // a `priv` member) is refused by this runtime, which predates visibility.
+    let mut v: serde_json::Value = serde_json::from_str(POINT_FIXTURE).unwrap();
+    v["kinds"][0]["members"][1]["visibility"] = serde_json::json!("priv");
+    v["cosm_version"] = serde_json::json!("0.2.0");
+    let e = Program::from_blob(&blob_with_section(
+        KIND_TABLE_FORMAT_JSON_VERSIONED,
+        &v.to_string(),
+    ))
+    .unwrap_err();
+    assert!(matches!(e, crate::Error::BadKindTable(_)), "{e:?}");
+    assert!(e.to_string().contains("needs COSM 0.2.0"), "{e}");
+
+    // Unstamped, in format 1, the member key check still refuses it.
+    v.as_object_mut().unwrap().remove("cosm_version");
+    let e =
+        Program::from_blob(&blob_with_section(KIND_TABLE_FORMAT_JSON, &v.to_string())).unwrap_err();
+    assert!(e.to_string().contains("unknown key `visibility`"), "{e}");
 }
 
 #[test]

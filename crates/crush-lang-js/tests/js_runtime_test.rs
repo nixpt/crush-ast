@@ -135,11 +135,22 @@ fn compound_assignment_lowers_like_its_expanded_form() {
         strip(&mut v);
         v
     }
-    for op in [
-        "+", "-", "*", "/", "%", "**", "&", "|", "^", "<<", ">>", ">>>",
-    ] {
+    for op in ["+", "-", "*", "/", "%", "**"] {
         let compound = shape(&format!("let x = 9; x {op}= 2;"));
         let expanded = shape(&format!("let x = 9; x = x {op} 2;"));
         assert_eq!(compound, expanded, "`{op}=`");
+    }
+    // Bitwise ops are refused in both forms (#425): JS works on 32-bit
+    // ToInt32 values, crush's operators on i64.
+    for op in ["&", "|", "^", "<<", ">>", ">>>"] {
+        for source in [
+            format!("let x = 9; x {op}= 2;"),
+            format!("let x = 9; x = x {op} 2;"),
+        ] {
+            let err = crush_lang_js::js_to_cast(&source, "js")
+                .expect_err(&format!("`{source}` must be refused"))
+                .to_string();
+            assert!(err.contains("bitwise"), "`{source}`: {err}");
+        }
     }
 }

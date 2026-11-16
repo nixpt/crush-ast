@@ -52,8 +52,10 @@ fn cached_sni(sni: &str) -> &'static str {
     leaked
 }
 
+use crush_vm::host::HostCapError;
 use crush_vm::vm::Value;
 use crush_vm::{HostCap, HostCapSpec, HostCaps};
+use std::time::{Duration, Instant};
 
 use crate::{
     reactor::Reactor,
@@ -69,6 +71,9 @@ pub struct NetState {
     pub conns: HashMap<ConnId, SharedConn>,
     pub listeners: HashMap<ConnId, Arc<Mutex<TcpListener>>>,
     pub next_id: ConnId,
+    /// Bytes of an incomplete UTF-8 character left over from the last
+    /// `tcp.recv` on a connection (#507), prepended to the next read.
+    pub pending: HashMap<ConnId, Vec<u8>>,
     #[cfg(feature = "tls")]
     pub tls_client_conns: HashMap<
         ConnId,
@@ -85,6 +90,7 @@ impl NetState {
             conns: HashMap::new(),
             listeners: HashMap::new(),
             next_id: 1,
+            pending: HashMap::new(),
             #[cfg(feature = "tls")]
             tls_client_conns: HashMap::new(),
         }
@@ -109,6 +115,109 @@ fn str_arg(args: &[Value], i: usize) -> Result<String, String> {
         Some(v) => Err(format!("expected str at {i}, got {v:?}")),
         None => Err(format!("missing arg at {i}")),
     }
+}
+
+/// `tcp.send`'s payload: text is sent as its UTF-8 bytes, a bytes value as is.
+fn payload_arg(args: &[Value], i: usize) -> Result<Vec<u8>, String> {
+    match args.get(i) {
+        Some(Value::Str(s)) => Ok(s.clone().into_bytes()),
+        Some(Value::Bytes(b)) => Ok(b.clone()),
+        Some(v) => Err(format!("expected str or bytes at {i}, got {v:?}")),
+        None => Err(format!("missing arg at {i}")),
+    }
+}
+
+/// The optional trailing `opts` map of `tcp.accept` / `tcp.recv` (#507):
+/// null/absent, or `{ timeout_ms: N }` with N a positive integer.
+fn timeout_opt(cap: &str, args: &[Value], need: usize) -> Result<Option<u64>, String> {
+    if args.len() != need && args.len() != need + 1 {
+        return Err(format!(
+            "{cap}: expected {need} or {} arguments (…, opts?), got {}",
+            need + 1,
+            args.len()
+        ));
+    }
+    let map = match args.get(need) {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Map(m)) => m.borrow(),
+        Some(other) => return Err(format!("{cap}: opts must be a map or null, got {other}")),
+    };
+    let mut timeout = None;
+    for (k, v) in map.iter() {
+        match (k.as_str(), v) {
+            ("timeout_ms", Value::Int(n)) if *n > 0 => timeout = Some(*n as u64),
+            ("timeout_ms", Value::Null) => {}
+            ("timeout_ms", other) => {
+                return Err(format!(
+                    "{cap}: opts.timeout_ms must be a positive integer, got {other}"
+                ));
+            }
+            (key, _) => {
+                return Err(format!(
+                    "{cap}: unknown opts key '{key}' (known: timeout_ms)"
+                ));
+            }
+        }
+    }
+    Ok(timeout)
+}
+
+/// One call's time bound: the tighter of its own `timeout_ms` and what is
+/// left of the VM wall budget. A timeout is the call's own (catchable)
+/// failure only when `timeout_ms` was the tighter one.
+struct Bound {
+    deadline: Option<Instant>,
+    own_ms: Option<u64>,
+}
+
+impl Bound {
+    fn new(timeout_ms: Option<u64>, wall_ms: Option<u64>) -> Self {
+        let own = match (timeout_ms, wall_ms) {
+            (Some(t), Some(w)) => t < w,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        let ms = match (timeout_ms, wall_ms) {
+            (Some(t), Some(w)) => Some(t.min(w)),
+            (t, w) => t.or(w),
+        };
+        // An unrepresentable instant (an unlimited wall budget) is no deadline.
+        let deadline = ms.and_then(|ms| Instant::now().checked_add(Duration::from_millis(ms)));
+        Bound {
+            deadline,
+            own_ms: if own { timeout_ms } else { None },
+        }
+    }
+
+    fn remaining(&self) -> Option<Duration> {
+        self.deadline
+            .map(|d| d.saturating_duration_since(Instant::now()))
+    }
+
+    fn expired(&self, cap: &str) -> HostCapError {
+        match self.own_ms {
+            Some(t) => HostCapError::Message(format!("{cap}: timed out after {t} ms")),
+            None => HostCapError::Timeout,
+        }
+    }
+}
+
+fn to_call_result(
+    r: Result<Option<Value>, HostCapError>,
+    cap: &str,
+) -> Result<Option<Value>, String> {
+    r.map_err(|e| match e {
+        HostCapError::Message(m) => m,
+        HostCapError::Timeout => format!("{cap}: timed out"),
+        HostCapError::Exit(code) => format!("{cap}: unexpected exit({code})"),
+    })
+}
+
+fn is_timeout(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
 }
 
 fn id_arg(args: &[Value], i: usize) -> Result<ConnId, String> {
@@ -166,16 +275,10 @@ impl HostCap for TcpListenCap {
 }
 
 pub struct TcpAcceptCap(pub Arc<Mutex<NetState>>);
-impl HostCap for TcpAcceptCap {
-    fn spec(&self) -> HostCapSpec {
-        HostCapSpec {
-            name: "tcp.accept".into(),
-            argc: Some(1),
-            returns: true,
-        }
-    }
-    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        let listener_id = id_arg(&args, 0)?;
+impl TcpAcceptCap {
+    fn accept(&self, args: &[Value], wall_ms: Option<u64>) -> Result<Option<Value>, HostCapError> {
+        let timeout_ms = timeout_opt("tcp.accept", args, 1)?;
+        let listener_id = id_arg(args, 0)?;
         let listener = {
             let s = self.0.lock().unwrap();
             s.listeners
@@ -183,16 +286,38 @@ impl HostCap for TcpAcceptCap {
                 .ok_or_else(|| format!("tcp.accept: unknown listener {listener_id}"))?
                 .clone()
         };
-        // The state lock is NOT held across the blocking accept.
+        let bound = Bound::new(timeout_ms, wall_ms);
+        // The state lock is NOT held across the (polling) accept.
         let tcp_conn = listener
             .lock()
             .unwrap()
-            .accept_blocking()
-            .map_err(|e| format!("tcp.accept: {e}"))?;
+            .accept_until(bound.deadline)
+            .map_err(|e| format!("tcp.accept: {e}"))?
+            .ok_or_else(|| bound.expired("tcp.accept"))?;
         let mut s = self.0.lock().unwrap();
         let id = s.alloc_conn();
         s.conns.insert(id, Arc::new(Mutex::new(tcp_conn)));
         Ok(Some(Value::Int(id)))
+    }
+}
+impl HostCap for TcpAcceptCap {
+    fn spec(&self) -> HostCapSpec {
+        HostCapSpec {
+            name: "tcp.accept".into(),
+            // listener, opts? — checked by `timeout_opt`.
+            argc: None,
+            returns: true,
+        }
+    }
+    fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
+        to_call_result(self.accept(&args, None), "tcp.accept")
+    }
+    fn call_with_deadline(
+        &self,
+        args: Vec<Value>,
+        deadline_ms: u64,
+    ) -> Result<Option<Value>, HostCapError> {
+        self.accept(&args, Some(deadline_ms))
     }
 }
 
@@ -207,7 +332,7 @@ impl HostCap for TcpSendCap {
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         let id = id_arg(&args, 0)?;
-        let bytes = str_arg(&args, 1)?.into_bytes();
+        let bytes = payload_arg(&args, 1)?;
         #[cfg(feature = "tls")]
         {
             let tls = self.0.lock().unwrap().tls_client_conns.get(&id).cloned();
@@ -235,54 +360,121 @@ impl HostCap for TcpSendCap {
 }
 
 pub struct TcpRecvCap(pub Arc<Mutex<NetState>>);
+impl TcpRecvCap {
+    /// One read of up to 16 KiB, bounded by `timeout`.
+    fn read_once(
+        &self,
+        id: ConnId,
+        buf: &mut [u8],
+        timeout: Option<Duration>,
+    ) -> std::io::Result<usize> {
+        #[cfg(feature = "tls")]
+        {
+            let tls = self.0.lock().unwrap().tls_client_conns.get(&id).cloned();
+            if let Some(tls) = tls {
+                use std::io::Read;
+                let mut g = tls.lock().unwrap();
+                g.sock
+                    .set_read_timeout(timeout.map(|t| t.max(Duration::from_millis(1))))?;
+                let n = g.read(buf);
+                g.sock.set_read_timeout(None)?;
+                return n;
+            }
+        }
+        let conn = {
+            let s = self.0.lock().unwrap();
+            s.conns
+                .get(&id)
+                .ok_or_else(|| std::io::Error::other(format!("unknown conn {id}")))?
+                .clone()
+        };
+        let guard = conn.lock().unwrap();
+        guard.read_timeout(buf, timeout)
+    }
+
+    /// Text from the connection (#507). An incomplete UTF-8 character at
+    /// the end of a read is kept for the next call instead of failing, and
+    /// a read that yields only part of a character reads again, so `""`
+    /// still means end of stream. A timed-out read loses nothing.
+    fn recv(&self, args: &[Value], wall_ms: Option<u64>) -> Result<Option<Value>, HostCapError> {
+        let timeout_ms = timeout_opt("tcp.recv", args, 1)?;
+        let id = id_arg(args, 0)?;
+        let bound = Bound::new(timeout_ms, wall_ms);
+        let mut data = self
+            .0
+            .lock()
+            .unwrap()
+            .pending
+            .remove(&id)
+            .unwrap_or_default();
+        let mut buf = vec![0u8; 16 * 1024];
+        loop {
+            let left = bound.remaining();
+            if left.is_some_and(|d| d.is_zero()) {
+                self.0.lock().unwrap().pending.insert(id, data);
+                return Err(bound.expired("tcp.recv"));
+            }
+            let n = match self.read_once(id, &mut buf, left) {
+                Ok(n) => n,
+                Err(e) if is_timeout(&e) => {
+                    self.0.lock().unwrap().pending.insert(id, data);
+                    return Err(bound.expired("tcp.recv"));
+                }
+                Err(e) => return Err(format!("tcp.recv: {e}").into()),
+            };
+            if n == 0 {
+                if !data.is_empty() {
+                    return Err(format!(
+                        "tcp.recv: connection closed inside a UTF-8 character ({} byte(s) left)",
+                        data.len()
+                    )
+                    .into());
+                }
+                return Ok(Some(Value::Str(String::new())));
+            }
+            data.extend_from_slice(&buf[..n]);
+            match std::str::from_utf8(&data) {
+                Ok(_) => {
+                    return Ok(Some(Value::Str(String::from_utf8(data).expect("checked"))));
+                }
+                Err(e) if e.error_len().is_some() => {
+                    return Err(format!(
+                        "tcp.recv: invalid UTF-8 at byte {} of the received text",
+                        e.valid_up_to()
+                    )
+                    .into());
+                }
+                Err(e) => {
+                    let valid = e.valid_up_to();
+                    if valid == 0 {
+                        continue; // only part of one character so far: read more
+                    }
+                    let tail = data.split_off(valid);
+                    self.0.lock().unwrap().pending.insert(id, tail);
+                    return Ok(Some(Value::Str(String::from_utf8(data).expect("checked"))));
+                }
+            }
+        }
+    }
+}
 impl HostCap for TcpRecvCap {
     fn spec(&self) -> HostCapSpec {
         HostCapSpec {
             name: "tcp.recv".into(),
-            argc: Some(1),
+            // conn, opts? — checked by `timeout_opt`.
+            argc: None,
             returns: true,
         }
     }
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
-        let id = id_arg(&args, 0)?;
-        let mut buf = vec![0u8; 16 * 1024];
-        #[cfg(feature = "tls")]
-        let tls_n = {
-            let tls = self.0.lock().unwrap().tls_client_conns.get(&id).cloned();
-            match tls {
-                Some(tls) => {
-                    use std::io::Read;
-                    let n = tls
-                        .lock()
-                        .unwrap()
-                        .read(&mut buf)
-                        .map_err(|e| format!("tcp.recv: {e}"))?;
-                    Some(n)
-                }
-                None => None,
-            }
-        };
-        #[cfg(not(feature = "tls"))]
-        let tls_n: Option<usize> = None;
-        let n = match tls_n {
-            Some(n) => n,
-            None => {
-                let s = self.0.lock().unwrap();
-                let conn = s
-                    .conns
-                    .get(&id)
-                    .ok_or_else(|| format!("tcp.recv: unknown conn {id}"))?
-                    .clone();
-                drop(s);
-                conn.lock()
-                    .unwrap()
-                    .blocking_read(&mut buf)
-                    .map_err(|e| format!("tcp.recv: {e}"))?
-            }
-        };
-        buf.truncate(n);
-        let s = String::from_utf8(buf).map_err(|e| format!("tcp.recv: utf8: {e}"))?;
-        Ok(Some(Value::Str(s)))
+        to_call_result(self.recv(&args, None), "tcp.recv")
+    }
+    fn call_with_deadline(
+        &self,
+        args: Vec<Value>,
+        deadline_ms: u64,
+    ) -> Result<Option<Value>, HostCapError> {
+        self.recv(&args, Some(deadline_ms))
     }
 }
 
@@ -299,6 +491,7 @@ impl HostCap for TcpCloseCap {
         let id = id_arg(&args, 0)?;
         let mut s = self.0.lock().unwrap();
         s.conns.remove(&id);
+        s.pending.remove(&id);
         #[cfg(feature = "tls")]
         s.tls_client_conns.remove(&id);
         Ok(None)
