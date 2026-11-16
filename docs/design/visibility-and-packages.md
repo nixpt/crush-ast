@@ -6,6 +6,11 @@ must rule on are collected under **Decisions**.
 
 ## What exists today (checked on main 30d6d581)
 
+*These facts are the state on 2026-11-14, before V3a (#529) merged. Since #529, `MemberDecl` rejects
+unknown keys (`check_keys`), `cosm_version` is read on every load, and a versioned kind table is written as
+`kt_format 2`. Where this note says "today" about those three (this table, §2 "Schema change", and the
+advisor's NOT CHECKED list), read "before #529"; decision 7 below describes what was built.*
+
 | Fact | Where | Checked how |
 |---|---|---|
 | `pub fn` and `pub async fn` parse, and `pub` is thrown away. `pub` is not a keyword: the parser matches the identifier `pub` before `fn`. | `crates/crush-frontend/src/parser/mod.rs:648-700` | read |
@@ -161,8 +166,9 @@ does not protect members. Options:
 - **(iii)** A `requires: ["visibility", …]` feature list instead of a linear minor, which gives a by-name
   refusal per feature. Slightly more schema; it reads better in an error message.
 
-**Recommendation: (ii)**, with the one-time `kt_format 2` bump and with (iii)'s by-name message as the
-error text. Add a test that today's runtime refuses a blob with a private method, which pins down
+**Ruled (decision 7, 2026-11-14): (ii)**, with the one-time `kt_format 2` bump and with (iii)'s by-name
+message as the error text. A purely additive or cosmetic field may be marked ignore-unknown, still gated by
+the version or a `requires` list. Security-relevant fields (visibility first) are must-understand. Add a test that today's runtime refuses a blob with a private method, which pins down
 `MemberDecl`'s lenience. F7 closes with the rule written into `crush-cosm`'s docs plus that test. **It must
 land before any other schema-touching ticket**, including the owner fields and V3.
 
@@ -277,6 +283,8 @@ V0 needs no decision and can start now. V1, V2, V4 and V5 need decisions 1, 3 an
 | 4 | **Approved.** No directory modules: the package entry is the directory module. Concatenation is retired only for multi-file or with-deps packages whose entry has no `import`. |
 | 5 | **Approved.** F7: `cosm_version`, each blob stamped with the lowest version that can express it, and a one-time `kt_format 2` bump. This lands **before any other schema change**. |
 | 6 | **The Crush 1.0 feature freeze is 2026-12-31** (ruled 2026-11-14). "No new syntax after the freeze" applies, so `pub struct`/`pub trait` (V1), the qualified literal `a.P { … }` (V4), the F7 rule and the owner ids (V3a, V3b), and the `W-VIS01` error flip (V5, after V2) must land before it. Decision 2 resolves on this date: **C1 only if K2 lands by 2026-12-31**, otherwise C2. |
+
+| 7 | **CRUSH-458 vs decision 5: decision 5 wins, with the middle path** (captain, 2026-11-14). COSM stays **strict by default**: `cosm_version` with the lowest-version stamp, plus the one-time `kt_format 2`. A field that is **purely additive or cosmetic** may be ignore-unknown, gated by the version or a `requires` list. **Visibility, and anything else security-relevant, is must-understand**: an old runtime refuses the blob rather than running a `priv` member as public. CRUSH-458 ("ruling 13": ignore unknown everywhere, major-only check) is superseded. V3a #521 is written against this ruling. |
 
 Order: V0 (#515) first, then V3a (F7) before any schema-touching ticket.
 
