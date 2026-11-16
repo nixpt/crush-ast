@@ -24,6 +24,12 @@ add its entry after yours.
   catches a failing cap sees the same change in the caught value's text
   (`error(tcp.recv: timed out after 500 ms)`), so a script that matched the doubled text must
   be updated (#514).
+- **Behaviour change:** `str.starts_with` and `str.ends_with` now return Bool (`true`/`false`) on
+  every engine, as `str.contains` already did. They returned Int `1`/`0`, so
+  `str.starts_with("ab", "a") == true` was silently false and `print` showed `1`. Code that
+  compares the result with `1`/`0` or does arithmetic on it must change to use the Bool
+  (`if str.starts_with(...)` is unaffected). Fixed in the shared method kernel used by the
+  scheduler VM, PortableVm and AOT; FastVM and the JIT already returned Bool (#511).
 - COSM has a version rule (F7, #521). A kind table may carry `cosm_version`; a runtime loads the
   same major and a minor no greater than its own and refuses a newer one by name. Member objects
   are now must-understand like the rest of COSM: an unknown key on a member is a load error
