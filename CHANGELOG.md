@@ -15,6 +15,12 @@ add its entry after yours.
 ## [Unreleased]
 
 - fix: `crush update` no longer reads an install as "installed: none" when running `crush --version` fails once with "text file busy" (ETXTBSY). The version probe retries a few times (about 100 ms in all) before giving up, and an exec error other than "not found" is reported on stderr when `CRUSH_UPDATE_DEBUG` is set. Output and exit codes are unchanged. The updater's tests also write their fake binaries to a temp name and rename them into place (#517).
+- **Behaviour change:** `str.starts_with` and `str.ends_with` now return Bool (`true`/`false`) on
+  every engine, as `str.contains` already did. They returned Int `1`/`0`, so
+  `str.starts_with("ab", "a") == true` was silently false and `print` showed `1`. Code that
+  compares the result with `1`/`0` or does arithmetic on it must change to use the Bool
+  (`if str.starts_with(...)` is unaffected). Fixed in the shared method kernel used by the
+  scheduler VM, PortableVm and AOT; FastVM and the JIT already returned Bool (#511).
 - COSM has a version rule (F7, #521). A kind table may carry `cosm_version`; a runtime loads the
   same major and a minor no greater than its own and refuses a newer one by name. Member objects
   are now must-understand like the rest of COSM: an unknown key on a member is a load error

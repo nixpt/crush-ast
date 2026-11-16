@@ -50,7 +50,7 @@ fn numeric_and_boolean_result_tags_and_canonical_sdk_flags_are_distinct() {
             .unwrap()
             .call(args.clone())
             .unwrap(),
-        Some(Value::Int(1))
+        Some(Value::Bool(true))
     );
     assert_eq!(
         caps.get("rust.str.starts_with")

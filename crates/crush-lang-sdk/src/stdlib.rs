@@ -1384,7 +1384,7 @@ mod tests {
                 Value::Str("he".to_string()),
             ])
             .unwrap();
-        assert_eq!(result, Some(Value::Int(1)));
+        assert_eq!(result, Some(Value::Bool(true)));
 
         let cap = caps.get("str.ends_with").unwrap();
         let result = cap
@@ -1393,7 +1393,7 @@ mod tests {
                 Value::Str("lo".to_string()),
             ])
             .unwrap();
-        assert_eq!(result, Some(Value::Int(1)));
+        assert_eq!(result, Some(Value::Bool(true)));
     }
 
     #[test]
