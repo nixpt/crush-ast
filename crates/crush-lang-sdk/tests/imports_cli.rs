@@ -633,3 +633,33 @@ fn visibility_findings_go_to_stderr_and_change_no_output() {
     );
     assert!(stderr(&o).contains("[N-VIS01]"), "{}", stderr(&o));
 }
+
+/// V1 (#519): `pub fn __x` is `W-VIS02` through `crushc`, and
+/// `--deny-warnings` fails on it.
+#[test]
+fn pub_dunder_is_w_vis02_on_the_cli_and_denied() {
+    let d = tree(&[(
+        "main.crush",
+        "pub fn __leak() { return 1 }\nfn main() {\n    io.print(__leak())\n}\n",
+    )]);
+    let crushc = |extra: &[&str]| {
+        Command::new(bin("crushc"))
+            .args(["main.crush", "-o", "out.cvm1"])
+            .args(extra)
+            .current_dir(d.path())
+            .env_remove("CRUSH_PATH")
+            .output()
+            .unwrap()
+    };
+    let o = crushc(&[]);
+    assert!(
+        o.status.success(),
+        "a warning, not an error: {}",
+        stderr(&o)
+    );
+    assert!(stderr(&o).contains("[W-VIS02]"), "{}", stderr(&o));
+    assert!(stderr(&o).contains("`pub fn __leak`"), "{}", stderr(&o));
+    let o = crushc(&["--deny-warnings"]);
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert_prints(&run_in(d.path(), &["main.crush"]), &["1"]);
+}

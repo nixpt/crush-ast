@@ -504,3 +504,195 @@ fn findings_do_not_change_the_compiled_program() {
     assert_eq!(codes(&d), [W_VIS01]);
     crush_frontend::compile_cast(&program).unwrap_or_else(|e| panic!("{e:#}"));
 }
+
+// ── Contract items from the independent review of #537 ──────────────────
+
+#[test]
+fn a_root_that_is_only_a_string_prefix_is_not_a_parent() {
+    // `lib` and `lib2` side by side: `lib2/m.crush` starts with the string
+    // `…/lib` but is not inside `lib/`, so it is its own package.
+    let files = [
+        (
+            "lib2/m2.crush",
+            "pub fn shown() { return 1 }\nfn hidden() { return 2 }\n",
+        ),
+        (
+            "lib/a.crush",
+            "import m2\npub fn fa() { return m2.hidden() }\n",
+        ),
+        (
+            "main.crush",
+            "import a\nfn main() {\n    print(a.fa())\n}\n",
+        ),
+    ];
+    let (program, d) = compile_with("prefix", &files, "main.crush", |dir| {
+        ImportOptions::new([dir.join("lib"), dir.join("lib2")])
+    });
+    assert_eq!(codes(&d), [W_VIS01], "lib and lib2 are two packages: {d:?}");
+    assert!(
+        d[0].location.file.ends_with("a.crush"),
+        "{:?}",
+        d[0].location
+    );
+    let pkg = program.functions["m2::hidden"].meta["package"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(pkg.ends_with("lib2"), "{pkg}");
+}
+
+#[test]
+fn an_alias_warns_like_the_module_name() {
+    let d = compile(
+        "alias",
+        &[
+            ("lib/geo.crush", GEO),
+            (
+                "main.crush",
+                "import geo as g\nfn main() {\n    print(g.helper(1))\n    let f = g.other\n    print(g.area(1, 2))\n}\n",
+            ),
+        ],
+        &["lib"],
+    );
+    assert_eq!(codes(&d), [W_VIS01, W_VIS01], "{d:?}");
+    assert!(d[0].message.contains("`g.helper(…)`"), "{}", d[0].message);
+    assert!(
+        d[1].message.contains("function value `g.other`"),
+        "{}",
+        d[1].message
+    );
+}
+
+#[test]
+fn a_private_function_passed_as_an_argument_or_used_in_a_closure_warns() {
+    let d = compile(
+        "arg-closure",
+        &[
+            ("lib/geo.crush", GEO),
+            (
+                "main.crush",
+                "import geo\nfn apply(f, x) { return f(x) }\nfn main() {\n    print(apply(geo.helper, 1))\n    let c = |x| geo.helper(x)\n    print(c(2))\n    let k = |x| geo.other\n}\n",
+            ),
+        ],
+        &["lib"],
+    );
+    assert_eq!(codes(&d), [W_VIS01, W_VIS01, W_VIS01], "{d:?}");
+    let lines: Vec<u32> = d.iter().map(|w| w.location.line).collect();
+    assert_eq!(lines, [4, 5, 7], "{d:?}");
+    assert!(
+        d[0].message.contains("function value `geo.helper`"),
+        "{}",
+        d[0].message
+    );
+    assert!(d[1].message.contains("`geo.helper(…)`"), "{}", d[1].message);
+}
+
+/// One way of writing a search directory, given the fixture root.
+type Spell = fn(&Path) -> PathBuf;
+
+/// `to` written relative to the process's working directory.
+fn relative_to_cwd(to: &Path) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap();
+    let mut rel = PathBuf::new();
+    for _ in cwd.components().skip(1) {
+        rel.push("..");
+    }
+    rel.join(to.strip_prefix("/").unwrap_or(to))
+}
+
+#[test]
+fn relative_and_dotdot_search_dirs_name_the_canonical_package() {
+    // `main.crush` reaches `lib/shared.crush` relatively (`import lib.shared`),
+    // while the `-L` root is written another way. The file is inside that
+    // root whatever the spelling, so the use from the root package warns. A
+    // root that was not made canonical would not contain the file, and the
+    // warning would vanish.
+    let files = [
+        ("x/keep.crush", "fn k() { return 0 }\n"),
+        (
+            "lib/shared.crush",
+            "pub fn ok() { return 1 }\nfn priv_fn() { return 2 }\n",
+        ),
+        (
+            "main.crush",
+            "import lib.shared\nfn main() {\n    print(shared.priv_fn())\n}\n",
+        ),
+    ];
+    let spellings: [(&str, Spell); 3] = [
+        ("canonical", |d| d.join("lib")),
+        ("dotdot", |d| d.join("x/../lib")),
+        ("relative", |d| relative_to_cwd(&d.join("lib"))),
+    ];
+    for (tag, spell) in spellings {
+        let (program, d) = compile_with(&format!("spell-{tag}"), &files, "main.crush", |dir| {
+            // A search directory that does not exist is skipped, not an error.
+            ImportOptions::new([dir.join("does-not-exist"), spell(dir)])
+        });
+        assert_eq!(codes(&d), [W_VIS01], "{tag}: {d:?}");
+        let pkg = program.functions["lib::shared::priv_fn"].meta["package"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(pkg.starts_with("dir:"), "{tag}: {pkg}");
+    }
+}
+
+#[test]
+fn pub_as_an_identifier_keeps_its_old_meaning_at_statement_start() {
+    let program = crush_frontend::parse_source(
+        "struct R { x }\nfn pub(v) { return v }\nfn main() {\n    print(pub(1))\n    let p = R { x: 3 }\n    print(p.x)\n}\n",
+    )
+    .unwrap_or_else(|e| panic!("{e:#}"));
+    assert!(
+        !is_pub(&program.functions["pub"].meta),
+        "`fn pub` is not `pub`"
+    );
+    crush_frontend::compile_cast(&program).unwrap_or_else(|e| panic!("{e:#}"));
+
+    // Top-level statements: `pub(1)` calls fn pub, `pub.x` reads a field of
+    // a variable named pub, `pub = 4` assigns it, and a bare `pub` line
+    // followed by `struct P` on the next line leaves P unmarked.
+    let program = crush_frontend::parse_source(
+        "struct R { x }\nfn pub(v) { return v }\nlet pub = R { x: 3 }\nprint(pub.x)\npub.x = 5\npub = 4\npub(1)\npub\nstruct P { y }\nprint(pub)\n",
+    )
+    .unwrap_or_else(|e| panic!("{e:#}"));
+    assert!(
+        !is_pub(def_meta(&program, "struct", "P")),
+        "P must not become pub"
+    );
+    assert!(!is_pub(def_meta(&program, "struct", "R")));
+    let body = serde_json::to_string(&program.functions["main"].body).unwrap();
+    assert!(
+        body.contains(r#""type":"Assign""#),
+        "`pub = 4` is an assignment: {body}"
+    );
+    assert!(
+        body.contains(r#""function":"pub""#),
+        "`pub(1)` calls fn pub: {body}"
+    );
+    crush_frontend::compile_cast(&program).unwrap_or_else(|e| panic!("{e:#}"));
+}
+
+#[test]
+fn pub_trait_parses_records_and_ends_the_legacy_rule() {
+    let program = crush_frontend::parse_source(
+        "pub trait Shape {\n    fn area(self);\n}\nfn main() { print(1) }\n",
+    )
+    .unwrap_or_else(|e| panic!("{e:#}"));
+    assert!(is_pub(def_meta(&program, "trait", "Shape")));
+    let d = compile(
+        "pub-trait-only",
+        &[
+            (
+                "lib/shapes.crush",
+                "pub trait Shape {\n    fn area(self);\n}\nfn make(s) { return s }\n",
+            ),
+            (
+                "main.crush",
+                "import shapes\nfn main() {\n    print(shapes.make(1))\n}\n",
+            ),
+        ],
+        &["lib"],
+    );
+    assert_eq!(codes(&d), [W_VIS01], "{d:?}");
+}
