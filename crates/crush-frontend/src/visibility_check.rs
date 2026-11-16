@@ -5,10 +5,17 @@
 //! contradict each other, so the compiler warns. The cross-package checks
 //! (`W-VIS01`, `N-VIS01`) need the import graph and live in
 //! [`crate::import_system`]; this pass needs only the program.
+//!
+//! [`module_surface`] and [`surfaces`] are the library author's view (V1.5,
+//! #539): what each module file exports, with no foreign user needed. They
+//! back `crushc --list-exports` and the package check of
+//! `crush-pkg build --deny-legacy-visibility`.
 
 use crate::diagnostics::{CompilerDiagnostic, DiagnosticSeverity};
-use crush_cast::Program;
 use crush_cast::manifest::SourceLoc;
+use crush_cast::{ImportStatement, Program, Statement};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 /// The diagnostic code.
 pub const W_VIS02: &str = "W-VIS02";
@@ -68,6 +75,230 @@ pub fn check_pub_internal(program: &Program) -> Vec<CompilerDiagnostic> {
         ))
     });
     out
+}
+
+/// What one module file exports (V1.5, #539): its functions (an explicit
+/// `fn main` excluded), which of them are `pub`, and its `struct` / `trait`
+/// names with their `pub`. Read from the file alone, as the import resolver
+/// reads a module (`Parser::parse_module`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ModuleSurface {
+    /// Every function name, `main` excluded.
+    pub functions: BTreeSet<String>,
+    /// The functions marked `pub`.
+    pub pub_functions: BTreeSet<String>,
+    /// Every `struct` / `trait` name, with whether it is marked `pub`.
+    pub kinds: BTreeMap<String, bool>,
+    /// It has an explicit `fn main`. The import resolver ignores a module's
+    /// `main`, so this alone does not stop the file being imported.
+    pub has_main: bool,
+    /// It has a top-level statement other than a definition or a Crush
+    /// module import (a `let`, a call, a `use @lang`, …). Such a file cannot
+    /// be imported: the resolver refuses it.
+    pub has_toplevel_code: bool,
+}
+
+impl ModuleSurface {
+    /// It marks something `pub` (a `fn`, `struct` or `trait`). The import
+    /// resolver's test for "not legacy".
+    pub fn has_pub(&self) -> bool {
+        !self.pub_functions.is_empty() || self.kinds.values().any(|p| *p)
+    }
+
+    /// It defines names besides `main` (functions or kinds).
+    pub fn defines_names(&self) -> bool {
+        !(self.functions.is_empty() && self.kinds.is_empty())
+    }
+
+    /// Another file can `import` it: it has no top-level statement that runs.
+    pub fn is_importable(&self) -> bool {
+        !self.has_toplevel_code
+    }
+
+    /// It defines names and marks none `pub`, so every name is public by the
+    /// legacy rule: what stage 3 (#524) turns private.
+    pub fn is_legacy(&self) -> bool {
+        !self.has_pub() && self.defines_names()
+    }
+
+    /// What the stage-2 gate refuses in a directory or package (V1.5, #539):
+    /// an importable legacy module, including one with a demo `fn main` (the
+    /// resolver drops the `main` and exports the rest).
+    pub fn fails_gate(&self) -> bool {
+        self.is_legacy() && self.is_importable()
+    }
+
+    /// The names it exports to other packages: the `pub` ones, or every
+    /// name of a legacy module.
+    pub fn exported(&self) -> Vec<&str> {
+        let legacy = !self.has_pub();
+        self.functions
+            .iter()
+            .filter(|f| legacy || self.pub_functions.contains(*f))
+            .map(String::as_str)
+            .chain(
+                self.kinds
+                    .iter()
+                    .filter(|(_, p)| legacy || **p)
+                    .map(|(k, _)| k.as_str()),
+            )
+            .collect()
+    }
+
+    /// The names it keeps private to its package (none for a legacy module).
+    pub fn private(&self) -> Vec<&str> {
+        if !self.has_pub() {
+            return Vec::new();
+        }
+        self.functions
+            .iter()
+            .filter(|f| !self.pub_functions.contains(*f))
+            .map(String::as_str)
+            .chain(
+                self.kinds
+                    .iter()
+                    .filter(|(_, p)| !**p)
+                    .map(|(k, _)| k.as_str()),
+            )
+            .collect()
+    }
+}
+
+/// The [`ModuleSurface`] of Crush `source`. A parse error is returned as
+/// the parser's message.
+pub fn module_surface(source: &str) -> Result<ModuleSurface, String> {
+    let (program, toplevel) = crate::parser::Parser::parse_module(source)
+        .map_err(|errs| crate::ParseErrors(errs).to_string())?;
+    let is_pub = |meta: &std::collections::HashMap<String, serde_json::Value>| {
+        meta.get("pub")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    };
+    let mut surface = ModuleSurface::default();
+    for (name, f) in &program.functions {
+        if name == "main" {
+            surface.has_main = true;
+            continue;
+        }
+        surface.functions.insert(name.clone());
+        if is_pub(&f.meta) {
+            surface.pub_functions.insert(name.clone());
+        }
+    }
+    for stmt in &toplevel {
+        match stmt {
+            Statement::StructDef { name, meta, .. } | Statement::TraitDef { name, meta, .. } => {
+                surface.kinds.insert(name.clone(), is_pub(meta));
+            }
+            // Only a Crush module import is allowed in a module; any other
+            // top-level statement (a `use @python`, `import @http`, a `let`,
+            // a call) makes the resolver refuse to import the file.
+            Statement::Import {
+                import: ImportStatement::CrushModule { .. },
+                ..
+            }
+            | Statement::ImplBlock { .. } => {}
+            _ => surface.has_toplevel_code = true,
+        }
+    }
+    Ok(surface)
+}
+
+/// The surface of every `.crush` file at `path`: the file itself (it must
+/// have the `.crush` extension), or every `.crush` file under the directory
+/// (recursively, sorted by path; hidden directories, `target/` and
+/// symlinked directories are skipped, so a link loop cannot recur and no
+/// file is listed twice). A file that cannot be read or parsed comes back
+/// as its error. An empty result means there is no `.crush` file.
+pub fn surfaces(path: &Path) -> std::io::Result<Vec<(PathBuf, Result<ModuleSurface, String>)>> {
+    let mut files = Vec::new();
+    if path.is_dir() {
+        collect_crush_files(path, &mut files)?;
+        files.sort();
+    } else if path.extension().is_some_and(|e| e == "crush") {
+        files.push(path.to_path_buf());
+    } else if path.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} is not a .crush file or a directory", path.display()),
+        ));
+    } else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("{} does not exist", path.display()),
+        ));
+    }
+    Ok(files
+        .into_iter()
+        .map(|f| {
+            let surface = std::fs::read_to_string(&f)
+                .map_err(|e| format!("cannot read {}: {e}", f.display()))
+                .and_then(|src| module_surface(&src));
+            (f, surface)
+        })
+        .collect())
+}
+
+fn collect_crush_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        // `file_type` does not follow symlinks: a symlinked directory is not
+        // walked; a symlink to a `.crush` file is listed like a file.
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            if !name.starts_with('.') && name != "target" {
+                collect_crush_files(&path, out)?;
+            }
+        } else if path.extension().is_some_and(|e| e == "crush")
+            && (kind.is_file() || path.is_file())
+        {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// One module's listing for `crushc --list-exports` (V1.5, #539): a head
+/// line `FILE: …` and indented name lines.
+pub fn render_surface(file: &str, surface: &ModuleSurface) -> String {
+    let names = |v: Vec<&str>| {
+        if v.is_empty() {
+            "(none)".to_string()
+        } else {
+            v.join(", ")
+        }
+    };
+    if !surface.is_importable() {
+        return format!(
+            "{file}: program (exempt from the gate: top-level statements, so it cannot be \
+             imported)\n"
+        );
+    }
+    if !surface.defines_names() {
+        return if surface.has_main {
+            format!("{file}: program (exempt from the gate: nothing to export besides `main`)\n")
+        } else {
+            format!("{file}: empty, exports nothing\n")
+        };
+    }
+    let main = if surface.has_main {
+        " (its `fn main` is ignored when it is imported)"
+    } else {
+        ""
+    };
+    if surface.is_legacy() {
+        return format!(
+            "{file}: legacy: no pub, everything public{main}\n  public: {}\n",
+            names(surface.exported())
+        );
+    }
+    format!(
+        "{file}: pub{main}\n  pub: {}\n  private: {}\n",
+        names(surface.exported()),
+        names(surface.private())
+    )
 }
 
 #[cfg(test)]
