@@ -188,3 +188,23 @@ fn fs_is_an_empty_directory_of_the_runs_own() {
     let next = execute_with_options("print(fs.exists(\"left.txt\"))\n", &granted(&["fs"]));
     assert_eq!(next.output, "0\n");
 }
+
+/// #534: a `Session` granted `fs` runs, and `fs.stat`'s modified time is the
+/// clock crush-web hands the in-memory tree (`Date.now()` in a browser; the
+/// system clock here). The wasm32 half of this is the `fsSession` case in
+/// scripts/browser_test.py: before the fix the SDK's `SystemTime::now()`
+/// aborted every such session there with "unreachable".
+#[test]
+fn a_session_granted_fs_stats_with_the_hosts_clock() {
+    let source = "print(1)\nfs.write(\"note.txt\", \"hello\")\nprint(fs.read(\"note.txt\"))\n\
+                  let st = fs.stat(\"note.txt\")\nprint(st[\"size\"])\nprint(st[\"modified\"])\n";
+    let secs = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+    let before = secs();
+    let report = Session::with_options(source, &granted(&["fs"])).run_report();
+    let after = secs();
+    assert_eq!(report.status, Status::Done, "{:?}", report.error);
+    let lines: Vec<&str> = report.output.lines().collect();
+    assert_eq!(&lines[..3], ["1", "hello", "5"], "{}", report.output);
+    let modified: i64 = lines[3].parse().unwrap();
+    assert!((before..=after).contains(&modified), "{modified} not in {before}..={after}");
+}
