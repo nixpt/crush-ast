@@ -1700,3 +1700,120 @@ fn await_on_a_non_handle_returns_the_value_on_every_engine() {
     // survives the `await`.
     assert_all_backends_agree("fn main() { return len(await [1, 2]) }");
 }
+
+// ── #447 / CRUSH-474: an out-of-range or non-Int array write raises on AOT ──
+// After #448 the VMs, FastVM and the JIT raise for `a[9] = v` and
+// `a["x"] = v`; both AOT backends used to skip the write and carry on. They
+// now exit 1 with the VMs' message, on both the `arr_set` capability (what
+// Crush source `a[i] = v` and `arr_set(a, i, v)` compile to) and the `arr_set`
+// opcode.
+
+/// `a = [1, 2, 3]`, one write, then `a[0]`.
+fn write_then_read(write: &str) -> String {
+    format!("fn main() {{\n  let a = [1, 2, 3];\n  {write}\n  return a[0];\n}}")
+}
+
+/// The AOT Rust and AOT C outcomes for an already-compiled program.
+fn aot_outcomes(program: &casm::Program) -> (FastOutcome, FastOutcome) {
+    let cc = pick_c_compiler().expect("no C compiler (gcc or clang) available on PATH");
+    let compiler = AotCompiler::new();
+    let rust = match compiler.compile_casm(program, "arr_set_rust") {
+        Ok(so) => run_aot_subprocess(&so),
+        Err(e) => FastOutcome::Err(format!("compile failed: {e}")),
+    };
+    let c = match compiler.compile_c(program, "arr_set_c", cc) {
+        Ok(so) => run_aot_subprocess(&so),
+        Err(e) => FastOutcome::Err(format!("compile failed: {e}")),
+    };
+    (rust, c)
+}
+
+/// The same program with its one `cap_call "arr_set"` turned into the
+/// `arr_set` opcode (same operands: array, index, value).
+fn via_arr_set_opcode(source: &str) -> casm::Program {
+    let mut program = crush_frontend::compile_crush_source(source).expect("frontend");
+    let mut rewritten = 0;
+    for f in program.functions.values_mut() {
+        for ins in &mut f.body {
+            if ins.op == "cap_call"
+                && ins.args.get("name").and_then(|n| n.as_str()) == Some("arr_set")
+            {
+                ins.op = "arr_set".into();
+                ins.args = serde_json::json!({});
+                rewritten += 1;
+            }
+        }
+    }
+    assert_eq!(rewritten, 1, "one arr_set cap_call in {source:?}");
+    program
+}
+
+/// Both AOT backends exit 1 and print `crush(aot[c]): <want>`.
+#[track_caller]
+fn assert_aot_write_error(program: &casm::Program, what: &str, want: &str) {
+    let (rust, c) = aot_outcomes(program);
+    for (backend, prefix, got) in [
+        ("AOT Rust", "crush(aot): ", rust),
+        ("AOT C", "crush(aotc): ", c),
+    ] {
+        let FastOutcome::Err(msg) = &got else {
+            panic!("{backend}: `{what}` must fail, got {got:?}");
+        };
+        assert!(
+            msg.contains("exited with code Some(1)") && msg.contains(&format!("{prefix}{want}")),
+            "{backend}: `{what}`: want exit 1 with {prefix}{want:?}, got {msg:?}"
+        );
+    }
+}
+
+const BAD_WRITES: [(&str, &str); 4] = [
+    ("a[9] = 1;", "array index out of range: 9 (len 3)"),
+    ("a[-4] = 1;", "array index out of range: -4 (len 3)"),
+    ("a[\"x\"] = 1;", "array index must be int, got str"),
+    ("a[1.5] = 1;", "array index must be int, got float"),
+];
+
+#[test]
+fn aot_out_of_range_or_non_int_array_write_is_rejected_like_the_vms() {
+    // The float index is checked on AOT only (below): the JIT's float-index
+    // write is not pinned by any test yet.
+    for (write, _) in BAD_WRITES.iter().filter(|(w, _)| !w.contains("1.5")) {
+        assert_all_backends_agree(&write_then_read(write));
+    }
+    assert_all_backends_agree(&write_then_read("arr_set(a, 9, 1);"));
+}
+
+#[test]
+fn aot_array_write_errors_carry_the_vm_message_on_the_capability_path() {
+    for (write, want) in BAD_WRITES {
+        let program =
+            crush_frontend::compile_crush_source(&write_then_read(write)).expect("frontend");
+        assert_aot_write_error(&program, write, want);
+    }
+    // An index past i32 used to be truncated to `int` by AOT C's
+    // `_wrap_index((int)i, len)`: 2^32 became 0 and overwrote `a[0]`.
+    let program = crush_frontend::compile_crush_source(&write_then_read("a[4294967296] = 7;"))
+        .expect("frontend");
+    assert_aot_write_error(
+        &program,
+        "a[4294967296] = 7;",
+        "array index out of range: 4294967296 (len 3)",
+    );
+}
+
+#[test]
+fn aot_array_write_errors_carry_the_vm_message_on_the_opcode_path() {
+    for (write, want) in BAD_WRITES {
+        assert_aot_write_error(&via_arr_set_opcode(&write_then_read(write)), write, want);
+    }
+}
+
+#[test]
+fn aot_in_range_and_negative_array_writes_still_land() {
+    assert_all_backends_return(&write_then_read("a[0] = 7;"), 7);
+    assert_all_backends_return(&write_then_read("a[-3] = 8;"), 8);
+    assert_all_backends_return(
+        "fn main() {\n  let a = [1, 2, 3];\n  a[-1] = 9;\n  return a[2];\n}",
+        9,
+    );
+}

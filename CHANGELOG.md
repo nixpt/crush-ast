@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- AOT: an out-of-range or non-Int array write raises instead of being skipped (#447, CRUSH-474).
+  On AOT Rust and AOT C, `a[9] = v` on a 3-element array now exits 1 with the VMs' message
+  (`array index out of range: 9 (len 3)`), and `a["x"] = v` with `array index must be int, got
+  str`. This applies to both the `arr_set` capability (what `a[i] = v` and `arr_set(a, i, v)`
+  compile to) and the `arr_set` opcode. Both used to skip the write silently. Negative indices
+  still count from the end. AOT C now checks the index as int64: before, `a[4294967296] = v`
+  was truncated to `int` and overwrote `a[0]`. Reads are unchanged: AOT reads out of range still
+  give `null`, and the C read path still truncates the index to `int`.
 - **Format:** owner ids, COSM `0.2.0` (V3b, #522). A kind may record the package that declares
   it (`package`, and with it `module`), and the COSM module records the package of each function
   outside the root package (`fn_packages`). **When:** only when a program uses code from another
