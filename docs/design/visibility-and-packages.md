@@ -371,7 +371,8 @@ the legacy rule. Nothing changes without it. There are two gates, and a library 
   is refused with the flag.
 - **The directory gate, `crushc --list-exports --deny-legacy-visibility PATH`** (a `.crush` file or a
   directory, walked recursively in path order): the library author's view, with no foreign user needed.
-  The walk sees what the import resolver sees. It **follows a symlinked directory**, as
+  The walk follows what an import can follow (it may still list a file no import can name, such
+  as `my-lib/x.crush`). It **follows a symlinked directory**, as
   `import a.b` does when `a/` is a link; each directory is walked once by its canonical path, so a
   link loop ends and a directory two paths reach is listed once (under the real path, when the
   link sits beside its target). It skips a **hidden directory** (`.name`), which no import can
@@ -389,7 +390,9 @@ the legacy rule. Nothing changes without it. There are two gates, and a library 
 - **`crush-pkg build --deny-legacy-visibility`**: both, for a package. It is a **library gate**. The
   package's sources are the entry's directory; when that is the package root, its `tests/` and
   `examples/` are left out. The walk is the directory gate's (symlinked directories followed,
-  hidden directories and `target/` skipped). Every importable legacy module there fails, the entry included, even
+  hidden directories and `target/` skipped). `tests/` and `examples/` are not entered at all, so
+  a link inside them cannot take a real source directory out of the gate, and a link from
+  outside them into them is gated under the link's path. Every importable legacy module there fails, the entry included, even
   when nobody imports it; the same two exemptions apply (top-level statements, or nothing besides
   `main`). An application does not need this gate: legacy inside one package stays fine at every
   stage. An application that runs it anyway must mark its importable modules `pub`, entry included

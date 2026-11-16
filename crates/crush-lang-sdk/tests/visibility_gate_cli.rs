@@ -307,7 +307,7 @@ fn e_vis01_json_level_is_error() {
     assert_eq!(v["level"], "error");
 }
 
-/// The directory walk sees what the import resolver sees (#545 review). The
+/// The directory walk follows what an import can follow (#545 review). The
 /// resolver looks `import vendor.old` up as `<root>/vendor/old.crush` and
 /// goes through a symlinked `vendor/`, so the walk follows it too.
 #[cfg(unix)]
@@ -386,9 +386,10 @@ mod symlinked_dirs {
         );
     }
 
-    /// A hidden directory stays out of the walk because the resolver cannot
-    /// reach it either: a module path is made of identifiers, and none
-    /// starts with `.`. That holds for a real one and for a link.
+    /// A hidden directory stays out of the walk because no import can reach
+    /// it: the parser takes only identifiers in a module path, and none
+    /// starts with `.`, so the resolver is never asked. That holds for a
+    /// real one and for a link.
     #[test]
     fn a_hidden_directory_is_skipped_because_no_import_can_name_it() {
         let dir = tree(&[

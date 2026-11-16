@@ -209,7 +209,8 @@ pub fn module_surface(source: &str) -> Result<ModuleSurface, String> {
 /// (recursively, sorted by path). A file that cannot be read or parsed comes
 /// back as its error. An empty result means there is no `.crush` file.
 ///
-/// The walk sees what the import resolver sees. The resolver looks a module
+/// The walk follows what an import can follow (it may still list a file no
+/// import can name, such as `my-lib/x.crush`). The resolver looks a module
 /// up by path (`import a.b` is `<root>/a/b.crush`) and so goes through a
 /// symlinked directory; the walk follows one too. Each directory is walked
 /// once, by its canonical path: a link loop ends there, and a directory
@@ -223,9 +224,24 @@ pub fn module_surface(source: &str) -> Result<ModuleSurface, String> {
 /// - **`target/`** is skipped as build output, although `import target.x`
 ///   does resolve; a module kept in a directory of that name is not seen.
 pub fn surfaces(path: &Path) -> std::io::Result<Vec<(PathBuf, Result<ModuleSurface, String>)>> {
+    surfaces_skipping(path, &[])
+}
+
+/// [`surfaces`], leaving out the directories of `path` itself (not deeper
+/// ones) whose name is in `skip_top_level`, a real directory or a link.
+///
+/// They are left out **of the walk**, not filtered from its result. The
+/// difference matters because each directory is walked once: were `tests/`
+/// walked and dropped afterwards, a link `tests/lib -> ../lib` would list
+/// the real `lib/` under `tests/` only, and dropping `tests/` would drop an
+/// importable directory with it.
+pub fn surfaces_skipping(
+    path: &Path,
+    skip_top_level: &[&str],
+) -> std::io::Result<Vec<(PathBuf, Result<ModuleSurface, String>)>> {
     let mut files = Vec::new();
     if path.is_dir() {
-        collect_crush_files(path, &mut BTreeSet::new(), &mut files)?;
+        collect_crush_files(path, skip_top_level, &mut BTreeSet::new(), &mut files)?;
         files.sort();
     } else if path.extension().is_some_and(|e| e == "crush") {
         files.push(path.to_path_buf());
@@ -253,17 +269,24 @@ pub fn surfaces(path: &Path) -> std::io::Result<Vec<(PathBuf, Result<ModuleSurfa
 
 fn collect_crush_files(
     dir: &Path,
+    skip: &[&str],
     visited: &mut BTreeSet<PathBuf>,
     out: &mut Vec<PathBuf>,
 ) -> std::io::Result<()> {
+    // The walk can leave the tree through a link, so an error names the
+    // directory it is about, not just the root the caller passed.
+    let named =
+        |e: std::io::Error| std::io::Error::new(e.kind(), format!("{}: {e}", dir.display()));
     // One walk per real directory: this is what ends a symlink loop, and
     // what keeps a directory reached by two paths from being listed twice.
-    if !visited.insert(std::fs::canonicalize(dir)?) {
+    if !visited.insert(std::fs::canonicalize(dir).map_err(named)?) {
         return Ok(());
     }
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)?
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(named)?
         .map(|e| e.map(|e| e.path()))
-        .collect::<std::io::Result<_>>()?;
+        .collect::<std::io::Result<_>>()
+        .map_err(named)?;
     entries.sort();
     let mut linked_dirs = Vec::new();
     for path in entries {
@@ -277,13 +300,13 @@ fn collect_crush_files(
             continue;
         };
         if kind.is_dir() {
-            if name.starts_with('.') || name == "target" {
+            if name.starts_with('.') || name == "target" || skip.contains(&name) {
                 continue;
             }
             if is_link {
                 linked_dirs.push(path);
             } else {
-                collect_crush_files(&path, visited, out)?;
+                collect_crush_files(&path, &[], visited, out)?;
             }
         } else if kind.is_file() && path.extension().is_some_and(|e| e == "crush") {
             out.push(path);
@@ -292,7 +315,7 @@ fn collect_crush_files(
     // Real directories first, so a directory and a link to it that sit side
     // by side are listed under the real path.
     for path in linked_dirs {
-        collect_crush_files(&path, visited, out)?;
+        collect_crush_files(&path, &[], visited, out)?;
     }
     Ok(())
 }

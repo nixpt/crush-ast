@@ -305,7 +305,7 @@ fn surfaces_walks_a_directory_sorted_and_skips_hidden_and_target() {
 
 #[cfg(unix)]
 #[test]
-fn surfaces_does_not_follow_a_symlinked_directory() {
+fn surfaces_walks_each_directory_once_through_symlinks() {
     let dir = tree("symlink", &[("a/z.crush", LEGACY)]);
     // A loop back to the root, and a second route to `a/`.
     std::os::unix::fs::symlink(&dir, dir.join("a/loop")).unwrap();
