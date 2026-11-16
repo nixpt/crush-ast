@@ -26,8 +26,8 @@ registration or host denial is a host error, never an allowlisted language limit
 | `push` | 2 | Known Vec + supported flat element → unit, discard only | `array.push`, core cap registry | Existing append path on all three; value-position calls refused | xps-7, xps-8 element types |
 | `pop` | 1 | Vec → Option | refused before execution | All source-refused; no Option semantics | xps-7 |
 | `contains` | 2 | proven str/String + string pattern → bool | `str.contains`, core cap registry | Shared Bool kernel on all three; char/other patterns refused | xps-13 |
-| `starts_with` | 2 | str + supported Pattern → bool | `rust.str.starts_with`, SDK | Shared Bool kernel on all three; generic SDK `str.starts_with` keeps Int flags | xps-13 |
-| `ends_with` | 2 | str + supported Pattern → bool | `rust.str.ends_with`, SDK | Shared Bool kernel on all three; generic SDK `str.ends_with` keeps Int flags | xps-13 |
+| `starts_with` | 2 | str + supported Pattern → bool | `rust.str.starts_with`, SDK | Shared Bool kernel on all three; generic `str.starts_with` also returns Bool (#511) | xps-13 |
+| `ends_with` | 2 | str + supported Pattern → bool | `rust.str.ends_with`, SDK | Shared Bool kernel on all three; generic `str.ends_with` also returns Bool (#511) | xps-13 |
 | `to_lowercase` | 1 | proven str/String → String | `str.to_lower`, SDK | Shared Unicode kernel on all three; char iterator results unsupported | xps-13 |
 | `to_uppercase` | 1 | proven str/String → String | `str.to_upper`, SDK | Shared Unicode kernel on all three, including expansion | xps-13 |
 | `trim` | 1 | proven str/String → borrowed str | `str.trim`, SDK | Shared text kernel on all three; source borrowed-view restrictions retained | xps-13, xps-7 |
@@ -62,9 +62,9 @@ Rust supports char patterns for some string methods, but this slice explicitly
 refuses them until pattern-specific adapters exist.
 
 Both core and SDK string operations use Rust's `str` methods: Unicode casing, Unicode trim,
-and substring matching/replacement (including empty patterns). Predicates return
-Int(0/1) in the SDK handlers; the core `str.contains` builtin returns Bool and
-shadows its SDK handler. Core `str.replace` also shadows its SDK handler.
+and substring matching/replacement (including empty patterns). `str.starts_with` and `str.ends_with` return Bool on every engine (#511; they
+returned Int(0/1) before). The `str.contains` SDK handler still returns
+Int(0/1); the core `str.contains` builtin returns Bool and shadows it. Core `str.replace` also shadows its SDK handler.
 Math operations accept numbers or parseable strings through `get_float`
 and return Float. Wrong arity is checked by host dispatch; adapters must preserve
 canonical missing-argument/type errors rather than unchecked indexing.
