@@ -14,6 +14,18 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- Visibility, the gate for stage 2 (V1.5, #539). `crushc --deny-legacy-visibility` fails (exit 1)
+  while any exported name relies on the legacy rule: `W-VIS01` becomes an error, and a module with
+  no `pub` that another package imports is one `E-VIS01` error naming every name used (in place of
+  its `N-VIS01` note). `crushc --list-exports FILE|DIR` lists each module's `pub` and private names,
+  or "legacy: no pub, everything public"; under the gate a legacy module there fails (programs
+  excepted). `crush-pkg build --deny-legacy-visibility` does both for a package. crush-pkg builds
+  and test compiles now print `W-VIS01` / `N-VIS01` / `W-VIS02` on stderr (warnings: nothing new
+  fails without the flag). Without the flag, crushc's output is unchanged. API:
+  `ImportOptions::deny_legacy_visibility`, `import_system::E_VIS01`,
+  `visibility_check::{ModuleSurface, module_surface, surfaces, render_surface}`,
+  `compile::visibility_diagnostics`, `BuildOutput::visibility`,
+  `PackageBuilder::deny_legacy_visibility`.
 - Module visibility, stage 1 (V1, #519). `pub` is recorded on `fn`, `async fn`, `struct` and
   `trait` (`pub struct` / `pub trait` used to fail with `Undefined variable: pub`); `pub` stays a
   contextual identifier. Every file belongs to a package (the longest of: the entry's directory,

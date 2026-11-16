@@ -23,6 +23,8 @@
 //! crushc program.crush --check
 //! crushc program.crush -O --cap io.print --cap str.concat
 //! crushc program.crush -L ./modules -L /usr/lib/crush   # import search path (CRUSH-110)
+//! crushc --list-exports src/                # each module's exported surface (#539)
+//! crushc --deny-legacy-visibility --check program.crush -L lib   # the stage-2 gate (#539)
 //! ```
 
 use std::path::PathBuf;
@@ -105,6 +107,25 @@ struct Cli {
     #[arg(long = "deny-warnings")]
     deny_warnings: bool,
 
+    /// The visibility stage-2 gate (#539): fail (exit 1) while any exported
+    /// name still relies on the legacy rule (a module with no `pub` is
+    /// all-public). A cross-package use of a name that is not `pub`
+    /// (`W-VIS01`) and every module with no `pub` that another package
+    /// imports (`E-VIS01`, once per module, naming the names used) are
+    /// errors. With `--list-exports`, every module with no `pub` in the
+    /// listed file or directory fails too, unless it is a program (`fn main`
+    /// or top-level statements). Without this flag both are reported as
+    /// before and never fail.
+    #[arg(long = "deny-legacy-visibility")]
+    deny_legacy_visibility: bool,
+
+    /// Don't compile: list the exported surface of INPUT, a `.crush` file or
+    /// a directory (every `.crush` file under it). For each module: its
+    /// `pub` names and the names its `pub` keeps private, or "legacy: no
+    /// pub, everything public". Needs no other package to import it.
+    #[arg(long = "list-exports")]
+    list_exports: bool,
+
     /// Format for diagnostic output on errors: `text` (default, colored
     /// terminal output) or `json` (newline-delimited records for editor /
     /// IDE / LSP bridge integration).
@@ -163,6 +184,9 @@ fn main() {
     }
     let cli = Cli::parse();
     crush_lang_sdk::theme::init_styling();
+    if cli.list_exports {
+        std::process::exit(list_exports(&cli));
+    }
     if let Err(e) = run_compiler(&cli) {
         // Non-themed errors (file I/O, unknown emit kind, etc.) keep the
         // original `crushc: <msg>` prefix in default text mode. In
@@ -284,8 +308,9 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
     // warnings, `N-VIS01` notes) join the annotation warnings below.
     let mut visibility = Vec::new();
     if cli.emit != EmitKind::Ast {
-        let imports =
+        let mut imports =
             crush_frontend::import_system::ImportOptions::with_crush_path(cli.lib_paths.clone());
+        imports.deny_legacy_visibility = cli.deny_legacy_visibility;
         match crush_frontend::import_system::resolve_imports_reporting(
             &mut program,
             &cli.input,
@@ -303,8 +328,10 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         let mut checked = program.clone();
         crush_frontend::cast_enrich::enrich_cast(&mut checked);
         let input = cli.input.display().to_string();
-        let mut warnings =
-            crush_lang_sdk::compile::compiler_diagnostics(std::mem::take(&mut visibility), &input);
+        let mut warnings = crush_lang_sdk::compile::visibility_diagnostics(
+            std::mem::take(&mut visibility),
+            &input,
+        );
         warnings.extend(crush_lang_sdk::compile::annotation_diagnostics(
             &checked, &input,
         ));
@@ -312,6 +339,18 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
             &warnings,
             matches!(cli.message_format, MessageFormat::Json),
         );
+        // The stage-2 gate's errors (#539): only under
+        // --deny-legacy-visibility.
+        let gate = warnings.iter().filter(|d| d.level == "error").count();
+        if gate > 0 {
+            if matches!(cli.message_format, MessageFormat::Text) {
+                eprintln!(
+                    "crushc: {gate} visibility finding(s) fail the stage-2 gate \
+                     (--deny-legacy-visibility)"
+                );
+            }
+            std::process::exit(1);
+        }
         // Notes (`N-VIS01`) are information: they never fail a build.
         warnings.retain(|d| d.level != "note");
         if cli.deny_warnings && !warnings.is_empty() {
@@ -480,6 +519,61 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         }
         _ => unreachable!(),
     }
+}
+
+/// `--list-exports` (#539): print the surface of every module at the input
+/// (stdout), and return the exit code: 1 for a file that does not parse, or,
+/// under `--deny-legacy-visibility`, for a module the gate refuses.
+fn list_exports(cli: &Cli) -> i32 {
+    let found = match crush_frontend::visibility_check::surfaces(&cli.input) {
+        Ok(found) => found,
+        Err(e) => {
+            eprintln!("crushc: cannot list '{}': {e}", cli.input.display());
+            return 1;
+        }
+    };
+    if found.is_empty() {
+        eprintln!("crushc: no .crush files under '{}'", cli.input.display());
+        return 1;
+    }
+    let mut failed = Vec::new();
+    let mut broken = 0;
+    for (file, surface) in &found {
+        let shown = file.display().to_string();
+        match surface {
+            Ok(s) => {
+                print!(
+                    "{}",
+                    crush_frontend::visibility_check::render_surface(&shown, s)
+                );
+                if cli.deny_legacy_visibility && s.fails_gate() {
+                    failed.push(shown);
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "{badge} error: {shown}: {e}",
+                    badge = crush_lang_sdk::theme::paint_error_badge("parse")
+                );
+                broken += 1;
+            }
+        }
+    }
+    for f in &failed {
+        eprintln!(
+            "{badge} [E-VIS01] {f}: no `pub`, so every name is public by the legacy rule \
+             (mark its exports `pub`; before 1.0 a module with no `pub` stops being all-public, \
+             #524)",
+            badge = crush_lang_sdk::theme::paint_error_badge("error")
+        );
+    }
+    if !failed.is_empty() {
+        eprintln!(
+            "crushc: {} legacy module(s) fail the stage-2 gate (--deny-legacy-visibility)",
+            failed.len()
+        );
+    }
+    i32::from(broken > 0 || !failed.is_empty())
 }
 
 /// #258: exit 1 with the same `[compile] … not declared in @capabilities`
