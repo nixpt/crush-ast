@@ -15,8 +15,9 @@ work while it waits.
   never prints, until an external `timeout 10` kills the run.
 - **Why** (*verified*):
   - The CVM1 scheduler is one OS thread running green threads round-robin, 50 instructions
-    per slice (`crates/crush-vm/src/scheduler.rs`). SPAWN, AWAIT and YIELD are the only
-    switch points.
+    per slice (`crates/crush-vm/src/scheduler.rs`). A thread switches when its slice runs out
+    or at SPAWN, AWAIT and YIELD. All of these happen between instructions, never inside a
+    capability call.
   - Host capabilities are called synchronously from the step loop
     (`dispatch_cap` → `call_with_deadline`). So any blocking cap holds the only OS thread:
     `tcp.accept`, `tcp.recv`, and also **`time.sleep`**.
@@ -27,7 +28,9 @@ work while it waits.
     (`if !any_runnable { … halted: true }`). Main returning also ends the program.
   - crush-net's polling reactor (`crates/crush-net/src/reactor.rs`) probes readiness with
     `Source::try_read`. For `TcpConnection`, that is a **consuming** `read`. Used as is, it
-    would eat bytes meant for `tcp.recv`.
+    would eat bytes meant for `tcp.recv`. The same poller calls `try_accept` on listeners and
+    drops the accepted stream (`Ok(Some(_))` only wakes the waker), so it would also eat
+    connections meant for `tcp.accept`.
   - `Value` is `Rc<RefCell<…>>`, so it cannot be sent to another thread, and `parallel_map`
     workers run in a fresh VM with no host caps.
 
@@ -36,7 +39,7 @@ work while it waits.
 | | What | Cost | Fixes #506? |
 |---|---|---|---|
 | **A** | One connection at a time, documented as v1. Liveness comes from #512's `tcp.accept`/`tcp.recv` `{timeout_ms}` and #510's `--max-wall-ms unlimited`. | No new code. A slow client stalls everything for up to its timeout. An acceptor plus a background task only work with short accept timeouts in a loop. | No, but it is livable |
-| **B** | Wire crush-net's reactor (poller thread, `Waker`s) into the scheduler. | Adds a second thread and waker plumbing to a single-threaded scheduler. The reactor's consuming `try_read` must change to a non-consuming readiness check (`peek`, or `poll(2)`) first. | Yes |
+| **B** | Wire crush-net's reactor (poller thread, `Waker`s) into the scheduler. | Adds a second thread and waker plumbing to a single-threaded scheduler. The reactor's consuming `try_read` **and** its `try_accept` (which drops the accepted stream) must both change to non-consuming readiness checks (`peek`, or `poll(2)`) first. | Yes |
 | **B'** | `HostCap::try_call(args) -> Ready(v) \| Pending`, with a default that falls back to the blocking call, so every other cap and engine is unchanged. Only `tcp.accept`/`tcp.recv`/`tcp.send`/`time.sleep` implement it. A green thread that gets `Pending` is parked; the **scheduler** retries parked threads each round, and sleeps 1-5 ms when every live thread is parked. | One trait method on the public SDK (crates.io surface), one park state, the all-parked idle path, timeout/wall checks while parked. A few ms of polling latency. CVM1 scheduler only; FastVM/JIT/AOT/portable stay blocking (the same gap as #161). | Yes |
 | **C** | A worker VM per connection: an OS thread per VM, with its own caps, and only plain data (the conn id) crosses. | True parallelism and isolation, but the largest semantic surface: a grant decision for workers (today's `parallel_map` workers deliberately have no host caps), a thread per connection, and no shared mutable state between handlers. | Yes |
 
