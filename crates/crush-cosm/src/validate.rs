@@ -30,6 +30,15 @@ pub fn validate_with(module: &CosmModule, deps: &[&CosmModule]) -> Vec<Diagnosti
     for iface in &module.interfaces {
         v.interface(iface);
     }
+    for (path, problem) in module.owner_id_problems() {
+        let span = path
+            .strip_prefix("kinds[")
+            .and_then(|r| r.split(']').next())
+            .and_then(|i| i.parse::<usize>().ok())
+            .and_then(|i| module.kinds.get(i))
+            .and_then(|k| k.span.as_ref());
+        v.push(DiagnosticCode::InvalidOwnerId, path, problem, span);
+    }
     v.out
 }
 

@@ -218,6 +218,8 @@ pub struct PortableVm {
     load_error: Option<LoadError>,
     /// COSM K1.4: the program's Kinds.
     kinds: crate::cosm_rt::KindTable,
+    /// V3b (#522): the owning package of the code at each address.
+    code_owners: crate::cosm_rt::CodeOwners,
     /// CRUSH-165: the hash chain over every executed instruction and cap call.
     #[cfg(feature = "transcript")]
     transcript: crate::transcript::Transcript,
@@ -268,6 +270,7 @@ impl PortableVm {
         let declared_caps: std::collections::HashSet<String> = permissions.into_iter().collect();
         #[cfg(feature = "transcript")]
         let transcript = crate::transcript::Transcript::new(&program);
+        let code_owners = kinds.code_owners(func_entry.iter().map(|(n, &e)| (n.as_str(), e)));
 
         Self {
             program,
@@ -308,6 +311,7 @@ impl PortableVm {
             last_stop: None,
             load_error,
             kinds,
+            code_owners,
             #[cfg(feature = "transcript")]
             transcript,
         }
@@ -567,6 +571,24 @@ impl PortableVm {
             .filter(|&(_, &entry)| entry <= ip)
             .max_by_key(|&(_, &entry)| entry)
             .map(|(name, _)| name.as_str())
+    }
+
+    /// The package that owns function `name`, from the program's COSM
+    /// `fn_packages`; `None` for the root package (V3b, #522).
+    pub fn function_package(&self, name: &str) -> Option<&str> {
+        self.kinds.function_package(name)
+    }
+
+    /// The package that owns the executing function (the one whose code
+    /// holds the instruction pointer); `None` for the root package (V3b,
+    /// #522). What member visibility will compare against (V6, #525).
+    pub fn current_function_package(&self) -> Option<&str> {
+        self.code_owners.at(self.ip)
+    }
+
+    /// The loaded Kind `name`, if the program declares it.
+    pub fn kind(&self, name: &str) -> Option<&std::rc::Rc<crate::cosm_rt::Kind>> {
+        self.kinds.get(name).ok()
     }
 
     /// Why the most recent `VmYield::DebugBreak` happened. Cleared when

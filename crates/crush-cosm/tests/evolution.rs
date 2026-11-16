@@ -35,10 +35,10 @@ fn an_older_patch_or_same_minor_loads() {
 
 #[test]
 fn a_newer_minor_is_refused_naming_both_versions() {
-    let err = CosmModule::from_json(&with_version(json!("0.2.0")))
+    let err = CosmModule::from_json(&with_version(json!("0.3.0")))
         .unwrap_err()
         .to_string();
-    assert!(err.contains("needs COSM 0.2.0"), "{err}");
+    assert!(err.contains("needs COSM 0.3.0"), "{err}");
     assert!(err.contains(COSM_VERSION), "{err}");
 }
 
@@ -64,7 +64,8 @@ fn a_malformed_version_is_refused() {
 fn check_readable_is_the_same_gate() {
     assert!(check_readable("0.1.0").is_ok());
     assert!(check_readable("0.1.99").is_ok());
-    assert!(check_readable("0.2.0").is_err());
+    assert!(check_readable("0.2.0").is_ok());
+    assert!(check_readable("0.3.0").is_err());
     assert!(check_readable("1.1.0").is_err());
 }
 
@@ -144,12 +145,12 @@ fn a_private_method_from_a_newer_writer_is_refused_by_this_reader() {
         .as_object_mut()
         .unwrap()
         .insert("visibility".into(), json!("priv"));
-    m["cosm_version"] = json!("0.2.0");
+    m["cosm_version"] = json!("0.3.0");
     let err = CosmModule::from_json(&m.to_string())
         .unwrap_err()
         .to_string();
     assert!(
-        err.contains("needs COSM 0.2.0"),
+        err.contains("needs COSM 0.3.0"),
         "the stamp refuses it: {err}"
     );
 

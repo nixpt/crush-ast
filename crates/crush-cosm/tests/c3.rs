@@ -27,6 +27,8 @@ struct Class {
 
 fn python_class(name: &str, parents: &[String]) -> KindDecl {
     KindDecl {
+        module: None,
+        package: None,
         name: name.into(),
         home_lang: "python".into(),
         span: Some(Span::new(1, 1)),

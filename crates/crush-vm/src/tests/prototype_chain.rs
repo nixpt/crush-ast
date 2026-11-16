@@ -71,6 +71,7 @@ fn js_kind(name: &str, f: impl FnOnce(&mut KindDecl)) -> KindDecl {
 
 fn module(kinds: Vec<KindDecl>) -> CosmModule {
     CosmModule {
+        fn_packages: Default::default(),
         kinds,
         interfaces: Vec::new(),
     }

@@ -376,6 +376,12 @@ fn disassemble_kind_table(module: &crush_cosm::CosmModule, lines: &mut Vec<Strin
             members.join(", ")
         ));
     }
+    if !module.fn_packages.is_empty() {
+        lines.push(format!(
+            ";   functions outside the root package: {}",
+            module.fn_packages.len()
+        ));
+    }
     lines.push(format!(".cosm {}", module.to_json()));
 }
 
@@ -384,7 +390,7 @@ pub fn disassemble(program: &Program) -> String {
 
     let code = &program.code;
     let mut lines: Vec<String> = Vec::new();
-    if let Some(module) = program.kind_table() {
+    if let Some(module) = program.cosm_section() {
         disassemble_kind_table(module, &mut lines);
     }
     // The manifest's permissions travel with the text as `.cap` lines, which

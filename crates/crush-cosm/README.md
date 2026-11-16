@@ -45,7 +45,7 @@ point.storage = Storage::Sealed {
     fields: vec![FieldDecl::new("x", CosmType::Int), FieldDecl::new("y", CosmType::Int)],
 };
 point.members.push(MemberDecl::method("norm2", "Point::norm2"));
-let module = CosmModule { kinds: vec![point], interfaces: vec![] };
+let module = CosmModule { kinds: vec![point], ..CosmModule::default() };
 
 assert!(validate(&module).is_empty());
 assert_eq!(module.kind("Point").unwrap().field_slot("y"), Some(1));
@@ -77,6 +77,13 @@ Serde JSON, like CAST. Strategy names are the design doc's spellings, `snake_cas
   hook, ordering is `cmp`);
 - **types** are `CastType`'s JSON: `"Int"`, `"Any"`, `{"Array": "Float"}`, `{"Struct": "Point"}`;
 - **spans** are `{"file"?, "line", "col", "end_line"?, "end_col"?}` (1-based), optional everywhere;
+- **owners** (COSM 0.2.0, V3b #522): a kind may carry `"package"` (`"pkg:<name>"` for a crush-pkg
+  package, `"dir:<label>"` for a library directory) and, with it, `"module"` (the declaring module's
+  import path as first written, e.g. `"geo"`; not unique); the module may carry `"fn_packages":
+  {"<function>": "<package>", …}`, the owning package of each function outside the root package.
+  Absent means the **root package**. One rule (`owner_id_problem`) refuses on load, on write and in
+  `validate`: an explicit `null`, an empty id, a spelled-out `"root"`, any other prefix, and a `/` or
+  `\` in a name or module;
 - empty lists, empty hooks and absent options are omitted; unknown fields are rejected everywhere,
   members included (a member may carry only `name`, `span`, `kind` and its kind's own keys).
   Parse errors name the JSON path
@@ -110,6 +117,15 @@ from decisions 5 and 7 of `docs/design/visibility-and-packages.md`:
   format `2` (format `1` otherwise). Runtimes from before this rule refuse format 2 by name, since
   they predate the `cosm_version` check.
 
+| `cosm_version` | adds | written when |
+|---|---|---|
+| `0.1.0` (absent) | the schema before the rule | nothing below is used |
+| `0.2.0` | owner ids (V3b, #522): `KindDecl.module`, `KindDecl.package`, `fn_packages`; all must-understand | a program uses code from another package: a kind or a function is outside the root package |
+
+Owner ids are recorded, not enforced: member visibility (V6, #525) is what will compare a member's
+owner with the package of the executing function. A module that only records `fn_packages` (a
+program of several packages without kinds) is still a kind-table section in CVM1.
+
 The gate sits in `CosmModule`'s deserializer, so it covers every load path: `CosmModule::from_json`,
 CVM1's kind table and CASM's `cosm` field (JSON and binary). Tests: `tests/evolution.rs`.
 
@@ -128,6 +144,7 @@ one known (member → conformance → field → declaration).
 | `field_shadowed_by_member` | a method/accessor/static member named like a sealed field |
 | `undeclared_field` · `empty_accessor` | a `field` member on a sealed kind must be a declared field; an accessor needs `get` or `set` |
 | `value_semantics_with_open_storage` | `value(copy)`/`value(move)` with `open_dict`/`open_dict_with_slots` |
+| `invalid_owner_id` | a kind's `module` / `package` or a `fn_packages` value breaks the owner-id rule (`owner_id_problem`); the reader and the writer refuse the same ids |
 | `parent_arity` | `none` takes no parents; `single`/`prototype_chain` at most one |
 | `duplicate_base` · `inconsistent_mro` | C3 failures, with CPython's exact `TypeError` message |
 | `inheritance_cycle` · `incompatible_parent` | a kind inherits from itself; an `embedding_promotion` kind used as a linear parent |
