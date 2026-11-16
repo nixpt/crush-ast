@@ -203,14 +203,19 @@ pub fn compile_cast_owned(program: crush_cast::Program) -> Result<casm::Program>
 ///
 /// The CASM program carries the same module as its kind table
 /// (`casm::Program::cosm`, COSM K1.3, CRUSH-zorro-42); its functions include
-/// the lifted methods (`Point::norm2`, …).
+/// the lifted methods (`Point::norm2`, …). The module returned is the CASM
+/// program's, so it also carries the owner of each function outside the root
+/// package (`fn_packages`, V3b #522), which only compiling can know (lambdas
+/// and nested functions are named then); for such a program it is `Some` even
+/// without declarations.
 pub fn compile_cast_with_cosm(
     program: crush_cast::Program,
 ) -> Result<(casm::Program, Option<crush_cosm::CosmModule>)> {
     let (mut program, cosm) = lower_and_check(program)?;
     optimizer::Optimizer::optimize(&mut program);
     let mut comp = compiler::Compiler::new();
-    let casm = comp.compile_lowered(program, cosm.clone())?;
+    let casm = comp.compile_lowered(program, cosm)?;
+    let cosm = casm.cosm.clone();
     Ok((casm, cosm))
 }
 

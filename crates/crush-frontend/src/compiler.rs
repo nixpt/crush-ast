@@ -75,6 +75,10 @@ pub struct Compiler {
     lambda_aliases: Vec<HashMap<String, Option<String>>>,
     /// Program-wide counter for unique lambda names.
     lambda_counter: usize,
+    /// Every CASM function (or lambda) created while compiling the current
+    /// top-level function, itself included: what inherits its owner package
+    /// (V3b, #522).
+    created_fns: Vec<String>,
     /// Names bound more than once in the top-level function being compiled
     /// (see `rebound_names`): a lambda bound to one gets no alias.
     rebound: HashSet<String>,
@@ -124,6 +128,7 @@ impl Compiler {
             lambda_outer_vars: Vec::new(),
             lambda_aliases: Vec::new(),
             lambda_counter: 0,
+            created_fns: Vec::new(),
             rebound: HashSet::new(),
             function_arity: HashMap::new(),
             boxed: HashSet::new(),
@@ -430,7 +435,15 @@ impl Compiler {
         // build cache is keyed on the code generated from it).
         let mut functions: Vec<_> = program.functions.into_iter().collect();
         functions.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        // V3b (#522): the owning package of every CASM function outside the
+        // root package. A function's own CAST meta says (the V1 seam, see
+        // `cosm_lower::normalize_package_ids`); what compiling it lifts out
+        // (nested `fn`s, lambdas, an async body) belongs to the same package.
+        let mut fn_packages: std::collections::BTreeMap<crush_cosm::FnRef, String> =
+            Default::default();
         for (name, func) in functions {
+            let owner = crate::cosm_lower::package_of(&func.meta);
+            self.created_fns.clear();
             let mut instrs = Vec::new();
             self.lambda_aliases.push(HashMap::new());
             self.rebound = rebound_names(&func.params, &func.body);
@@ -471,6 +484,7 @@ impl Compiler {
                     );
 
                     let hints = extract_type_hints(params, body);
+                    self.created_fns.push(name.clone());
                     casm_program.functions.insert(
                         name.clone(),
                         CasmFunction {
@@ -574,6 +588,7 @@ impl Compiler {
                 );
 
                 let hints = extract_type_hints(&func.params, &func.body);
+                self.created_fns.push(inner_name.clone());
                 casm_program.functions.insert(
                     inner_name.clone(),
                     CasmFunction {
@@ -614,6 +629,7 @@ impl Compiler {
                     &mut source_files,
                 );
 
+                self.created_fns.push(name.clone());
                 casm_program.functions.insert(
                     name.clone(),
                     CasmFunction {
@@ -640,6 +656,7 @@ impl Compiler {
                 );
 
                 let hints = extract_type_hints(&func.params, &func.body);
+                self.created_fns.push(name.clone());
                 casm_program.functions.insert(
                     name.clone(),
                     CasmFunction {
@@ -651,11 +668,31 @@ impl Compiler {
                 );
             }
             self.lambda_aliases.pop();
+            if let Some(owner) = owner {
+                for f in self.created_fns.drain(..) {
+                    fn_packages.insert(crush_cosm::FnRef::new(f), owner.clone());
+                }
+            }
         }
 
         // Merge lambdas
         for (name, func) in self.lambdas.drain() {
             casm_program.functions.insert(name, func);
+        }
+        if !fn_packages.is_empty() {
+            casm_program
+                .cosm
+                .get_or_insert_with(Default::default)
+                .fn_packages
+                .extend(fn_packages);
+        }
+        // The owner-id rule (`crush_cosm::owner_id_problem`), here too: a
+        // walker's module or CAST meta that slipped past normalization is a
+        // compile error, not an artifact every reader refuses.
+        if let Some(module) = &casm_program.cosm
+            && let Some((path, problem)) = module.owner_id_problems().into_iter().next()
+        {
+            anyhow::bail!("invalid COSM owner id at `{path}`: {problem}");
         }
 
         if !self.all_permissions.is_empty() {
@@ -3135,6 +3172,7 @@ impl Compiler {
                 self.rewrite_cells(&mut func_instrs, body_start);
 
                 let hints = extract_type_hints(params, body);
+                self.created_fns.push(lambda_name.clone());
                 self.lambdas.insert(
                     lambda_name.clone(),
                     CasmFunction {

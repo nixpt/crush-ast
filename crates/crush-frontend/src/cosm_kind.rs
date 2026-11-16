@@ -107,6 +107,20 @@ fn kind_decl(ty: &TypePlan) -> std::result::Result<KindDecl, Vec<String>> {
     let mut errors = Vec::new();
     let mut k = KindDecl::crush(ty.name.clone());
     k.span = span(&ty.meta);
+    // The owner (V3b, #522): its package (the V1 seam, see
+    // `cosm_lower::normalize_package_ids`) and, only with a package other
+    // than the root, the declaring module's import path. A Kind of the root
+    // package records neither (ruling on independent review, 2026-11-16):
+    // until a program really uses another package nothing is stamped, and
+    // `module` is the import path as first written, not an identity (V4).
+    k.package = crate::cosm_lower::package_of(&ty.meta);
+    if k.package.is_some() {
+        k.module = ty
+            .meta
+            .get("module")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+    }
     let fields: Vec<FieldDecl> = ty
         .fields
         .iter()
