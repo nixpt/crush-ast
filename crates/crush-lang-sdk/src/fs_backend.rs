@@ -202,8 +202,28 @@ fn enotempty() -> io::Error {
     os_error(io::ErrorKind::DirectoryNotEmpty, 39)
 }
 
-fn now() -> std::time::SystemTime {
-    std::time::SystemTime::now()
+/// Where [`MemFs`] reads the current time for its modification times.
+///
+/// A plain function, so a host with no system clock can hand in its own: on
+/// `wasm32-unknown-unknown` `SystemTime::now()` panics, and crush-web gives
+/// [`MemFs::with_clock`] JavaScript's `Date.now()` instead (#534).
+pub type Clock = fn() -> std::time::SystemTime;
+
+/// [`MemFs::new`]'s clock: `SystemTime::now()`.
+///
+/// On `wasm32-unknown-unknown`, which has no system clock (`SystemTime::now()`
+/// panics there), it is the Unix epoch, so a browser registry that was not
+/// handed a clock still runs; such a host should pass its own clock to
+/// [`MemFs::with_clock`] for real times, as crush-web does (#534).
+pub fn system_clock() -> std::time::SystemTime {
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        std::time::UNIX_EPOCH
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    {
+        std::time::SystemTime::now()
+    }
 }
 
 /// A file with its bytes, or a directory with its children, and the time the
@@ -222,14 +242,14 @@ enum Node {
 }
 
 impl Node {
-    fn file(bytes: Vec<u8>) -> Self {
+    fn file(bytes: Vec<u8>, now: Clock) -> Self {
         Node::File {
             bytes,
             modified: now(),
         }
     }
 
-    fn dir() -> Self {
+    fn dir(now: Clock) -> Self {
         Node::Dir {
             children: Default::default(),
             modified: now(),
@@ -243,7 +263,7 @@ impl Node {
         }
     }
 
-    fn mark_modified(&mut self) {
+    fn mark_modified(&mut self, now: Clock) {
         match self {
             Node::File { modified, .. } | Node::Dir { modified, .. } => *modified = now(),
         }
@@ -268,6 +288,8 @@ impl Node {
 #[derive(Debug)]
 pub struct MemFs {
     root: std::sync::Mutex<Node>,
+    /// Read each time a node changes (where `SystemTime::now()` was read).
+    clock: Clock,
 }
 
 impl Default for MemFs {
@@ -298,15 +320,23 @@ fn names(path: &Path) -> io::Result<Vec<OsString>> {
 }
 
 impl MemFs {
+    /// An empty tree whose times come from [`system_clock`].
     pub fn new() -> Self {
+        Self::with_clock(system_clock)
+    }
+
+    /// An empty tree whose modification times come from `clock` (#534).
+    pub fn with_clock(clock: Clock) -> Self {
         Self {
-            root: std::sync::Mutex::new(Node::dir()),
+            root: std::sync::Mutex::new(Node::dir(clock)),
+            clock,
         }
     }
 
-    fn with<T>(&self, f: impl FnOnce(&mut Node) -> io::Result<T>) -> io::Result<T> {
+    /// Run `f` on the locked tree, with the clock to stamp what it changes.
+    fn with<T>(&self, f: impl FnOnce(&mut Node, Clock) -> io::Result<T>) -> io::Result<T> {
         let mut root = self.root.lock().unwrap_or_else(|e| e.into_inner());
-        f(&mut root)
+        f(&mut root, self.clock)
     }
 }
 
@@ -361,7 +391,7 @@ fn dir_mut(
 impl FsBackend for MemFs {
     fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
         let names = names(path)?;
-        self.with(|root| lookup(root, &names).map(|_| ()))?;
+        self.with(|root, _| lookup(root, &names).map(|_| ()))?;
         let mut out = PathBuf::from("/");
         out.extend(&names);
         Ok(out)
@@ -371,11 +401,11 @@ impl FsBackend for MemFs {
     }
     fn kind(&self, path: &Path) -> io::Result<Kind> {
         let names = names(path)?;
-        self.with(|root| lookup(root, &names).map(Node::kind))
+        self.with(|root, _| lookup(root, &names).map(Node::kind))
     }
     fn metadata(&self, path: &Path) -> io::Result<Metadata> {
         let names = names(path)?;
-        self.with(|root| {
+        self.with(|root, _| {
             let node = lookup(root, &names)?;
             Ok(Metadata {
                 kind: node.kind(),
@@ -391,7 +421,7 @@ impl FsBackend for MemFs {
     }
     fn read_to_string(&self, path: &Path) -> io::Result<String> {
         let names = names(path)?;
-        let bytes = self.with(|root| match lookup(root, &names)? {
+        let bytes = self.with(|root, _| match lookup(root, &names)? {
             Node::File { bytes, .. } => Ok(bytes.clone()),
             Node::Dir { .. } => Err(eisdir()),
         })?;
@@ -404,19 +434,19 @@ impl FsBackend for MemFs {
     }
     fn write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         let names = names(path)?;
-        self.with(|root| match parent_mut(root, &names)? {
+        self.with(|root, now| match parent_mut(root, &names)? {
             None => Err(eisdir()),
             Some((parent, name)) => {
                 let (children, modified) = dir_mut(parent)?;
                 match children.get_mut(name) {
                     Some(Node::Dir { .. }) => Err(eisdir()),
                     Some(node) => {
-                        *node = Node::file(data.to_vec());
+                        *node = Node::file(data.to_vec(), now);
                         *modified = now();
                         Ok(())
                     }
                     None => {
-                        children.insert(name.clone(), Node::file(data.to_vec()));
+                        children.insert(name.clone(), Node::file(data.to_vec(), now));
                         *modified = now();
                         Ok(())
                     }
@@ -426,7 +456,7 @@ impl FsBackend for MemFs {
     }
     fn append(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         let names = names(path)?;
-        self.with(|root| match parent_mut(root, &names)? {
+        self.with(|root, now| match parent_mut(root, &names)? {
             None => Err(eisdir()),
             Some((parent, name)) => {
                 let (children, modified) = dir_mut(parent)?;
@@ -438,7 +468,7 @@ impl FsBackend for MemFs {
                         Ok(())
                     }
                     None => {
-                        children.insert(name.clone(), Node::file(data.to_vec()));
+                        children.insert(name.clone(), Node::file(data.to_vec(), now));
                         *modified = now();
                         Ok(())
                     }
@@ -448,19 +478,19 @@ impl FsBackend for MemFs {
     }
     fn touch(&self, path: &Path) -> io::Result<()> {
         let names = names(path)?;
-        self.with(|root| match parent_mut(root, &names)? {
+        self.with(|root, now| match parent_mut(root, &names)? {
             None => Err(eisdir()),
             Some((parent, name)) => {
                 let (children, modified) = dir_mut(parent)?;
                 match children.get_mut(name) {
                     Some(Node::Dir { .. }) => Err(eisdir()),
                     Some(node) => {
-                        node.mark_modified();
+                        node.mark_modified(now);
                         *modified = now();
                         Ok(())
                     }
                     None => {
-                        children.insert(name.clone(), Node::file(Vec::new()));
+                        children.insert(name.clone(), Node::file(Vec::new(), now));
                         *modified = now();
                         Ok(())
                     }
@@ -470,14 +500,14 @@ impl FsBackend for MemFs {
     }
     fn create_dir(&self, path: &Path) -> io::Result<()> {
         let names = names(path)?;
-        self.with(|root| match parent_mut(root, &names)? {
+        self.with(|root, now| match parent_mut(root, &names)? {
             None => Err(eexist()),
             Some((parent, name)) => {
                 let (children, modified) = dir_mut(parent)?;
                 if children.contains_key(name) {
                     return Err(eexist());
                 }
-                children.insert(name.clone(), Node::dir());
+                children.insert(name.clone(), Node::dir(now));
                 *modified = now();
                 Ok(())
             }
@@ -485,14 +515,14 @@ impl FsBackend for MemFs {
     }
     fn create_dir_all(&self, path: &Path) -> io::Result<()> {
         let names = names(path)?;
-        self.with(|root| {
+        self.with(|root, now| {
             let mut node = root;
             for (i, n) in names.iter().enumerate() {
                 let Node::Dir { children, modified } = node else {
                     unreachable!("only directories are descended into")
                 };
                 let existed = children.contains_key(n);
-                let child = children.entry(n.clone()).or_insert_with(Node::dir);
+                let child = children.entry(n.clone()).or_insert_with(|| Node::dir(now));
                 if let Node::File { .. } = child {
                     // as std: the last name existing as a file is EEXIST;
                     // creating something under a file is ENOTDIR
@@ -512,7 +542,7 @@ impl FsBackend for MemFs {
     }
     fn remove_file(&self, path: &Path) -> io::Result<()> {
         let names = names(path)?;
-        self.with(|root| match parent_mut(root, &names)? {
+        self.with(|root, now| match parent_mut(root, &names)? {
             None => Err(eisdir()),
             Some((parent, name)) => {
                 let (children, modified) = dir_mut(parent)?;
@@ -530,7 +560,7 @@ impl FsBackend for MemFs {
     }
     fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
         let names = names(path)?;
-        self.with(|root| match parent_mut(root, &names)? {
+        self.with(|root, now| match parent_mut(root, &names)? {
             None => Err(einval()),
             Some((parent, name)) => {
                 let (children, modified) = dir_mut(parent)?;
@@ -549,7 +579,7 @@ impl FsBackend for MemFs {
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
         let src = names(from)?;
         let dst = names(to)?;
-        self.with(|root| {
+        self.with(|root, now| {
             let src_kind = lookup(root, &src)?.kind();
             if src.is_empty() || dst.is_empty() {
                 return Err(if src.is_empty() { einval() } else { eexist() });
@@ -596,7 +626,7 @@ impl FsBackend for MemFs {
     }
     fn read_dir(&self, path: &Path) -> io::Result<Vec<io::Result<Entry>>> {
         let names = names(path)?;
-        self.with(|root| match lookup(root, &names)? {
+        self.with(|root, _| match lookup(root, &names)? {
             Node::File { .. } => Err(enotdir()),
             Node::Dir { children, .. } => Ok(children
                 .iter()
@@ -611,7 +641,7 @@ impl FsBackend for MemFs {
     }
     fn copy_file(&self, from: &Path, to: &Path) -> io::Result<()> {
         let src = names(from)?;
-        let bytes = self.with(|root| match lookup(root, &src)? {
+        let bytes = self.with(|root, _| match lookup(root, &src)? {
             Node::File { bytes, .. } => Ok(Some(bytes.clone())),
             // opening a directory works; reading it fails, after the
             // destination was opened (as std::fs::copy does)
@@ -624,5 +654,78 @@ impl FsBackend for MemFs {
                 Err(eisdir())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    /// A clock that moves one second per read, from 1000 s after the epoch.
+    static TICKS: AtomicU64 = AtomicU64::new(1000);
+    fn ticking() -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(TICKS.fetch_add(1, Ordering::SeqCst))
+    }
+
+    fn mtime(fs: &MemFs, path: &str) -> SystemTime {
+        fs.metadata(Path::new(path)).unwrap().modified
+    }
+
+    /// Every time MemFs stamps comes from the clock it was given, never from
+    /// `SystemTime::now()` directly: that panics on wasm32-unknown-unknown and
+    /// took down every browser session granted `fs` (#534).
+    #[test]
+    fn mem_fs_times_come_from_its_clock() {
+        let fs = MemFs::with_clock(ticking);
+        let at = |t: SystemTime| t.duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let made = at(mtime(&fs, "/"));
+        assert!((1000..2000).contains(&made), "root stamped {made}");
+
+        fs.write(Path::new("/a.txt"), b"hi").unwrap();
+        let file = at(mtime(&fs, "/a.txt"));
+        let root = at(mtime(&fs, "/"));
+        assert!(
+            file > made && root > made,
+            "file {file}, root {root}, made {made}"
+        );
+
+        fs.write(Path::new("/a.txt"), b"again").unwrap();
+        assert!(at(mtime(&fs, "/a.txt")) > file);
+        fs.touch(Path::new("/a.txt")).unwrap();
+        fs.create_dir(Path::new("/d")).unwrap();
+        let dir = at(mtime(&fs, "/d"));
+        assert!(dir > file && dir < 2000, "dir {dir}");
+    }
+
+    /// `HostCapsBuilder::fs_memory_with_clock` hands its clock to the tree, and
+    /// `fs.stat` reports that clock's time in seconds.
+    #[test]
+    fn fs_stat_reports_the_injected_clock() {
+        fn fixed() -> SystemTime {
+            UNIX_EPOCH + Duration::from_millis(1_700_000_000_123)
+        }
+        let caps = crate::host_caps::HostCapsBuilder::new()
+            .fs_memory_with_clock(fixed)
+            .build();
+        let call = |cap: &str, args: Vec<crate::Value>| caps.get(cap).unwrap().call(args).unwrap();
+        let s = |t: &str| crate::Value::Str(t.to_string());
+        call("fs.write", vec![s("x.txt"), s("1")]);
+        let stat = call("fs.stat", vec![s("x.txt")]).unwrap();
+        assert!(
+            stat.to_string().contains("1700000000"),
+            "fs.stat gave {stat}"
+        );
+    }
+
+    /// Native default: `MemFs::new` stamps with the system clock, as before.
+    #[test]
+    fn mem_fs_new_uses_the_system_clock() {
+        let before = SystemTime::now();
+        let fs = MemFs::new();
+        fs.write(Path::new("/f"), b"").unwrap();
+        let t = mtime(&fs, "/f");
+        assert!(t >= before && t <= SystemTime::now());
     }
 }
