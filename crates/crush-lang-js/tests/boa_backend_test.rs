@@ -2526,3 +2526,22 @@ fn test_boa_value_callee_spreads_refuse_bad_inputs_on_both_vms() {
         assert!(portable_error.contains(expected), "{portable_error}");
     }
 }
+
+/// #425: JS bitwise ops work on ToInt32 (32-bit) values and crush's on i64,
+/// so the Boa lowering refuses them in every form, as the swc one does. Once
+/// the compiler gained bitwise ops, `1 << 31` printed 2147483648 here (node:
+/// -2147483648) and `x <<= 40` printed 1099511627776 (node: 256).
+#[test]
+fn bitwise_operators_are_refused() {
+    for op in ["&", "|", "^", "<<", ">>", ">>>"] {
+        for source in [
+            format!("let x = 9; let y = x {op} 2;"),
+            format!("let x = 9; x {op}= 2;"),
+        ] {
+            let msg = loud(&source);
+            assert!(msg.contains("bitwise"), "`{source}`: {msg}");
+        }
+    }
+    let msg = loud("let x = ~5;");
+    assert!(msg.contains("`~`"), "`~5`: {msg}");
+}

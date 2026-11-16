@@ -61,7 +61,13 @@ impl Lower<'_> {
                     UnaryOp::Minus => "-",
                     UnaryOp::Plus => "+",
                     UnaryOp::Not => "!",
-                    UnaryOp::Tilde => "~",
+                    // JS `~` is ToInt32-based; crush's is i64 (#425).
+                    UnaryOp::Tilde => {
+                        return Err(self.unsupported(
+                            "bitwise operator `~` (JS 32-bit semantics, #425)",
+                            span,
+                        ));
+                    }
                     UnaryOp::TypeOf => "typeof",
                     UnaryOp::Void => "void",
                     UnaryOp::Delete => "delete",
@@ -367,6 +373,12 @@ impl Lower<'_> {
             }
             return self.expr(last);
         }
+        // JS bitwise ops work on ToInt32 (32-bit) values; crush's are i64,
+        // so `1 << 31` or `x | 0` would come out different. Refused until a
+        // JS-semantics implementation exists (#425; the swc walker does the same).
+        if matches!(b.op(), BinaryOp::Bitwise(_)) {
+            return Err(self.unsupported("a bitwise operator (JS 32-bit semantics, #425)", span));
+        }
         let numeric = is_js_number(b.lhs()) && is_js_number(b.rhs());
         let left = self.expr(b.lhs())?;
         let right = self.expr(b.rhs())?;
@@ -640,6 +652,21 @@ impl Lower<'_> {
         span: Option<Span>,
         m: Meta,
     ) -> anyhow::Result<CastExpr> {
+        // Bitwise compound assignment: refused like the plain operators (#425).
+        if matches!(
+            a.op(),
+            AssignOp::And
+                | AssignOp::Or
+                | AssignOp::Xor
+                | AssignOp::Shl
+                | AssignOp::Shr
+                | AssignOp::Ushr
+        ) {
+            return Err(self.unsupported(
+                "bitwise compound assignment (JS 32-bit semantics, #425)",
+                span,
+            ));
+        }
         // Where the value goes: a variable, or an object field / array slot.
         enum Target {
             Var(String),
