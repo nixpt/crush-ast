@@ -10,16 +10,27 @@ use crush_cast::manifest::SourceLoc;
 /// Severity level of a compiler diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiagnosticSeverity {
+    /// Information only: never fails a build, not even under
+    /// `--deny-warnings` (the legacy all-public module note, `N-VIS01`).
+    Note,
     Warning,
     Error,
 }
 
+impl DiagnosticSeverity {
+    /// The NDJSON `level` string (`"note"`, `"warning"`, `"error"`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DiagnosticSeverity::Note => "note",
+            DiagnosticSeverity::Warning => "warning",
+            DiagnosticSeverity::Error => "error",
+        }
+    }
+}
+
 impl std::fmt::Display for DiagnosticSeverity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DiagnosticSeverity::Warning => write!(f, "warning"),
-            DiagnosticSeverity::Error => write!(f, "error"),
-        }
+        f.write_str(self.as_str())
     }
 }
 
@@ -29,7 +40,8 @@ impl std::fmt::Display for DiagnosticSeverity {
 /// surface as a build warning, log entry, or CI failure depending on severity.
 #[derive(Debug, Clone)]
 pub struct CompilerDiagnostic {
-    /// Machine-stable code.  Prefix `E-` for errors, `W-` for warnings.
+    /// Machine-stable code.  Prefix `E-` for errors, `W-` for warnings,
+    /// `N-` for notes.
     pub code: &'static str,
     /// Severity level.
     pub severity: DiagnosticSeverity,

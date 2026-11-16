@@ -246,6 +246,7 @@ pub fn lint_source(source: &str) -> Vec<Finding> {
         let level = match d.severity {
             crush_frontend::diagnostics::DiagnosticSeverity::Error => "error",
             crush_frontend::diagnostics::DiagnosticSeverity::Warning => "warning",
+            crush_frontend::diagnostics::DiagnosticSeverity::Note => "note",
         };
         let line = (d.location.line > 0).then_some(d.location.line);
         let col = (d.location.col > 0).then_some(d.location.col);

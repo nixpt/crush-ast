@@ -541,6 +541,11 @@ impl Parser {
                             match self.parse_kind_annotation(kind_meta) {
                                 Ok(kind) => {
                                     self.skip_newlines();
+                                    // `@kind(…) pub struct P { … }` (V1, #519).
+                                    let is_pub = self.at_pub_struct();
+                                    if is_pub {
+                                        self.advance();
+                                    }
                                     if !matches!(self.peek(), Token::Struct(_)) {
                                         let (line, col) = self.get_location(self.peek());
                                         self.errors.push(ParseError::Expected {
@@ -555,12 +560,15 @@ impl Parser {
                                     match self.parse_struct_def() {
                                         Ok(Statement::StructDef {
                                             name, fields, meta, ..
-                                        }) => statements.push(Statement::StructDef {
-                                            name,
-                                            fields,
-                                            kind: Some(kind),
-                                            meta,
-                                        }),
+                                        }) => {
+                                            let def = Statement::StructDef {
+                                                name,
+                                                fields,
+                                                kind: Some(kind),
+                                                meta,
+                                            };
+                                            statements.push(if is_pub { mark_pub(def) } else { def })
+                                        }
                                         Ok(other) => statements.push(other),
                                         Err(_) => self.synchronize(),
                                     }
@@ -665,6 +673,8 @@ impl Parser {
                         if let Some(ann) = pending_fn_annotations.take() {
                             func.annotations = Some(ann);
                         }
+                        // V1 (#519): `pub` is recorded, not dropped.
+                        func.meta.insert("pub".to_string(), serde_json::Value::Bool(true));
                         functions.insert(name, func);
                     }
                     Err(_) => {
@@ -693,12 +703,32 @@ impl Parser {
                         if let Some(ann) = pending_fn_annotations.take() {
                             func.annotations = Some(ann);
                         }
+                        func.meta.insert("pub".to_string(), serde_json::Value::Bool(true));
                         functions.insert(name, func);
                     }
                     Err(_) => {
                         pending_fn_annotations = None;
                         self.synchronize();
                     }
+                }
+                continue;
+            }
+
+            // V1 (#519): `pub struct …` / `pub trait …` (top level only). `pub`
+            // stays a contextual identifier: only these exact shapes take it as
+            // a modifier, so a variable, field or function named `pub` keeps
+            // working. The marker is recorded as `meta["pub"]`.
+            if self.at_pub_struct() || self.at_pub_trait() {
+                let is_struct = self.at_pub_struct();
+                self.advance(); // `pub`
+                let parsed = if is_struct {
+                    self.parse_struct_def()
+                } else {
+                    self.parse_trait_def()
+                };
+                match parsed {
+                    Ok(stmt) => statements.push(mark_pub(stmt)),
+                    Err(_) => self.synchronize(),
                 }
                 continue;
             }
@@ -1374,16 +1404,37 @@ impl Parser {
     /// CRUSH-zorro-41): only these exact shapes start a declaration, so a
     /// variable named `impl` or `trait` keeps working.
     fn at_impl_or_trait(&self) -> bool {
-        let Token::Ident(kw, _) = self.peek() else {
+        self.at_impl_or_trait_from(0)
+    }
+
+    /// `pub struct Name` at the current position (V1, #519)?
+    fn at_pub_struct(&self) -> bool {
+        matches!(self.peek(), Token::Ident(kw, _) if kw == "pub")
+            && matches!(self.peek_ahead(1), Token::Struct(_))
+            && matches!(self.peek_ahead(2), Token::Ident(_, _))
+    }
+
+    /// `pub trait Name {` at the current position (V1, #519)?
+    fn at_pub_trait(&self) -> bool {
+        matches!(self.peek(), Token::Ident(kw, _) if kw == "pub")
+            && matches!(self.peek_ahead(1), Token::Ident(kw, _) if kw == "trait")
+            && self.at_impl_or_trait_from(1)
+    }
+
+    /// [`Self::at_impl_or_trait`], looking `at` tokens ahead.
+    fn at_impl_or_trait_from(&self, at: usize) -> bool {
+        let Token::Ident(kw, _) = self.peek_ahead(at) else {
             return false;
         };
-        let ident = |n: usize| matches!(self.peek_ahead(n), Token::Ident(_, _));
-        let lbrace = |n: usize| matches!(self.peek_ahead(n), Token::LBrace(_));
+        let ident = |n: usize| matches!(self.peek_ahead(at + n), Token::Ident(_, _));
+        let lbrace = |n: usize| matches!(self.peek_ahead(at + n), Token::LBrace(_));
         match kw.as_str() {
             "impl" => {
                 ident(1)
                     && (lbrace(2)
-                        || (matches!(self.peek_ahead(2), Token::For(_)) && ident(3) && lbrace(4)))
+                        || (matches!(self.peek_ahead(at + 2), Token::For(_))
+                            && ident(3)
+                            && lbrace(4)))
             }
             "trait" => ident(1) && lbrace(2),
             _ => false,
@@ -3889,6 +3940,16 @@ fn is_bare_main_call(stmt: &Statement) -> bool {
             ..
         } if function == "main" && args.is_empty()
     )
+}
+
+
+/// Record `pub` on a `struct` / `trait` declaration (`meta["pub"] = true`,
+/// V1, #519). Other statements are returned unchanged.
+fn mark_pub(mut stmt: Statement) -> Statement {
+    if let Statement::StructDef { meta, .. } | Statement::TraitDef { meta, .. } = &mut stmt {
+        meta.insert("pub".to_string(), serde_json::Value::Bool(true));
+    }
+    stmt
 }
 
 #[cfg(test)]
