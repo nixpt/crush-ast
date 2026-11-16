@@ -194,14 +194,14 @@ fn a_cvm1_blob_with_a_private_method_is_refused_at_load() {
     // a `priv` member) is refused by this runtime, which predates visibility.
     let mut v: serde_json::Value = serde_json::from_str(POINT_FIXTURE).unwrap();
     v["kinds"][0]["members"][1]["visibility"] = serde_json::json!("priv");
-    v["cosm_version"] = serde_json::json!("0.2.0");
+    v["cosm_version"] = serde_json::json!("0.3.0");
     let e = Program::from_blob(&blob_with_section(
         KIND_TABLE_FORMAT_JSON_VERSIONED,
         &v.to_string(),
     ))
     .unwrap_err();
     assert!(matches!(e, crate::Error::BadKindTable(_)), "{e:?}");
-    assert!(e.to_string().contains("needs COSM 0.2.0"), "{e}");
+    assert!(e.to_string().contains("needs COSM 0.3.0"), "{e}");
 
     // Unstamped, in format 1, the member key check still refuses it.
     v.as_object_mut().unwrap().remove("cosm_version");
@@ -360,4 +360,184 @@ fn fastvm_applies_the_same_rule_to_a_cvm1_kind_table() {
         "{e}"
     );
     assert!(e.contains("`Point` declares semantics: value(move)"), "{e}");
+}
+
+// ── owner ids (V3b, #522) ────────────────────────────────────────────────────
+
+/// The fixture's canonical COSM JSON as written before owner ids, byte for
+/// byte (crush-cosm's `tests/owners.rs` pins the same string).
+const POINT_GOLDEN: &str = r#"{"kinds":[{"name":"Point","home_lang":"crush","span":{"file":"example","line":1,"col":1},"storage":{"sealed":{"fields":[{"name":"x","type":"Int"},{"name":"y","type":"Int"}]}},"semantics":"reference","resolution":"none","receiver":"explicit_ref","construct":"literal","members":[{"name":"new","span":{"line":3,"col":5},"kind":"static","value":{"fn":"Point::new"}},{"name":"norm2","span":{"line":4,"col":5},"kind":"method","fn":"Point::norm2"}],"conforms":[{"interface":"Shape","check":"nominal","members":[{"name":"area","kind":"method","fn":"<Point as Shape>::area"}],"span":{"file":"example","line":7,"col":1}}],"equality":"structural"}],"interfaces":[{"name":"Shape","home_lang":"crush","span":{"file":"example","line":6,"col":1},"members":[{"name":"area","receiver":"explicit_ref","returns":"Any"},{"name":"describe","receiver":"explicit_ref","returns":"Any","default":"Shape::describe"}],"satisfaction":"nominal"}]}"#;
+
+/// `main` calls `helper`, which another package owns.
+const TWO_FN_SRC: &str = "\
+.func main
+    PUSH 1
+    CALL helper
+    HALT
+.func helper
+    PUSH 2
+    MUL
+    RET
+";
+
+fn owned_point() -> CosmModule {
+    let mut m = point_module();
+    m.kinds[0].module = Some("geo".into());
+    m.kinds[0].package = Some("pkg:geom".into());
+    m.fn_packages
+        .insert(crush_cosm::FnRef::new("helper"), "pkg:geom".into());
+    m
+}
+
+fn two_fn_program(module: Option<CosmModule>) -> Program {
+    let mut p = assemble(TWO_FN_SRC, None, None).expect("assembly");
+    p.cosm = module;
+    p
+}
+
+fn owners_only() -> CosmModule {
+    let mut m = CosmModule::new();
+    m.fn_packages
+        .insert(crush_cosm::FnRef::new("helper"), "dir:lib".into());
+    m
+}
+
+#[test]
+fn a_kind_table_without_owners_is_written_byte_for_byte_as_before() {
+    // The section as every writer before V3b laid it out: format 1, the
+    // golden JSON.
+    let expected = blob_with_section(KIND_TABLE_FORMAT_JSON, POINT_GOLDEN);
+    assert_eq!(program_with(Some(point_module())).to_blob(), expected);
+}
+
+#[test]
+fn owner_ids_are_written_as_kt_format_2_and_round_trip() {
+    let p = two_fn_program(Some(owned_point()));
+    let blob = p.to_blob();
+    assert_eq!(blob[4], VERSION_KIND_TABLE);
+    let v2_len = two_fn_program(None).to_blob().len();
+    assert_eq!(blob[v2_len], KIND_TABLE_FORMAT_JSON_VERSIONED);
+    let json = std::str::from_utf8(&blob[v2_len + 5..]).unwrap();
+    assert!(json.starts_with(r#"{"cosm_version":"0.2.0","#), "{json}");
+    let back = Program::from_blob(&blob).unwrap();
+    assert_eq!(back.cosm, Some(owned_point()));
+}
+
+#[test]
+fn owners_without_kinds_still_get_a_section() {
+    // A program of several packages that declares no Kind: its owners must
+    // not be dropped because there is no Kind to carry them.
+    let p = two_fn_program(Some(owners_only()));
+    assert!(p.kind_table().is_none());
+    let blob = p.to_blob();
+    assert_eq!(blob[4], VERSION_KIND_TABLE);
+    let back = Program::from_blob(&blob).unwrap();
+    assert_eq!(back.cosm, Some(owners_only()));
+    // An empty module is still no section at all.
+    assert_eq!(
+        two_fn_program(Some(CosmModule::new())).to_blob(),
+        two_fn_program(None).to_blob()
+    );
+}
+
+#[test]
+fn a_reader_before_owner_ids_refuses_the_blob_by_name() {
+    // A COSM 0.1.0 runtime (V3a) reads format 2 and gates on the stamp; the
+    // same gate at its version names what it can't read. A runtime from
+    // before V3a refuses format 2 itself (`unknown kind-table format 2`).
+    let blob = two_fn_program(Some(owned_point())).to_blob();
+    let v2_len = two_fn_program(None).to_blob().len();
+    let json: serde_json::Value = serde_json::from_slice(&blob[v2_len + 5..]).unwrap();
+    let err = crush_cosm::check_readable_by(
+        json["cosm_version"].as_str().unwrap(),
+        crush_cosm::COSM_BASE_VERSION,
+    )
+    .unwrap_err();
+    assert!(err.contains("needs COSM 0.2.0"), "{err}");
+}
+
+#[test]
+fn the_disassembler_keeps_owners_only_modules() {
+    let p = two_fn_program(Some(owners_only()));
+    let text = disassemble(&p);
+    assert!(text.contains("functions outside the root package: 1"), "{text}");
+    let back = assemble(&text, None, None).expect("reassembles");
+    assert_eq!(back.cosm, Some(owners_only()));
+}
+
+#[test]
+fn the_portable_vm_reads_the_executing_function_s_package() {
+    for module in [owned_point(), owners_only()] {
+        let want = module.function_package("helper").map(str::to_string);
+        let mut vm = crate::portable_vm::PortableVm::new(two_fn_program(Some(module)));
+        assert_eq!(vm.function_package("helper"), want.as_deref());
+        assert_eq!(vm.function_package("main"), None, "root package");
+        let mut seen: Vec<(String, Option<String>)> = Vec::new();
+        while !vm.is_halted() {
+            let f = vm.function_at(vm.current_ip()).unwrap_or("?").to_string();
+            let pkg = vm.current_function_package().map(str::to_string);
+            if seen.last().map(|(g, _)| g != &f).unwrap_or(true) {
+                seen.push((f, pkg));
+            }
+            vm.step().expect("steps");
+        }
+        assert_eq!(
+            seen,
+            vec![
+                ("main".to_string(), None),
+                ("helper".to_string(), want.clone()),
+                ("main".to_string(), None),
+            ]
+        );
+    }
+    let vm = crate::portable_vm::PortableVm::new(two_fn_program(Some(owned_point())));
+    let point = vm.kind("Point").expect("Point is loaded");
+    assert_eq!(point.module(), Some("geo"));
+    assert_eq!(point.package(), Some("pkg:geom"));
+}
+
+#[test]
+fn the_scheduler_vm_loads_owners_and_runs_as_before() {
+    for module in [owned_point(), owners_only()] {
+        let p = two_fn_program(Some(module.clone()));
+        // The table the scheduler builds at load (`run_from`).
+        let kinds = crate::cosm_rt::KindTable::load(&p).expect("loads");
+        assert_eq!(
+            kinds.function_package("helper"),
+            module.function_package("helper")
+        );
+        assert_eq!(kinds.function_package("main"), None);
+        let entries: Vec<(&str, usize)> = p
+            .manifest
+            .functions
+            .iter()
+            .map(|(n, f)| (n.as_str(), f.entry))
+            .collect();
+        let helper = entries.iter().find(|(n, _)| *n == "helper").unwrap().1;
+        assert_eq!(
+            kinds.package_at(entries.iter().copied(), helper + 1),
+            module.function_package("helper")
+        );
+        assert_eq!(kinds.package_at(entries.iter().copied(), 0), None);
+
+        let with = run(&p, &Quotas::default()).expect("runs");
+        let plain = run(&two_fn_program(None), &Quotas::default()).unwrap();
+        assert_eq!(with.stack, plain.stack);
+        assert_eq!(with.stack, vec![Value::Int(2)]);
+    }
+    let kinds = crate::cosm_rt::KindTable::load(&two_fn_program(Some(owned_point()))).unwrap();
+    let point = kinds.get("Point").unwrap();
+    assert_eq!((point.module(), point.package()), (Some("geo"), Some("pkg:geom")));
+}
+
+#[test]
+fn fastvm_runs_owner_ids_as_before() {
+    // Nothing enforces owners yet (V6, #525), so the map engines lower a
+    // program with them exactly as without: the shared rule doesn't look at
+    // them.
+    for module in [owned_point(), owners_only()] {
+        assert!(
+            crate::fastvm::lower_bytecode_program(&two_fn_program(Some(module))).is_ok()
+        );
+    }
 }

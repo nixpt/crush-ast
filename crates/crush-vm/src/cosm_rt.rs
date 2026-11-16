@@ -93,6 +93,18 @@ impl Kind {
         &self.mro[0].name
     }
 
+    /// The module that declares this Kind (its import path); `None` for the
+    /// program's own file (V3b, #522).
+    pub fn module(&self) -> Option<&str> {
+        self.mro[0].module.as_deref()
+    }
+
+    /// The package that owns this Kind; `None` for the root package (V3b,
+    /// #522). Recorded only: nothing compares it yet (V6, #525).
+    pub fn package(&self) -> Option<&str> {
+        self.mro[0].package.as_deref()
+    }
+
     /// The names of the Kinds in the resolution order, this Kind first.
     pub fn resolution_order(&self) -> impl Iterator<Item = &str> {
         self.mro.iter().map(|k| k.name.as_str())
@@ -188,6 +200,10 @@ pub struct KindTable {
     /// Whether any Kind has a `str` / `repr` hook: printing only looks for
     /// hooked Records (walking the printed value) when one does.
     print_hooks: bool,
+    /// The owning package of each function outside the root package (COSM
+    /// `fn_packages`, V3b #522): a static fact per function, read from the
+    /// program's COSM module whether or not it declares any Kind.
+    fn_packages: HashMap<String, String>,
 }
 
 impl KindTable {
@@ -196,8 +212,17 @@ impl KindTable {
     /// first, then each Kind's resolution order. A program whose table fails
     /// either is refused before it runs.
     pub fn load(program: &crate::bytecode::Program) -> Result<Self, VmError> {
+        let fn_packages: HashMap<String, String> = program
+            .cosm
+            .iter()
+            .flat_map(|m| &m.fn_packages)
+            .map(|(f, p)| (f.as_str().to_string(), p.clone()))
+            .collect();
         let Some(module) = program.kind_table() else {
-            return Ok(Self::default());
+            return Ok(Self {
+                fn_packages,
+                ..Self::default()
+            });
         };
         crate::cosm_gate::check_runnable(Some(module))?;
         let arity: Rc<HashMap<String, u8>> = Rc::new(
@@ -254,7 +279,37 @@ impl KindTable {
             *k.chain.borrow_mut() = chain;
         }
         let print_hooks = kinds.values().any(|k| k.print_hook().is_some());
-        Ok(Self { kinds, print_hooks })
+        Ok(Self {
+            kinds,
+            print_hooks,
+            fn_packages,
+        })
+    }
+
+    /// The package that owns function `name`: `None` for the root package
+    /// (V3b, #522). The owner of the executing function is this, for the
+    /// function whose code holds the instruction pointer
+    /// ([`KindTable::package_at`]).
+    pub fn function_package(&self, name: &str) -> Option<&str> {
+        self.fn_packages.get(name).map(String::as_str)
+    }
+
+    /// The package that owns the code at `ip`: the function with the highest
+    /// entry at or below `ip` (functions are laid out one after another), as
+    /// [`KindTable::function_package`]. `entries` is the program's function
+    /// entry table. `None` for the root package, or when no function holds
+    /// `ip`.
+    pub fn package_at<'a>(
+        &self,
+        entries: impl IntoIterator<Item = (&'a str, usize)>,
+        ip: usize,
+    ) -> Option<&str> {
+        let name = entries
+            .into_iter()
+            .filter(|&(_, entry)| entry <= ip)
+            .max_by_key(|&(_, entry)| entry)?
+            .0;
+        self.function_package(name)
     }
 
     /// Whether any Kind prints through a `str` / `repr` hook.

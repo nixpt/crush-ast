@@ -569,6 +569,27 @@ impl PortableVm {
             .map(|(name, _)| name.as_str())
     }
 
+    /// The package that owns function `name`, from the program's COSM
+    /// `fn_packages`; `None` for the root package (V3b, #522).
+    pub fn function_package(&self, name: &str) -> Option<&str> {
+        self.kinds.function_package(name)
+    }
+
+    /// The package that owns the executing function (the one whose code
+    /// holds the instruction pointer); `None` for the root package (V3b,
+    /// #522). What member visibility will compare against (V6, #525).
+    pub fn current_function_package(&self) -> Option<&str> {
+        self.kinds.package_at(
+            self.func_entry.iter().map(|(n, &e)| (n.as_str(), e)),
+            self.ip,
+        )
+    }
+
+    /// The loaded Kind `name`, if the program declares it.
+    pub fn kind(&self, name: &str) -> Option<&std::rc::Rc<crate::cosm_rt::Kind>> {
+        self.kinds.get(name).ok()
+    }
+
     /// Why the most recent `VmYield::DebugBreak` happened. Cleared when
     /// the next instruction executes.
     pub fn last_stop(&self) -> Option<&crate::debug::DebugStop> {
