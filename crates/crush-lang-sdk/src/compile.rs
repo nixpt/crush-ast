@@ -444,7 +444,19 @@ pub fn annotation_diagnostics(
     program: &crush_cast::Program,
     file: &str,
 ) -> Vec<crate::theme::JsonDiagnostic> {
-    crush_frontend::check_program(program)
+    compiler_diagnostics(crush_frontend::check_program(program), file)
+}
+
+/// [`annotation_diagnostics`]' record shape for any compiler findings, such
+/// as the import graph's visibility findings
+/// (`crush_frontend::parse_file_reporting`, V1 #519). `Warning` and `Error`
+/// are `level: "warning"`; a `Note`, and a level this build does not know,
+/// is `"note"` (it never fails a build, not even under `--deny-warnings`).
+pub fn compiler_diagnostics(
+    diags: Vec<crush_frontend::diagnostics::CompilerDiagnostic>,
+    file: &str,
+) -> Vec<crate::theme::JsonDiagnostic> {
+    diags
         .into_iter()
         .map(|d| {
             let loc_file = if d.location.file.is_empty() {
@@ -452,9 +464,17 @@ pub fn annotation_diagnostics(
             } else {
                 d.location.file.as_str()
             };
+            // A warning stays a warning (CRUSH-369 also reports the passes'
+            // errors as warnings here); `Note`, and any level this build does
+            // not know (`DiagnosticSeverity` is non_exhaustive), is a note.
+            let level = match d.severity {
+                crush_frontend::diagnostics::DiagnosticSeverity::Warning
+                | crush_frontend::diagnostics::DiagnosticSeverity::Error => "warning",
+                _ => "note",
+            };
             crate::theme::JsonDiagnostic {
                 code: d.code,
-                level: "warning",
+                level,
                 file: Some(loc_file.to_string()),
                 line: (d.location.line > 0).then_some(d.location.line),
                 col: (d.location.col > 0).then_some(d.location.col),
@@ -481,12 +501,12 @@ pub fn print_annotation_diagnostics(diags: &[crate::theme::JsonDiagnostic], json
             (Some(f), None) => format!("{f}: "),
             _ => String::new(),
         };
-        eprintln!(
-            "{} [{}] {at}{}",
-            crate::theme::paint_warning_badge("warning"),
-            d.code,
-            d.message
-        );
+        let badge = if d.level == "note" {
+            crate::theme::paint_note_badge("note")
+        } else {
+            crate::theme::paint_warning_badge("warning")
+        };
+        eprintln!("{badge} [{}] {at}{}", d.code, d.message);
         if let Some(h) = &d.hint {
             eprintln!("  hint: {h}");
         }

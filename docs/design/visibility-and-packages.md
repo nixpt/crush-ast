@@ -1,7 +1,10 @@
 # Visibility and packages for Crush (CRUSH-509): design note
 
 altair (crush lane), 2026-11-14, asked for by the captain through vega. **Design only.** The captain ruled on
-all six decisions on 2026-11-14 (see **Rulings**). The 1.0 feature freeze is 2026-12-31. Every decision below has options and a recommendation. The ones the captain
+all six decisions on 2026-11-14 (see **Rulings**). **Status: V1 (#519) implemented**: §1 stage 1 as
+described in `docs/design/import-system.md` "Visibility"; where the code had to choose, that section says
+what it does (notes only for a module another package uses; the first-`pub` listing rides on the first
+`W-VIS01` per module). The 1.0 feature freeze is 2026-12-31. Every decision below has options and a recommendation. The ones the captain
 must rule on are collected under **Decisions**.
 
 ## What exists today (checked on main 30d6d581)
@@ -301,11 +304,11 @@ V0 needs no decision and can start now. V1, V2, V4 and V5 need decisions 1, 3 an
   (`inherit_declaration_owners`); a module whose functions disagree, or a declaration that disagrees
   with them, is an internal compiler error. A `"root"` stamp (V1 puts one on every merged function)
   is removed in the same lowering step, before anything copies meta, so it changes no output.
-- **Open, must close before V6 (#525):** a module that declares types and **no** function has
-  nothing to derive an owner from, so its Kinds stay root-owned until the resolver stamps
-  declarations itself (#537 stamps functions only today). Recorded-only owners make that harmless
-  now; once V6 enforces visibility it would let such a module's members be read as the root
-  package's.
+- **A module with types and no function** has nothing to derive an owner from; it is owned
+  because the resolver stamps its merged `struct` / `impl` / `trait` with the module's package, the
+  same id it stamps on functions (#537 stamped functions only; V3b adds the declarations, next to
+  `module`). Before V6 (#525) any other producer of merged declarations (a walker's CAST, CAST JSON)
+  must stamp them too: an unstamped declaration is root-owned.
 - **A program with no Kinds** still gets a kind-table section when it has owners
   (`Program::cosm_section`); `kind_table()` keeps meaning "declares Kinds or interfaces", so the
   engines' checks are unchanged.
@@ -315,8 +318,8 @@ V0 needs no decision and can start now. V1, V2, V4 and V5 need decisions 1, 3 an
   artifact. The label comes from the spelling alone, never the filesystem or the working
   directory, so the same source compiles to the same owners in any checkout: a directory written
   `.` or `..` has no real component and is labelled `dir` (`#N` on a clash). The resolver (V1) is
-  the place to pass a meaningful directory spelling. The frontend reads `meta["package"]`, which V1 (#519) records; until V1 lands
-  nothing is filled from source.
+  the place to pass a meaningful directory spelling. The frontend reads `meta["package"]`, which the V1 resolver
+  (#519, #537) records on merged functions and declarations.
 - **Run time.** The scheduler VM and the portable VM read `fn_packages` at load
   (`KindTable::function_package`, `KindTable::code_owners` (a sorted entry index, binary-searched),
   `PortableVm::current_function_package`) and a

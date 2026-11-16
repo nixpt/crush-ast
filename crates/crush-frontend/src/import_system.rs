@@ -60,6 +60,27 @@
 //! - **Graph.** Each file is loaded once per compile (a diamond shares one
 //!   copy); a cycle is a compile error that shows the cycle; nesting deeper
 //!   than [`ImportOptions::max_depth`] is a compile error.
+//! - **Visibility** (stage 1, V1 #519; `docs/design/visibility-and-packages.md`
+//!   §1). Every file belongs to one **package**: its canonical path is
+//!   matched against the known roots and the longest root containing it
+//!   wins (on a tie, the first listed): the entry file's directory and
+//!   [`ImportOptions::home_package`]'s root (both the root package), each
+//!   other [`ImportOptions::packages`] root, each search directory (`-L`,
+//!   then `CRUSH_PATH`). A file under no root, or an entry with no real file
+//!   (the REPL), is in the root package. The file decides, not the route, so
+//!   a diamond or a file reached both relatively and through `-L` has one
+//!   package. Merged functions record it in `meta["package"]` (`root`,
+//!   `pkg:<name>` or `dir:<directory>`). The parser records `pub` as
+//!   `meta["pub"]` on `fn`, `struct` and `trait`. A **cross-package** use of
+//!   a module function that is not `pub` (the call `q.f(…)`, the value
+//!   `q.f`, or `import a { f }`, reported at the import) is the warning
+//!   `W-VIS01`; the first such use per module also lists every name the
+//!   module's `pub` keeps private. A module with no `pub` anywhere (no `pub
+//!   fn`, `pub struct` or `pub trait`) is all-public, the legacy rule, and
+//!   gets one `N-VIS01` note, at the first cross-package use of it. A
+//!   same-package use never reports. Kinds are not checked yet (per-module
+//!   kinds are #523). The findings never stop a compile; they come back from
+//!   [`resolve_imports_reporting`].
 //! - **Positions.** Errors raised while loading carry the file they are in
 //!   ([`ImportError`]); every merged function records its file in
 //!   `meta["source_file"]`, which the semantic checker attaches to its errors
@@ -73,7 +94,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use crush_cast::manifest::SourceLoc;
 use crush_cast::{Function, ImportStatement, Program, Statement};
+
+use crate::diagnostics::{CompilerDiagnostic, DiagnosticSeverity};
 use serde_json::Value;
 
 /// Default for [`ImportOptions::max_depth`].
@@ -91,6 +115,11 @@ pub struct ImportOptions {
     pub packages: Vec<ImportPackage>,
     /// The deepest import chain allowed (the root file imports at depth 1).
     pub max_depth: usize,
+    /// The [`ImportOptions::packages`] entry that is the package being
+    /// compiled, if any (crush-pkg sets its own name). Its root counts as part
+    /// of the root package, so a package's `tests/*.crush` and its `src/`
+    /// share one package for visibility (V1, #519).
+    pub home_package: Option<String>,
 }
 
 /// A package importable by name: `import <name>` loads `entry`,
@@ -112,6 +141,7 @@ impl Default for ImportOptions {
             search_paths: Vec::new(),
             packages: Vec::new(),
             max_depth: DEFAULT_MAX_IMPORT_DEPTH,
+            home_package: None,
         }
     }
 }
@@ -239,6 +269,19 @@ pub(crate) fn source_file(func: &Function) -> Option<String> {
 /// rules. `origin` need not exist (the REPL passes a name in its working
 /// directory); only its parent directory is searched.
 pub fn resolve_imports(program: &mut Program, origin: &Path, opts: &ImportOptions) -> Result<()> {
+    resolve_imports_reporting(program, origin, opts).map(drop)
+}
+
+/// [`resolve_imports`], also returning the visibility findings of the
+/// compile (V1, #519; see the module docs, "Visibility"): a `W-VIS01`
+/// warning per cross-package use of a name that is not `pub`, and an
+/// `N-VIS01` note per legacy module (no `pub` anywhere) that another package
+/// uses. Neither stops the compile. What the CLIs call, to print them.
+pub fn resolve_imports_reporting(
+    program: &mut Program,
+    origin: &Path,
+    opts: &ImportOptions,
+) -> Result<Vec<CompilerDiagnostic>> {
     let origin_display = origin.display().to_string();
     // Imports anywhere but the top level of the file are not resolved.
     for (name, func) in &program.functions {
@@ -260,7 +303,7 @@ pub fn resolve_imports(program: &mut Program, origin: &Path, opts: &ImportOption
         }
     }
     let Some(main) = program.functions.get_mut("main") else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let mut imports = Vec::new();
     main.body.retain(|stmt| match stmt {
@@ -274,9 +317,10 @@ pub fn resolve_imports(program: &mut Program, origin: &Path, opts: &ImportOption
         _ => true,
     });
     if imports.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
+    let (roots, packages) = package_roots(origin, opts);
     let mut resolver = Resolver {
         opts,
         modules: Vec::new(),
@@ -286,33 +330,51 @@ pub fn resolve_imports(program: &mut Program, origin: &Path, opts: &ImportOption
         functions: Vec::new(),
         defs: Vec::new(),
         kinds: HashMap::new(),
+        roots,
+        packages,
+        uses: Vec::new(),
     };
     for stmt in &main.body {
         resolver.note_kind(stmt, &origin_display)?;
     }
     let root_dir = parent_dir(origin);
+    let root_package = resolver.package_of(&canonical_file(origin));
     let root_names: BTreeSet<String> = program.functions.keys().cloned().collect();
     let root_fn_lines: HashMap<String, Option<(usize, usize)>> = program
         .functions
         .iter()
         .map(|(n, f)| (n.clone(), span(&f.meta)))
         .collect();
-    let scope = resolver.bind_imports(&root_dir, &origin_display, &imports, None, &|name| {
-        root_names.contains(name).then(|| {
-            let at = root_fn_lines.get(name).copied().flatten();
-            format!(
-                "`fn {name}`{}",
-                at.map(|(l, _)| format!(" (line {l})")).unwrap_or_default()
-            )
-        })
-    })?;
+    let scope = resolver.bind_imports(
+        &root_dir,
+        &origin_display,
+        &imports,
+        None,
+        root_package,
+        &|name| {
+            root_names.contains(name).then(|| {
+                let at = root_fn_lines.get(name).copied().flatten();
+                format!(
+                    "`fn {name}`{}",
+                    at.map(|(l, _)| format!(" (line {l})")).unwrap_or_default()
+                )
+            })
+        },
+    )?;
 
     let mut names: Vec<String> = program.functions.keys().cloned().collect();
     names.sort();
     for name in names {
         let func = program.functions.get_mut(&name).expect("listed above");
-        rewrite_function(func, &scope, &resolver.modules, &origin_display)?;
+        rewrite_function(
+            func,
+            &scope,
+            &resolver.modules,
+            &origin_display,
+            &mut resolver.uses,
+        )?;
     }
+    let findings = resolver.visibility_findings();
     for (name, func) in resolver.functions {
         program.functions.insert(name, func);
     }
@@ -325,7 +387,7 @@ pub fn resolve_imports(program: &mut Program, origin: &Path, opts: &ImportOption
         body.append(&mut main.body);
         main.body = body;
     }
-    Ok(())
+    Ok(findings)
 }
 
 /// One loaded module.
@@ -339,6 +401,13 @@ struct Module {
     file: String,
     /// Its function names, unqualified (`main` excluded).
     functions: BTreeSet<String>,
+    /// The package its file belongs to (index into `Resolver::packages`).
+    package: usize,
+    /// Its functions marked `pub`.
+    pub_functions: BTreeSet<String>,
+    /// Whether it marks anything `pub` (a `fn`, `struct` or `trait`). A
+    /// module with no `pub` anywhere is all-public (the legacy rule).
+    has_pub: bool,
 }
 
 impl Module {
@@ -357,6 +426,8 @@ struct Scope {
     selective: HashMap<String, String>,
     /// Qualifiers (`facet`, `s`) → module index.
     qualifiers: HashMap<String, usize>,
+    /// The package this file belongs to.
+    package: usize,
 }
 
 impl Scope {
@@ -387,9 +458,114 @@ struct Resolver<'a> {
     /// position of its first declaration: Kinds are one global namespace, so
     /// the same name from two different files is an error (#515).
     kinds: HashMap<String, (String, Option<(usize, usize)>)>,
+    /// Package roots, canonical, each with its package index; the longest
+    /// root containing a file decides its package ([`package_roots`]).
+    roots: Vec<(PathBuf, usize)>,
+    /// The packages: index 0 is the root package.
+    packages: Vec<Package>,
+    /// Every use of a module function from a *different* package, in the
+    /// order met, for [`Resolver::visibility_findings`].
+    uses: Vec<CrossUse>,
 }
 
 impl Resolver<'_> {
+    /// The package of the file at `canonical` (V1, #519): the longest root
+    /// that contains it wins; on a tie, the root listed first (the root
+    /// package, then named packages, then search directories). A file under
+    /// no root is in the root package.
+    fn package_of(&self, canonical: &Path) -> usize {
+        let mut best: Option<(usize, usize)> = None;
+        for (dir, pkg) in &self.roots {
+            if canonical.starts_with(dir) {
+                let len = dir.components().count();
+                if best.is_none_or(|(l, _)| len > l) {
+                    best = Some((len, *pkg));
+                }
+            }
+        }
+        best.map_or(ROOT_PACKAGE, |(_, p)| p)
+    }
+
+    /// The visibility findings for the uses recorded during resolution. See
+    /// the module docs, "Visibility".
+    fn visibility_findings(&self) -> Vec<CompilerDiagnostic> {
+        let mut out = Vec::new();
+        let mut noted: HashSet<usize> = HashSet::new();
+        let mut listed: HashSet<usize> = HashSet::new();
+        for u in &self.uses {
+            let m = &self.modules[u.module];
+            let theirs = self.packages[m.package].describe();
+            let ours = self.packages[u.from_package].describe();
+            let location = SourceLoc {
+                file: u.file.clone(),
+                line: u.pos.map_or(0, |(l, _)| l as u32),
+                col: u.pos.map_or(0, |(_, c)| c as u32),
+            };
+            if !m.has_pub {
+                if noted.insert(u.module) {
+                    out.push(CompilerDiagnostic {
+                        code: N_VIS01,
+                        severity: DiagnosticSeverity::Note,
+                        message: format!(
+                            "{} has no `pub`, so all its functions are public (the legacy rule); \
+                             {ours} uses it here ({})",
+                            m.file,
+                            u.via.describe(&u.name)
+                        ),
+                        location,
+                        hint: Some(format!(
+                            "mark the functions other packages may use with `pub`: once a module \
+                             has a `pub`, its other names are private to {theirs}"
+                        )),
+                    });
+                }
+                continue;
+            }
+            if m.pub_functions.contains(&u.name) {
+                continue;
+            }
+            let mut hint = format!(
+                "add `pub` to `fn {}` in {} if other packages may use it (this warning becomes \
+                 an error before 1.0, #524)",
+                u.name, m.file
+            );
+            if listed.insert(u.module) {
+                let hidden: Vec<&str> = m
+                    .functions
+                    .iter()
+                    .filter(|n| !m.pub_functions.contains(*n))
+                    .map(String::as_str)
+                    .collect();
+                let exported: Vec<&str> = m.pub_functions.iter().map(String::as_str).collect();
+                hint.push_str(&format!(
+                    "\n  {} has a `pub`, so the names it does not mark are private to {theirs}: \
+                     {} (`pub`: {})",
+                    m.file,
+                    hidden.join(", "),
+                    if exported.is_empty() {
+                        "no functions".to_string()
+                    } else {
+                        exported.join(", ")
+                    }
+                ));
+            }
+            out.push(CompilerDiagnostic {
+                code: W_VIS01,
+                severity: DiagnosticSeverity::Warning,
+                message: format!(
+                    "`{}` is not `pub` in {}, so it is private to {theirs}; this use ({}) is in \
+                     {ours}",
+                    u.name,
+                    m.file,
+                    u.via.describe(&u.name)
+                ),
+                location,
+                hint: Some(hint),
+            });
+        }
+        out
+    }
+
     /// Record the Kind a `struct` / `trait` declaration in `file` names. The
     /// same name declared in a *different* file is a compile error naming both:
     /// Kind names are one global namespace, and a silent replacement made the
@@ -498,10 +674,12 @@ impl Resolver<'_> {
         file: &str,
         imports: &[Statement],
         own: Option<usize>,
+        package: usize,
         local: &dyn Fn(&str) -> Option<String>,
     ) -> Result<Scope> {
         let mut scope = Scope {
             own,
+            package,
             ..Scope::default()
         };
         // Where each binding came from, for collision messages.
@@ -582,6 +760,16 @@ impl Resolver<'_> {
                         ),
                     ));
                 }
+                if module.package != package {
+                    self.uses.push(CrossUse {
+                        module: idx,
+                        name: name.clone(),
+                        file: file.to_string(),
+                        pos: at,
+                        via: Via::Selective(module_path.clone()),
+                        from_package: package,
+                    });
+                }
                 selective_from.insert(name.clone(), (module_path.clone(), line));
                 scope.selective.insert(name.clone(), mangled);
             }
@@ -652,11 +840,28 @@ impl Resolver<'_> {
         }
         self.prefixes.insert(prefix.clone());
         let idx = self.modules.len();
+        let package = self.package_of(&canonical);
+        let pub_functions: BTreeSet<String> = parsed
+            .functions
+            .iter()
+            .filter(|(_, f)| is_pub(&f.meta))
+            .map(|(n, _)| n.clone())
+            .collect();
+        let has_pub = !pub_functions.is_empty()
+            || toplevel.iter().any(|stmt| match stmt {
+                Statement::StructDef { meta, .. } | Statement::TraitDef { meta, .. } => {
+                    is_pub(meta)
+                }
+                _ => false,
+            });
         self.modules.push(Module {
             path: module_path.to_string(),
             prefix,
             file: display.clone(),
             functions: parsed.functions.keys().cloned().collect(),
+            package,
+            pub_functions,
+            has_pub,
         });
 
         let mut imports = Vec::new();
@@ -692,32 +897,42 @@ impl Resolver<'_> {
         self.stack.push((canonical.clone(), display.clone()));
         let module_dir = parent_dir(&found);
         let own_names = self.modules[idx].functions.clone();
-        let scope = self.bind_imports(&module_dir, &display, &imports, Some(idx), &|name| {
-            own_names.contains(name).then(|| format!("`fn {name}`"))
-        })?;
+        let scope = self.bind_imports(
+            &module_dir,
+            &display,
+            &imports,
+            Some(idx),
+            package,
+            &|name| own_names.contains(name).then(|| format!("`fn {name}`")),
+        )?;
         self.stack.pop();
 
         let mut names: Vec<String> = parsed.functions.keys().cloned().collect();
         names.sort();
         for name in names {
             let mut func = parsed.functions.remove(&name).expect("listed above");
-            rewrite_function(&mut func, &scope, &self.modules, &display)?;
+            rewrite_function(&mut func, &scope, &self.modules, &display, &mut self.uses)?;
             func.meta
                 .insert("source_file".to_string(), Value::String(display.clone()));
             func.meta
                 .insert("module".to_string(), Value::String(module_path.to_string()));
+            func.meta.insert(
+                "package".to_string(),
+                Value::String(self.packages[package].id.clone()),
+            );
             self.functions
                 .push((self.modules[idx].mangled(&name), func));
         }
         for mut def in defs {
             self.note_kind(&def, &display)?;
-            rewrite_statement(&mut def, &scope, &self.modules, &display)?;
+            rewrite_statement(&mut def, &scope, &self.modules, &display, &mut self.uses)?;
             // Where this declaration comes from (V3b, #522): its module's
-            // import path and its merge prefix. `cosm_lower` gives the
-            // declaration the package of its module's functions
-            // (`inherit_declaration_owners`), so a type's Kind and methods
-            // can't end up in the root package while the module's functions
-            // are in another. Neither key reaches compiled output: a struct
+            // import path, its merge prefix and its package (stamped like the
+            // module's functions above, so a module with types and no
+            // function is owned too). `cosm_lower` also checks it against the
+            // package of the module's functions (`inherit_declaration_owners`),
+            // so a type's Kind and methods can't end up in another package
+            // than the module's functions; a `root` stamp is removed there. Neither key reaches compiled output: a struct
             // compiles to nothing, an impl / trait is lifted, and a Kind
             // records its module only with a non-root package.
             if let Statement::StructDef { meta, .. }
@@ -728,6 +943,10 @@ impl Resolver<'_> {
                 meta.insert(
                     crate::cosm_lower::MODULE_PREFIX_META.to_string(),
                     Value::String(self.modules[idx].prefix.clone()),
+                );
+                meta.insert(
+                    "package".to_string(),
+                    Value::String(self.packages[package].id.clone()),
                 );
             }
             self.defs.push(def);
@@ -744,6 +963,7 @@ fn rewrite_function(
     scope: &Scope,
     modules: &[Module],
     file: &str,
+    uses: &mut Vec<CrossUse>,
 ) -> Result<()> {
     if scope.qualifiers.is_empty() && scope.selective.is_empty() && scope.own.is_none() {
         return Ok(());
@@ -751,7 +971,7 @@ fn rewrite_function(
     let mut body = serde_json::to_value(&func.body)?;
     let mut locals: HashSet<String> = func.params.iter().map(|(p, _)| p.clone()).collect();
     collect_locals(&body, &mut locals);
-    rewrite_value(&mut body, scope, modules, &locals, file)?;
+    rewrite_value(&mut body, scope, modules, &locals, file, uses)?;
     func.body = serde_json::from_value(body)?;
     Ok(())
 }
@@ -763,11 +983,12 @@ fn rewrite_statement(
     scope: &Scope,
     modules: &[Module],
     file: &str,
+    uses: &mut Vec<CrossUse>,
 ) -> Result<()> {
     let mut v = serde_json::to_value(&*stmt)?;
     let mut locals = HashSet::new();
     collect_locals(&v, &mut locals);
-    rewrite_value(&mut v, scope, modules, &locals, file)?;
+    rewrite_value(&mut v, scope, modules, &locals, file, uses)?;
     *stmt = serde_json::from_value(v)?;
     Ok(())
 }
@@ -817,6 +1038,7 @@ fn rewrite_value(
     modules: &[Module],
     locals: &HashSet<String>,
     file: &str,
+    uses: &mut Vec<CrossUse>,
 ) -> Result<()> {
     match v {
         Value::Object(obj) => {
@@ -856,6 +1078,16 @@ fn rewrite_value(
                         && let Some(&idx) = scope.qualifiers.get(q)
                     {
                         let target = qualified(&modules[idx], q, f, obj.get("meta"), file)?;
+                        note_use(
+                            uses,
+                            scope,
+                            modules,
+                            idx,
+                            f,
+                            file,
+                            obj.get("meta"),
+                            Via::Call(q.to_string()),
+                        );
                         obj.insert("type".to_string(), Value::String("Call".to_string()));
                         obj.remove("name");
                         obj.insert("function".to_string(), Value::String(target));
@@ -878,6 +1110,16 @@ fn rewrite_value(
                             .unwrap_or("")
                             .to_string();
                         let target = qualified(&modules[idx], &q, &f, obj.get("meta"), file)?;
+                        note_use(
+                            uses,
+                            scope,
+                            modules,
+                            idx,
+                            &f,
+                            file,
+                            obj.get("meta"),
+                            Via::Value(q.clone()),
+                        );
                         let meta = obj
                             .get("meta")
                             .cloned()
@@ -890,13 +1132,13 @@ fn rewrite_value(
             }
             for (k, child) in obj.iter_mut() {
                 if k != "meta" {
-                    rewrite_value(child, scope, modules, locals, file)?;
+                    rewrite_value(child, scope, modules, locals, file, uses)?;
                 }
             }
         }
         Value::Array(items) => {
             for item in items {
-                rewrite_value(item, scope, modules, locals, file)?;
+                rewrite_value(item, scope, modules, locals, file, uses)?;
             }
         }
         _ => {}
@@ -930,6 +1172,176 @@ fn qualified(
             available(&module.functions)
         ),
     ))
+}
+
+/// Record `q.f` (module `idx`, met in `file`) when it crosses a package
+/// boundary.
+#[allow(clippy::too_many_arguments)]
+fn note_use(
+    uses: &mut Vec<CrossUse>,
+    scope: &Scope,
+    modules: &[Module],
+    idx: usize,
+    f: &str,
+    file: &str,
+    meta: Option<&Value>,
+    via: Via,
+) {
+    if modules[idx].package == scope.package {
+        return;
+    }
+    uses.push(CrossUse {
+        module: idx,
+        name: f.to_string(),
+        file: file.to_string(),
+        pos: meta_pos(meta),
+        via,
+        from_package: scope.package,
+    });
+}
+
+fn meta_pos(meta: Option<&Value>) -> Option<(usize, usize)> {
+    meta.and_then(|m| {
+        let line = m.get("line")?.as_u64()? as usize;
+        let col = m.get("col").and_then(Value::as_u64).unwrap_or(0) as usize;
+        (line > 0).then_some((line, col))
+    })
+}
+
+/// Whether a declaration's meta carries the `pub` marker the parser records.
+fn is_pub(meta: &HashMap<String, Value>) -> bool {
+    meta.get("pub").and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// `W-VIS01`: a cross-package use of a name that is not `pub`.
+pub const W_VIS01: &str = "W-VIS01";
+/// `N-VIS01`: a legacy module (no `pub` anywhere) used from another package.
+pub const N_VIS01: &str = "N-VIS01";
+
+/// Index of the root package in `Resolver::packages`.
+const ROOT_PACKAGE: usize = 0;
+
+/// One package of a compile (V1, #519).
+struct Package {
+    /// What `meta["package"]` records: `root`, `pkg:<name>` (a crush-pkg
+    /// package), or `dir:<directory as given>` (an `-L` / `CRUSH_PATH`
+    /// directory).
+    id: String,
+}
+
+impl Package {
+    fn describe(&self) -> String {
+        if let Some(name) = self.id.strip_prefix("pkg:") {
+            format!("package `{name}`")
+        } else if let Some(dir) = self.id.strip_prefix("dir:") {
+            format!("the library directory {dir}")
+        } else {
+            "the root package".to_string()
+        }
+    }
+}
+
+/// How a module function was reached.
+enum Via {
+    /// `q.f(…)`.
+    Call(String),
+    /// `q.f` as a value.
+    Value(String),
+    /// `import a.b { f }` (the module path).
+    Selective(String),
+}
+
+impl Via {
+    fn describe(&self, f: &str) -> String {
+        match self {
+            Via::Call(q) => format!("the call `{q}.{f}(…)`"),
+            Via::Value(q) => format!("the function value `{q}.{f}`"),
+            Via::Selective(path) => format!("`import {path} {{ {f} }}`"),
+        }
+    }
+}
+
+/// A use of module function `name` of `module` from another package.
+struct CrossUse {
+    module: usize,
+    name: String,
+    /// The file the use is in, as displayed.
+    file: String,
+    pos: Option<(usize, usize)>,
+    via: Via,
+    from_package: usize,
+}
+
+/// The package roots of a compile whose entry is `origin`, in tie-break
+/// order, and the packages they name (index 0 is the root package):
+/// the entry's directory and the home package's root (the root package),
+/// each other named package's root, then each search directory (`-L`, then
+/// `CRUSH_PATH`). A directory already listed is not listed again, and a
+/// directory that does not exist is skipped.
+fn package_roots(origin: &Path, opts: &ImportOptions) -> (Vec<(PathBuf, usize)>, Vec<Package>) {
+    let mut packages = vec![Package {
+        id: "root".to_string(),
+    }];
+    let mut roots: Vec<(PathBuf, usize)> = Vec::new();
+    let mut add = |dir: &Path, id: Option<String>, roots: &mut Vec<(PathBuf, usize)>| {
+        let Ok(canon) = std::fs::canonicalize(if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            dir
+        }) else {
+            return;
+        };
+        if roots.iter().any(|(d, _)| *d == canon) {
+            return;
+        }
+        let pkg = match id {
+            None => ROOT_PACKAGE,
+            Some(id) => {
+                packages.push(Package { id });
+                packages.len() - 1
+            }
+        };
+        roots.push((canon, pkg));
+    };
+    add(&parent_dir(origin), None, &mut roots);
+    let home = opts.home_package.as_deref();
+    for p in opts
+        .packages
+        .iter()
+        .filter(|p| Some(p.name.as_str()) == home)
+    {
+        add(&p.root, None, &mut roots);
+    }
+    for p in opts
+        .packages
+        .iter()
+        .filter(|p| Some(p.name.as_str()) != home)
+    {
+        add(&p.root, Some(format!("pkg:{}", p.name)), &mut roots);
+    }
+    for d in &opts.search_paths {
+        add(d, Some(format!("dir:{}", d.display())), &mut roots);
+    }
+    (roots, packages)
+}
+
+/// `path` made canonical; for a file that does not exist (the REPL's
+/// `<repl>`), its canonical directory joined with its name.
+fn canonical_file(path: &Path) -> PathBuf {
+    if let Ok(c) = std::fs::canonicalize(path) {
+        return c;
+    }
+    let dir = parent_dir(path);
+    let dir = std::fs::canonicalize(if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        &dir
+    })
+    .unwrap_or(dir);
+    match path.file_name() {
+        Some(name) => dir.join(name),
+        None => dir,
+    }
 }
 
 /// `" (it defines: a, b, c)"`, for not-found messages.

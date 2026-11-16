@@ -708,10 +708,9 @@ fn dir_label(dir: &str) -> String {
 /// Rewrite every `meta["package"]` in `program` to the id that goes into a
 /// shipped artifact (V3b, #522).
 ///
-/// **This is the seam V1 (#519) plugs into.** Main records no package yet; the
-/// V1 resolver stamps `meta["package"]` on each merged function (and must
-/// stamp it on each merged `struct` / `impl` / `trait` too, beside
-/// `meta["module"]` in `import_system`) as `root`, `pkg:<name>` or
+/// **This is the seam V1 (#519) plugs into.** The V1 resolver
+/// (`import_system`) stamps `meta["package"]` on each merged function and
+/// each merged `struct` / `impl` / `trait` as `root`, `pkg:<name>` or
 /// `dir:<directory>`. A directory is whatever the user passed (`-L`,
 /// `CRUSH_PATH`), often absolute, and must not reach an artifact: that would
 /// make builds depend on where the source sits and leak local directory

@@ -130,6 +130,16 @@ fn a_module_s_types_take_the_package_of_its_functions() {
         if name.starts_with("geo::") {
             set_package(&mut f.meta, "pkg:x");
         }
+        // The declarations as a resolver that stamps only functions leaves
+        // them: no package (derived from the functions above).
+        for stmt in &mut f.body {
+            if let Statement::StructDef { meta, .. }
+            | Statement::ImplBlock { meta, .. }
+            | Statement::TraitDef { meta, .. } = stmt
+            {
+                meta.remove("package");
+            }
+        }
     }
     let (_, cosm) = crush_frontend::compile_cast_with_cosm(program).unwrap();
     let cosm = cosm.unwrap();
@@ -477,4 +487,43 @@ fn normalization_refuses_an_invalid_package_id() {
         let err = crush_frontend::cosm_lower::normalize_package_ids(&mut program).unwrap_err();
         assert!(format!("{err:#}").contains("package id"), "{bad}: {err:#}");
     }
+}
+
+/// End to end through the V1 resolver: a library directory (`-L lib`) is its
+/// own package. A module of only types there (no function to derive from)
+/// is owned through the resolver's stamp on its declarations; a module with
+/// functions too. Nothing records the absolute directory.
+#[test]
+fn a_library_directory_owns_its_types_through_the_resolver() {
+    let shapes = "pub struct S { w: Int }\nimpl S {\n    fn width(self) {\n        return self.w\n    }\n}\n";
+    let dir = tree(
+        "resolver",
+        &[
+            ("lib/shapes.crush", shapes),
+            ("lib/geo.crush", GEO),
+            (
+                "app/main.crush",
+                "import geo\nimport shapes\nfn main() {\n    io.print(geo.make().get())\n}\n",
+            ),
+        ],
+    );
+    let options = ImportOptions {
+        search_paths: vec![dir.join("lib")],
+        ..Default::default()
+    };
+    let program = crush_frontend::parse_file(&dir.join("app/main.crush"), &options).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let (casm, cosm) = crush_frontend::compile_cast_with_cosm(program).unwrap();
+    let cosm = cosm.unwrap();
+    for (kind, module) in [("S", "shapes"), ("P", "geo")] {
+        let k = cosm.kind(kind).unwrap();
+        assert_eq!(k.package.as_deref(), Some("dir:lib"), "{kind}");
+        assert_eq!(k.module.as_deref(), Some(module), "{kind}");
+    }
+    assert_eq!(cosm.function_package("S::width"), Some("dir:lib"));
+    assert_eq!(cosm.function_package("P::get"), Some("dir:lib"));
+    assert_eq!(cosm.function_package("main"), None);
+    let text = String::from_utf8(casm.serialize(casm::Format::Json).unwrap()).unwrap();
+    assert!(!text.contains(dir.to_str().unwrap()), "absolute dir leaked");
+    assert!(!text.contains("\"package\": \"root\""), "root stamp leaked");
 }
