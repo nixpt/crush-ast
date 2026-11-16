@@ -101,7 +101,7 @@ pub fn dispatch(
             cap: gate,
             limit_ms: deadline_ms,
         }),
-        Err(HostCapError::Message(message)) => Err(VmError::CapFailed { cap: gate, message }),
+        Err(HostCapError::Message(message)) => Err(VmError::cap_failed(gate, message)),
         Err(HostCapError::Exit(code)) => Err(VmError::Exit(code)),
     }
 }
@@ -237,6 +237,38 @@ mod tests {
         fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
             Err("boom".into())
         }
+    }
+
+    /// #514: this `dispatch` is the one FastVM's `resolve_host_request` calls (it
+    /// drops the error, so the text is only observable here); a handler whose
+    /// message starts with its own gate name shows it once.
+    #[test]
+    fn a_handler_error_shows_the_cap_name_once() {
+        struct Dup;
+        impl HostCap for Dup {
+            fn spec(&self) -> HostCapSpec {
+                HostCapSpec {
+                    name: "ai_native.query".into(),
+                    argc: None,
+                    returns: true,
+                }
+            }
+            fn call(&self, _args: Vec<Value>) -> Result<Option<Value>, String> {
+                Err("ai_native.query timed out after 300 ms".into())
+            }
+        }
+        let mut caps = HostCaps::new();
+        caps.register(Box::new(Dup));
+        let err = dispatch(
+            "query",
+            &serde_json::json!({}),
+            vec![],
+            Some(&caps),
+            &Quotas::default(),
+            1000,
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "ai_native.query: timed out after 300 ms");
     }
 
     #[test]
