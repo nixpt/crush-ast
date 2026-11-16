@@ -691,29 +691,18 @@ pub(crate) fn package_of(meta: &HashMap<String, Value>) -> Option<String> {
     }
 }
 
-/// A library directory's label: its last path component (split on `/` and
-/// `\\` alike, so the id doesn't depend on the host). A directory written as
-/// `.` or `..` (or ending in one, `-L lib/..`) is resolved on disk first, so
-/// `-L .` is labelled by the directory it names, not `dir`; when that fails
-/// (the path doesn't exist here), its last real component, else `dir`.
+/// A library directory's label: its last real path component (split on `/`
+/// and `\\` alike, so the id doesn't depend on the host), skipping `.`, `..`
+/// and empty components; `dir` when there is none (`-L .`). Read from the
+/// spelling only, never the filesystem or the working directory, so the same
+/// source compiles to the same owners in any checkout. A spelling that says
+/// more (`-L ../geo` instead of `-L ..`) is the resolver's to pass (V1, #519);
+/// `#N` separates directories whose labels clash.
 fn dir_label(dir: &str) -> String {
-    let last = |d: &str| {
-        d.rsplit(['/', '\\'])
-            .find(|c| !c.is_empty() && *c != ".")
-            .map(str::to_string)
-    };
-    match last(dir) {
-        Some(c) if c != ".." => c,
-        _ => std::fs::canonicalize(if dir.is_empty() { "." } else { dir })
-            .ok()
-            .and_then(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
-            .or_else(|| {
-                dir.rsplit(['/', '\\'])
-                    .find(|c| !c.is_empty() && *c != "." && *c != "..")
-                    .map(str::to_string)
-            })
-            .unwrap_or_else(|| "dir".to_string()),
-    }
+    dir.rsplit(['/', '\\'])
+        .find(|c| !c.is_empty() && *c != "." && *c != "..")
+        .unwrap_or("dir")
+        .to_string()
 }
 
 /// Rewrite every `meta["package"]` in `program` to the id that goes into a
@@ -728,7 +717,9 @@ fn dir_label(dir: &str) -> String {
 /// make builds depend on where the source sits and leak local directory
 /// names. So:
 ///
-/// - `root` stays `root` (written as an absent owner);
+/// - `root` is removed: the root package is the absence of an owner, so a
+///   one-package program's CAST meta (and so its CASM) is the same with the
+///   resolver's stamp as without it;
 /// - `pkg:<name>` stays as it is: a crush-pkg package name is already stable;
 /// - `dir:<directory>` becomes `dir:<its last path component>` (`dir:lib`).
 ///   Two different directories with the same last component in one program
@@ -767,16 +758,20 @@ pub fn normalize_package_ids(program: &mut Program) -> Result<()> {
             bail!("a package id must be a string, got {v}");
         };
         if id == crush_cosm::ROOT_PACKAGE {
+            // The root package is the absence of an owner. The resolver
+            // stamps it on every merged function (V1, #519); removed here,
+            // before anything copies meta (the compiler copies a function's
+            // meta into each of its CASM instructions), so a one-package
+            // program compiles exactly as it does without the stamp.
+            meta.remove("package");
             continue;
         }
-        if let Some(name) = id.strip_prefix("pkg:") {
-            if name.is_empty() || name.contains(['/', '\\']) {
-                bail!("package id `{id}`: a crush-pkg package name has no path in it");
-            }
-        } else if let Some(dir) = id.strip_prefix("dir:") {
+        if let Some(dir) = id.strip_prefix("dir:") {
+            // A directory as given (often absolute): labelled below.
             dirs.insert(dir.to_string());
-        } else {
-            bail!("unknown package id `{id}` (expected `root`, `pkg:<name>` or `dir:<directory>`)");
+        } else if let Some(problem) = crush_cosm::owner_id_problem(crush_cosm::OwnerId::Package, id)
+        {
+            bail!("{problem} (a package id in CAST is `root`, `pkg:<name>` or `dir:<directory>`)");
         }
     }
     if dirs.is_empty() {

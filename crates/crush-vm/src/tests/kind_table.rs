@@ -544,3 +544,23 @@ fn fastvm_runs_owner_ids_as_before() {
         assert!(crate::fastvm::lower_bytecode_program(&two_fn_program(Some(module))).is_ok());
     }
 }
+
+#[test]
+fn code_owners_boundaries_are_deterministic() {
+    let p = two_fn_program(Some(owners_only()));
+    let kinds = crate::cosm_rt::KindTable::load(&p).expect("loads");
+    // Empty table: nothing owns anything.
+    assert_eq!(kinds.code_owners(std::iter::empty()).at(0), None);
+    // Before the first entry: no function holds the address.
+    let owners = kinds.code_owners([("helper", 5)]);
+    assert_eq!(owners.at(4), None);
+    assert_eq!(owners.at(5), owners_only().function_package("helper"));
+    // A tie: the same answer whatever order the entries come in (the last by
+    // name, `main` after `helper`, wins).
+    let a = kinds.code_owners([("helper", 3), ("main", 3)]);
+    let b = kinds.code_owners([("main", 3), ("helper", 3)]);
+    for ip in [3, 4] {
+        assert_eq!(a.at(ip), None);
+        assert_eq!(a.at(ip), b.at(ip));
+    }
+}

@@ -267,7 +267,8 @@ pub struct KindDecl {
     /// namespace per program until per-module Kinds (V4, #523).
     pub name: String,
     /// The module that declares this Kind, as its import path (`geo`,
-    /// `util.shapes`); absent for the program's own file (V3b, #522).
+    /// `util.shapes`); absent for the root package: written only together
+    /// with a [`KindDecl::package`] (V3b, #522).
     /// Must-understand: needs [`COSM_OWNERS_VERSION`](crate::COSM_OWNERS_VERSION).
     #[serde(
         default,

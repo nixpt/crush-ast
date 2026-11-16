@@ -94,7 +94,7 @@ impl Kind {
     }
 
     /// The module that declares this Kind (its import path); `None` for the
-    /// program's own file (V3b, #522).
+    /// root package: it is written only together with a package (V3b, #522).
     pub fn module(&self) -> Option<&str> {
         self.mro[0].module.as_deref()
     }
@@ -301,12 +301,16 @@ impl KindTable {
         &self,
         entries: impl IntoIterator<Item = (&'a str, usize)>,
     ) -> CodeOwners {
-        let mut v: Vec<(usize, Option<String>)> = entries
-            .into_iter()
-            .map(|(name, entry)| (entry, self.function_package(name).map(str::to_string)))
-            .collect();
-        v.sort_by_key(|(entry, _)| *entry);
-        CodeOwners(v)
+        // Sorted by entry, then name: two functions at one entry (an empty
+        // function and the next) are decided by name, not by the order a
+        // HashMap handed them over in.
+        let mut v: Vec<(usize, &str)> = entries.into_iter().map(|(n, e)| (e, n)).collect();
+        v.sort_unstable();
+        CodeOwners(
+            v.into_iter()
+                .map(|(entry, name)| (entry, self.function_package(name).map(str::to_string)))
+                .collect(),
+        )
     }
 
     /// Whether any Kind prints through a `str` / `repr` hook.
@@ -329,7 +333,8 @@ pub struct CodeOwners(Vec<(usize, Option<String>)>);
 impl CodeOwners {
     /// The package that owns the code at `ip`: that of the function with the
     /// highest entry at or below it (functions are laid out one after
-    /// another). `None` for the root package, or when no function holds `ip`.
+    /// another); at a tie, the last by name. `None` for the root package, or
+    /// when no function holds `ip`.
     pub fn at(&self, ip: usize) -> Option<&str> {
         let i = self.0.partition_point(|(entry, _)| *entry <= ip);
         self.0.get(i.checked_sub(1)?)?.1.as_deref()

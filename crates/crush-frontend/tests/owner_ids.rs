@@ -61,6 +61,14 @@ fn a_kind_from_an_imported_module_of_the_root_package_records_no_owner() {
     assert!(!cosm.to_json().contains("cosm_version"));
 }
 
+/// A CASM program as a JSON document, after a round trip through `format`.
+/// CASM keeps functions in a HashMap, so its bytes follow hash order even
+/// between two compiles of one program: tests compare documents.
+fn document(p: &casm::Program, format: casm::Format) -> Value {
+    let back = casm::Program::deserialize(&p.serialize(format).unwrap(), format).unwrap();
+    serde_json::from_slice(&back.serialize(casm::Format::Json).unwrap()).unwrap()
+}
+
 /// Strip what this PR's import system adds to merged declarations.
 fn without_owner_stamps(mut program: crush_cast::Program) -> crush_cast::Program {
     for f in program.functions.values_mut() {
@@ -98,14 +106,12 @@ fn owner_stamps_leave_the_casm_of_a_one_package_program_unchanged() {
         let plain = without_owner_stamps(stamped.clone());
         let a = crush_frontend::compile_cast(&stamped).unwrap();
         let b = crush_frontend::compile_cast(&plain).unwrap();
-        // CASM keeps functions in a HashMap, so its bytes follow hash order
-        // even between two compiles of one program: compare the documents.
-        let value = |p: &casm::Program, format| -> Value {
-            let back = casm::Program::deserialize(&p.serialize(format).unwrap(), format).unwrap();
-            serde_json::from_slice(&back.serialize(casm::Format::Json).unwrap()).unwrap()
-        };
         for format in [casm::Format::Json, casm::Format::Binary] {
-            assert_eq!(value(&a, format), value(&b, format), "{tag} {format:?}");
+            assert_eq!(
+                document(&a, format),
+                document(&b, format),
+                "{tag} {format:?}"
+            );
         }
         let text = String::from_utf8(a.serialize(casm::Format::Json).unwrap()).unwrap();
         assert!(!text.contains("module_prefix"), "{tag}");
@@ -362,8 +368,45 @@ fn main() {
     assert_eq!(cosm.function_package("main"), None);
 }
 
+/// The resolver (V1, #537) stamps `package: "root"` on every merged function.
+/// Root is the absence of an owner: the stamp is removed before anything
+/// copies meta, so the CASM is the one the same program has without it.
 #[test]
-fn a_dot_directory_is_labelled_by_the_directory_it_names() {
+fn a_root_package_stamp_changes_nothing() {
+    let plain = parse_tree(
+        "root-stamp",
+        &[("geo.crush", GEO), ("main.crush", GEO_MAIN)],
+    );
+    let stamped = {
+        let mut p = plain.clone();
+        for f in p.functions.values_mut() {
+            set_package(&mut f.meta, "root");
+            for stmt in &mut f.body {
+                if let Statement::StructDef { meta, .. }
+                | Statement::ImplBlock { meta, .. }
+                | Statement::TraitDef { meta, .. } = stmt
+                {
+                    set_package(meta, "root");
+                }
+            }
+        }
+        p
+    };
+    let a = crush_frontend::compile_cast(&stamped).unwrap();
+    let b = crush_frontend::compile_cast(&plain).unwrap();
+    for format in [casm::Format::Json, casm::Format::Binary] {
+        assert_eq!(document(&a, format), document(&b, format), "{format:?}");
+    }
+    let text = String::from_utf8(a.serialize(casm::Format::Json).unwrap()).unwrap();
+    assert!(!text.contains("\"package\""), "{text}");
+    let (_, cosm) = crush_frontend::compile_cast_with_cosm(stamped).unwrap();
+    assert!(!cosm.unwrap().has_owners());
+}
+
+/// A directory label comes from the spelling alone: `-L .`-style spellings
+/// have no real component and are labelled `dir` (`#N` on a clash).
+#[test]
+fn a_dot_directory_is_labelled_from_its_spelling() {
     let mut program = crush_frontend::parse_source(SRC).unwrap();
     set_package(
         &mut program.functions.get_mut("helper").unwrap().meta,
@@ -373,15 +416,53 @@ fn a_dot_directory_is_labelled_by_the_directory_it_names() {
         &mut program.functions.get_mut("other").unwrap().meta,
         "dir:./..",
     );
+    set_package(
+        &mut program.functions.get_mut("third").unwrap().meta,
+        "dir:lib/..",
+    );
     crush_frontend::cosm_lower::normalize_package_ids(&mut program).unwrap();
-    let cwd = std::env::current_dir().unwrap();
-    let name = |p: &std::path::Path| format!("dir:{}", p.file_name().unwrap().to_str().unwrap());
     let id = |f: &str| {
         program.functions[f].meta["package"]
             .as_str()
             .unwrap()
             .to_string()
     };
-    assert_eq!(id("helper"), name(&cwd));
-    assert_eq!(id("other"), name(cwd.parent().unwrap()));
+    let mut dots = [id("helper"), id("other")];
+    dots.sort();
+    assert_eq!(dots, ["dir:dir".to_string(), "dir:dir#2".to_string()]);
+    assert_eq!(id("third"), "dir:lib");
+}
+
+/// The compiler's own owner-id check, on the public `compile_lowered` route
+/// that skips `cosm_lower::lower`: a module handed in with a bad id, and a
+/// raw (unnormalized) directory on a function.
+#[test]
+fn compile_lowered_refuses_an_invalid_owner_id() {
+    let program = crush_frontend::parse_source("fn main() {\n    io.print(1)\n}\n").unwrap();
+    let mut module = crush_cosm::CosmModule::default();
+    module
+        .fn_packages
+        .insert(crush_cosm::FnRef::new("main"), "root".to_string());
+    let err = crush_frontend::compiler::Compiler::new()
+        .compile_lowered(program.clone(), Some(module))
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        format!("{err:#}").contains("invalid COSM owner id"),
+        "{err:#}"
+    );
+
+    let mut raw = program;
+    set_package(
+        &mut raw.functions.get_mut("main").unwrap().meta,
+        "dir:/abs/lib",
+    );
+    let err = crush_frontend::compiler::Compiler::new()
+        .compile_lowered(raw, None)
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        format!("{err:#}").contains("invalid COSM owner id"),
+        "{err:#}"
+    );
 }
