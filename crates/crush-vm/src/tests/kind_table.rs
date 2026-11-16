@@ -517,11 +517,10 @@ fn the_scheduler_vm_loads_owners_and_runs_as_before() {
             .map(|(n, f)| (n.as_str(), f.entry))
             .collect();
         let helper = entries.iter().find(|(n, _)| *n == "helper").unwrap().1;
-        assert_eq!(
-            kinds.package_at(entries.iter().copied(), helper + 1),
-            module.function_package("helper")
-        );
-        assert_eq!(kinds.package_at(entries.iter().copied(), 0), None);
+        let owners = kinds.code_owners(entries.iter().copied());
+        assert_eq!(owners.at(helper + 1), module.function_package("helper"));
+        assert_eq!(owners.at(helper), module.function_package("helper"));
+        assert_eq!(owners.at(0), None);
 
         let with = run(&p, &Quotas::default()).expect("runs");
         let plain = run(&two_fn_program(None), &Quotas::default()).unwrap();

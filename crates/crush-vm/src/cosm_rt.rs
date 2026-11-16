@@ -289,27 +289,24 @@ impl KindTable {
     /// The package that owns function `name`: `None` for the root package
     /// (V3b, #522). The owner of the executing function is this, for the
     /// function whose code holds the instruction pointer
-    /// ([`KindTable::package_at`]).
+    /// ([`KindTable::code_owners`]).
     pub fn function_package(&self, name: &str) -> Option<&str> {
         self.fn_packages.get(name).map(String::as_str)
     }
 
-    /// The package that owns the code at `ip`: the function with the highest
-    /// entry at or below `ip` (functions are laid out one after another), as
-    /// [`KindTable::function_package`]. `entries` is the program's function
-    /// entry table. `None` for the root package, or when no function holds
-    /// `ip`.
-    pub fn package_at<'a>(
+    /// Which package owns the code at each address: `entries` is the
+    /// program's function entry table. Build it once per program;
+    /// [`CodeOwners::at`] is then a binary search (V3b, #522).
+    pub fn code_owners<'a>(
         &self,
         entries: impl IntoIterator<Item = (&'a str, usize)>,
-        ip: usize,
-    ) -> Option<&str> {
-        let name = entries
+    ) -> CodeOwners {
+        let mut v: Vec<(usize, Option<String>)> = entries
             .into_iter()
-            .filter(|&(_, entry)| entry <= ip)
-            .max_by_key(|&(_, entry)| entry)?
-            .0;
-        self.function_package(name)
+            .map(|(name, entry)| (entry, self.function_package(name).map(str::to_string)))
+            .collect();
+        v.sort_by_key(|(entry, _)| *entry);
+        CodeOwners(v)
     }
 
     /// Whether any Kind prints through a `str` / `repr` hook.
@@ -321,6 +318,21 @@ impl KindTable {
         self.kinds
             .get(name)
             .ok_or_else(|| VmError::Cosm(format!("`{name}` is not a Kind of this program")))
+    }
+}
+
+/// The owning package of the code at each address of a program, sorted by
+/// function entry ([`KindTable::code_owners`]).
+#[derive(Debug, Default, Clone)]
+pub struct CodeOwners(Vec<(usize, Option<String>)>);
+
+impl CodeOwners {
+    /// The package that owns the code at `ip`: that of the function with the
+    /// highest entry at or below it (functions are laid out one after
+    /// another). `None` for the root package, or when no function holds `ip`.
+    pub fn at(&self, ip: usize) -> Option<&str> {
+        let i = self.0.partition_point(|(entry, _)| *entry <= ip);
+        self.0.get(i.checked_sub(1)?)?.1.as_deref()
     }
 }
 
