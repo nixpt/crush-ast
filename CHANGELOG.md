@@ -27,6 +27,24 @@ add its entry after yours.
   takes any `1.x`. Recorded only; member visibility (#525) will enforce it. `--emit cast` of a
   program that imports a module with `struct` / `impl` / `trait` now shows `module` and
   `module_prefix` in those declarations' meta, as functions already showed `module`.
+- Visibility, the gate for stage 2 (V1.5, #539). `crushc --check --deny-legacy-visibility` fails
+  (exit 1) while an exported function relies on the legacy rule: `W-VIS01` becomes an error, and a
+  module with no `pub` whose functions another package uses is one `E-VIS01` error naming every
+  function used (in place of its `N-VIS01` note). It sees function uses only (kinds are global
+  until #523). `crushc --list-exports FILE|DIR` lists each module's `pub` and private names, or
+  "legacy: no pub, everything public"; with the flag every importable legacy module there fails,
+  kinds included (a file with top-level statements, or with nothing besides `main`, is exempt; a
+  library with a demo `main` is not). Use both on a library: the compile gate on its users, the
+  directory gate on its own directory. `crush-pkg build --deny-legacy-visibility` does both for a
+  package: a library gate over its sources, entry included (an application does not need it, and
+  one that runs it must mark its importable modules, entry included); concatenation with
+  dependencies fails. crush-pkg builds and test compiles now print `W-VIS01` / `N-VIS01` /
+  `W-VIS02` on stderr (nothing new fails without the flag). Without the flag, crushc's output is
+  unchanged. API: `ImportOptions::deny_legacy_visibility`, `import_system::E_VIS01`,
+  `visibility_check::{ModuleSurface, module_surface, surfaces, render_surface}`,
+  `compile::visibility_diagnostics`, `BuildOutput::visibility`,
+  `PackageBuilder::deny_legacy_visibility`; `BuildOutput` and `ImportOptions` struct literals need
+  `..`.
 - fix(web): a crush-web session granted `fs` no longer aborts with `RuntimeError: unreachable`
   (#534). The in-memory filesystem (`MemFs`, since 0.11.0) stamped modification times with
   `SystemTime::now()`, which panics on `wasm32-unknown-unknown`, and it did so while the

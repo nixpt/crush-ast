@@ -274,7 +274,22 @@ enum Commands {
         facet_path: Option<PathBuf>,
     },
     /// Build the current package
-    Build,
+    Build {
+        /// The visibility stage-2 gate (#539), a library gate: fail while
+        /// any exported function relies on the legacy rule (a module with no
+        /// `pub` is all-public). Fails on every importable module of the
+        /// package's sources with no `pub`, the entry included (kinds count;
+        /// a file with top-level statements, or with nothing besides `main`,
+        /// is exempt), on a cross-package use of a function that is not
+        /// `pub` (`W-VIS01`), and on a module with no `pub` whose functions
+        /// another package uses (`E-VIS01`; the compile sees function uses
+        /// only, not kinds). An application does not need it: legacy inside
+        /// one package stays fine at every stage; one that runs it must mark
+        /// its importable modules, entry included. Without it the visibility
+        /// findings are printed and never fail.
+        #[arg(long = "deny-legacy-visibility")]
+        deny_legacy_visibility: bool,
+    },
     /// Run the current package
     Run {
         /// Arguments passed to the program's main function
@@ -663,7 +678,10 @@ fn dispatch(cli: Cli, json_mode: bool, strict_mode: bool) -> Result<(), CommandF
             facet_path,
         } => handle_new(name, dir, cli, lib, facet_path)
             .map_err(|e| CommandFailure::New(format!("{e:#}"))),
-        Commands::Build => handle_build().map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
+        Commands::Build {
+            deny_legacy_visibility,
+        } => handle_build(deny_legacy_visibility)
+            .map_err(|e| CommandFailure::Builder(format!("{e:#}"))),
         Commands::Run { args, grants } => {
             handle_run(args, &grants, strict_mode).map_err(|e| e.into_failure())
         }
@@ -747,14 +765,16 @@ fn handle_new(
     Ok(())
 }
 
-fn handle_build() -> anyhow::Result<()> {
+fn handle_build(deny_legacy_visibility: bool) -> anyhow::Result<()> {
     let (manifest, root) = load_manifest()?;
     crush_pkg::flow::require_crush_buildable(&manifest, &root, "build")?;
     println!(
         "building {} v{}",
         manifest.capsule.name, manifest.capsule.version
     );
-    let builder = PackageBuilder::new(manifest, root).offline(offline());
+    let builder = PackageBuilder::new(manifest, root)
+        .offline(offline())
+        .deny_legacy_visibility(deny_legacy_visibility);
     let output = builder.build()?;
     builder.write_output(&output)?;
     println!(

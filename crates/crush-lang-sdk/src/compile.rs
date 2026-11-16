@@ -485,8 +485,32 @@ pub fn compiler_diagnostics(
         .collect()
 }
 
+/// The import graph's visibility findings
+/// (`crush_frontend::parse_file_reporting`) as records, like
+/// [`compiler_diagnostics`] except that an `Error` stays `level: "error"`.
+/// Only the stage-2 gate (`ImportOptions::deny_legacy_visibility`, V1.5
+/// #539) produces errors there, so without it this is
+/// [`compiler_diagnostics`].
+pub fn visibility_diagnostics(
+    diags: Vec<crush_frontend::diagnostics::CompilerDiagnostic>,
+    file: &str,
+) -> Vec<crate::theme::JsonDiagnostic> {
+    let errors: Vec<bool> = diags
+        .iter()
+        .map(|d| d.severity == crush_frontend::diagnostics::DiagnosticSeverity::Error)
+        .collect();
+    let mut out = compiler_diagnostics(diags, file);
+    for (d, error) in out.iter_mut().zip(errors) {
+        if error {
+            d.level = "error";
+        }
+    }
+    out
+}
+
 /// Print [`annotation_diagnostics`] to stderr: themed text lines, or NDJSON
-/// when `json`.
+/// when `json`. A record of `level: "error"` (the stage-2 gate's) gets the
+/// error badge.
 pub fn print_annotation_diagnostics(diags: &[crate::theme::JsonDiagnostic], json: bool) {
     if diags.is_empty() {
         return;
@@ -503,6 +527,8 @@ pub fn print_annotation_diagnostics(diags: &[crate::theme::JsonDiagnostic], json
         };
         let badge = if d.level == "note" {
             crate::theme::paint_note_badge("note")
+        } else if d.level == "error" {
+            crate::theme::paint_error_badge("error")
         } else {
             crate::theme::paint_warning_badge("warning")
         };

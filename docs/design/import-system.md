@@ -103,8 +103,16 @@ exports). Stage 1 warns; it changes no program's behaviour.
 
 None of these stops a compile. `crushc` and `crush-run` print them on stderr with the annotation
 warnings (`--message-format json`: `level` `"warning"` or `"note"`); `crushc --deny-warnings` fails on
-the warnings and never on a note. crush-pkg builds and the REPL do not print them yet. API:
+the warnings and never on a note. crush-pkg builds print them too (#539); the REPL does not. API:
 `import_system::resolve_imports_reporting`, `crush_frontend::parse_file_reporting`.
+
+**The stage-2 gate** (#539, `visibility-and-packages.md` "V1.5 as built"): `crushc
+--deny-legacy-visibility` and `crush-pkg build --deny-legacy-visibility` fail on `W-VIS01` and on a
+legacy module whose functions another package uses (`E-VIS01`, once per module, naming every
+function used; the compile sees function uses only);
+`crushc --list-exports PATH` lists each module's `pub` and private names, or that it is legacy, with
+no foreign user needed. API: `ImportOptions::deny_legacy_visibility`,
+`visibility_check::{module_surface, surfaces}`.
 
 ## Diagnostics
 
