@@ -14,6 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(fastvm): an out-of-range index read on FastVM now raises the same error as the scheduler VM
+  and PortableVm instead of returning `null` (#445). `a[5]` on a 3-element array, `"abc"[9]`
+  and `a[-4]` raise `array index out of range: 5 (len 3)` (and so on); a non-Int index
+  (`a["x"]`, `a[1.5]`) raises `array index must be int, got str`; indexing something that is
+  not an array, map or string (`5[0]`) raises `type error: expected array, map, or string, got
+  int`. FastVM's explicit `arr_get(a, i)` takes the same path. Each error is catchable with
+  `try`/`catch` on FastVM as on the VMs. An out-of-range or non-Int FastVM *write* (`a[5] = 1`)
+  now raises the same catchable errors with the same text; it used to be an uncatchable
+  `Execution error: array index out of range: …` / `Type mismatch`. A FastVM program that read
+  past the end and got `null` now stops with an error (or enters its `catch`). JIT and AOT are
+  unchanged.
 - fix(web): a crush-web session granted `fs` no longer aborts with `RuntimeError: unreachable`
   (#534). The in-memory filesystem (`MemFs`, since 0.11.0) stamped modification times with
   `SystemTime::now()`, which panics on `wasm32-unknown-unknown`, and it did so while the
