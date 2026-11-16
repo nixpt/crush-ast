@@ -31,6 +31,19 @@ fn now_ms() -> i64 {
     now_ms_f64().floor() as i64
 }
 
+/// The same clock as a `SystemTime`, for the in-memory filesystem's
+/// modification times (`fs` grant, `HostCapsBuilder::fs_memory_with_clock`):
+/// crush-lang-sdk's own `MemFs` clock reads `SystemTime::now()`, which panics
+/// on `wasm32-unknown-unknown` (#534).
+pub fn system_time() -> std::time::SystemTime {
+    let ms = now_ms();
+    if ms >= 0 {
+        std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms as u64)
+    } else {
+        std::time::UNIX_EPOCH - std::time::Duration::from_millis(ms.unsigned_abs())
+    }
+}
+
 /// Register the clock family: `time.now`, `time.now_ms`, `time.now_iso`,
 /// `time.elapsed`, `time.sleep` and `async.sleep`.
 pub fn register(caps: &mut HostCaps) {

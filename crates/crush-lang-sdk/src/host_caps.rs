@@ -111,10 +111,18 @@ impl HostCapsBuilder {
     /// sandbox rules and the same results and error messages as an empty
     /// `fs_root` directory, for a host with no disk to give (a browser). The
     /// files live as long as the registry this builds.
-    pub fn fs_memory(mut self) -> Self {
+    pub fn fs_memory(self) -> Self {
+        self.fs_memory_with_clock(crate::fs_backend::system_clock)
+    }
+
+    /// [`fs_memory`](Self::fs_memory) with the files' modification times read
+    /// from `clock`, for a host with no system clock: on
+    /// `wasm32-unknown-unknown` `SystemTime::now()` panics, so crush-web
+    /// passes JavaScript's `Date.now()` (#534).
+    pub fn fs_memory_with_clock(mut self, clock: crate::fs_backend::Clock) -> Self {
         self.fs = true;
         self.fs_root = Some("/".to_string());
-        self.fs_backend = Some(Arc::new(crate::fs_backend::MemFs::new()));
+        self.fs_backend = Some(Arc::new(crate::fs_backend::MemFs::with_clock(clock)));
         self
     }
 
