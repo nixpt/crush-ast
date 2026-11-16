@@ -158,8 +158,13 @@ fn list_exports_shows_each_modules_surface_and_the_gate_fails_legacy_ones() {
     let dir = tree(&[
         ("src/geo.crush", PUB_GEO),
         ("src/old.crush", LEGACY),
+        ("src/app.crush", "fn main() { print(1) }\n"),
         (
-            "src/app.crush",
+            "src/script.crush",
+            "fn helper() { return 1 }\nprint(helper())\n",
+        ),
+        (
+            "src/demo.crush",
             "fn helper() { return 1 }\nfn main() { print(helper()) }\n",
         ),
     ]);
@@ -167,10 +172,13 @@ fn list_exports_shows_each_modules_surface_and_the_gate_fails_legacy_ones() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        "src/app.crush: legacy: no pub, everything public (a program: not checked by the gate \
-         unless another package imports it)\n  public: helper\n\
+        "src/app.crush: program (exempt from the gate: nothing to export besides `main`)\n\
+         src/demo.crush: legacy: no pub, everything public (its `fn main` is ignored when it is \
+         imported)\n  public: helper\n\
          src/geo.crush: pub\n  pub: area\n  private: helper\n\
-         src/old.crush: legacy: no pub, everything public\n  public: area, helper\n"
+         src/old.crush: legacy: no pub, everything public\n  public: area, helper\n\
+         src/script.crush: program (exempt from the gate: top-level statements, so it cannot be \
+         imported)\n"
     );
     let gated = crushc(
         dir.path(),
@@ -180,11 +188,15 @@ fn list_exports_shows_each_modules_surface_and_the_gate_fails_legacy_ones() {
     let err = stderr(&gated);
     assert!(err.contains("[E-VIS01] src/old.crush"), "{err}");
     assert!(
-        !err.contains("app.crush"),
-        "a program is not refused: {err}"
+        err.contains("[E-VIS01] src/demo.crush"),
+        "a library with a demo main is importable: {err}"
     );
     assert!(
-        err.contains("1 legacy module(s) fail the stage-2 gate"),
+        !err.contains("app.crush") && !err.contains("script.crush"),
+        "programs are exempt: {err}"
+    );
+    assert!(
+        err.contains("2 legacy module(s) fail the stage-2 gate"),
         "{err}"
     );
 
@@ -210,4 +222,87 @@ fn list_exports_fails_on_a_file_that_does_not_parse() {
     let out = crushc(dir.path(), &["--list-exports", "src"]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(stderr(&out).contains("src/bad.crush"), "{}", stderr(&out));
+}
+
+#[test]
+fn list_exports_with_no_crush_files_passes_and_refuses_a_non_crush_file() {
+    let dir = tree(&[("docs/notes.txt", "x")]);
+    for args in [
+        &["--list-exports", "docs"][..],
+        &["--list-exports", "--deny-legacy-visibility", "docs"][..],
+    ] {
+        let out = crushc(dir.path(), args);
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+        assert!(stderr(&out).contains("no .crush files"), "{}", stderr(&out));
+    }
+    let out = crushc(dir.path(), &["--list-exports", "docs/notes.txt"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("is not a .crush file or a directory"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn the_gate_refuses_emit_ast() {
+    let dir = tree(&[
+        ("lib/geo.crush", LEGACY),
+        (
+            "main.crush",
+            "import geo\nfn main() {\n    print(geo.area(1, 2))\n}\n",
+        ),
+    ]);
+    let out = crushc(
+        dir.path(),
+        &[
+            "--emit",
+            "ast",
+            "--deny-legacy-visibility",
+            "-L",
+            "lib",
+            "main.crush",
+        ],
+    );
+    assert!(!out.status.success(), "{}", stderr(&out));
+    assert!(stderr(&out).contains("--emit ast"), "{}", stderr(&out));
+    assert!(stdout(&out).is_empty(), "nothing emitted: {}", stdout(&out));
+    let plain = crushc(dir.path(), &["--emit", "ast", "-L", "lib", "main.crush"]);
+    assert!(
+        plain.status.success(),
+        "without the gate as before: {}",
+        stderr(&plain)
+    );
+}
+
+#[test]
+fn e_vis01_json_level_is_error() {
+    let dir = tree(&[
+        ("lib/geo.crush", LEGACY),
+        (
+            "main.crush",
+            "import geo\nfn main() {\n    print(geo.area(1, 2))\n}\n",
+        ),
+    ]);
+    let out = crushc(
+        dir.path(),
+        &[
+            "--check",
+            "--message-format",
+            "json",
+            "--deny-legacy-visibility",
+            "-L",
+            "lib",
+            "main.crush",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    let line = stderr(&out)
+        .lines()
+        .find(|l| l.contains("E-VIS01"))
+        .unwrap_or_else(|| panic!("{}", stderr(&out)))
+        .to_string();
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["code"], "E-VIS01");
+    assert_eq!(v["level"], "error");
 }

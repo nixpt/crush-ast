@@ -14,18 +14,23 @@ add its entry after yours.
 
 ## [Unreleased]
 
-- Visibility, the gate for stage 2 (V1.5, #539). `crushc --deny-legacy-visibility` fails (exit 1)
-  while any exported name relies on the legacy rule: `W-VIS01` becomes an error, and a module with
-  no `pub` that another package imports is one `E-VIS01` error naming every name used (in place of
-  its `N-VIS01` note). `crushc --list-exports FILE|DIR` lists each module's `pub` and private names,
-  or "legacy: no pub, everything public"; under the gate a legacy module there fails (programs
-  excepted). `crush-pkg build --deny-legacy-visibility` does both for a package. crush-pkg builds
-  and test compiles now print `W-VIS01` / `N-VIS01` / `W-VIS02` on stderr (warnings: nothing new
-  fails without the flag). Without the flag, crushc's output is unchanged. API:
-  `ImportOptions::deny_legacy_visibility`, `import_system::E_VIS01`,
+- Visibility, the gate for stage 2 (V1.5, #539). `crushc --check --deny-legacy-visibility` fails
+  (exit 1) while an exported function relies on the legacy rule: `W-VIS01` becomes an error, and a
+  module with no `pub` whose functions another package uses is one `E-VIS01` error naming every
+  function used (in place of its `N-VIS01` note). It sees function uses only (kinds are global
+  until #523). `crushc --list-exports FILE|DIR` lists each module's `pub` and private names, or
+  "legacy: no pub, everything public"; with the flag every importable legacy module there fails,
+  kinds included (a file with top-level statements, or with nothing besides `main`, is exempt; a
+  library with a demo `main` is not). Use both on a library: the compile gate on its users, the
+  directory gate on its own directory. `crush-pkg build --deny-legacy-visibility` does both for a
+  package (sources only; the entry of a non-`library` package is exempt; concatenation with
+  dependencies fails). crush-pkg builds and test compiles now print `W-VIS01` / `N-VIS01` /
+  `W-VIS02` on stderr (nothing new fails without the flag). Without the flag, crushc's output is
+  unchanged. API: `ImportOptions::deny_legacy_visibility`, `import_system::E_VIS01`,
   `visibility_check::{ModuleSurface, module_surface, surfaces, render_surface}`,
   `compile::visibility_diagnostics`, `BuildOutput::visibility`,
-  `PackageBuilder::deny_legacy_visibility`.
+  `PackageBuilder::deny_legacy_visibility`; `BuildOutput` and `ImportOptions` struct literals need
+  `..`.
 - fix: a failing host cap's error shows the cap name once. `VmError::CapFailed` displays as
   `{cap}: {message}` and most caps also start their message with their own name, so users saw
   `tcp.recv: tcp.recv: timed out after 500 ms`. Where `CapFailed` is built (the scheduler VM and

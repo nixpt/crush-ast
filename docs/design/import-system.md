@@ -108,7 +108,8 @@ the warnings and never on a note. crush-pkg builds print them too (#539); the RE
 
 **The stage-2 gate** (#539, `visibility-and-packages.md` "V1.5 as built"): `crushc
 --deny-legacy-visibility` and `crush-pkg build --deny-legacy-visibility` fail on `W-VIS01` and on a
-legacy module another package imports (`E-VIS01`, once per module, naming every name used);
+legacy module whose functions another package uses (`E-VIS01`, once per module, naming every
+function used; the compile sees function uses only);
 `crushc --list-exports PATH` lists each module's `pub` and private names, or that it is legacy, with
 no foreign user needed. API: `ImportOptions::deny_legacy_visibility`,
 `visibility_check::{module_surface, surfaces}`.

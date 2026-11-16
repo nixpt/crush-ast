@@ -296,41 +296,58 @@ Order: V0 (#515) first, then V3a (F7) before any schema-touching ticket.
 Stage 1 alone could not show that a library is ready for stage 3: a legacy module (no `pub`) gets
 only a note, only when another package uses it, and `--deny-warnings` ignores notes. V1.5 adds one
 opt-in flag, `--deny-legacy-visibility`, that fails (exit 1) while any exported name still relies on
-the legacy rule. Nothing changes without it.
+the legacy rule. Nothing changes without it. There are two gates, and a library needs both.
 
-- **`crushc --deny-legacy-visibility FILE`** (with the usual `-L`): a `W-VIS01` becomes an error
-  (same code and text, `level: "error"`), and a legacy module another package imports becomes one
-  `E-VIS01` error per module, naming its file, the using package(s) and every name used, in place
-  of its `N-VIS01` note. A legacy module used only inside its own package is fine: stage 3 keeps it
-  usable there.
-- **`crushc --list-exports PATH`** (a file or a directory, walked recursively; hidden directories
-  and `target/` skipped): the library author's view, with no foreign user needed. Per module, either
-  `pub: …` and `private: …` (what the module's `pub` keeps inside the package), or `legacy: no pub,
-  everything public` with the names. With `--deny-legacy-visibility` every legacy module there fails
-  (`E-VIS01`), except a **program** (an explicit `fn main` or top-level statements), which is an entry
-  rather than a library module; a program another package imports is still caught by the compile
-  gate. A file that does not parse fails the listing.
-- **`crush-pkg build --deny-legacy-visibility`**: both at once for a package: every legacy module in
-  the entry's directory (`src/`) fails, even when nobody imports it (programs excepted, as above),
-  and the compile fails on `W-VIS01` / `E-VIS01`.
+- **The compile gate, `crushc --check --deny-legacy-visibility FILE`** (with the usual `-L`): a
+  `W-VIS01` becomes an error (same code and text, `level: "error"`), and a legacy module whose
+  **functions** another package uses becomes one `E-VIS01` error per module, naming its file, the
+  using package(s) and every function used, in place of its `N-VIS01` note. It follows the whole
+  import graph, so a legacy module reached through a `pub` one in a third package is caught. It sees
+  **function uses only**: kinds are one global namespace until #523, so a legacy module another
+  package uses only for its `struct` / `impl` is not reported here. A legacy module used only inside
+  its own package is fine (stage 3 keeps it usable there). `--emit ast` resolves no imports, so it
+  is refused with the flag.
+- **The directory gate, `crushc --list-exports --deny-legacy-visibility PATH`** (a `.crush` file or a
+  directory, walked recursively in path order; hidden directories, `target/` and symlinked
+  directories are skipped): the library author's view, with no foreign user needed. Without the
+  flag it lists, per module, `pub: …` and `private: …`, or `legacy: no pub, everything public` with
+  the names. With it, every **importable** legacy module fails (`E-VIS01`), kinds included. Exempt,
+  and printed as `program (exempt from the gate: …)`: a file with top-level statements (it cannot
+  be imported) and a file that defines nothing besides `main`. A file with `fn main` **and** other
+  definitions is importable (the resolver drops a module's `main`), so a library with a demo `main`
+  fails. A file that does not parse, or a file argument without the `.crush` extension, exits 1; a
+  directory with no `.crush` file prints "no .crush files" and exits 0, with or without the flag.
+- **`crush-pkg build --deny-legacy-visibility`**: both, for a package. The package's sources are the
+  entry's directory; when that is the package root, its `tests/` and `examples/` are left out. Every
+  importable legacy module there fails, even when nobody imports it, except the **entry file of a
+  package that is not a library**: a package is a library when `[capsule] category = "library"`;
+  with any other category, or none, the entry is treated as an application's and exempt. The compile
+  then runs under the compile gate. A concatenation-mode package (entry without `import`) that has
+  dependencies fails: concatenation reaches every name of a dependency by the legacy rule.
 - **crush-pkg prints the findings** (`W-VIS01`, `N-VIS01`, `W-VIS02`) on stderr for every import-mode
   compile: `build`, `check`, `run`, the bare build-then-run, and `PackageBuilder::build_file`
   (what `squeeze test` compiles each test with), also when the builder is quiet; they are also on
   `BuildOutput::visibility`. They are warnings and notes: without the flag nothing new fails, and
   `--message-format strict` (which lifts its own `note` records) does not touch them. A
-  concatenation-mode package (no `import` in its entry) has no packages to compare and prints none.
+  concatenation-mode package has no packages to compare and prints none.
 
 **The gate V2 (#520) uses**, per repository of the sweep:
 - a crush-pkg package (facet, crush-http, polish): `crush-pkg build --deny-legacy-visibility` in the
   package directory;
-- a directory of modules and programs (the examples, the guide, awesome-crush):
-  `crushc --list-exports --deny-legacy-visibility <dir>`, plus, for each program that imports a
-  library from another directory, `crushc --check --deny-legacy-visibility -L <lib dir> <program>`.
+- a library directory that is not a crush-pkg package: the directory gate on the library,
+  `crushc --list-exports --deny-legacy-visibility <dir>`, and the compile gate on each of its users;
+- a corpus of example **programs** (the examples, the guide, awesome-crush): the compile gate per
+  program, `crushc --check --deny-legacy-visibility [-L <lib dir>] <program>`, not the directory
+  gate (a program that shares helpers through a sibling module is one package, and that is fine).
 
 A repository passes when these exit 0. The scaffolded library of `crush-pkg new --lib` has no `pub`
 yet; it is part of V2.
 
-**Pre-freeze (by 2026-12-31):** V0 #518, V1 #519, V2 #520, V3a #521, V3b #522, V4 #523, V5 #524. **Conditional:** V6 #525 is pre-freeze only under C1 (K2 by 2026-12-31); under C2 it ships after 1.0 as experimental.
+**Known limits.** No gate flag on `crush-pkg run`, `check` or the bare build-then-run (only
+`build`). The REPL, crush-debug and CAST input print no visibility findings. In crush-pkg's JSON
+message mode the findings are text on stderr, not NDJSON records (its stdout also carries the
+existing `building` / `compiled` status lines, as before). `BuildOutput` and `ImportOptions` gained
+a public field, so struct literals of either need `..`.
 
 ## Advisor
 

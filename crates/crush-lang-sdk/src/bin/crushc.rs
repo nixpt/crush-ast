@@ -108,14 +108,18 @@ struct Cli {
     deny_warnings: bool,
 
     /// The visibility stage-2 gate (#539): fail (exit 1) while any exported
-    /// name still relies on the legacy rule (a module with no `pub` is
-    /// all-public). A cross-package use of a name that is not `pub`
-    /// (`W-VIS01`) and every module with no `pub` that another package
-    /// imports (`E-VIS01`, once per module, naming the names used) are
-    /// errors. With `--list-exports`, every module with no `pub` in the
-    /// listed file or directory fails too, unless it is a program (`fn main`
-    /// or top-level statements). Without this flag both are reported as
-    /// before and never fail.
+    /// function still relies on the legacy rule (a module with no `pub` is
+    /// all-public). Compiling, a cross-package use of a function that is not
+    /// `pub` (`W-VIS01`) and every module with no `pub` whose functions
+    /// another package uses (`E-VIS01`, once per module, naming the names
+    /// used) are errors. The compile sees function uses only: kinds are one
+    /// global namespace for now, so a module another package uses only for
+    /// its `struct` / `impl` is not reported here. With `--list-exports`,
+    /// every importable module with no `pub` in the listed file or directory
+    /// fails, kinds included; a program that cannot be imported (top-level
+    /// statements) or defines nothing besides `main` is exempt. For a
+    /// library use both: the compile gate on its users, the listing gate on
+    /// its own directory. Without this flag nothing fails on visibility.
     #[arg(long = "deny-legacy-visibility")]
     deny_legacy_visibility: bool,
 
@@ -186,6 +190,14 @@ fn main() {
     crush_lang_sdk::theme::init_styling();
     if cli.list_exports {
         std::process::exit(list_exports(&cli));
+    }
+    if cli.deny_legacy_visibility && cli.emit == EmitKind::Ast {
+        // `--emit ast` resolves no imports, so the gate would see nothing.
+        eprintln!(
+            "crushc: --deny-legacy-visibility needs the imports resolved, and `--emit ast` \
+             does not resolve them; drop one of the two"
+        );
+        std::process::exit(2);
     }
     if let Err(e) = run_compiler(&cli) {
         // Non-themed errors (file I/O, unknown emit kind, etc.) keep the
@@ -533,8 +545,9 @@ fn list_exports(cli: &Cli) -> i32 {
         }
     };
     if found.is_empty() {
+        // Nothing there relies on the legacy rule, so the gate passes too.
         eprintln!("crushc: no .crush files under '{}'", cli.input.display());
-        return 1;
+        return 0;
     }
     let mut failed = Vec::new();
     let mut broken = 0;

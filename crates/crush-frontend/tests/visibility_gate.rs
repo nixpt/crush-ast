@@ -182,30 +182,50 @@ fn surface_of_a_legacy_module_says_everything_public_and_fails_the_gate() {
 }
 
 #[test]
-fn a_program_is_legacy_but_not_refused_by_the_package_check() {
-    for src in [
-        "fn helper() { return 1 }\nfn main() { print(helper()) }\n",
-        "fn helper() { return 1 }\nprint(helper())\n",
-    ] {
-        let s = module_surface(src).unwrap();
-        assert!(
-            s.is_program && s.is_legacy() && !s.fails_gate(),
-            "{src}: {s:?}"
-        );
-        assert!(
-            render_surface("app.crush", &s).starts_with(
-                "app.crush: legacy: no pub, everything public (a program: not checked"
-            ),
-            "{}",
-            render_surface("app.crush", &s)
-        );
-    }
+fn a_library_with_a_demo_main_is_importable_and_fails_the_gate() {
+    // The resolver drops a module's `main`, so `helper` is importable.
+    let s = module_surface("fn helper() { return 1 }\nfn main() { print(helper()) }\n").unwrap();
+    assert!(
+        s.has_main && s.is_importable() && s.is_legacy() && s.fails_gate(),
+        "{s:?}"
+    );
+    assert_eq!(
+        render_surface("lib.crush", &s),
+        "lib.crush: legacy: no pub, everything public (its `fn main` is ignored when it is \
+         imported)\n  public: helper\n"
+    );
+}
+
+#[test]
+fn a_file_with_top_level_statements_cannot_be_imported_and_is_exempt() {
+    let s = module_surface("fn helper() { return 1 }\nprint(helper())\n").unwrap();
+    assert!(
+        s.has_toplevel_code && !s.is_importable() && !s.fails_gate(),
+        "{s:?}"
+    );
+    assert_eq!(
+        render_surface("app.crush", &s),
+        "app.crush: program (exempt from the gate: top-level statements, so it cannot be \
+         imported)\n"
+    );
+}
+
+#[test]
+fn a_main_only_file_exports_nothing_and_is_exempt() {
     let s = module_surface("fn main() { print(1) }\n").unwrap();
-    assert!(!s.is_legacy() && !s.fails_gate());
+    assert!(!s.is_legacy() && !s.fails_gate(), "{s:?}");
     assert_eq!(
         render_surface("m.crush", &s),
-        "m.crush: a program, exports nothing\n"
+        "m.crush: program (exempt from the gate: nothing to export besides `main`)\n"
     );
+}
+
+#[test]
+fn a_legacy_module_with_only_a_struct_fails_the_directory_gate() {
+    // The compile gate sees function uses only; the directory gate sees kinds.
+    let s = module_surface("struct P { x: Int }\nimpl P { fn norm(self) { return self.x } }\n")
+        .unwrap();
+    assert!(s.is_legacy() && s.fails_gate(), "{s:?}");
 }
 
 #[test]
@@ -241,5 +261,58 @@ fn surfaces_walks_a_directory_sorted_and_skips_hidden_and_target() {
     assert!(found[2].1.is_err(), "a parse error comes back as an error");
     let one = surfaces(&dir.join("b.crush")).unwrap();
     assert_eq!(one.len(), 1);
+    let refused = surfaces(&dir.join("notes.txt")).unwrap_err();
+    assert_eq!(
+        refused.kind(),
+        std::io::ErrorKind::InvalidInput,
+        "{refused}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn surfaces_does_not_follow_a_symlinked_directory() {
+    let dir = tree("symlink", &[("a/z.crush", LEGACY)]);
+    // A loop back to the root, and a second route to `a/`.
+    std::os::unix::fs::symlink(&dir, dir.join("a/loop")).unwrap();
+    std::os::unix::fs::symlink(dir.join("a"), dir.join("again")).unwrap();
+    let found = surfaces(&dir).unwrap();
+    let names: Vec<String> = found.iter().map(|(p, _)| rel(&dir, p)).collect();
+    assert_eq!(names, ["a/z.crush"], "listed once, no loop");
+    let empty = tree("empty", &[("notes.txt", "x")]);
+    assert!(surfaces(&empty).unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&empty);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn gate_catches_a_legacy_module_reached_through_a_pub_one_in_another_package() {
+    // main (root) -> pub b (lib2) -> legacy c (lib3).
+    let dir = tree(
+        "transitive",
+        &[
+            ("lib3/c.crush", "fn deep() { return 7 }\n"),
+            (
+                "lib2/b.crush",
+                "import c\npub fn mid() { return c.deep() }\n",
+            ),
+            (
+                "main.crush",
+                "import b\nfn main() {\n    print(b.mid())\n}\n",
+            ),
+        ],
+    );
+    let mut opts = ImportOptions::new([dir.join("lib2"), dir.join("lib3")]);
+    opts.deny_legacy_visibility = true;
+    let (_, d) = crush_frontend::parse_file_reporting(&dir.join("main.crush"), &opts).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(codes(&d), [E_VIS01], "{d:?}");
+    assert!(d[0].message.contains("c.crush"), "{}", d[0].message);
+    assert!(d[0].message.contains("uses it: deep "), "{}", d[0].message);
+    assert!(
+        d[0].location.file.ends_with("b.crush"),
+        "{:?}",
+        d[0].location
+    );
 }

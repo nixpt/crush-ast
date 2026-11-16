@@ -188,3 +188,119 @@ fn the_test_compile_carries_and_prints_the_findings() {
     let codes: Vec<&str> = out.visibility.iter().map(|d| d.code).collect();
     assert_eq!(codes, ["W-VIS01", "W-VIS02"], "{:?}", out.visibility);
 }
+
+#[test]
+fn the_gate_checks_only_source_modules_when_the_entry_is_at_the_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("rootpkg");
+    write(
+        &pkg,
+        &[
+            (
+                "capsule.toml",
+                "[capsule]\nname = \"rootpkg\"\nversion = \"0.1.0\"\nentry = \"main.crush\"\nlanguage = \"crush\"\n",
+            ),
+            (
+                "main.crush",
+                "import util\n\nfn main() {\n    io.print(util.hi())\n}\n",
+            ),
+            ("util.crush", "pub fn hi() {\n    return \"hi\"\n}\n"),
+            // Legacy and importable, but not package sources.
+            ("tests/helpers.crush", "fn fixture() {\n    return 1\n}\n"),
+            ("examples/demo.crush", "fn show() {\n    return 2\n}\n"),
+        ],
+    );
+    let out = crush_pkg(&pkg, &["build", "--deny-legacy-visibility"]);
+    assert!(out.status.success(), "{}", text(&out));
+    // A legacy source module at the root still fails.
+    write(&pkg, &[("extra.crush", "fn more() {\n    return 3\n}\n")]);
+    let out = crush_pkg(&pkg, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    let err = stderr(&out);
+    assert!(err.contains("extra.crush"), "{err}");
+    assert!(
+        !err.contains("helpers.crush") && !err.contains("demo.crush"),
+        "{err}"
+    );
+}
+
+#[test]
+fn the_gate_fails_a_library_whose_entry_has_a_demo_main() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = tmp.path().join("geo");
+    write(
+        &lib,
+        &[
+            ("capsule.toml", LIB_TOML),
+            (
+                "src/geo.crush",
+                "fn area(w, h) {\n    return w * h\n}\n\nfn main() {\n    io.print(area(2, 3))\n}\n",
+            ),
+        ],
+    );
+    let out = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    assert!(stderr(&out).contains("geo.crush"), "{}", text(&out));
+}
+
+#[test]
+fn the_gate_fails_an_all_legacy_concatenation_mode_package() {
+    // A library with no `import` in its entry builds by concatenation; its
+    // modules are checked like any package's.
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = tmp.path().join("geo");
+    write(
+        &lib,
+        &[
+            ("capsule.toml", LIB_TOML),
+            ("src/geo.crush", LEGACY_GEO),
+            ("src/more.crush", "fn helper() {\n    return 1\n}\n"),
+        ],
+    );
+    let plain = crush_pkg(&lib, &["build"]);
+    assert!(plain.status.success(), "{}", text(&plain));
+    let out = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("geo.crush") && err.contains("more.crush"),
+        "{err}"
+    );
+
+    // An app that reaches a dependency by concatenation (no `import`) relies
+    // on all of the dependency's names being public: refused under the gate.
+    let app = tmp.path().join("app");
+    write(
+        &app,
+        &[
+            ("capsule.toml", APP_TOML),
+            (
+                "src/main.crush",
+                "fn main() {\n    io.print(area(2, 3))\n}\n",
+            ),
+        ],
+    );
+    let plain = crush_pkg(&app, &["build"]);
+    assert!(plain.status.success(), "{}", text(&plain));
+    let out = crush_pkg(&app, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    assert!(text(&out).contains("by concatenation"), "{}", text(&out));
+}
+
+#[test]
+fn json_mode_keeps_the_findings_off_stdout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app_with_lib(
+        tmp.path(),
+        PUB_GEO,
+        "import geo\n\nfn main() {\n    io.print(geo.helper(1))\n}\n",
+    );
+    let out = crush_pkg(&app, &["--message-format", "json", "build"]);
+    assert!(out.status.success(), "{}", text(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("VIS0"),
+        "findings are not on stdout: {stdout}"
+    );
+    assert!(stderr(&out).contains("[W-VIS01]"), "{}", text(&out));
+}

@@ -89,9 +89,12 @@ pub struct ModuleSurface {
     pub pub_functions: BTreeSet<String>,
     /// Every `struct` / `trait` name, with whether it is marked `pub`.
     pub kinds: BTreeMap<String, bool>,
-    /// The file is a program: it has an explicit `fn main` or a top-level
-    /// statement that runs (a `let`, a call, …), not only definitions.
-    pub is_program: bool,
+    /// It has an explicit `fn main`. The import resolver ignores a module's
+    /// `main`, so this alone does not stop the file being imported.
+    pub has_main: bool,
+    /// It has a top-level statement that runs (a `let`, a call, …). Such a
+    /// file cannot be imported: a module has no init code.
+    pub has_toplevel_code: bool,
 }
 
 impl ModuleSurface {
@@ -101,18 +104,28 @@ impl ModuleSurface {
         !self.pub_functions.is_empty() || self.kinds.values().any(|p| *p)
     }
 
+    /// It defines names besides `main` (functions or kinds).
+    pub fn defines_names(&self) -> bool {
+        !(self.functions.is_empty() && self.kinds.is_empty())
+    }
+
+    /// Another file can `import` it: it has no top-level statement that runs.
+    pub fn is_importable(&self) -> bool {
+        !self.has_toplevel_code
+    }
+
     /// It defines names and marks none `pub`, so every name is public by the
     /// legacy rule: what stage 3 (#524) turns private.
     pub fn is_legacy(&self) -> bool {
-        !self.has_pub() && !(self.functions.is_empty() && self.kinds.is_empty())
+        !self.has_pub() && self.defines_names()
     }
 
-    /// What the stage-2 gate refuses in a package directory (V1.5, #539): a
-    /// legacy module that is not a program. A program (`fn main`, or
-    /// top-level statements) is an entry, not a library module; it is still
-    /// refused when another package imports it (`E-VIS01`).
+    /// What the stage-2 gate refuses in a directory or package (V1.5, #539):
+    /// an importable legacy module, including one with a demo `fn main` (the
+    /// resolver drops the `main` and exports the rest). The one more
+    /// exemption, a non-library package's entry file, is crush-pkg's.
     pub fn fails_gate(&self) -> bool {
-        self.is_legacy() && !self.is_program
+        self.is_legacy() && self.is_importable()
     }
 
     /// The names it exports to other packages: the `pub` ones, or every
@@ -164,7 +177,7 @@ pub fn module_surface(source: &str) -> Result<ModuleSurface, String> {
     let mut surface = ModuleSurface::default();
     for (name, f) in &program.functions {
         if name == "main" {
-            surface.is_program = true;
+            surface.has_main = true;
             continue;
         }
         surface.functions.insert(name.clone());
@@ -178,23 +191,35 @@ pub fn module_surface(source: &str) -> Result<ModuleSurface, String> {
                 surface.kinds.insert(name.clone(), is_pub(meta));
             }
             Statement::Import { .. } | Statement::ImplBlock { .. } => {}
-            _ => surface.is_program = true,
+            _ => surface.has_toplevel_code = true,
         }
     }
     Ok(surface)
 }
 
-/// The surface of every `.crush` file at `path`: the file itself, or every
-/// `.crush` file under the directory (recursively, sorted by path; hidden
-/// directories and `target/` are skipped). A file that cannot be read or
-/// parsed comes back as its error.
+/// The surface of every `.crush` file at `path`: the file itself (it must
+/// have the `.crush` extension), or every `.crush` file under the directory
+/// (recursively, sorted by path; hidden directories, `target/` and
+/// symlinked directories are skipped, so a link loop cannot recur and no
+/// file is listed twice). A file that cannot be read or parsed comes back
+/// as its error. An empty result means there is no `.crush` file.
 pub fn surfaces(path: &Path) -> std::io::Result<Vec<(PathBuf, Result<ModuleSurface, String>)>> {
     let mut files = Vec::new();
     if path.is_dir() {
         collect_crush_files(path, &mut files)?;
         files.sort();
-    } else {
+    } else if path.extension().is_some_and(|e| e == "crush") {
         files.push(path.to_path_buf());
+    } else if path.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} is not a .crush file or a directory", path.display()),
+        ));
+    } else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("{} does not exist", path.display()),
+        ));
     }
     Ok(files
         .into_iter()
@@ -209,13 +234,19 @@ pub fn surfaces(path: &Path) -> std::io::Result<Vec<(PathBuf, Result<ModuleSurfa
 
 fn collect_crush_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
+        let entry = entry?;
+        let path = entry.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if path.is_dir() {
+        // `file_type` does not follow symlinks: a symlinked directory is not
+        // walked; a symlink to a `.crush` file is listed like a file.
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
             if !name.starts_with('.') && name != "target" {
                 collect_crush_files(&path, out)?;
             }
-        } else if path.extension().is_some_and(|e| e == "crush") {
+        } else if path.extension().is_some_and(|e| e == "crush")
+            && (kind.is_file() || path.is_file())
+        {
             out.push(path);
         }
     }
@@ -232,27 +263,32 @@ pub fn render_surface(file: &str, surface: &ModuleSurface) -> String {
             v.join(", ")
         }
     };
-    if surface.functions.is_empty() && surface.kinds.is_empty() {
-        let what = if surface.is_program {
-            "a program"
-        } else {
-            "empty"
-        };
-        return format!("{file}: {what}, exports nothing\n");
-    }
-    if surface.is_legacy() {
-        let program = if surface.is_program {
-            " (a program: not checked by the gate unless another package imports it)"
-        } else {
-            ""
-        };
+    if !surface.is_importable() {
         return format!(
-            "{file}: legacy: no pub, everything public{program}\n  public: {}\n",
+            "{file}: program (exempt from the gate: top-level statements, so it cannot be \
+             imported)\n"
+        );
+    }
+    if !surface.defines_names() {
+        return if surface.has_main {
+            format!("{file}: program (exempt from the gate: nothing to export besides `main`)\n")
+        } else {
+            format!("{file}: empty, exports nothing\n")
+        };
+    }
+    let main = if surface.has_main {
+        " (its `fn main` is ignored when it is imported)"
+    } else {
+        ""
+    };
+    if surface.is_legacy() {
+        return format!(
+            "{file}: legacy: no pub, everything public{main}\n  public: {}\n",
             names(surface.exported())
         );
     }
     format!(
-        "{file}: pub\n  pub: {}\n  private: {}\n",
+        "{file}: pub{main}\n  pub: {}\n  private: {}\n",
         names(surface.exported()),
         names(surface.private())
     )
