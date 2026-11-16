@@ -303,10 +303,8 @@ fn run_compiler(cli: &Cli) -> anyhow::Result<()> {
         let mut checked = program.clone();
         crush_frontend::cast_enrich::enrich_cast(&mut checked);
         let input = cli.input.display().to_string();
-        let mut warnings = crush_lang_sdk::compile::compiler_diagnostics(
-            std::mem::take(&mut visibility),
-            &input,
-        );
+        let mut warnings =
+            crush_lang_sdk::compile::compiler_diagnostics(std::mem::take(&mut visibility), &input);
         warnings.extend(crush_lang_sdk::compile::annotation_diagnostics(
             &checked, &input,
         ));

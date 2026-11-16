@@ -569,12 +569,24 @@ fn visibility_findings_go_to_stderr_and_change_no_output() {
     let err = stderr(&o);
     assert_eq!(err.matches("[W-VIS01]").count(), 1, "{err}");
     assert!(err.contains("`helper` is not `pub`"), "{err}");
-    assert_eq!(err.matches("[N-VIS01]").count(), 1, "one note per module: {err}");
+    assert_eq!(
+        err.matches("[N-VIS01]").count(),
+        1,
+        "one note per module: {err}"
+    );
     assert!(!stdout(&o).contains("VIS"), "findings never reach stdout");
 
     // NDJSON: the note keeps level "note".
     let o = Command::new(bin("crushc"))
-        .args(["main.crush", "-L", "lib", "-L", "old", "--message-format", "json"])
+        .args([
+            "main.crush",
+            "-L",
+            "lib",
+            "-L",
+            "old",
+            "--message-format",
+            "json",
+        ])
         .args(["-o", "out.cvm1"])
         .current_dir(d.path())
         .env_remove("CRUSH_PATH")
@@ -582,13 +594,25 @@ fn visibility_findings_go_to_stderr_and_change_no_output() {
         .unwrap();
     assert!(o.status.success(), "{}", stderr(&o));
     let err = stderr(&o);
-    assert!(err.contains(r#"{"code":"W-VIS01","level":"warning""#), "{err}");
+    assert!(
+        err.contains(r#"{"code":"W-VIS01","level":"warning""#),
+        "{err}"
+    );
     assert!(err.contains(r#"{"code":"N-VIS01","level":"note""#), "{err}");
 
     // --deny-warnings fails on the warning ...
     let deny = |main: &str| {
         Command::new(bin("crushc"))
-            .args([main, "-L", "lib", "-L", "old", "--deny-warnings", "-o", "out.cvm1"])
+            .args([
+                main,
+                "-L",
+                "lib",
+                "-L",
+                "old",
+                "--deny-warnings",
+                "-o",
+                "out.cvm1",
+            ])
             .current_dir(d.path())
             .env_remove("CRUSH_PATH")
             .output()
@@ -602,6 +626,10 @@ fn visibility_findings_go_to_stderr_and_change_no_output() {
     )
     .unwrap();
     let o = deny("only_legacy.crush");
-    assert!(o.status.success(), "a note never fails a build: {}", stderr(&o));
+    assert!(
+        o.status.success(),
+        "a note never fails a build: {}",
+        stderr(&o)
+    );
     assert!(stderr(&o).contains("[N-VIS01]"), "{}", stderr(&o));
 }

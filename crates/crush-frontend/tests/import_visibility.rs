@@ -52,7 +52,8 @@ fn codes(d: &[CompilerDiagnostic]) -> Vec<&'static str> {
     d.iter().map(|d| d.code).collect()
 }
 
-const GEO: &str = "pub fn area(w, h) { return w * h }\nfn helper(x) { return x + 1 }\nfn other() { return 0 }\n";
+const GEO: &str =
+    "pub fn area(w, h) { return w * h }\nfn helper(x) { return x + 1 }\nfn other() { return 0 }\n";
 
 #[test]
 fn same_package_use_of_a_private_name_is_silent() {
@@ -60,7 +61,10 @@ fn same_package_use_of_a_private_name_is_silent() {
         "same-pkg",
         &[
             ("geo.crush", GEO),
-            ("sub/more.crush", "pub fn m() { return 1 }\nfn hidden() { return 2 }\n"),
+            (
+                "sub/more.crush",
+                "pub fn m() { return 1 }\nfn hidden() { return 2 }\n",
+            ),
             (
                 "main.crush",
                 "import geo\nimport geo { other }\nimport sub.more\nfn main() {\n    print(geo.helper(1))\n    let f = geo.other\n    print(more.hidden())\n}\n",
@@ -88,15 +92,26 @@ fn cross_package_qualified_call_of_a_private_name_warns() {
     let w = &d[0];
     assert_eq!(w.severity, DiagnosticSeverity::Warning);
     assert!(w.message.contains("`helper` is not `pub`"), "{}", w.message);
-    assert!(w.message.contains("geo.crush"), "names the module: {}", w.message);
+    assert!(
+        w.message.contains("geo.crush"),
+        "names the module: {}",
+        w.message
+    );
     assert!(
         w.message.contains("the library directory") && w.message.contains("lib"),
         "names the package: {}",
         w.message
     );
-    assert!(w.message.contains("`geo.helper(…)`"), "names the path: {}", w.message);
     assert!(
-        w.hint.as_deref().unwrap().contains("add `pub` to `fn helper`"),
+        w.message.contains("`geo.helper(…)`"),
+        "names the path: {}",
+        w.message
+    );
+    assert!(
+        w.hint
+            .as_deref()
+            .unwrap()
+            .contains("add `pub` to `fn helper`"),
         "names the fix: {:?}",
         w.hint
     );
@@ -118,8 +133,16 @@ fn cross_package_function_value_of_a_private_name_warns() {
         &["lib"],
     );
     assert_eq!(codes(&d), [W_VIS01], "{d:?}");
-    assert!(d[0].message.contains("`other` is not `pub`"), "{}", d[0].message);
-    assert!(d[0].message.contains("function value `geo.other`"), "{}", d[0].message);
+    assert!(
+        d[0].message.contains("`other` is not `pub`"),
+        "{}",
+        d[0].message
+    );
+    assert!(
+        d[0].message.contains("function value `geo.other`"),
+        "{}",
+        d[0].message
+    );
     assert_eq!(d[0].location.line, 3);
 }
 
@@ -138,7 +161,11 @@ fn cross_package_selective_import_of_a_private_name_warns_at_the_import() {
     );
     // One finding, at the import: the bare calls it binds are not re-reported.
     assert_eq!(codes(&d), [W_VIS01], "{d:?}");
-    assert!(d[0].message.contains("`import geo { helper }`"), "{}", d[0].message);
+    assert!(
+        d[0].message.contains("`import geo { helper }`"),
+        "{}",
+        d[0].message
+    );
     assert_eq!(d[0].location.line, 1);
 }
 
@@ -179,7 +206,10 @@ fn the_first_hidden_use_lists_what_the_modules_pub_hid_once() {
     );
     assert!(first.contains("(`pub`: area)"), "{first}");
     let second = d[1].hint.as_deref().unwrap();
-    assert!(!second.contains("does not mark"), "listed once per module: {second}");
+    assert!(
+        !second.contains("does not mark"),
+        "listed once per module: {second}"
+    );
 }
 
 #[test]
@@ -211,8 +241,14 @@ fn a_pub_struct_alone_ends_the_legacy_rule_for_its_module() {
     let d = compile(
         "pub-struct-only",
         &[
-            ("lib/shapes.crush", "pub struct Sq { side }\nfn make(s) { return s }\n"),
-            ("main.crush", "import shapes\nfn main() {\n    print(shapes.make(1))\n}\n"),
+            (
+                "lib/shapes.crush",
+                "pub struct Sq { side }\nfn make(s) { return s }\n",
+            ),
+            (
+                "main.crush",
+                "import shapes\nfn main() {\n    print(shapes.make(1))\n}\n",
+            ),
         ],
         &["lib"],
     );
@@ -225,15 +261,28 @@ fn the_longest_containing_root_decides_the_package() {
     // longer, so `deep` is its own package, and `lib/top.crush` (package
     // `lib`) reaching its private `hidden` warns.
     let files = [
-        ("lib/inner/deep.crush", "pub fn shown() { return 1 }\nfn hidden() { return 2 }\n"),
-        ("lib/top.crush", "import inner.deep\npub fn go() { return deep.hidden() }\n"),
-        ("main.crush", "import top\nfn main() {\n    print(top.go())\n}\n"),
+        (
+            "lib/inner/deep.crush",
+            "pub fn shown() { return 1 }\nfn hidden() { return 2 }\n",
+        ),
+        (
+            "lib/top.crush",
+            "import inner.deep\npub fn go() { return deep.hidden() }\n",
+        ),
+        (
+            "main.crush",
+            "import top\nfn main() {\n    print(top.go())\n}\n",
+        ),
     ];
     let (program, d) = compile_with("nested", &files, "main.crush", |dir| {
         ImportOptions::new([dir.join("lib"), dir.join("lib/inner")])
     });
     assert_eq!(codes(&d), [W_VIS01], "{d:?}");
-    assert!(d[0].location.file.ends_with("top.crush"), "{:?}", d[0].location);
+    assert!(
+        d[0].location.file.ends_with("top.crush"),
+        "{:?}",
+        d[0].location
+    );
     let pkg = |f: &str| {
         program.functions[f]
             .meta
@@ -242,7 +291,11 @@ fn the_longest_containing_root_decides_the_package() {
             .unwrap_or_default()
             .to_string()
     };
-    assert!(pkg("inner::deep::hidden").ends_with("inner"), "{}", pkg("inner::deep::hidden"));
+    assert!(
+        pkg("inner::deep::hidden").ends_with("inner"),
+        "{}",
+        pkg("inner::deep::hidden")
+    );
     assert!(pkg("top::go").ends_with("lib"), "{}", pkg("top::go"));
 
     // With only the outer root, the two files share a package: silent.
@@ -259,8 +312,14 @@ fn a_file_reached_by_two_routes_has_one_package() {
     // from a second module (a diamond). The file decides, not the route: it
     // is in the `lib` package every time, so every private use warns alike.
     let files = [
-        ("lib/shared.crush", "pub fn ok() { return 1 }\nfn priv_fn() { return 2 }\n"),
-        ("lib/a.crush", "import shared\npub fn fa() { return shared.priv_fn() }\n"),
+        (
+            "lib/shared.crush",
+            "pub fn ok() { return 1 }\nfn priv_fn() { return 2 }\n",
+        ),
+        (
+            "lib/a.crush",
+            "import shared\npub fn fa() { return shared.priv_fn() }\n",
+        ),
         (
             "main.crush",
             "import lib.shared\nimport shared as s2\nimport a\nfn main() {\n    print(shared.priv_fn())\n    print(s2.priv_fn())\n    print(a.fa())\n}\n",
@@ -272,7 +331,10 @@ fn a_file_reached_by_two_routes_has_one_package() {
     // a.crush is in `lib` with shared.crush: silent. The two uses in
     // main.crush (root package) both warn.
     assert_eq!(codes(&d), [W_VIS01, W_VIS01], "{d:?}");
-    assert!(d.iter().all(|w| w.location.file.ends_with("main.crush")), "{d:?}");
+    assert!(
+        d.iter().all(|w| w.location.file.ends_with("main.crush")),
+        "{d:?}"
+    );
     let shared: Vec<_> = program
         .functions
         .iter()
@@ -288,14 +350,10 @@ fn an_input_without_a_real_file_is_in_the_root_package() {
     // The REPL resolves from `<cwd>/<repl>`, a file that does not exist: it
     // is in the root package, the directory it names, so a module beside
     // it shares its package.
-    let dir = tree(
-        "pathless",
-        &[("geo.crush", GEO)],
-    );
-    let mut program = crush_frontend::parse_source(
-        "import geo\nfn main() {\n    print(geo.helper(1))\n}\n",
-    )
-    .unwrap();
+    let dir = tree("pathless", &[("geo.crush", GEO)]);
+    let mut program =
+        crush_frontend::parse_source("import geo\nfn main() {\n    print(geo.helper(1))\n}\n")
+            .unwrap();
     let d = crush_frontend::import_system::resolve_imports_reporting(
         &mut program,
         &dir.join("<repl>"),
@@ -306,7 +364,8 @@ fn an_input_without_a_real_file_is_in_the_root_package() {
     assert!(d.is_empty(), "{d:?}");
     // And a string entry point resolves nothing, so it has nothing to report.
     let program =
-        crush_frontend::parse_source("pub fn f() { return 1 }\nfn main() { print(f()) }\n").unwrap();
+        crush_frontend::parse_source("pub fn f() { return 1 }\nfn main() { print(f()) }\n")
+            .unwrap();
     assert!(crush_frontend::check_program(&program).is_empty());
 }
 
@@ -316,8 +375,14 @@ fn the_home_package_root_is_the_root_package() {
     // package; `home_package` names it, so tests reach private helpers
     // without a warning, as Go's in-package tests do.
     let files = [
-        ("src/main.crush", "pub fn api() { return 1 }\nfn helper() { return 2 }\n"),
-        ("tests/t.crush", "import app\nfn main() {\n    print(app.helper())\n}\n"),
+        (
+            "src/main.crush",
+            "pub fn api() { return 1 }\nfn helper() { return 2 }\n",
+        ),
+        (
+            "tests/t.crush",
+            "import app\nfn main() {\n    print(app.helper())\n}\n",
+        ),
     ];
     let opts = |dir: &Path, home: Option<&str>| {
         let mut o = ImportOptions::new([dir.join("src")]);
@@ -329,19 +394,27 @@ fn the_home_package_root_is_the_root_package() {
         o.home_package = home.map(str::to_string);
         o
     };
-    let (_, d) = compile_with("home", &files, "tests/t.crush", |dir| opts(dir, Some("app")));
+    let (_, d) = compile_with("home", &files, "tests/t.crush", |dir| {
+        opts(dir, Some("app"))
+    });
     assert!(d.is_empty(), "{d:?}");
     let (_, d) = compile_with("not-home", &files, "tests/t.crush", |dir| opts(dir, None));
     assert_eq!(codes(&d), [W_VIS01], "{d:?}");
     assert!(d[0].message.contains("package `app`"), "{}", d[0].message);
 }
 
-fn def_meta<'a>(program: &'a Program, kind: &str, name: &str) -> &'a std::collections::HashMap<String, serde_json::Value> {
+fn def_meta<'a>(
+    program: &'a Program,
+    kind: &str,
+    name: &str,
+) -> &'a std::collections::HashMap<String, serde_json::Value> {
     program.functions["main"]
         .body
         .iter()
         .find_map(|s| match s {
-            Statement::StructDef { name: n, meta, .. } if kind == "struct" && n == name => Some(meta),
+            Statement::StructDef { name: n, meta, .. } if kind == "struct" && n == name => {
+                Some(meta)
+            }
             Statement::TraitDef { name: n, meta, .. } if kind == "trait" && n == name => Some(meta),
             _ => None,
         })
@@ -390,8 +463,14 @@ fn an_identifier_named_pub_still_works() {
 #[test]
 fn pub_fn_with_a_dunder_name_is_linted() {
     let files = [
-        ("lib/m.crush", "pub fn __leak() { return 1 }\npub fn fine() { return 2 }\nfn __quiet() { return 3 }\n"),
-        ("main.crush", "import m\nfn main() {\n    print(m.fine())\n}\n"),
+        (
+            "lib/m.crush",
+            "pub fn __leak() { return 1 }\npub fn fine() { return 2 }\nfn __quiet() { return 3 }\n",
+        ),
+        (
+            "main.crush",
+            "import m\nfn main() {\n    print(m.fine())\n}\n",
+        ),
     ];
     let (program, d) = compile_with("dunder", &files, "main.crush", |dir| {
         ImportOptions::new([dir.join("lib")])
@@ -401,7 +480,11 @@ fn pub_fn_with_a_dunder_name_is_linted() {
     let w: Vec<_> = lint.iter().filter(|d| d.code == "W-VIS02").collect();
     assert_eq!(w.len(), 1, "{lint:?}");
     assert!(w[0].message.contains("`pub fn __leak`"), "{}", w[0].message);
-    assert!(w[0].location.file.ends_with("m.crush"), "{:?}", w[0].location);
+    assert!(
+        w[0].location.file.ends_with("m.crush"),
+        "{:?}",
+        w[0].location
+    );
     assert_eq!(w[0].location.line, 1);
 }
 
@@ -410,7 +493,10 @@ fn findings_do_not_change_the_compiled_program() {
     // A warning, not an error: the same program compiles with or without it.
     let files = [
         ("lib/geo.crush", GEO),
-        ("main.crush", "import geo\nfn main() {\n    print(geo.helper(1))\n}\n"),
+        (
+            "main.crush",
+            "import geo\nfn main() {\n    print(geo.helper(1))\n}\n",
+        ),
     ];
     let (program, d) = compile_with("compiles", &files, "main.crush", |dir| {
         ImportOptions::new([dir.join("lib")])

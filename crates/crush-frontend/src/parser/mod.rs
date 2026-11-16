@@ -567,7 +567,11 @@ impl Parser {
                                                 kind: Some(kind),
                                                 meta,
                                             };
-                                            statements.push(if is_pub { mark_pub(def) } else { def })
+                                            statements.push(if is_pub {
+                                                mark_pub(def)
+                                            } else {
+                                                def
+                                            })
                                         }
                                         Ok(other) => statements.push(other),
                                         Err(_) => self.synchronize(),
@@ -674,7 +678,8 @@ impl Parser {
                             func.annotations = Some(ann);
                         }
                         // V1 (#519): `pub` is recorded, not dropped.
-                        func.meta.insert("pub".to_string(), serde_json::Value::Bool(true));
+                        func.meta
+                            .insert("pub".to_string(), serde_json::Value::Bool(true));
                         functions.insert(name, func);
                     }
                     Err(_) => {
@@ -703,7 +708,8 @@ impl Parser {
                         if let Some(ann) = pending_fn_annotations.take() {
                             func.annotations = Some(ann);
                         }
-                        func.meta.insert("pub".to_string(), serde_json::Value::Bool(true));
+                        func.meta
+                            .insert("pub".to_string(), serde_json::Value::Bool(true));
                         functions.insert(name, func);
                     }
                     Err(_) => {
@@ -3941,7 +3947,6 @@ fn is_bare_main_call(stmt: &Statement) -> bool {
         } if function == "main" && args.is_empty()
     )
 }
-
 
 /// Record `pub` on a `struct` / `trait` declaration (`meta["pub"] = true`,
 /// V1, #519). Other statements are returned unchanged.

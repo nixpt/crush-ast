@@ -352,12 +352,12 @@ pub fn resolve_imports_reporting(
         None,
         root_package,
         &|name| {
-        root_names.contains(name).then(|| {
-            let at = root_fn_lines.get(name).copied().flatten();
-            format!(
-                "`fn {name}`{}",
-                at.map(|(l, _)| format!(" (line {l})")).unwrap_or_default()
-            )
+            root_names.contains(name).then(|| {
+                let at = root_fn_lines.get(name).copied().flatten();
+                format!(
+                    "`fn {name}`{}",
+                    at.map(|(l, _)| format!(" (line {l})")).unwrap_or_default()
+                )
             })
         },
     )?;
@@ -897,9 +897,14 @@ impl Resolver<'_> {
         self.stack.push((canonical.clone(), display.clone()));
         let module_dir = parent_dir(&found);
         let own_names = self.modules[idx].functions.clone();
-        let scope = self.bind_imports(&module_dir, &display, &imports, Some(idx), package, &|name| {
-            own_names.contains(name).then(|| format!("`fn {name}`"))
-        })?;
+        let scope = self.bind_imports(
+            &module_dir,
+            &display,
+            &imports,
+            Some(idx),
+            package,
+            &|name| own_names.contains(name).then(|| format!("`fn {name}`")),
+        )?;
         self.stack.pop();
 
         let mut names: Vec<String> = parsed.functions.keys().cloned().collect();
@@ -1277,10 +1282,18 @@ fn package_roots(origin: &Path, opts: &ImportOptions) -> (Vec<(PathBuf, usize)>,
     };
     add(&parent_dir(origin), None, &mut roots);
     let home = opts.home_package.as_deref();
-    for p in opts.packages.iter().filter(|p| Some(p.name.as_str()) == home) {
+    for p in opts
+        .packages
+        .iter()
+        .filter(|p| Some(p.name.as_str()) == home)
+    {
         add(&p.root, None, &mut roots);
     }
-    for p in opts.packages.iter().filter(|p| Some(p.name.as_str()) != home) {
+    for p in opts
+        .packages
+        .iter()
+        .filter(|p| Some(p.name.as_str()) != home)
+    {
         add(&p.root, Some(format!("pkg:{}", p.name)), &mut roots);
     }
     for d in &opts.search_paths {

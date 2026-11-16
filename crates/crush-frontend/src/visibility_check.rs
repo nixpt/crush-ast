@@ -30,7 +30,12 @@ pub fn check_pub_internal(program: &Program) -> Vec<CompilerDiagnostic> {
             if !name.starts_with("__") {
                 return None;
             }
-            let num = |k: &str| f.meta.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0);
+            let num = |k: &str| {
+                f.meta
+                    .get(k)
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+            };
             Some(CompilerDiagnostic {
                 code: W_VIS02,
                 severity: DiagnosticSeverity::Warning,
