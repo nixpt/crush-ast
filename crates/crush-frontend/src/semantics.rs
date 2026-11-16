@@ -616,6 +616,24 @@ impl SemanticAnalyzer {
                             bail!("Invalid binary op ** for types {} and {}", l_type, r_type)
                         }
                     }
+                    // Bitwise (#425, ruling H1): Int operands only. An `Any`
+                    // operand is left to the runtime check (TypeError).
+                    "&" | "|" | "^" | "<<" | ">>" => {
+                        let int_or_any = |t: &Type| *t == Type::Int || *t == Type::Any;
+                        if int_or_any(&l_type) && int_or_any(&r_type) {
+                            Ok(Type::Int)
+                        } else {
+                            bail!(
+                                "Invalid binary op {} for types {} and {}: bitwise operators take int operands",
+                                operator,
+                                l_type,
+                                r_type
+                            )
+                        }
+                    }
+                    // JS's unsigned shift has no i64 meaning; matrix `@` has no
+                    // runtime here. Both stay refused, by name (#425).
+                    ">>>" | "@" => bail!("Unsupported operator: {} (#425)", operator),
                     _ => bail!("Unknown operator: {}", operator),
                 }
             }
@@ -889,6 +907,13 @@ impl SemanticAnalyzer {
                 Ok(match (operator.as_str(), operand_type) {
                     ("!", _) => Type::Bool,
                     ("-", t @ (Type::Int | Type::Float)) => t,
+                    // Bitwise NOT (#425): Int only; `Any` is checked at runtime.
+                    ("~", Type::Int | Type::Any) => Type::Int,
+                    ("~", other) => {
+                        bail!(
+                            "Invalid unary op ~ for type {other}: bitwise operators take int operands"
+                        )
+                    }
                     _ => Type::Any,
                 })
             }

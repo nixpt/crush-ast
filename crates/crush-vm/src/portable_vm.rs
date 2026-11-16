@@ -1060,29 +1060,22 @@ impl PortableVm {
                 });
             }
             BITAND | BITOR | BITXOR | SHL | SHR => {
-                let b = need_num(self.pop()?)?;
-                let a = need_num(self.pop()?)?;
-                let ai = to_i64(&a);
-                let bi = to_i64(&b);
-                let result = match opcode {
-                    BITAND => Value::Int(ai & bi),
-                    BITOR => Value::Int(ai | bi),
-                    BITXOR => Value::Int(ai ^ bi),
-                    SHL => Value::Int(
-                        ai.checked_shl(bi as u32)
-                            .ok_or(VmError::ArithmeticOverflow)?,
-                    ),
-                    SHR => Value::Int(
-                        ai.checked_shr(bi as u32)
-                            .ok_or(VmError::ArithmeticOverflow)?,
-                    ),
-                    _ => unreachable!(),
+                // Int operands only; shift count 0..=63, checked left shift (#425).
+                use crate::arithmetic::BitOp;
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let op = match opcode {
+                    BITAND => BitOp::And,
+                    BITOR => BitOp::Or,
+                    BITXOR => BitOp::Xor,
+                    SHL => BitOp::Shl,
+                    _ => BitOp::Shr,
                 };
-                self.push(result);
+                self.push(crate::arithmetic::bitwise_values(op, &a, &b)?);
             }
             BITNOT => {
-                let a = need_num(self.pop()?)?;
-                self.push(Value::Int(!to_i64(&a)));
+                let a = self.pop()?;
+                self.push(crate::arithmetic::bitnot_value(&a)?);
             }
             NOT => {
                 let a = self.pop()?;
@@ -2545,14 +2538,14 @@ impl PortableVm {
                     }
                     match &args[0] {
                         Value::Array(elems) => {
-                            let idx = match &args[1] {
-                                Value::Int(i) => *i as usize,
-                                _ => 0,
-                            };
+                            // Same contract as the ARR_SET opcode (#442): a negative
+                            // index counts from the end, out of range is a bounds error
+                            // and a non-Int index is BadIndex. This used to truncate the
+                            // index to usize and drop the write silently.
+                            let idx = need_array_index(&args[1])?;
                             let mut arr = elems.borrow_mut();
-                            if idx < arr.len() {
-                                arr[idx] = args[2].clone();
-                            }
+                            let actual = wrap_index(idx, arr.len())?;
+                            arr[actual] = args[2].clone();
                             Ok(Some(args[0].clone()))
                         }
                         Value::Map(map) => {
@@ -2999,13 +2992,6 @@ fn wrap_index(idx: i64, len: usize) -> Result<usize, VmError> {
     }
 }
 
-fn to_i64(v: &Value) -> i64 {
-    match v {
-        Value::Int(i) => *i,
-        Value::Float(f) => *f as i64,
-        _ => 0,
-    }
-}
 
 fn to_f64_p(v: &Value) -> f64 {
     match v {

@@ -203,3 +203,23 @@ fn engines_refuse_only_kinds_maps_cant_represent() {
         assert!(e.contains(want), "missing {want:?}: {e}");
     }
 }
+
+/// V3a (#521): the COSM version gate holds through CASM JSON too, so a
+/// `.casm` whose kind table needs a newer COSM is refused at load, naming
+/// the version, instead of loading with fields this reader can't honour.
+#[test]
+fn casm_json_whose_kind_table_needs_a_newer_cosm_is_refused() {
+    let p = program(Some(point_module()));
+    let mut v: serde_json::Value =
+        serde_json::from_slice(&p.serialize(Format::Json).unwrap()).unwrap();
+    v["cosm"]["cosm_version"] = serde_json::json!("0.9.0");
+    let err = Program::deserialize(v.to_string().as_bytes(), Format::Json)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("needs COSM 0.9.0"), "{err}");
+
+    // The base version stamped explicitly still loads.
+    v["cosm"]["cosm_version"] = serde_json::json!(crush_cosm::COSM_BASE_VERSION);
+    let back = Program::deserialize(v.to_string().as_bytes(), Format::Json).unwrap();
+    assert_eq!(back.cosm, Some(point_module()));
+}
