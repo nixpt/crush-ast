@@ -343,8 +343,8 @@ the legacy rule. Nothing changes without it. There are two gates, and a library 
   program, `crushc --check --deny-legacy-visibility [-L <lib dir>] <program>`, not the directory
   gate (a program that shares helpers through a sibling module is one package, and that is fine).
 
-A repository passes when these exit 0. The scaffolded library of `crush-pkg new --lib` has no `pub`
-yet; it is part of V2.
+A repository passes when these exit 0. The scaffolded library of `crush-pkg new --lib` marks its one
+function `pub` (V2, #520), so a new library passes the gate from its first build.
 
 **Known limits.** No gate flag on `crush-pkg run`, `check` or the bare build-then-run (only
 `build`). The REPL, crush-debug and CAST input print no visibility findings. In crush-pkg's JSON

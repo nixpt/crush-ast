@@ -14,6 +14,10 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- `crush-pkg new --lib` writes `pub fn greet` in `src/lib.crush` (visibility stage 2, #520), with a
+  comment saying what `pub` does. A new library is no longer a legacy module (no `pub`: everything
+  public): it passes `crush-pkg build --deny-legacy-visibility`, and its scaffolded test compiles
+  with no `N-VIS01` note. Existing packages are not touched.
 - Visibility, the gate for stage 2 (V1.5, #539). `crushc --check --deny-legacy-visibility` fails
   (exit 1) while an exported function relies on the legacy rule: `W-VIS01` becomes an error, and a
   module with no `pub` whose functions another package uses is one `E-VIS01` error naming every
