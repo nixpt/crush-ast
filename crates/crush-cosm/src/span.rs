@@ -105,6 +105,9 @@ pub enum DiagnosticCode {
     MissingInterfaceMember,
     /// A conformance provides a member the interface doesn't declare.
     UnknownInterfaceMember,
+    /// An owner id (a kind's `module` / `package`, a `fn_packages` value)
+    /// breaks the owner-id rule (`crate::owner_id_problem`, V3b #522).
+    InvalidOwnerId,
 }
 
 impl DiagnosticCode {
@@ -132,6 +135,7 @@ impl DiagnosticCode {
             SatisfactionMismatch => "cosm::satisfaction_mismatch",
             MissingInterfaceMember => "cosm::missing_interface_member",
             UnknownInterfaceMember => "cosm::unknown_interface_member",
+            InvalidOwnerId => "cosm::invalid_owner_id",
         }
     }
 }

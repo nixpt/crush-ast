@@ -595,3 +595,41 @@ fn a_throw_caught_inside_the_block_is_not_a_failure() {
     );
     assert_eq!(run(&src).unwrap(), "handled\non!\n");
 }
+
+/// V3b (#522): a lowered block, and every helper its lowering makes, is owned
+/// by the package of the function it stands in. Without that a block inside
+/// another package's function would run as the root package's code.
+#[test]
+fn a_lowered_block_takes_the_package_of_its_function() {
+    let src = "fn work(n) {\n    @python -> r {\n        def twice(v):\n            return v * 2\n        r = twice(n)\n    }\n    return r\n}\nfn main() {\n    io.print(work(3))\n}\n";
+    let mut program = crush_frontend::parse_source(src).unwrap();
+    program
+        .functions
+        .get_mut("work")
+        .unwrap()
+        .meta
+        .insert("package".to_string(), serde_json::json!("pkg:x"));
+    let (casm, _) = crush_lang_sdk::compile::compile_cast_to_casm(program, &LOWER).unwrap();
+    let cosm = casm.cosm.as_ref().expect("owners");
+    let blocks: Vec<&String> = casm
+        .functions
+        .keys()
+        .filter(|f| f.starts_with("__crush_python_block_"))
+        .collect();
+    assert!(!blocks.is_empty(), "{:?}", casm.functions.keys());
+    // Everything but `main` comes from `work`: the block, whatever helpers
+    // its lowering made, and whatever compiling them lifted.
+    for f in casm.functions.keys().filter(|f| *f != "main") {
+        assert_eq!(cosm.function_package(f), Some("pkg:x"), "{f}");
+    }
+    assert_eq!(cosm.function_package("work"), Some("pkg:x"));
+    assert_eq!(cosm.function_package("main"), None);
+
+    // In the root package, nothing is recorded.
+    let (casm, _) = crush_lang_sdk::compile::compile_cast_to_casm(
+        crush_frontend::parse_source(src).unwrap(),
+        &LOWER,
+    )
+    .unwrap();
+    assert!(casm.cosm.is_none(), "{:?}", casm.cosm);
+}

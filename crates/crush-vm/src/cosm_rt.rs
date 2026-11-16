@@ -93,6 +93,18 @@ impl Kind {
         &self.mro[0].name
     }
 
+    /// The module that declares this Kind (its import path); `None` for the
+    /// root package: it is written only together with a package (V3b, #522).
+    pub fn module(&self) -> Option<&str> {
+        self.mro[0].module.as_deref()
+    }
+
+    /// The package that owns this Kind; `None` for the root package (V3b,
+    /// #522). Recorded only: nothing compares it yet (V6, #525).
+    pub fn package(&self) -> Option<&str> {
+        self.mro[0].package.as_deref()
+    }
+
     /// The names of the Kinds in the resolution order, this Kind first.
     pub fn resolution_order(&self) -> impl Iterator<Item = &str> {
         self.mro.iter().map(|k| k.name.as_str())
@@ -188,6 +200,10 @@ pub struct KindTable {
     /// Whether any Kind has a `str` / `repr` hook: printing only looks for
     /// hooked Records (walking the printed value) when one does.
     print_hooks: bool,
+    /// The owning package of each function outside the root package (COSM
+    /// `fn_packages`, V3b #522): a static fact per function, read from the
+    /// program's COSM module whether or not it declares any Kind.
+    fn_packages: HashMap<String, String>,
 }
 
 impl KindTable {
@@ -196,8 +212,17 @@ impl KindTable {
     /// first, then each Kind's resolution order. A program whose table fails
     /// either is refused before it runs.
     pub fn load(program: &crate::bytecode::Program) -> Result<Self, VmError> {
+        let fn_packages: HashMap<String, String> = program
+            .cosm
+            .iter()
+            .flat_map(|m| &m.fn_packages)
+            .map(|(f, p)| (f.as_str().to_string(), p.clone()))
+            .collect();
         let Some(module) = program.kind_table() else {
-            return Ok(Self::default());
+            return Ok(Self {
+                fn_packages,
+                ..Self::default()
+            });
         };
         crate::cosm_gate::check_runnable(Some(module))?;
         let arity: Rc<HashMap<String, u8>> = Rc::new(
@@ -254,7 +279,38 @@ impl KindTable {
             *k.chain.borrow_mut() = chain;
         }
         let print_hooks = kinds.values().any(|k| k.print_hook().is_some());
-        Ok(Self { kinds, print_hooks })
+        Ok(Self {
+            kinds,
+            print_hooks,
+            fn_packages,
+        })
+    }
+
+    /// The package that owns function `name`: `None` for the root package
+    /// (V3b, #522). The owner of the executing function is this, for the
+    /// function whose code holds the instruction pointer
+    /// ([`KindTable::code_owners`]).
+    pub fn function_package(&self, name: &str) -> Option<&str> {
+        self.fn_packages.get(name).map(String::as_str)
+    }
+
+    /// Which package owns the code at each address: `entries` is the
+    /// program's function entry table. Build it once per program;
+    /// [`CodeOwners::at`] is then a binary search (V3b, #522).
+    pub fn code_owners<'a>(
+        &self,
+        entries: impl IntoIterator<Item = (&'a str, usize)>,
+    ) -> CodeOwners {
+        // Sorted by entry, then name: two functions at one entry (an empty
+        // function and the next) are decided by name, not by the order a
+        // HashMap handed them over in.
+        let mut v: Vec<(usize, &str)> = entries.into_iter().map(|(n, e)| (e, n)).collect();
+        v.sort_unstable();
+        CodeOwners(
+            v.into_iter()
+                .map(|(entry, name)| (entry, self.function_package(name).map(str::to_string)))
+                .collect(),
+        )
     }
 
     /// Whether any Kind prints through a `str` / `repr` hook.
@@ -266,6 +322,22 @@ impl KindTable {
         self.kinds
             .get(name)
             .ok_or_else(|| VmError::Cosm(format!("`{name}` is not a Kind of this program")))
+    }
+}
+
+/// The owning package of the code at each address of a program, sorted by
+/// function entry ([`KindTable::code_owners`]).
+#[derive(Debug, Default, Clone)]
+pub struct CodeOwners(Vec<(usize, Option<String>)>);
+
+impl CodeOwners {
+    /// The package that owns the code at `ip`: that of the function with the
+    /// highest entry at or below it (functions are laid out one after
+    /// another); at a tie, the last by name. `None` for the root package, or
+    /// when no function holds `ip`.
+    pub fn at(&self, ip: usize) -> Option<&str> {
+        let i = self.0.partition_point(|(entry, _)| *entry <= ip);
+        self.0.get(i.checked_sub(1)?)?.1.as_deref()
     }
 }
 

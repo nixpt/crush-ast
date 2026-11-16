@@ -250,7 +250,7 @@ still collide.
 | **V1** #519 (M) | §1 stage 1: `pub` recorded on `fn`/`struct`/`trait`, the per-file package rule, `W-VIS01`, the legacy all-public note and the first-`pub` warning | L5 (modules have an interface) |
 | **V2** #520 (S, other repos) | `pub` added in facet, crush-http, polish, examples, the guide and awesome-crush | — |
 | **V3a** #521 (S-M) | F7: `cosm_version` in `CosmModule`, `kt_format 2`, the reader gate and its by-name error, the lowest-version stamp, docs, and the private-method refusal test. **Before every schema-touching ticket.** | **F7** ✅ |
-| **V3b** #522 (M) | Owner ids: `module`/`package` on `KindDecl`, and a package id per function in CASM/CVM1 (refused by name on old runtimes) | F4/F9 inputs (the format change is documented) |
+| **V3b** #522 (M) | Owner ids: `module`/`package` on `KindDecl`, and a package id per function in CASM/CVM1 (refused by name on old runtimes) | F4/F9 inputs (the format change is documented) ✅ (see "V3b as built") |
 | **V4** #523 (M) | §3 B per-module kinds, the foreign-`impl` rule, and shape-parsed cross-file struct literals with `a.P { … }` in both grammars | L5 (the "Not yet" items); keeps L2 |
 | **V5** #524 (M) | §1 stage 3, plus the narrow concatenation retirement: `W-VIS01` becomes an error at a minor bump | — |
 | **V6** #525 (L, with or after K2) | §2: the `visibility` schema field and contextual `priv`/`readonly`. The VM enforces it on the scheduler and portable VMs. Kinds with private members are not map-compatible. The side doors are closed or documented. FastVM/JIT/AOT are exact-or-loud. Under C2, the syntax stays experimental until this ships. | L6 ✅ when combined with K2 |
@@ -275,6 +275,68 @@ V0 needs no decision and can start now. V1, V2, V4 and V5 need decisions 1, 3 an
 6. **Freeze date:** the 1.0 criteria's §4.1 says "no new syntax after the feature freeze", but its release
    numbering is stale. `pub struct`, the visibility error flip and (under C1) `priv`/`readonly` all have to
    land before the freeze, so the freeze needs a date.
+
+## V3b as built (#522)
+
+- **Where function ownership lives.** Inside the COSM module, as `fn_packages` (function name →
+  package id), not as a per-function CASM field. CASM's `check_version` takes any `1.x`, so an old
+  reader would have dropped a per-function field and ownership with it; COSM is must-understand
+  since V3a and both load paths (CVM1's kind table, CASM's `cosm`) go through
+  `CosmModule::from_json`. So an old runtime refuses ownership by name, never runs without it.
+- **Schema** (COSM `0.2.0`, `COSM_OWNERS_VERSION`): `KindDecl.module` (the declaring module's import
+  path), `KindDecl.package`, `CosmModule.fn_packages`. All are omitted for the root package, so a
+  one-package program is written exactly as before (COSM `0.1.0`, `kt_format 1`), however many
+  files it has; any of them stamps `0.2.0` and `kt_format 2`. `module` is written only together
+  with a non-root `package`. None of them is ignorable.
+- **One owner-id rule** (`crush_cosm::owner_id_problem`): a package id is `pkg:<name>` or
+  `dir:<label>`, with no `/` or `\` and never empty; the root package is never spelled out; a module
+  id is a non-empty import path without separators. The reader refuses, the writer refuses to write
+  (CASM returns the error, CVM1's infallible writer panics) and `validate` reports
+  (`cosm::invalid_owner_id`) the same ids; the frontend checks what it compiles.
+- **`module` is the import path as first written** (`geo`, `lib.geo`), not a canonical identity:
+  two import paths can reach one file. V4 must not treat it as unique; the package plus the file is
+  what identifies a module.
+- **Owners of synthesised code.** A function a pass creates from another takes its owner
+  (`cosm_lower::inherit_owner`): lifted methods take their `impl`/`trait`'s, lowered polyglot blocks
+  and their helpers take the enclosing function's, and what the compiler lifts (nested `fn`s,
+  lambdas, async bodies) is recorded under the function it came from. A merged `struct`/`impl`/
+  `trait` carries its module's merge prefix and takes the package of that module's functions
+  (`inherit_declaration_owners`); a module whose functions disagree, or a declaration that disagrees
+  with them, is an internal compiler error. A `"root"` stamp (V1 puts one on every merged function)
+  is removed in the same lowering step, before anything copies meta, so it changes no output.
+- **A module with types and no function** has nothing to derive an owner from; it is owned
+  because the resolver stamps its merged `struct` / `impl` / `trait` with the module's package, the
+  same id it stamps on functions (#537 stamped functions only; V3b adds the declarations, next to
+  `module`). Before V6 (#525) any other producer of merged declarations (a walker's CAST, CAST JSON)
+  must stamp them too: an unstamped declaration is root-owned.
+- **A program with no Kinds** still gets a kind-table section when it has owners
+  (`Program::cosm_section`); `kind_table()` keeps meaning "declares Kinds or interfaces", so the
+  engines' checks are unchanged.
+- **Package ids in artifacts.** `root` (omitted), `pkg:<name>` (a crush-pkg package, kept), and
+  `dir:<label>` for a library directory: the directory's last path component, numbered `#2`, `#3`, …
+  when two directories of one program share it. A user's absolute directory never reaches an
+  artifact. The label comes from the spelling alone, never the filesystem or the working
+  directory, so the same source compiles to the same owners in any checkout: a directory written
+  `.` or `..` has no real component and is labelled `dir` (`#N` on a clash). The resolver (V1) is
+  the place to pass a meaningful directory spelling. The frontend reads `meta["package"]`, which the V1 resolver
+  (#519, #537) records on merged functions and declarations.
+- **Run time.** The scheduler VM and the portable VM read `fn_packages` at load
+  (`KindTable::function_package`, `KindTable::code_owners` (a sorted entry index, binary-searched),
+  `PortableVm::current_function_package`) and a
+  Kind's owner (`Kind::module` / `package`). FastVM, the JIT and AOT run such programs as before:
+  owners are inert until V6 (#525) enforces them.
+- **Compatibility.** A compiled artifact with owners needs a runtime that reads COSM `0.2.0`;
+  released 0.11.x refuses it (CVM1 by name, `unknown kind-table format 2`; CASM JSON with a serde
+  unknown-field error). That happens only when a program uses code from another package. Source
+  programs are unaffected.
+- **Not as the note had it:** §2 says "each function in CASM/CVM1 (its package id)"; it is in COSM, as
+  above.
+- **Ruling (altair, 2026-11-16, on independent review):** a Kind of the root package records no
+  owner, wherever it is declared. The first build recorded `module` for every Kind of an imported
+  module, which stamped ordinary multi-file programs `0.2.0` and made old runtimes refuse them
+  before any program had a second package. Now nothing is stamped until a program has one, and the
+  CASM of a one-package program is unchanged (tested against the same program with the stamps
+  removed).
 
 ## Rulings (captain, 2026-11-14, via vega)
 
@@ -379,7 +441,7 @@ It also raised:
 |---|---|---|
 | The edge-based package rule makes a program's own modules foreign | `import_system.rs:420-428`: importer's directory, then search paths | **Taken.** §1 now keys the package on the file's path |
 | `MemberDecl` ignores unknown keys | `schema.rs:234-242`: no `deny_unknown_fields`, `#[serde(flatten)]` | **Taken.** The serde behaviour is from its docs and is pinned by a test in V3a |
-| The VM has no owner to compare | `KindDecl` has no module/package field; GET_MEMBER carries a name only | **Taken.** Owner ids are V3b |
+| The VM has no owner to compare | `KindDecl` has no module/package field; GET_MEMBER carries a name only | **Taken.** Owner ids are V3b (built: see "V3b as built") |
 | Unenforced `priv` in 1.0 breaks the promise later | RELEASE-1.0-CRITERIA §4.5 (semantics row) and §1.2 (COSM experimental) | **Taken.** C1/C2 replace the old "A for 1.0" fallback |
 | The kind clash contradicts documented behaviour | `import_system.rs:57-59` | **Taken.** V0 is a bug fix; #515 |
 | Map-compatible kinds run as plain maps on FastVM/JIT/AOT | `object-model.md` §9 (line 428) | **Taken.** Private members make a kind non-map-compatible |

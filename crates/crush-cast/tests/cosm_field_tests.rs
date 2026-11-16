@@ -21,6 +21,8 @@ fn plain_program() -> Program {
 
 fn js_kind() -> KindDecl {
     KindDecl {
+        module: None,
+        package: None,
         name: "Counter".to_string(),
         home_lang: "javascript".to_string(),
         span: None,
@@ -63,6 +65,7 @@ fn cast_written_before_the_field_deserializes_with_no_cosm() {
 fn program_with_cosm_round_trips() {
     let mut program = plain_program();
     program.cosm = Some(CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![js_kind()],
         interfaces: vec![],
     });

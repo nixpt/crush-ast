@@ -766,6 +766,8 @@ impl Lower<'_> {
         // (`x = new C()`, `clone() { return new C(…); }`); its member
         // list is patched in at the end.
         let make_decl = |members: Vec<MemberDecl>| KindDecl {
+            module: None,
+            package: None,
             name: kind.clone(),
             home_lang: "javascript".to_string(),
             span: span

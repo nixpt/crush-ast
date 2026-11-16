@@ -282,6 +282,7 @@ mod tests {
             func: "Q::init".into(),
         };
         program.cosm = Some(CosmModule {
+            fn_packages: Default::default(),
             kinds: vec![p, q],
             interfaces: Vec::new(),
         });
