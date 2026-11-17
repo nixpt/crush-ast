@@ -199,6 +199,7 @@ fn conformance_satisfied_by_an_inherited_member() {
         satisfaction: Satisfaction::Nominal,
     };
     let mut m = CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![base, child],
         interfaces: vec![shape],
     };
@@ -239,6 +240,7 @@ fn parent_arity_per_strategy() {
     ] {
         let k = plain("K", resolution, &parents);
         let m = CosmModule {
+            fn_packages: Default::default(),
             kinds: vec![a.clone(), b.clone(), k],
             interfaces: vec![],
         };
@@ -255,6 +257,7 @@ fn parent_arity_per_strategy() {
 #[test]
 fn single_and_prototype_chains_are_linear() {
     let m = CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![
             plain("Object", Resolution::PrototypeChain, &[]),
             plain("Animal", Resolution::PrototypeChain, &["Object"]),
@@ -272,6 +275,7 @@ fn single_and_prototype_chains_are_linear() {
 #[test]
 fn inheritance_cycle_reported_once() {
     let m = CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![
             plain("A", Resolution::C3, &["C"]),
             plain("B", Resolution::C3, &["A"]),
@@ -286,6 +290,7 @@ fn inheritance_cycle_reported_once() {
     assert!(matches!(err, MroError::Cycle { .. }), "{err:?}");
 
     let selfish = CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![plain("S", Resolution::C3, &["S"])],
         interfaces: vec![],
     };
@@ -298,6 +303,7 @@ fn embedding_promotion_is_valid_but_not_linear() {
     let inner = plain("Inner", Resolution::None, &[]);
     let outer = plain("Outer", Resolution::EmbeddingPromotion, &["Inner"]);
     let m = CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![inner.clone(), outer.clone()],
         interfaces: vec![],
     };
@@ -310,6 +316,7 @@ fn embedding_promotion_is_valid_but_not_linear() {
     // ...so it can't be a c3/single parent.
     let child = plain("Child", Resolution::C3, &["Outer"]);
     let m = CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![inner, outer, child],
         interfaces: vec![],
     };
@@ -321,6 +328,7 @@ fn embedding_promotion_is_valid_but_not_linear() {
 fn c3_on_a_kind_whose_own_resolution_is_not_c3() {
     // c3_mro applies C3 at the kind itself; resolution_order follows the strategy.
     let m = CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![
             plain("A", Resolution::None, &[]),
             plain("B", Resolution::Single, &["A"]),

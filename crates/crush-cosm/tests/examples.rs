@@ -152,6 +152,7 @@ fn constants_keep_int_float_distinct() {
         fields.push(f);
     }
     let m = CosmModule {
+        fn_packages: Default::default(),
         kinds: vec![k],
         interfaces: vec![],
     };

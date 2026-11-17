@@ -250,7 +250,7 @@ still collide.
 | **V1** #519 (M) | §1 stage 1: `pub` recorded on `fn`/`struct`/`trait`, the per-file package rule, `W-VIS01`, the legacy all-public note and the first-`pub` warning | L5 (modules have an interface) |
 | **V2** #520 (S, other repos) | `pub` added in facet, crush-http, polish, examples, the guide and awesome-crush | — |
 | **V3a** #521 (S-M) | F7: `cosm_version` in `CosmModule`, `kt_format 2`, the reader gate and its by-name error, the lowest-version stamp, docs, and the private-method refusal test. **Before every schema-touching ticket.** | **F7** ✅ |
-| **V3b** #522 (M) | Owner ids: `module`/`package` on `KindDecl`, and a package id per function in CASM/CVM1 (refused by name on old runtimes) | F4/F9 inputs (the format change is documented) |
+| **V3b** #522 (M) | Owner ids: `module`/`package` on `KindDecl`, and a package id per function in CASM/CVM1 (refused by name on old runtimes) | F4/F9 inputs (the format change is documented) ✅ (see "V3b as built") |
 | **V4** #523 (M) | §3 B per-module kinds, the foreign-`impl` rule, and shape-parsed cross-file struct literals with `a.P { … }` in both grammars | L5 (the "Not yet" items); keeps L2 |
 | **V5** #524 (M) | §1 stage 3, plus the narrow concatenation retirement: `W-VIS01` becomes an error at a minor bump | — |
 | **V6** #525 (L, with or after K2) | §2: the `visibility` schema field and contextual `priv`/`readonly`. The VM enforces it on the scheduler and portable VMs. Kinds with private members are not map-compatible. The side doors are closed or documented. FastVM/JIT/AOT are exact-or-loud. Under C2, the syntax stays experimental until this ships. | L6 ✅ when combined with K2 |
@@ -276,6 +276,68 @@ V0 needs no decision and can start now. V1, V2, V4 and V5 need decisions 1, 3 an
    numbering is stale. `pub struct`, the visibility error flip and (under C1) `priv`/`readonly` all have to
    land before the freeze, so the freeze needs a date.
 
+## V3b as built (#522)
+
+- **Where function ownership lives.** Inside the COSM module, as `fn_packages` (function name →
+  package id), not as a per-function CASM field. CASM's `check_version` takes any `1.x`, so an old
+  reader would have dropped a per-function field and ownership with it; COSM is must-understand
+  since V3a and both load paths (CVM1's kind table, CASM's `cosm`) go through
+  `CosmModule::from_json`. So an old runtime refuses ownership by name, never runs without it.
+- **Schema** (COSM `0.2.0`, `COSM_OWNERS_VERSION`): `KindDecl.module` (the declaring module's import
+  path), `KindDecl.package`, `CosmModule.fn_packages`. All are omitted for the root package, so a
+  one-package program is written exactly as before (COSM `0.1.0`, `kt_format 1`), however many
+  files it has; any of them stamps `0.2.0` and `kt_format 2`. `module` is written only together
+  with a non-root `package`. None of them is ignorable.
+- **One owner-id rule** (`crush_cosm::owner_id_problem`): a package id is `pkg:<name>` or
+  `dir:<label>`, with no `/` or `\` and never empty; the root package is never spelled out; a module
+  id is a non-empty import path without separators. The reader refuses, the writer refuses to write
+  (CASM returns the error, CVM1's infallible writer panics) and `validate` reports
+  (`cosm::invalid_owner_id`) the same ids; the frontend checks what it compiles.
+- **`module` is the import path as first written** (`geo`, `lib.geo`), not a canonical identity:
+  two import paths can reach one file. V4 must not treat it as unique; the package plus the file is
+  what identifies a module.
+- **Owners of synthesised code.** A function a pass creates from another takes its owner
+  (`cosm_lower::inherit_owner`): lifted methods take their `impl`/`trait`'s, lowered polyglot blocks
+  and their helpers take the enclosing function's, and what the compiler lifts (nested `fn`s,
+  lambdas, async bodies) is recorded under the function it came from. A merged `struct`/`impl`/
+  `trait` carries its module's merge prefix and takes the package of that module's functions
+  (`inherit_declaration_owners`); a module whose functions disagree, or a declaration that disagrees
+  with them, is an internal compiler error. A `"root"` stamp (V1 puts one on every merged function)
+  is removed in the same lowering step, before anything copies meta, so it changes no output.
+- **A module with types and no function** has nothing to derive an owner from; it is owned
+  because the resolver stamps its merged `struct` / `impl` / `trait` with the module's package, the
+  same id it stamps on functions (#537 stamped functions only; V3b adds the declarations, next to
+  `module`). Before V6 (#525) any other producer of merged declarations (a walker's CAST, CAST JSON)
+  must stamp them too: an unstamped declaration is root-owned.
+- **A program with no Kinds** still gets a kind-table section when it has owners
+  (`Program::cosm_section`); `kind_table()` keeps meaning "declares Kinds or interfaces", so the
+  engines' checks are unchanged.
+- **Package ids in artifacts.** `root` (omitted), `pkg:<name>` (a crush-pkg package, kept), and
+  `dir:<label>` for a library directory: the directory's last path component, numbered `#2`, `#3`, …
+  when two directories of one program share it. A user's absolute directory never reaches an
+  artifact. The label comes from the spelling alone, never the filesystem or the working
+  directory, so the same source compiles to the same owners in any checkout: a directory written
+  `.` or `..` has no real component and is labelled `dir` (`#N` on a clash). The resolver (V1) is
+  the place to pass a meaningful directory spelling. The frontend reads `meta["package"]`, which the V1 resolver
+  (#519, #537) records on merged functions and declarations.
+- **Run time.** The scheduler VM and the portable VM read `fn_packages` at load
+  (`KindTable::function_package`, `KindTable::code_owners` (a sorted entry index, binary-searched),
+  `PortableVm::current_function_package`) and a
+  Kind's owner (`Kind::module` / `package`). FastVM, the JIT and AOT run such programs as before:
+  owners are inert until V6 (#525) enforces them.
+- **Compatibility.** A compiled artifact with owners needs a runtime that reads COSM `0.2.0`;
+  released 0.11.x refuses it (CVM1 by name, `unknown kind-table format 2`; CASM JSON with a serde
+  unknown-field error). That happens only when a program uses code from another package. Source
+  programs are unaffected.
+- **Not as the note had it:** §2 says "each function in CASM/CVM1 (its package id)"; it is in COSM, as
+  above.
+- **Ruling (altair, 2026-11-16, on independent review):** a Kind of the root package records no
+  owner, wherever it is declared. The first build recorded `module` for every Kind of an imported
+  module, which stamped ordinary multi-file programs `0.2.0` and made old runtimes refuse them
+  before any program had a second package. Now nothing is stamped until a program has one, and the
+  CASM of a one-package program is unchanged (tested against the same program with the stamps
+  removed).
+
 ## Rulings (captain, 2026-11-14, via vega)
 
 | # | Ruling |
@@ -291,7 +353,66 @@ V0 needs no decision and can start now. V1, V2, V4 and V5 need decisions 1, 3 an
 
 Order: V0 (#515) first, then V3a (F7) before any schema-touching ticket.
 
-**Pre-freeze (by 2026-12-31):** V0 #518, V1 #519, V2 #520, V3a #521, V3b #522, V4 #523, V5 #524. **Conditional:** V6 #525 is pre-freeze only under C1 (K2 by 2026-12-31); under C2 it ships after 1.0 as experimental.
+## V1.5 as built (#539): the gate for stage 2
+
+Stage 1 alone could not show that a library is ready for stage 3: a legacy module (no `pub`) gets
+only a note, only when another package uses it, and `--deny-warnings` ignores notes. V1.5 adds one
+opt-in flag, `--deny-legacy-visibility`, that fails (exit 1) while any exported name still relies on
+the legacy rule. Nothing changes without it. There are two gates, and a library needs both.
+
+- **The compile gate, `crushc --check --deny-legacy-visibility FILE`** (with the usual `-L`): a
+  `W-VIS01` becomes an error (same code and text, `level: "error"`), and a legacy module whose
+  **functions** another package uses becomes one `E-VIS01` error per module, naming its file, the
+  using package(s) and every function used, in place of its `N-VIS01` note. It follows the whole
+  import graph, so a legacy module reached through a `pub` one in a third package is caught. It sees
+  **function uses only**: kinds are one global namespace until #523, so a legacy module another
+  package uses only for its `struct` / `impl` is not reported here. A legacy module used only inside
+  its own package is fine (stage 3 keeps it usable there). `--emit ast` resolves no imports, so it
+  is refused with the flag.
+- **The directory gate, `crushc --list-exports --deny-legacy-visibility PATH`** (a `.crush` file or a
+  directory, walked recursively in path order; hidden directories, `target/` and symlinked
+  directories are skipped): the library author's view, with no foreign user needed. Without the
+  flag it lists, per module, `pub: …` and `private: …`, or `legacy: no pub, everything public` with
+  the names. With it, every **importable** legacy module fails (`E-VIS01`), kinds included. Exempt:
+  a file with top-level statements other than definitions and Crush module imports (a `let`, a
+  call, a `use @lang`: the resolver refuses to import it) and a file that defines nothing besides
+  `main`; this listing prints them as `program (exempt from the gate: …)`. A file with `fn main` **and** other
+  definitions is importable (the resolver drops a module's `main`), so a library with a demo `main`
+  fails. A file that does not parse, or a file argument without the `.crush` extension, exits 1; a
+  directory with no `.crush` file prints "no .crush files" and exits 0, with or without the flag.
+- **`crush-pkg build --deny-legacy-visibility`**: both, for a package. It is a **library gate**. The
+  package's sources are the entry's directory; when that is the package root, its `tests/` and
+  `examples/` are left out. Every importable legacy module there fails, the entry included, even
+  when nobody imports it; the same two exemptions apply (top-level statements, or nothing besides
+  `main`). An application does not need this gate: legacy inside one package stays fine at every
+  stage. An application that runs it anyway must mark its importable modules `pub`, entry included
+  (an entry with helpers beside `main` is importable). The failing modules are printed with their
+  names; the compile then runs under the compile gate. A concatenation-mode package (entry without `import`) that has
+  dependencies fails: concatenation reaches every name of a dependency by the legacy rule.
+- **crush-pkg prints the findings** (`W-VIS01`, `N-VIS01`, `W-VIS02`) on stderr for every import-mode
+  compile: `build`, `check`, `run`, the bare build-then-run, and `PackageBuilder::build_file`
+  (what `squeeze test` compiles each test with), also when the builder is quiet; they are also on
+  `BuildOutput::visibility`. They are warnings and notes: without the flag nothing new fails, and
+  `--message-format strict` (which lifts its own `note` records) does not touch them. A
+  concatenation-mode package has no packages to compare and prints none.
+
+**The gate V2 (#520) uses**, per repository of the sweep:
+- a crush-pkg package (facet, crush-http, polish): `crush-pkg build --deny-legacy-visibility` in the
+  package directory;
+- a library directory that is not a crush-pkg package: the directory gate on the library,
+  `crushc --list-exports --deny-legacy-visibility <dir>`, and the compile gate on each of its users;
+- a corpus of example **programs** (the examples, the guide, awesome-crush): the compile gate per
+  program, `crushc --check --deny-legacy-visibility [-L <lib dir>] <program>`, not the directory
+  gate (a program that shares helpers through a sibling module is one package, and that is fine).
+
+A repository passes when these exit 0. The scaffolded library of `crush-pkg new --lib` has no `pub`
+yet; it is part of V2.
+
+**Known limits.** No gate flag on `crush-pkg run`, `check` or the bare build-then-run (only
+`build`). The REPL, crush-debug and CAST input print no visibility findings. In crush-pkg's JSON
+message mode the findings are text on stderr, not NDJSON records (its stdout also carries the
+existing `building` / `compiled` status lines, as before). `BuildOutput` and `ImportOptions` gained
+a public field, so struct literals of either need `..`.
 
 ## Advisor
 
@@ -320,7 +441,7 @@ It also raised:
 |---|---|---|
 | The edge-based package rule makes a program's own modules foreign | `import_system.rs:420-428`: importer's directory, then search paths | **Taken.** §1 now keys the package on the file's path |
 | `MemberDecl` ignores unknown keys | `schema.rs:234-242`: no `deny_unknown_fields`, `#[serde(flatten)]` | **Taken.** The serde behaviour is from its docs and is pinned by a test in V3a |
-| The VM has no owner to compare | `KindDecl` has no module/package field; GET_MEMBER carries a name only | **Taken.** Owner ids are V3b |
+| The VM has no owner to compare | `KindDecl` has no module/package field; GET_MEMBER carries a name only | **Taken.** Owner ids are V3b (built: see "V3b as built") |
 | Unenforced `priv` in 1.0 breaks the promise later | RELEASE-1.0-CRITERIA §4.5 (semantics row) and §1.2 (COSM experimental) | **Taken.** C1/C2 replace the old "A for 1.0" fallback |
 | The kind clash contradicts documented behaviour | `import_system.rs:57-59` | **Taken.** V0 is a bug fix; #515 |
 | Map-compatible kinds run as plain maps on FastVM/JIT/AOT | `object-model.md` §9 (line 428) | **Taken.** Private members make a kind non-map-compatible |

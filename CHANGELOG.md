@@ -26,6 +26,48 @@ add its entry after yours.
   syntax yet and to write the bare name (it used to be a plain parse error such as `Expected } but found <`); any other `Name<...>` says type arguments have no annotation syntax. `Tuple`,
   `Vector` have no bare spelling. The kind table needs no format change: a bare container field
   is `{"Array":"Any"}` etc., a shape COSM already has.
+- fix(fastvm): an out-of-range index read on FastVM now raises the same error as the scheduler VM
+  and PortableVm instead of returning `null` (#445). `a[5]` on a 3-element array, `"abc"[9]`
+  and `a[-4]` raise `array index out of range: 5 (len 3)` (and so on); a non-Int index
+  (`a["x"]`, `a[1.5]`) raises `array index must be int, got str`; indexing something that is
+  not an array, map or string (`5[0]`) raises `type error: expected array, map, or string, got
+  int`. FastVM's explicit `arr_get(a, i)` takes the same path. Each error is catchable with
+  `try`/`catch` on FastVM as on the VMs. An out-of-range or non-Int FastVM *write* (`a[5] = 1`)
+  now raises the same catchable errors with the same text; it used to be an uncatchable
+  `Execution error: array index out of range: …` / `Type mismatch`. A FastVM program that read
+  past the end and got `null` now stops with an error (or enters its `catch`). JIT and AOT are
+  unchanged.
+- **Format:** owner ids, COSM `0.2.0` (V3b, #522). A kind may record the package that declares
+  it (`package`, and with it `module`), and the COSM module records the package of each function
+  outside the root package (`fn_packages`). **When:** only when a program uses code from another
+  package. A program of one package, however many files and imported modules it has, is written
+  byte for byte as before and runs on released runtimes. **What it needs:** a compiled artifact
+  with owners needs a runtime that reads COSM `0.2.0`. Released 0.11.x refuses it: CVM1 by name
+  (`unknown kind-table format 2`), CASM JSON with a serde unknown-field error. Source programs are
+  unaffected. Owner ids are `pkg:<name>` or `dir:<label>` (a directory's last component, never a
+  local path); one rule refuses anything else on read, on write and in `validate`
+  (`cosm::invalid_owner_id`). Function ownership lives in COSM, not CASM, because CASM's own gate
+  takes any `1.x`. Recorded only; member visibility (#525) will enforce it. `--emit cast` of a
+  program that imports a module with `struct` / `impl` / `trait` now shows `module` and
+  `module_prefix` in those declarations' meta, as functions already showed `module`.
+- Visibility, the gate for stage 2 (V1.5, #539). `crushc --check --deny-legacy-visibility` fails
+  (exit 1) while an exported function relies on the legacy rule: `W-VIS01` becomes an error, and a
+  module with no `pub` whose functions another package uses is one `E-VIS01` error naming every
+  function used (in place of its `N-VIS01` note). It sees function uses only (kinds are global
+  until #523). `crushc --list-exports FILE|DIR` lists each module's `pub` and private names, or
+  "legacy: no pub, everything public"; with the flag every importable legacy module there fails,
+  kinds included (a file with top-level statements, or with nothing besides `main`, is exempt; a
+  library with a demo `main` is not). Use both on a library: the compile gate on its users, the
+  directory gate on its own directory. `crush-pkg build --deny-legacy-visibility` does both for a
+  package: a library gate over its sources, entry included (an application does not need it, and
+  one that runs it must mark its importable modules, entry included); concatenation with
+  dependencies fails. crush-pkg builds and test compiles now print `W-VIS01` / `N-VIS01` /
+  `W-VIS02` on stderr (nothing new fails without the flag). Without the flag, crushc's output is
+  unchanged. API: `ImportOptions::deny_legacy_visibility`, `import_system::E_VIS01`,
+  `visibility_check::{ModuleSurface, module_surface, surfaces, render_surface}`,
+  `compile::visibility_diagnostics`, `BuildOutput::visibility`,
+  `PackageBuilder::deny_legacy_visibility`; `BuildOutput` and `ImportOptions` struct literals need
+  `..`.
 - fix(web): a crush-web session granted `fs` no longer aborts with `RuntimeError: unreachable`
   (#534). The in-memory filesystem (`MemFs`, since 0.11.0) stamped modification times with
   `SystemTime::now()`, which panics on `wasm32-unknown-unknown`, and it did so while the

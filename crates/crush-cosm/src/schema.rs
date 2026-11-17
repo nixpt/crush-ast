@@ -93,6 +93,14 @@ name_ref! {
 pub struct CosmModule {
     pub kinds: Vec<KindDecl>,
     pub interfaces: Vec<InterfaceDecl>,
+    /// The owning package of each function that is **not** in the root
+    /// package, keyed by its program function name (V3b, #522). A function
+    /// not listed belongs to the root package ([`crate::ROOT_PACKAGE`]), so a
+    /// one-package program writes nothing here. On the wire: `fn_packages`,
+    /// omitted when empty; any entry needs
+    /// [`COSM_OWNERS_VERSION`](crate::COSM_OWNERS_VERSION). The VM reads it as
+    /// a static fact per function; nothing enforces it yet (V6, #525).
+    pub fn_packages: BTreeMap<FnRef, String>,
 }
 
 /// The wire form of [`CosmModule`]: strict, plus the optional version stamp.
@@ -114,6 +122,8 @@ struct CosmModuleRepr {
     kinds: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "present")]
     interfaces: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    fn_packages: Option<serde_json::Value>,
 }
 
 /// `Some` for any present value, `null` included, so an explicit `null` is
@@ -121,6 +131,61 @@ struct CosmModuleRepr {
 /// absent field means empty.
 fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<serde_json::Value>, D::Error> {
     serde_json::Value::deserialize(d).map(Some)
+}
+
+/// An owner field (`module`, `package`) as written: `Some` for any present
+/// value, so an explicit `null` is a type error instead of passing as absent
+/// (the V3a lesson: a plain `Option` field takes `null` as `None`). What the
+/// id may be is [`owner_id_problem`]'s rule, checked once the module is read.
+fn owner_field<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(d).map(Some)
+}
+
+/// Which owner id [`owner_id_problem`] checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnerId {
+    /// `KindDecl.module`: a module's import path.
+    Module,
+    /// `KindDecl.package` or a `fn_packages` value.
+    Package,
+}
+
+/// **The** owner-id rule (V3b, #522), the one check every route runs: the
+/// reader ([`CosmModule::from_json`] and every deserialize), the writer
+/// ([`CosmModule`]'s `Serialize`) and [`crate::validate`].
+///
+/// - A package id is `pkg:<name>` (a crush-pkg package) or `dir:<label>` (a
+///   library directory), with a non-empty name or label and no path
+///   separator (`/` or `\`) in it. The root package is never spelled out
+///   (it is an absent owner), so `root` and every other spelling is refused.
+/// - A module id is a non-empty import path with no path separator.
+///
+/// `None` when `id` is fine; otherwise what is wrong with it.
+pub fn owner_id_problem(which: OwnerId, id: &str) -> Option<String> {
+    let has_sep = |s: &str| s.contains(['/', '\\']);
+    match which {
+        OwnerId::Module if id.is_empty() => Some("an empty module id".to_string()),
+        OwnerId::Module if has_sep(id) => Some(format!(
+            "module id `{id}` has a path separator in it; it is an import path"
+        )),
+        OwnerId::Module => None,
+        OwnerId::Package if id == crate::ROOT_PACKAGE => Some(format!(
+            "package id `{id}`: the root package is written as an absent owner, never spelled out"
+        )),
+        OwnerId::Package => {
+            let rest = id.strip_prefix("pkg:").or_else(|| id.strip_prefix("dir:"));
+            match rest {
+                Some(r) if !r.is_empty() && !has_sep(r) => None,
+                Some(_) => Some(format!(
+                    "package id `{id}` needs a non-empty name with no path separator in it"
+                )),
+                None if id.is_empty() => Some("an empty package id".to_string()),
+                None => Some(format!(
+                    "package id `{id}` is neither `pkg:<name>` nor `dir:<label>`"
+                )),
+            }
+        }
+    }
 }
 
 /// Prefix of a typed-body error from [`CosmModuleRepr`]: `at `PATH`: MSG`.
@@ -153,10 +218,15 @@ impl TryFrom<CosmModuleRepr> for CosmModule {
         if let Some(v) = &r.cosm_version {
             crate::check_readable(v)?;
         }
-        Ok(CosmModule {
+        let module = CosmModule {
             kinds: typed("kinds", r.kinds)?,
             interfaces: typed("interfaces", r.interfaces)?,
-        })
+            fn_packages: typed("fn_packages", r.fn_packages)?,
+        };
+        if let Some((path, problem)) = module.owner_id_problems().into_iter().next() {
+            return Err(format!("{BODY_ERROR_PREFIX}{path}`: {problem}"));
+        }
+        Ok(module)
     }
 }
 
@@ -168,12 +238,20 @@ impl Serialize for CosmModule {
             cosm_version: Option<&'a str>,
             kinds: &'a [KindDecl],
             interfaces: &'a [InterfaceDecl],
+            #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+            fn_packages: &'a BTreeMap<FnRef, String>,
+        }
+        if let Some((path, problem)) = self.owner_id_problems().into_iter().next() {
+            return Err(serde::ser::Error::custom(format!(
+                "COSM can't be written: `{path}`: {problem}"
+            )));
         }
         let v = self.required_version();
         Out {
             cosm_version: (v != crate::COSM_BASE_VERSION).then_some(v),
             kinds: &self.kinds,
             interfaces: &self.interfaces,
+            fn_packages: &self.fn_packages,
         }
         .serialize(s)
     }
@@ -185,7 +263,27 @@ impl Serialize for CosmModule {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KindDecl {
+    /// The display name, and today still the Kind's identity: Kinds are one
+    /// namespace per program until per-module Kinds (V4, #523).
     pub name: String,
+    /// The module that declares this Kind, as its import path (`geo`,
+    /// `util.shapes`); absent for the root package: written only together
+    /// with a [`KindDecl::package`] (V3b, #522).
+    /// Must-understand: needs [`COSM_OWNERS_VERSION`](crate::COSM_OWNERS_VERSION).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "owner_field"
+    )]
+    pub module: Option<String>,
+    /// The package that owns this Kind (`pkg:<name>`, `dir:<label>`); absent
+    /// for the root package (V3b, #522). Must-understand, like `module`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "owner_field"
+    )]
+    pub package: Option<String>,
     /// The language that declared it (`"crush"`, `"rust"`, `"python"`, …).
     /// An instance keeps its home semantics wherever it travels.
     pub home_lang: String,
@@ -687,17 +785,74 @@ impl CosmModule {
     /// feature newer than the base raises it, e.g. the owner fields (#522) and
     /// member visibility (#525) when they land.
     pub fn required_version(&self) -> &'static str {
-        crate::COSM_BASE_VERSION
+        if self.has_owners() {
+            crate::COSM_OWNERS_VERSION
+        } else {
+            crate::COSM_BASE_VERSION
+        }
     }
 
-    /// Compact JSON.
+    /// Whether any owner id is present: a Kind's `module` or `package`, or a
+    /// `fn_packages` entry (V3b, #522).
+    pub fn has_owners(&self) -> bool {
+        !self.fn_packages.is_empty()
+            || self
+                .kinds
+                .iter()
+                .any(|k| k.module.is_some() || k.package.is_some())
+    }
+
+    /// The package that owns function `name`: `None` for the root package
+    /// (a function not listed in `fn_packages`).
+    pub fn function_package(&self, name: &str) -> Option<&str> {
+        self.fn_packages.get(name).map(String::as_str)
+    }
+
+    /// Nothing at all: no Kind, no interface, no owner. A writer omits such
+    /// a module.
+    pub fn is_empty(&self) -> bool {
+        self.kinds.is_empty() && self.interfaces.is_empty() && self.fn_packages.is_empty()
+    }
+
+    /// Compact JSON, or why the module can't be written (an invalid owner
+    /// id, [`owner_id_problem`]).
+    pub fn try_to_json(&self) -> Result<String, String> {
+        serde_json::to_string(self).map_err(|e| e.to_string())
+    }
+
+    /// Compact JSON. Panics on a module that can't be written (an invalid
+    /// owner id, see [`CosmModule::try_to_json`]): building one in process is
+    /// a bug in the producer, and writing it would make an artifact every
+    /// reader refuses.
     pub fn to_json(&self) -> String {
-        serde_json::to_string(self).expect("COSM serializes infallibly")
+        self.try_to_json().unwrap_or_else(|e| panic!("{e}"))
     }
 
-    /// Pretty-printed JSON.
+    /// Pretty-printed JSON; panics like [`CosmModule::to_json`].
     pub fn to_json_pretty(&self) -> String {
-        serde_json::to_string_pretty(self).expect("COSM serializes infallibly")
+        serde_json::to_string_pretty(self).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// Every owner id that breaks [`owner_id_problem`]'s rule, as
+    /// `(JSON path, problem)`, in declaration order.
+    pub fn owner_id_problems(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (i, k) in self.kinds.iter().enumerate() {
+            for (field, which, id) in [
+                ("module", OwnerId::Module, &k.module),
+                ("package", OwnerId::Package, &k.package),
+            ] {
+                if let Some(problem) = id.as_deref().and_then(|id| owner_id_problem(which, id)) {
+                    out.push((format!("kinds[{i}].{field}"), problem));
+                }
+            }
+        }
+        for (f, p) in &self.fn_packages {
+            if let Some(problem) = owner_id_problem(OwnerId::Package, p) {
+                out.push((format!("fn_packages.{f}"), problem));
+            }
+        }
+        out
     }
 
     /// [`crate::validate`] this module on its own.
@@ -713,6 +868,8 @@ impl KindDecl {
     pub fn crush(name: impl Into<String>) -> Self {
         KindDecl {
             name: name.into(),
+            module: None,
+            package: None,
             home_lang: "crush".into(),
             span: None,
             storage: Storage::Sealed { fields: Vec::new() },

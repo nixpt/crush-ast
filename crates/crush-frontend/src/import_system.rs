@@ -120,6 +120,13 @@ pub struct ImportOptions {
     /// of the root package, so a package's `tests/*.crush` and its `src/`
     /// share one package for visibility (V1, #519).
     pub home_package: Option<String>,
+    /// The stage-2 gate (V1.5, #539; `crushc --deny-legacy-visibility`):
+    /// the visibility findings that block stage 3 become errors. A
+    /// `W-VIS01` comes back with [`DiagnosticSeverity::Error`], and a
+    /// legacy module another package uses gets one `E-VIS01` error, naming
+    /// every name used, in place of its `N-VIS01` note. Off by default:
+    /// the findings are then exactly V1's.
+    pub deny_legacy_visibility: bool,
 }
 
 /// A package importable by name: `import <name>` loads `entry`,
@@ -142,6 +149,7 @@ impl Default for ImportOptions {
             packages: Vec::new(),
             max_depth: DEFAULT_MAX_IMPORT_DEPTH,
             home_package: None,
+            deny_legacy_visibility: false,
         }
     }
 }
@@ -502,6 +510,12 @@ impl Resolver<'_> {
                 col: u.pos.map_or(0, |(_, c)| c as u32),
             };
             if !m.has_pub {
+                if self.opts.deny_legacy_visibility {
+                    if noted.insert(u.module) {
+                        out.push(self.legacy_gate_error(u, location));
+                    }
+                    continue;
+                }
                 if noted.insert(u.module) {
                     out.push(CompilerDiagnostic {
                         code: N_VIS01,
@@ -551,7 +565,11 @@ impl Resolver<'_> {
             }
             out.push(CompilerDiagnostic {
                 code: W_VIS01,
-                severity: DiagnosticSeverity::Warning,
+                severity: if self.opts.deny_legacy_visibility {
+                    DiagnosticSeverity::Error
+                } else {
+                    DiagnosticSeverity::Warning
+                },
                 message: format!(
                     "`{}` is not `pub` in {}, so it is private to {theirs}; this use ({}) is in \
                      {ours}",
@@ -564,6 +582,43 @@ impl Resolver<'_> {
             });
         }
         out
+    }
+
+    /// The stage-2 gate's `E-VIS01` for the legacy module `first` uses (V1.5,
+    /// #539): one per module, at its first cross-package use, naming every
+    /// name other packages use from it.
+    fn legacy_gate_error(&self, first: &CrossUse, location: SourceLoc) -> CompilerDiagnostic {
+        let m = &self.modules[first.module];
+        let used: BTreeSet<&str> = self
+            .uses
+            .iter()
+            .filter(|u| u.module == first.module)
+            .map(|u| u.name.as_str())
+            .collect();
+        let users: BTreeSet<String> = self
+            .uses
+            .iter()
+            .filter(|u| u.module == first.module)
+            .map(|u| self.packages[u.from_package].describe())
+            .collect();
+        CompilerDiagnostic {
+            code: E_VIS01,
+            severity: DiagnosticSeverity::Error,
+            message: format!(
+                "{} has no `pub`, so it relies on the legacy rule (no `pub` anywhere: all \
+                 public), and {} uses it: {} (first: {})",
+                m.file,
+                users.into_iter().collect::<Vec<_>>().join(", "),
+                used.into_iter().collect::<Vec<_>>().join(", "),
+                first.via.describe(&first.name)
+            ),
+            location,
+            hint: Some(format!(
+                "mark the names other packages use with `pub` in {}; before 1.0 a module with \
+                 no `pub` stops being all-public (#524)",
+                m.file
+            )),
+        }
     }
 
     /// Record the Kind a `struct` / `trait` declaration in `file` names. The
@@ -926,6 +981,29 @@ impl Resolver<'_> {
         for mut def in defs {
             self.note_kind(&def, &display)?;
             rewrite_statement(&mut def, &scope, &self.modules, &display, &mut self.uses)?;
+            // Where this declaration comes from (V3b, #522): its module's
+            // import path, its merge prefix and its package (stamped like the
+            // module's functions above, so a module with types and no
+            // function is owned too). `cosm_lower` also checks it against the
+            // package of the module's functions (`inherit_declaration_owners`),
+            // so a type's Kind and methods can't end up in another package
+            // than the module's functions; a `root` stamp is removed there. Neither key reaches compiled output: a struct
+            // compiles to nothing, an impl / trait is lifted, and a Kind
+            // records its module only with a non-root package.
+            if let Statement::StructDef { meta, .. }
+            | Statement::ImplBlock { meta, .. }
+            | Statement::TraitDef { meta, .. } = &mut def
+            {
+                meta.insert("module".to_string(), Value::String(module_path.to_string()));
+                meta.insert(
+                    crate::cosm_lower::MODULE_PREFIX_META.to_string(),
+                    Value::String(self.modules[idx].prefix.clone()),
+                );
+                meta.insert(
+                    "package".to_string(),
+                    Value::String(self.packages[package].id.clone()),
+                );
+            }
             self.defs.push(def);
         }
         self.by_file.insert(canonical, idx);
@@ -1194,6 +1272,11 @@ fn is_pub(meta: &HashMap<String, Value>) -> bool {
 pub const W_VIS01: &str = "W-VIS01";
 /// `N-VIS01`: a legacy module (no `pub` anywhere) used from another package.
 pub const N_VIS01: &str = "N-VIS01";
+/// `E-VIS01`: under the stage-2 gate ([`ImportOptions::deny_legacy_visibility`]),
+/// a legacy module (no `pub` anywhere) used from another package (V1.5, #539).
+/// `crushc --list-exports` uses the same code, under the gate, for a legacy
+/// module of the listed file or directory.
+pub const E_VIS01: &str = "E-VIS01";
 
 /// Index of the root package in `Resolver::packages`.
 const ROOT_PACKAGE: usize = 0;
