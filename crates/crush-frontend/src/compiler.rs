@@ -390,7 +390,10 @@ impl Compiler {
         // never yielded to is abandoned when `main` returns, so an async entry
         // (and the top-level statements merged into it) never ran: no output,
         // exit 0 (#544). Refuse it rather than run nothing.
-        if let Some(entry) = program.functions.get(&program.entry)
+        //
+        // The function checked is `main`, not CAST `entry`: no engine reads
+        // `entry` (it is not carried into CASM), every engine runs `main`.
+        if let Some(entry) = program.functions.get("main")
             && entry.is_async
         {
             let at = match (
@@ -400,11 +403,18 @@ impl Compiler {
                 (Some(l), Some(c)) if l > 0 => format!("line {l}, col {c}: "),
                 _ => String::new(),
             };
+            let crush_source = program.lang.as_deref().is_none_or(|l| l == "crush");
+            if crush_source {
+                bail!(
+                    "{at}`async fn main` cannot be the entry point: nothing awaits it, so its \
+                     body would never run. Write `fn main` instead (it can still `spawn` and \
+                     `await` tasks)"
+                );
+            }
             bail!(
-                "{at}`async fn {}` cannot be the entry point: nothing awaits it, so its body \
-                 would never run. Write `fn {}` instead (it can still `spawn` and `await` tasks)",
-                program.entry,
-                program.entry
+                "{at}an async `main` cannot be the entry point: nothing awaits it, so its body \
+                 would never run. Make the program's `main` synchronous (it can still start \
+                 and await async work)"
             );
         }
         let declared_capabilities = program

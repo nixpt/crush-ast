@@ -20,7 +20,9 @@ add its entry after yours.
   top-level statements (merged into `main`) were dropped with it. It is now refused on every
   engine: ``line 1, col 7: `async fn main` cannot be the entry point: nothing awaits it, so its
   body would never run. Write `fn main` instead (it can still `spawn` and `await` tasks)``. Other
-  `async fn`s are unchanged. Walker CAST whose entry function is async is refused the same way.
+  `async fn`s are unchanged, and so is an imported module's own `async fn main`. The check is on
+  `main`, the function every engine runs, not on CAST `entry` (no engine reads it). Walker CAST with
+  an async `main` is refused too, with a message that does not ask for Crush syntax.
 - fix(visibility): a module that is really under no package root takes the package of the path
   it was found through (#552). A module reached through a symlink inside a `-L` directory or
   package root that points outside every root (`lib/vendor -> ../outside`) fell into the root

@@ -57,10 +57,99 @@ fn other_async_fns_still_run() {
 /// refusal; only the entry point does.
 #[test]
 fn an_async_helper_with_a_sync_main_is_not_refused() {
-    crush_lang_sdk::compile::compile_crush_source(
+    let program = crush_lang_sdk::compile::compile_crush_source(
         "async fn main_loop() { print(1) }\nfn main() { await main_loop() }\n",
     )
     .expect("compiles");
+    assert_eq!(run(&program), "1\n");
+}
+
+fn run(program: &crush_vm::Program) -> String {
+    crush_lang_sdk::Runtime::new()
+        .with_host_caps(crush_lang_sdk::HostCapsBuilder::new().build())
+        .run(program)
+        .expect("runs")
+        .output
+}
+
+/// Compile CAST that did not come from `compile_crush_source` (as a walker or
+/// a hand-written file would hand it over) and run it.
+fn compile_cast(cast: &crush_cast::Program) -> anyhow::Result<crush_vm::Program> {
+    let casm = crush_frontend::compile_cast(cast)?;
+    crush_lang_sdk::compile::casm_to_vm(&casm)
+}
+
+/// The check is on `main`, the function every engine runs, not on CAST
+/// `entry`, which no engine reads (review of #554). CAST naming a sync
+/// `entry` next to an async `main` is refused (it ran nothing before); CAST
+/// naming an async `entry` next to a sync `main` runs `main`.
+#[test]
+fn the_check_is_on_main_not_on_cast_entry() {
+    let mut cast =
+        crush_frontend::parse_source("fn helper() { print(1) }\nasync fn main() { print(5) }\n")
+            .expect("parses");
+    cast.entry = "helper".to_string();
+    let e = format!("{:#}", compile_cast(&cast).expect_err("refused"));
+    assert!(e.contains(REFUSAL), "{e}");
+
+    let mut cast =
+        crush_frontend::parse_source("async fn sub() { print(1) }\nfn main() { print(5) }\n")
+            .expect("parses");
+    cast.entry = "sub".to_string();
+    let program = compile_cast(&cast).expect("compiles");
+    assert_eq!(run(&program), "5\n");
+}
+
+/// Walker CAST with an async `main` is refused too, and the message does not
+/// tell a JavaScript author to write Crush.
+#[cfg(feature = "polyglot-javascript")]
+#[test]
+fn walker_cast_with_an_async_main_is_refused() {
+    let cast = crush_lang_js::js_to_cast("async function main() { console.log(5); }\n", "js")
+        .expect("walk");
+    let e = format!(
+        "{:#}",
+        crush_frontend::compiler::Compiler::new()
+            .compile(cast)
+            .expect_err("refused")
+    );
+    assert!(
+        e.contains("an async `main` cannot be the entry point"),
+        "{e}"
+    );
+    assert!(!e.contains("Write `fn main`"), "{e}");
+}
+
+/// An imported module's own `async fn main` is not the program's entry point
+/// (the import resolver drops a module's `main`), so it keeps working.
+#[test]
+fn an_imported_module_with_async_fn_main_still_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("geom.crush"),
+        "fn area(w, h) { return w * h }\nasync fn main() { print(99) }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("main.crush"),
+        "import geom\nfn main() { print(geom.area(3, 2)) }\n",
+    )
+    .unwrap();
+    let bin = option_env!("CARGO_BIN_EXE_crush-run").unwrap_or("crush-run");
+    let out = Command::new(bin)
+        .args(["run", "main.crush"])
+        .current_dir(dir.path())
+        .env_remove("CRUSH_PATH")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("run crush-run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stderr: {stderr}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "6\n",
+        "stderr: {stderr}"
+    );
 }
 
 /// End to end through `crush-run`: a non-zero exit and the message on stderr,
