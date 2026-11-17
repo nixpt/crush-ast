@@ -14,6 +14,15 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(visibility): a module's package is decided by the path it was found through, not by its
+  canonical path (#552). A module reached through a symlink inside a `-L` directory or package
+  root that points outside it (`lib/vendor -> ../outside`) was under no root, so it fell into the
+  root package: its private functions were callable from the root package with no `W-VIS01`, and
+  `--deny-legacy-visibility` passed a legacy module there. It is now in the package of the root
+  that resolved the import, and reports exactly like the same files in a real directory. The
+  canonical path still decides that a file is loaded once. When a symlink makes one file
+  reachable through two packages, it takes the package of the first import that loads it (source
+  order, depth first). Only `main` since V1 (#519) was affected; no release has the check.
 - fix(vm): an explicit `arr_get(a, i)` call on the scheduler VM and PortableVm now behaves like
   `a[i]` (#446). A negative index counts from the end (`arr_get([1, 2, 3], -1)` is `3`; it was
   `null`). Out of range raises `array index out of range: 9 (len 3)` (it was `null`). A non-Int
