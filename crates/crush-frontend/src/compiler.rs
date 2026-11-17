@@ -385,6 +385,28 @@ impl Compiler {
     }
 
     fn compile_program(&mut self, mut program: Program) -> Result<CasmProgram> {
+        // An `async fn` compiles to a wrapper that spawns its body and returns
+        // the task handle. Nothing awaits the entry point's handle, and a task
+        // never yielded to is abandoned when `main` returns, so an async entry
+        // (and the top-level statements merged into it) never ran: no output,
+        // exit 0 (#544). Refuse it rather than run nothing.
+        if let Some(entry) = program.functions.get(&program.entry)
+            && entry.is_async
+        {
+            let at = match (
+                entry.meta.get("line").and_then(|v| v.as_u64()),
+                entry.meta.get("col").and_then(|v| v.as_u64()),
+            ) {
+                (Some(l), Some(c)) if l > 0 => format!("line {l}, col {c}: "),
+                _ => String::new(),
+            };
+            bail!(
+                "{at}`async fn {}` cannot be the entry point: nothing awaits it, so its body \
+                 would never run. Write `fn {}` instead (it can still `spawn` and `await` tasks)",
+                program.entry,
+                program.entry
+            );
+        }
         let declared_capabilities = program
             .manifest
             .as_ref()

@@ -14,6 +14,13 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(frontend): `async fn main` as the entry point is a compile error (#544). An `async fn`
+  compiles to a wrapper that spawns its body and returns the task handle; nothing awaited the
+  entry point's handle, so `async fn main() { print(5) }` printed nothing and exited 0, and any
+  top-level statements (merged into `main`) were dropped with it. It is now refused on every
+  engine: ``line 1, col 7: `async fn main` cannot be the entry point: nothing awaits it, so its
+  body would never run. Write `fn main` instead (it can still `spawn` and `await` tasks)``. Other
+  `async fn`s are unchanged. Walker CAST whose entry function is async is refused the same way.
 - fix(visibility): a module that is really under no package root takes the package of the path
   it was found through (#552). A module reached through a symlink inside a `-L` directory or
   package root that points outside every root (`lib/vendor -> ../outside`) fell into the root
