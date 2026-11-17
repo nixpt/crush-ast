@@ -665,16 +665,19 @@ pub fn scaffold_package(dir: &Path, name: &str) -> anyhow::Result<Manifest> {
     Ok(manifest)
 }
 
-/// [`scaffold_package`] for a library: `src/lib.crush` with no `main`,
-/// category `library`, and a test that imports it by name.
+/// [`scaffold_package`] for a library: `src/lib.crush` with no `main` and
+/// its one function marked `pub` (so a new library passes
+/// `crush-pkg build --deny-legacy-visibility`), category `library`, and a
+/// test that imports it by name.
 pub fn scaffold_lib_package(dir: &Path, name: &str) -> anyhow::Result<Manifest> {
     let own = crate::builder::import_name(name);
     write_if_absent(
         &dir.join("src/lib.crush"),
         &format!(
             "// {name} \u{2014} a Crush library. Other packages depend on it in their\n\
-             // capsule.toml and `import {own} {{ greet }}`.\n\n\
-             fn greet(who) {{\n    return \"hello, \" + who\n}}\n"
+             // capsule.toml and `import {own} {{ greet }}`. `pub` marks what they may\n\
+             // use; a function without it is private to this package.\n\n\
+             pub fn greet(who) {{\n    return \"hello, \" + who\n}}\n"
         ),
     )?;
     write_if_absent(

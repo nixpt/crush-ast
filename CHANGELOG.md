@@ -14,6 +14,10 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- `crush-pkg new --lib` writes `pub fn greet` in `src/lib.crush` (visibility stage 2, #520), with a
+  comment saying what `pub` does. A new library is no longer a legacy module (no `pub`: everything
+  public): it passes `crush-pkg build --deny-legacy-visibility`, and its scaffolded test compiles
+  with no `N-VIS01` note. Existing packages are not touched.
 - A type annotation can now name a container: `Array`, `List`, `Set` and `Map` are accepted
   wherever a type is, with an `Any` element type (only these capitalised names: lowercase `array`,
   `list`, `set`, `map` are still "Unknown type"), so
