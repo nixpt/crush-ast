@@ -72,6 +72,7 @@ fn sealed(fields: &[&str]) -> Storage {
 
 fn module(kinds: Vec<KindDecl>) -> CosmModule {
     CosmModule {
+        fn_packages: Default::default(),
         kinds,
         interfaces: Vec::new(),
     }
