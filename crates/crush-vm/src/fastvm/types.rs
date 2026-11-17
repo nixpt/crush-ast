@@ -174,6 +174,19 @@ pub enum FastError {
     InvalidCapability(u32),
     InvalidFunction(u32),
     TypeMismatch,
+    /// A typed type error with the CVM1 engines' wording (`VmError::TypeError`),
+    /// for sites that know what they expected — e.g. indexing a non-container (#445).
+    TypeError {
+        expected: &'static str,
+        got: &'static str,
+    },
+    /// An index out of range — `VmError::ArrayBounds`'s counterpart and wording (#445).
+    ArrayBounds {
+        index: i64,
+        len: usize,
+    },
+    /// A non-Int array/string index — `VmError::BadIndex`'s counterpart and wording (#445).
+    BadIndex(&'static str),
     DivisionByZero,
     ArithmeticOverflow,
     Unimplemented(String),
@@ -194,6 +207,13 @@ impl std::fmt::Display for FastError {
             FastError::InvalidCapability(i) => write!(f, "Invalid capability index: {}", i),
             FastError::InvalidFunction(i) => write!(f, "Invalid function index: {}", i),
             FastError::TypeMismatch => write!(f, "Type mismatch"),
+            FastError::TypeError { expected, got } => {
+                write!(f, "type error: expected {expected}, got {got}")
+            }
+            FastError::ArrayBounds { index, len } => {
+                write!(f, "array index out of range: {index} (len {len})")
+            }
+            FastError::BadIndex(got) => write!(f, "array index must be int, got {got}"),
             FastError::DivisionByZero => write!(f, "Division by zero"),
             FastError::ArithmeticOverflow => write!(f, "Arithmetic overflow"),
             FastError::Unimplemented(msg) => write!(f, "Unimplemented: {}", msg),

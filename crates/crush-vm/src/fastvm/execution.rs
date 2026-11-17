@@ -42,9 +42,10 @@ pub(crate) fn unwind_to_frame(
 /// Whether a `try` handler may catch this FastVM fault (CRUSH-369).
 ///
 /// Catchable — the program-level faults FastVM actually raises with real
-/// detail: `DivisionByZero`, `ArithmeticOverflow`, `TypeMismatch` (the
-/// counterparts of the CVM1 engines' catchable `DivByZero` /
-/// `ArithmeticOverflow` / `TypeError`). Everything else stays fatal:
+/// detail: `DivisionByZero`, `ArithmeticOverflow`, `TypeMismatch`/`TypeError`,
+/// `ArrayBounds`, `BadIndex` (the counterparts of the CVM1 engines' catchable
+/// `DivByZero` / `ArithmeticOverflow` / `TypeError` / `ArrayBounds` /
+/// `BadIndex`; the last two since #445). Everything else stays fatal:
 /// `ResourceLimitExceeded` is the quota (never catchable, as on the CVM1
 /// engines), `InvalidCapability` is a security decision, and
 /// `StackUnderflow`/`InvalidLocal`/`InvalidFunction`/`InternalError` are
@@ -53,15 +54,21 @@ pub(crate) fn unwind_to_frame(
 pub(crate) fn is_catchable_fault(err: &FastError) -> bool {
     matches!(
         err,
-        FastError::DivisionByZero | FastError::ArithmeticOverflow | FastError::TypeMismatch
+        FastError::DivisionByZero
+            | FastError::ArithmeticOverflow
+            | FastError::TypeMismatch
+            | FastError::TypeError { .. }
+            | FastError::ArrayBounds { .. }
+            | FastError::BadIndex(_)
     )
 }
 
 /// A caught fault's message — the text the handler's error variable binds
 /// (CRUSH-369). Matches the CVM1 engines' wording where the fault has a
-/// counterpart there (`DivisionByZero`/`ArithmeticOverflow`); `TypeMismatch`
-/// carries no expected/got detail on FastVM, so it can only bind the generic
-/// text (noted on the ticket).
+/// counterpart there (`DivisionByZero`/`ArithmeticOverflow`; `TypeError`,
+/// `ArrayBounds` and `BadIndex` already display with that wording);
+/// `TypeMismatch` carries no expected/got detail on FastVM, so it can only
+/// bind the generic text (noted on the ticket).
 pub(crate) fn fault_message(err: &FastError) -> String {
     match err {
         FastError::DivisionByZero => "division by zero".to_string(),
@@ -69,6 +76,45 @@ pub(crate) fn fault_message(err: &FastError) -> String {
         FastError::TypeMismatch => "type mismatch".to_string(),
         other => other.to_string(),
     }
+}
+
+/// The CVM1 engines' name for a value's type (`Value::type_name`), so a
+/// FastVM error can use their exact wording (#445). FastVM-only shapes get the
+/// nearest CVM1 name.
+fn cvm1_type_name(v: &RuntimeValue, arena: &Arena) -> &'static str {
+    match v {
+        RuntimeValue::Null => "null",
+        RuntimeValue::Bool(_) => "bool",
+        RuntimeValue::Int(_) => "int",
+        RuntimeValue::Float(_) => "float",
+        RuntimeValue::String(_) => "str",
+        RuntimeValue::Ref(ptr) => match arena.get(*ptr) {
+            Some(Object::Str(_)) => "str",
+            Some(Object::Array(_)) => "array",
+            Some(Object::Tuple(_)) => "tuple",
+            Some(Object::List(_)) => "list",
+            Some(Object::Vector(_)) => "vector",
+            Some(Object::Set(_)) => "set",
+            Some(Object::Map(_)) => "map",
+            Some(Object::Bytes(_) | Object::Buffer(_)) => "bytes",
+            Some(Object::Handle(_) | Object::InterfaceHandle(_)) => "handle",
+            Some(Object::Object { .. } | Object::Tagged { .. }) => "record",
+            Some(Object::Result { .. }) => "error",
+            None => "null",
+        },
+    }
+}
+
+/// Read `s[idx]` with the CVM1 contract (#445): a negative index counts from
+/// the end, out of range is `ArrayBounds`, a non-Int index is `BadIndex`.
+fn index_str(s: &str, key: &RuntimeValue, arena: &mut Arena) -> Result<RuntimeValue, FastError> {
+    let RuntimeValue::Int(idx) = *key else {
+        return Err(FastError::BadIndex(cvm1_type_name(key, arena)));
+    };
+    let len = s.chars().count();
+    let i = wrap_index(idx, len).ok_or(FastError::ArrayBounds { index: idx, len })?;
+    let c = s.chars().nth(i).map(|c| c.to_string()).unwrap_or_default();
+    Ok(RuntimeValue::Ref(arena.alloc(Object::Str(c))))
 }
 
 /// Execute a single instruction
@@ -556,18 +602,19 @@ pub fn execute_one(
             let key = stack.pop().ok_or(FastError::StackUnderflow)?;
             let container = stack.pop().ok_or(FastError::StackUnderflow)?;
 
-            if let RuntimeValue::Ref(ptr) = container {
-                match arena.get(ptr) {
+            // #445: the CVM1 contract (scheduler.rs / portable_vm.rs ARR_GET).
+            // Out of range, a non-Int index and a non-container receiver are
+            // catchable errors with the CVM1 wording; they used to read as null.
+            let val = match &container {
+                RuntimeValue::Ref(ptr) => match arena.get(*ptr) {
                     Some(Object::Array(items)) => {
-                        if let RuntimeValue::Int(idx) = key {
-                            let val = wrap_index(idx, items.len())
-                                .and_then(|i| items.get(i))
-                                .cloned()
-                                .unwrap_or(RuntimeValue::Null);
-                            stack.push(val);
-                        } else {
-                            stack.push(RuntimeValue::Null);
-                        }
+                        let RuntimeValue::Int(idx) = key else {
+                            return Err(FastError::BadIndex(cvm1_type_name(&key, arena)));
+                        };
+                        let len = items.len();
+                        let i = wrap_index(idx, len)
+                            .ok_or(FastError::ArrayBounds { index: idx, len })?;
+                        items[i].clone()
                     }
                     Some(Object::Map(map)) => {
                         // String keys only (no int→string coercion); missing key is an error.
@@ -580,27 +627,28 @@ pub fn execute_one(
                         let Some(val) = map.get(s) else {
                             return Err(FastError::TypeMismatch);
                         };
-                        stack.push(val.clone());
+                        val.clone()
                     }
                     Some(Object::Str(s)) => {
-                        if let RuntimeValue::Int(idx) = key {
-                            if let Some(c) =
-                                wrap_index(idx, s.chars().count()).and_then(|i| s.chars().nth(i))
-                            {
-                                let c_ptr = arena.alloc(Object::Str(c.to_string()));
-                                stack.push(RuntimeValue::Ref(c_ptr));
-                            } else {
-                                stack.push(RuntimeValue::Null);
-                            }
-                        } else {
-                            stack.push(RuntimeValue::Null);
-                        }
+                        let s = s.clone();
+                        index_str(&s, &key, arena)?
                     }
-                    _ => stack.push(RuntimeValue::Null),
+                    _ => {
+                        return Err(FastError::TypeError {
+                            expected: "array, map, or string",
+                            got: cvm1_type_name(&container, arena),
+                        });
+                    }
+                },
+                RuntimeValue::String(s) => index_str(s, &key, arena)?,
+                _ => {
+                    return Err(FastError::TypeError {
+                        expected: "array, map, or string",
+                        got: cvm1_type_name(&container, arena),
+                    });
                 }
-            } else {
-                stack.push(RuntimeValue::Null);
-            }
+            };
+            stack.push(val);
         }
 
         FastOp::Len => {
@@ -846,20 +894,19 @@ pub fn execute_one(
                     }
                     _ => None,
                 };
+                let key_type = cvm1_type_name(&key, arena);
                 match arena.get_mut(ptr) {
                     Ok(Object::Array(arr)) => {
                         // #442: a negative index counts from the end, and a
                         // write out of range or with a non-Int index is an
                         // error, as on CVM1 (it used to be dropped silently).
+                        // #445: the same catchable errors and wording as a read.
                         let RuntimeValue::Int(idx) = key else {
-                            return Err(FastError::TypeMismatch);
+                            return Err(FastError::BadIndex(key_type));
                         };
-                        let Some(i) = wrap_index(idx, arr.len()) else {
-                            return Err(FastError::ExecutionError(format!(
-                                "array index out of range: {idx} (len {})",
-                                arr.len()
-                            )));
-                        };
+                        let len = arr.len();
+                        let i = wrap_index(idx, len)
+                            .ok_or(FastError::ArrayBounds { index: idx, len })?;
                         arr[i] = val;
                     }
                     Ok(Object::Map(map)) => {
