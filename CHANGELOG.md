@@ -26,6 +26,19 @@ add its entry after yours.
   syntax yet and to write the bare name (it used to be a plain parse error such as `Expected } but found <`); any other `Name<...>` says type arguments have no annotation syntax. `Tuple`,
   `Vector` have no bare spelling. The kind table needs no format change: a bare container field
   is `{"Array":"Any"}` etc., a shape COSM already has.
+- **Behaviour change:** `import` inside `fn main` is now refused, like in any other function:
+  `` `import` inside `fn main`: imports go at the top level of a file `` (with the file, line and
+  column). It was accepted by accident: a file's top-level statements are merged into `main`, so the
+  placement check skipped `main` and could not tell the two apart. The same now holds for an
+  imported module's `fn main` (its `main` is ignored, so the import used to vanish unseen) and for
+  any other function of a module (it got the generic "not resolved" text). Migration: move the
+  import to the top of the file (#535).
+- fix(vm): an explicit `arr_get(a, i)` call on the scheduler VM and PortableVm now behaves like
+  `a[i]` (#446). A negative index counts from the end (`arr_get([1, 2, 3], -1)` is `3`; it was
+  `null`). Out of range raises `array index out of range: 9 (len 3)` (it was `null`). A non-Int
+  index raises `array index must be int, got str` (it read slot 0, so `arr_get(a, "x")` was
+  `a[0]`). Both errors are catchable. The capability and the `ARR_GET` opcode now share one
+  helper on both engines. `arr_get` on a map is unchanged.
 - fix(fastvm): an out-of-range index read on FastVM now raises the same error as the scheduler VM
   and PortableVm instead of returning `null` (#445). `a[5]` on a 3-element array, `"abc"[9]`
   and `a[-4]` raise `array index out of range: 5 (len 3)` (and so on); a non-Int index

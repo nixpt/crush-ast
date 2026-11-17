@@ -795,6 +795,24 @@ impl Parser {
         if self.module_mode {
             self.toplevel = std::mem::take(&mut statements);
         }
+        // The merge below puts the file's top-level imports into `main`'s body, where they
+        // cannot be told from an `import` written INSIDE `fn main`. Mark the latter now,
+        // while the two are still apart, so the import resolver refuses them like an
+        // import in any other function (CRUSH-535).
+        if let Some(existing) = functions.get_mut("main") {
+            for stmt in &mut existing.body {
+                if let Statement::Import {
+                    import: ImportStatement::CrushModule { .. },
+                    meta,
+                } = stmt
+                {
+                    meta.insert(
+                        crate::import_system::IN_FN_MAIN.to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                }
+            }
+        }
         if !statements.is_empty() {
             match functions.get_mut("main") {
                 Some(existing) => {
