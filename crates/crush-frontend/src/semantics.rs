@@ -1,7 +1,7 @@
 use crate::types::Type;
 use anyhow::{Result, bail};
 use crush_cast::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The marshaled output names a `@lang` block records in
 /// `meta["polyglot_outputs"]` (CRUSH-270) — an array of strings, empty when
@@ -89,6 +89,10 @@ fn statement_meta(stmt: &Statement) -> Option<&HashMap<String, serde_json::Value
 
 pub struct SemanticAnalyzer {
     structs: HashMap<String, HashMap<String, Type>>,
+    /// Every struct / trait / kind name the program declares, known before any
+    /// type is resolved: a bare `Array` / `List` / `Set` / `Map` annotation
+    /// means the container only when none of these has that name (#504).
+    declared_kinds: HashSet<String>,
     functions: HashMap<String, (Vec<Type>, Type)>,
     scopes: Vec<HashMap<String, Type>>,
 }
@@ -106,6 +110,7 @@ impl SemanticAnalyzer {
         global.insert("args".to_string(), Type::Array(Box::new(Type::String)));
         Self {
             structs: HashMap::new(),
+            declared_kinds: HashSet::new(),
             functions: HashMap::new(),
             scopes: vec![global],
         }
@@ -115,6 +120,10 @@ impl SemanticAnalyzer {
     /// (`Acc(5)` → `CONSTRUCT`), taking the constructor's parameters (after
     /// `self`, for an initialiser).
     pub fn declare_constructors(&mut self, module: &crush_cosm::CosmModule, program: &Program) {
+        self.declared_kinds
+            .extend(module.kinds.iter().map(|k| k.name.clone()));
+        self.declared_kinds
+            .extend(module.interfaces.iter().map(|i| i.name.clone()));
         for k in &module.kinds {
             let Some((ctor, usage)) = casm::kind_constructor_in(module, &k.name) else {
                 continue;
@@ -130,6 +139,8 @@ impl SemanticAnalyzer {
     }
 
     pub fn check(&mut self, program: &Program) -> Result<()> {
+        // Before lowering, which removes the `trait` nodes.
+        self.collect_declared_kinds(program);
         // A program that still has `impl` / `trait` nodes is checked as it
         // will be compiled: lowered, with the methods as functions (COSM
         // K1.2). `compile_cast_owned` lowers before checking, so this is only
@@ -163,6 +174,7 @@ impl SemanticAnalyzer {
     /// Infer the type of an expression within the context of an existing program.
     pub fn infer_expression_type(&mut self, program: &Program, expr: &Expression) -> Result<Type> {
         self.structs.clear();
+        self.declared_kinds.clear();
         self.functions.clear();
         self.scopes.clear();
         self.scopes.push(HashMap::new());
@@ -181,7 +193,23 @@ impl SemanticAnalyzer {
         self.check_expr(expr)
     }
 
+    /// Every struct, trait and kind name the program body declares, so a bare
+    /// `Array` / `List` / `Set` / `Map` annotation never overrides one (#504).
+    fn collect_declared_kinds(&mut self, program: &Program) {
+        for func in program.functions.values() {
+            for stmt in &func.body {
+                match stmt {
+                    Statement::StructDef { name, .. } | Statement::TraitDef { name, .. } => {
+                        self.declared_kinds.insert(name.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     fn collect_definitions(&mut self, program: &Program) -> Result<()> {
+        self.collect_declared_kinds(program);
         for func in program.functions.values() {
             for stmt in &func.body {
                 if let Statement::StructDef { name, fields, .. } = stmt {
@@ -345,6 +373,13 @@ impl SemanticAnalyzer {
             CastType::TypeRef(name) | CastType::Struct(name) => {
                 if self.structs.contains_key(name) {
                     Ok(Type::Struct(name.to_string()))
+                } else if let Some(container) = (!self.declared_kinds.contains(name))
+                    .then(|| crate::types::bare_container(name))
+                    .flatten()
+                {
+                    // `cells: Array` (#504): a bare container name, element
+                    // type `Any`. Only when no declared kind has the name.
+                    self.parse_cast_type(&container)
                 } else {
                     bail!("Unknown type: {}", name)
                 }
@@ -993,6 +1028,17 @@ impl SemanticAnalyzer {
             return true;
         }
         match (expected, actual) {
+            // A bare container annotation (`Array`, `List`, `Set`, `Map`, #504)
+            // has an `Any` element type: any element type fits. Crush has one
+            // sequence value (what `[..]` makes), so a `List` takes it too.
+            (Type::Array(e), Type::Array(_))
+            | (Type::List(e), Type::List(_) | Type::Array(_))
+            | (Type::Set(e), Type::Set(_))
+                if **e == Type::Any =>
+            {
+                true
+            }
+            (Type::Map(_, v), Type::Map(_, _)) if **v == Type::Any => true,
             (Type::Float, Type::Int) => true,
             (Type::Optional(_), Type::Null) => true,
             (Type::Optional(inner), other) => self.is_assignable(inner, other),
