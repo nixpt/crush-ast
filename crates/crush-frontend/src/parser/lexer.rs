@@ -320,6 +320,38 @@ impl Lexer {
         }
     }
 
+    /// The error for a bitwise operator, or its compound form when `=`
+    /// follows (the lexer has consumed `op`; this consumes the `=`). Native
+    /// Crush has no bitwise operators (#450): whether it gets them is a
+    /// language decision; walker CAST has them (#449).
+    fn no_bitwise_operator(&mut self, op: char, location: SourceLocation) -> ParseError {
+        let compound = op != '~' && self.peek() == Some('=');
+        if compound {
+            self.advance();
+        }
+        let shown = if compound {
+            format!("{op}=")
+        } else {
+            op.to_string()
+        };
+        // Secondary: `&` and `~` also start reference types (`&v`, `&mut T`)
+        // and other notations (`~0.95`), so the logical form is only a hint.
+        let hint = match op {
+            '&' => "; if you meant a logical and, write `and` or `&&`",
+            '|' => "; if you meant a logical or, write `or` or `||`",
+            '~' => "; if you meant a logical not, write `not` or `!`",
+            _ => "",
+        };
+        ParseError::UnexpectedToken {
+            line: location.line,
+            col: location.col,
+            msg: format!(
+                "`{shown}` is not an operator in native Crush (it has no bitwise operators, \
+                 #450){hint}"
+            ),
+        }
+    }
+
     fn peek(&self) -> Option<char> {
         self.input.get(self.pos).copied()
     }
@@ -1283,11 +1315,23 @@ impl Lexer {
                     self.advance();
                     Ok(Token::And(location))
                 } else {
-                    Ok(Token::Ident("&".to_string(), location)) // Single & as ident for now
+                    // A lone `&` used to lex as an identifier named `&`, so
+                    // `a &= 10` parsed as `a;` plus an assignment to a
+                    // variable `&` and ran with `a` unchanged (#450).
+                    Err(self.no_bitwise_operator('&', location))
                 }
+            }
+            '^' | '~' => {
+                self.advance();
+                Err(self.no_bitwise_operator(ch, location))
             }
             '|' => {
                 self.advance();
+                // `|=`, but not `|=>` / `|==` (a lambda's closing bar before
+                // `=>` or `==`).
+                if self.peek() == Some('=') && !matches!(self.peek_ahead(1), Some('>' | '=')) {
+                    return Err(self.no_bitwise_operator('|', location));
+                }
                 if self.peek() == Some('>') {
                     self.advance();
                     Ok(Token::Pipe(location))

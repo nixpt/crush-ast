@@ -14,6 +14,14 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(frontend): `a &= 10` in native Crush is a compile error instead of doing nothing (#450). The
+  lexer turned a lone `&` into an identifier named `&`, so `a &= 10` parsed as `a;` plus an
+  assignment to a variable called `&`, and the program ran with `a` unchanged. A lone `&`, `^` or
+  `~`, and `&=`, `^=`, `|=`, are now refused where they are written:
+  ``Unexpected token at line 1, column 27: `&=` is not an operator in native Crush (it has no bitwise
+  operators, #450); if you meant a logical and, write `and` or `&&` ``. `|`, `<<`, `>>`, `<<=` and `>>=` were already parse errors.
+  Native Crush still has no bitwise operators (that is a language decision); walker CAST keeps
+  them (#449).
 - fix(visibility): a module that is really under no package root takes the package of the path
   it was found through (#552). A module reached through a symlink inside a `-L` directory or
   package root that points outside every root (`lib/vendor -> ../outside`) fell into the root
