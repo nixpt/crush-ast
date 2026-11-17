@@ -73,6 +73,17 @@ add its entry after yours.
   takes any `1.x`. Recorded only; member visibility (#525) will enforce it. `--emit cast` of a
   program that imports a module with `struct` / `impl` / `trait` now shows `module` and
   `module_prefix` in those declarations' meta, as functions already showed `module`.
+- fix(visibility): the directory gate follows symlinked directories (#545 review). `crushc
+  --list-exports [--deny-legacy-visibility] DIR` and the package check of `crush-pkg build
+  --deny-legacy-visibility` skipped a symlinked directory, while `import a.b` goes through one,
+  so a legacy module behind a link was importable and not gated. The walk now follows the link.
+  Each directory is walked once by its canonical path: a link loop ends, and a directory two
+  paths reach is listed once. Hidden directories stay skipped (no import can name one; pass it
+  as the path to list it), and so does `target/`. A package or directory that links to legacy
+  modules now fails the gate where it passed before. For a package whose entry is at its root,
+  `tests/` and `examples/` are left out of the walk itself (API:
+  `visibility_check::surfaces_skipping`), so a link inside them cannot hide a source directory,
+  and a link into them from outside is gated. A read error names the directory that failed.
 - Visibility, the gate for stage 2 (V1.5, #539). `crushc --check --deny-legacy-visibility` fails
   (exit 1) while an exported function relies on the legacy rule: `W-VIS01` becomes an error, and a
   module with no `pub` whose functions another package uses is one `E-VIS01` error naming every
