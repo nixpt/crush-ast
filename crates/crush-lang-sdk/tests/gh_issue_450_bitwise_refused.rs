@@ -7,8 +7,9 @@
 //! as "Undefined variable: &".
 //!
 //! Every bitwise operator and compound form is now a compile error. The ones
-//! the lexer sees (`&`, `&=`, `^`, `^=`, `~`, `|=`) say that native Crush has
-//! no bitwise operators. The others (`|`, `<<`, `>>`, `<<=`, `>>=`) were
+//! the lexer sees (`&`, `&=`, `^`, `^=`, `~`, `|=`) say the form is not an
+//! operator in native Crush, which has no bitwise operators; the logical
+//! form is a secondary hint (a `&` may also be a reference written by habit). The others (`|`, `<<`, `>>`, `<<=`, `>>=`) were
 //! already parse errors and stay so. Whether native Crush gets bitwise
 //! operators is a language decision (#450 part 2); walker CAST compiles them
 //! (#449), which this does not touch.
@@ -24,7 +25,7 @@ fn program(stmt: &str) -> String {
     format!("fn main() {{ let a = 12; {stmt}; print(a); }}\n")
 }
 
-const NO_BITWISE: &str = "native Crush has no bitwise operators";
+const NO_BITWISE: &str = "is not an operator in native Crush (it has no bitwise operators";
 
 /// The issue's repro: a compile error, never a run that prints `12`.
 #[test]
@@ -47,8 +48,7 @@ fn lexer_level_forms_name_the_operator() {
         ("a |= 10", "`|=`"),
     ] {
         let e = compile_err(&program(stmt));
-        assert!(e.contains(op), "{stmt}: {e}");
-        assert!(e.contains(NO_BITWISE), "{stmt}: {e}");
+        assert!(e.contains(&format!("{op} {NO_BITWISE}")), "{stmt}: {e}");
     }
 }
 
@@ -79,4 +79,32 @@ fn neighbouring_syntax_is_unchanged() {
         .expect("runs")
         .output;
     assert_eq!(out, "true\n13\na & b ^ ~c |= d\n");
+}
+
+/// The no-space lambda forms still lex: the closing bar before `=>` is not
+/// `|=` (review of #556).
+#[test]
+fn no_space_lambdas_still_lex() {
+    let src = "fn main() {\n    let f = |a|=>a+1\n    let g = ||=> 7\n    print(f(1) + g())\n}\n";
+    let program = crush_lang_sdk::compile::compile_crush_source(src).expect("compiles");
+    let out = crush_lang_sdk::Runtime::new()
+        .with_host_caps(crush_lang_sdk::HostCapsBuilder::new().build())
+        .run(&program)
+        .expect("runs")
+        .output;
+    assert_eq!(out, "9\n");
+}
+
+/// Polyglot block bodies are read raw, so `&`, `&=`, `^`, `~` and `|=` in
+/// guest code still compile (review of #556).
+#[test]
+fn polyglot_bodies_with_bitwise_operators_still_compile() {
+    for src in [
+        "fn main() {\n    @python -> v {\nv = 12 & 10\nv &= 8\nv ^= ~1\nv |= 1\n    }\n    print(v)\n}\n",
+        "fn main() {\n    @javascript -> v {\nlet v = 12 & 10; v &= 8; v ^= ~1; v |= 1;\n    }\n    print(v)\n}\n",
+        "fn main() {\n    @bash {\necho $((12 & 10)) $((~1)) 2>&1 &\n    }\n}\n",
+    ] {
+        crush_lang_sdk::compile::compile_crush_source(src)
+            .unwrap_or_else(|e| panic!("{e:#}\n{src}"));
+    }
 }

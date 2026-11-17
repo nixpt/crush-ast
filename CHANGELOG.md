@@ -18,8 +18,8 @@ add its entry after yours.
   lexer turned a lone `&` into an identifier named `&`, so `a &= 10` parsed as `a;` plus an
   assignment to a variable called `&`, and the program ran with `a` unchanged. A lone `&`, `^` or
   `~`, and `&=`, `^=`, `|=`, are now refused where they are written:
-  ``Unexpected token at line 1, column 27: `&=`: native Crush has no bitwise operators (#450); for a
-  logical and, write `and` or `&&` ``. `|`, `<<`, `>>`, `<<=` and `>>=` were already parse errors.
+  ``Unexpected token at line 1, column 27: `&=` is not an operator in native Crush (it has no bitwise
+  operators, #450); if you meant a logical and, write `and` or `&&` ``. `|`, `<<`, `>>`, `<<=` and `>>=` were already parse errors.
   Native Crush still has no bitwise operators (that is a language decision); walker CAST keeps
   them (#449).
 - fix(visibility): a module that is really under no package root takes the package of the path

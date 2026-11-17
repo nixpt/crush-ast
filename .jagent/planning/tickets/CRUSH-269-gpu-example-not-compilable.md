@@ -14,7 +14,7 @@
 
 `examples/gpu/q6k_gemv.crush` (a Q6_K dequant → GEMV kernel for the crush→PTX backend) does not compile. It uses annotations (`@kernel`, `@target`, `@gpu`, `@semantic_switch`, `@synthesize`) and syntax (`mut`, `&`, `=>` in annotations) that the frontend doesn't recognize, e.g. `Unknown annotation: @kernel`. The file's own header says "NOT yet compilable."
 
-It is covered by `// expect-error: Unknown annotation: @kernel` in `crates/crush-lang-sdk/tests/examples_compile.rs`, which now fails the build loudly instead of being silently skipped (the CRUSH-226/#226 gap).
+It is covered by an `// expect-error:` marker checked by `crates/crush-lang-sdk/tests/examples_compile.rs`, which now fails the build loudly instead of being silently skipped (the CRUSH-226/#226 gap). The marker was `Unknown annotation: @kernel` until #450 made a lone `&` a lexer error; lex errors stop compilation before parsing, so the first error is now `` `&` is not an operator in native Crush `` (line 64), and that is the marker.
 
 ## Semantics to pin (before implementing)
 
@@ -23,7 +23,7 @@ It is covered by `// expect-error: Unknown annotation: @kernel` in `crates/crush
 
 ## Success criteria
 
-- [ ] `examples/gpu/q6k_gemv.crush` fails to compile with an error containing `Unknown annotation: @kernel` (covered by the expect-error test).
+- [ ] `examples/gpu/q6k_gemv.crush` fails to compile with an error containing `` `&` is not an operator in native Crush `` (covered by the expect-error test; before #450 it was `Unknown annotation: @kernel`).
 - [ ] If GPU annotation support is added, the example compiles and the expect-error marker is removed.
 
 ## Non-goals

@@ -334,16 +334,21 @@ impl Lexer {
         } else {
             op.to_string()
         };
+        // Secondary: `&` and `~` also start reference types (`&v`, `&mut T`)
+        // and other notations (`~0.95`), so the logical form is only a hint.
         let hint = match op {
-            '&' => "; for a logical and, write `and` or `&&`",
-            '|' => "; for a logical or, write `or` or `||`",
-            '~' => "; for a logical not, write `not` or `!`",
+            '&' => "; if you meant a logical and, write `and` or `&&`",
+            '|' => "; if you meant a logical or, write `or` or `||`",
+            '~' => "; if you meant a logical not, write `not` or `!`",
             _ => "",
         };
         ParseError::UnexpectedToken {
             line: location.line,
             col: location.col,
-            msg: format!("`{shown}`: native Crush has no bitwise operators (#450){hint}"),
+            msg: format!(
+                "`{shown}` is not an operator in native Crush (it has no bitwise operators, \
+                 #450){hint}"
+            ),
         }
     }
 
