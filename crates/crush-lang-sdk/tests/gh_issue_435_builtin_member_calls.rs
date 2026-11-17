@@ -218,3 +218,115 @@ fn an_instance_without_the_method_is_a_clear_error() {
     .expect_err("errors");
     assert!(e.contains("`T` has no method `pop`"), "{e}");
 }
+
+/// Both routes share one arity rule (review of #555): a built-in receiver
+/// call with too many or too few arguments is refused with the same error on
+/// the capability route (a plain `xs.m(…)`), the member route with a struct
+/// method of that name, and a computed receiver, on both VMs. Before, the
+/// member route accepted `m.a.arr_slice(0, 2, 9)` as `[1, 2]`, and every
+/// route dropped the extra argument of `xs.push(2, 3)`.
+#[test]
+fn arity_is_checked_the_same_way_on_every_route() {
+    // (method, receiver value, arguments, expected error)
+    let cases: &[(&str, &str, &str, &str)] = &[
+        ("push", "[1]", "2, 3", "push takes 2 arg(s), got 3"),
+        ("push", "[1]", "", "push takes 2 arg(s), got 1"),
+        ("append", "[1]", "2, 3", "append takes 2 arg(s), got 3"),
+        ("append", "[1]", "", "append takes 2 arg(s), got 1"),
+        ("pop", "[1]", "0", "pop takes 1 arg(s), got 2"),
+        (
+            "arr_get",
+            "[1, 2, 3]",
+            "0, 9",
+            "arr_get takes 2 arg(s), got 3",
+        ),
+        ("arr_get", "[1, 2, 3]", "", "arr_get takes 2 arg(s), got 1"),
+        (
+            "arr_set",
+            "[1, 2, 3]",
+            "0, 9, 7",
+            "arr_set takes 3 arg(s), got 4",
+        ),
+        ("arr_set", "[1, 2, 3]", "0", "arr_set takes 3 arg(s), got 2"),
+        (
+            "arr_slice",
+            "[1, 2, 3]",
+            "0, 2, 9",
+            "arr_slice takes 3 arg(s), got 4",
+        ),
+        (
+            "arr_slice",
+            "[1, 2, 3]",
+            "1",
+            "arr_slice takes 3 arg(s), got 2",
+        ),
+    ];
+    for (method, value, args, want) in cases {
+        let plain =
+            format!("fn main() {{\n    let xs = {value}\n    print(xs.{method}({args}))\n}}\n");
+        let hijacked = format!(
+            "struct S {{ a }}\nimpl S {{ fn {method}(self) {{ return 0 }} }}\nfn main() {{\n    let xs = {value}\n    print(xs.{method}({args}))\n}}\n"
+        );
+        let computed = format!(
+            "fn main() {{\n    let m = {{\"a\": {value}}}\n    print(m.a.{method}({args}))\n}}\n"
+        );
+        for (route, src) in [
+            ("cap", &plain),
+            ("member", &hijacked),
+            ("computed", &computed),
+        ] {
+            for (vm, got) in [("scheduler", scheduler(src)), ("portable", portable(src))] {
+                let e = got.expect_err(&format!("{route}/{vm}: {method}({args}) must be refused"));
+                assert!(e.contains(want), "{route}/{vm} {method}({args}): {e}");
+            }
+        }
+    }
+    // `make_range` takes 1 to 3 arguments, receiver included; its own check
+    // runs on both routes.
+    let plain = "fn main() {\n    let n = 0\n    print(n.make_range(1, 2, 3))\n}\n";
+    let computed = "fn main() {\n    let m = {\"n\": 0}\n    print(m.n.make_range(1, 2, 3))\n}\n";
+    let want = scheduler(plain).expect_err("4 arguments are refused");
+    for src in [plain, computed] {
+        assert_eq!(scheduler(src).as_ref().err(), Some(&want), "{src}");
+        assert_eq!(portable(src).as_ref().err(), Some(&want), "{src}");
+    }
+}
+
+/// `receiver_builtins::NAMES` is exactly the names the compiler lowers as
+/// built-in receiver calls (its `RECEIVER_CAPABILITIES`: `xs.m(1)` compiles
+/// to `cap_call "m"`), minus `parallel_map`, which calls back into user code
+/// and so is not a `CALL_MEMBER` fallback row.
+#[test]
+fn receiver_builtins_match_the_compilers_receiver_calls() {
+    let mut candidates: Vec<String> = crush_vm::caps::capabilities()
+        .keys()
+        .filter(|n| !n.contains('.'))
+        .map(|n| n.to_string())
+        .collect();
+    candidates.extend(
+        crush_vm::receiver_builtins::NAMES
+            .iter()
+            .map(|n| n.to_string()),
+    );
+    let mut lowered_as_builtin: Vec<String> = Vec::new();
+    for name in candidates {
+        let src = format!("fn main() {{ let xs = [0]; xs.{name}(1); }}");
+        let Ok(p) = crush_frontend::compile_crush_source(&src) else {
+            continue;
+        };
+        let is_cap = p.functions["main"].body.iter().any(|i| {
+            i.op == "cap_call" && i.args.get("name").and_then(|v| v.as_str()) == Some(name.as_str())
+        });
+        if is_cap && !lowered_as_builtin.contains(&name) {
+            lowered_as_builtin.push(name);
+        }
+    }
+    lowered_as_builtin.retain(|n| n != "parallel_map");
+    lowered_as_builtin.sort();
+    let mut names: Vec<String> = crush_vm::receiver_builtins::NAMES
+        .iter()
+        .map(|n| n.to_string())
+        .collect();
+    names.sort();
+    assert_eq!(names, lowered_as_builtin);
+}

@@ -24,7 +24,10 @@ add its entry after yours.
   (`crush_vm::receiver_builtins`) that the capability dispatch now shares. A struct's own method still
   wins on its instances, and an instance with no such method keeps the "has no method" error.
   `xs.parallel_map(f)` through `CALL_MEMBER` is a loud error that names `parallel_map(xs, f)`. FastVM
-  and the JIT refuse `CALL_MEMBER` at load, as before.
+  and the JIT refuse `CALL_MEMBER` at load, as before. The arity rule is now exact and the same on
+  both routes: `xs.push(2, 3)`, `xs.append(2, 3)`, `xs.arr_get(0, 9)` and `xs.arr_set(0, 9, 7)` used to
+  drop the extra argument and are now refused (`push takes 2 arg(s), got 3`). Nothing in this repo's
+  examples, the language guide, awesome-crush, polish or facet uses the extra-argument form.
 - fix(visibility): a module that is really under no package root takes the package of the path
   it was found through (#552). A module reached through a symlink inside a `-L` directory or
   package root that points outside every root (`lib/vendor -> ../outside`) fell into the root

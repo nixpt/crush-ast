@@ -35,48 +35,44 @@ pub fn is_builtin(name: &str) -> bool {
 }
 
 /// Run the built-in receiver call `name` with `args` (the receiver first).
+///
+/// The arity rule is the capability registry's (`crate::caps`), checked
+/// here as well as in the capability dispatch, so a call is refused the same
+/// way on both routes: an exact count for every row but `make_range`, whose
+/// 1 to 3 arguments [`crate::make_range::make_range_values`] checks.
 pub fn call(name: &str, args: &[Value]) -> Result<Value, VmError> {
-    let arity = |expected: usize| VmError::CapArity {
-        cap: name.to_string(),
-        expected,
-        got: args.len(),
-    };
+    if let Some(expected) = crate::caps::capabilities().get(name).and_then(|s| s.argc)
+        && args.len() != expected
+    {
+        return Err(VmError::CapArity {
+            cap: name.to_string(),
+            expected,
+            got: args.len(),
+        });
+    }
     match name {
         "arr_slice" => crate::seq::arr_slice_values(name, args),
         "make_range" => crate::make_range::make_range_values(args),
-        "append" | "push" => {
-            if args.len() < 2 {
-                return Err(arity(2));
+        "append" | "push" => match &args[0] {
+            Value::Array(elems) => {
+                elems.borrow_mut().push(args[1].clone());
+                Ok(args[0].clone())
             }
-            match &args[0] {
-                Value::Array(elems) => {
-                    elems.borrow_mut().push(args[1].clone());
-                    Ok(args[0].clone())
-                }
-                _ => Err(VmError::TypeError {
-                    expected: "array",
-                    got: args[0].type_name(),
-                }),
-            }
-        }
+            _ => Err(VmError::TypeError {
+                expected: "array",
+                got: args[0].type_name(),
+            }),
+        },
         // The removed element (null when empty), the method-call form's value
         // (CRUSH-391) — not the array: `let x = a.pop()` wants the element.
-        "pop" => {
-            if args.len() != 1 {
-                return Err(arity(1));
-            }
-            match &args[0] {
-                Value::Array(elems) => Ok(elems.borrow_mut().pop().unwrap_or(Value::Null)),
-                _ => Err(VmError::TypeError {
-                    expected: "array",
-                    got: args[0].type_name(),
-                }),
-            }
-        }
+        "pop" => match &args[0] {
+            Value::Array(elems) => Ok(elems.borrow_mut().pop().unwrap_or(Value::Null)),
+            _ => Err(VmError::TypeError {
+                expected: "array",
+                got: args[0].type_name(),
+            }),
+        },
         "arr_set" => {
-            if args.len() < 3 {
-                return Err(arity(3));
-            }
             match &args[0] {
                 Value::Array(elems) => {
                     // Same contract as the ARR_SET opcode (#442): a negative
@@ -100,9 +96,6 @@ pub fn call(name: &str, args: &[Value]) -> Result<Value, VmError> {
             }
         }
         "arr_get" => {
-            if args.len() < 2 {
-                return Err(arity(2));
-            }
             match &args[0] {
                 // #446: the `index` op's contract, through the same helper.
                 Value::Array(elems) => crate::scheduler::array_get(&elems.borrow(), &args[1]),

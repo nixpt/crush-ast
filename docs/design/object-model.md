@@ -657,11 +657,20 @@ print(t.run(1));                // loud: `run` is not callable
 
 #### 9.4 The runtime fallback: `CALL_MEMBER` on a non-Record
 
-*Implemented in part (#435):* the built-in table is `crates/crush-vm/src/receiver_builtins.rs`, with the
-receiver calls the frontend already lowers as built-ins (`push`, `append`, `pop`, `arr_get`, `arr_set`,
-`arr_slice`, `make_range`). The capability dispatch of both CVM1 VMs calls the same functions. It is
-keyed by name, not by (type, name, arity): each row type-checks its receiver and errors loudly on a wrong
-one. `parallel_map` calls back into user code, so it is not a row and stays a loud error.
+*What the code does (#435), and where it differs from this section.* The fallback is
+`crates/crush-vm/src/receiver_builtins.rs`. Its rows are the receiver calls the frontend already lowers
+as built-ins: `push`, `append`, `pop`, `arr_get`, `arr_set`, `arr_slice`, `make_range`. The capability
+dispatch of both CVM1 VMs calls the same function. The arity rule is the capability registry's: an exact
+count for every row except `make_range`, which takes 1 to 3 arguments. It is checked the same way on both
+routes, with the same error. `parallel_map` calls back into user code, so it is not a row, and through
+`CALL_MEMBER` it is a loud error. The code differs from this section in three ways:
+
+1. **Keying.** The table is keyed by name only, not by (type, name, arity). A row type-checks its own
+   receiver.
+2. **`make_range` takes an `int` receiver.** `n.make_range(3)` gives `[0, 1, 2]`, where the table above
+   says an `int` receiver is a loud error.
+3. **Error shape.** A wrong receiver type gives the row's type error (`type error: expected array, got
+   int`), not `` `.{name}(…)` on a {type} ``. A name with no row keeps that shape.
 
 **Rule.** The shared implementation behind `CALL_MEMBER`
 (`cosm_rt::call_member`, extended in place — not a second copy per VM)
