@@ -206,14 +206,42 @@ pub fn module_surface(source: &str) -> Result<ModuleSurface, String> {
 
 /// The surface of every `.crush` file at `path`: the file itself (it must
 /// have the `.crush` extension), or every `.crush` file under the directory
-/// (recursively, sorted by path; hidden directories, `target/` and
-/// symlinked directories are skipped, so a link loop cannot recur and no
-/// file is listed twice). A file that cannot be read or parsed comes back
-/// as its error. An empty result means there is no `.crush` file.
+/// (recursively, sorted by path). A file that cannot be read or parsed comes
+/// back as its error. An empty result means there is no `.crush` file.
+///
+/// The walk follows what an import can follow (it may still list a file no
+/// import can name, such as `my-lib/x.crush`). The resolver looks a module
+/// up by path (`import a.b` is `<root>/a/b.crush`) and so goes through a
+/// symlinked directory; the walk follows one too. Each directory is walked
+/// once, by its canonical path: a link loop ends there, and a directory
+/// that two paths reach is listed under one of them (the real path, when
+/// the link and its target sit in the same directory). The two skipped
+/// names are not symmetrical:
+///
+/// - a **hidden** directory (`.name`) is skipped because no import can name
+///   it: a module path is made of identifiers, and none starts with `.`. To
+///   list one, pass it as `path`: the root is never filtered.
+/// - **`target/`** is skipped as build output, although `import target.x`
+///   does resolve; a module kept in a directory of that name is not seen.
 pub fn surfaces(path: &Path) -> std::io::Result<Vec<(PathBuf, Result<ModuleSurface, String>)>> {
+    surfaces_skipping(path, &[])
+}
+
+/// [`surfaces`], leaving out the directories of `path` itself (not deeper
+/// ones) whose name is in `skip_top_level`, a real directory or a link.
+///
+/// They are left out **of the walk**, not filtered from its result. The
+/// difference matters because each directory is walked once: were `tests/`
+/// walked and dropped afterwards, a link `tests/lib -> ../lib` would list
+/// the real `lib/` under `tests/` only, and dropping `tests/` would drop an
+/// importable directory with it.
+pub fn surfaces_skipping(
+    path: &Path,
+    skip_top_level: &[&str],
+) -> std::io::Result<Vec<(PathBuf, Result<ModuleSurface, String>)>> {
     let mut files = Vec::new();
     if path.is_dir() {
-        collect_crush_files(path, &mut files)?;
+        collect_crush_files(path, skip_top_level, &mut BTreeSet::new(), &mut files)?;
         files.sort();
     } else if path.extension().is_some_and(|e| e == "crush") {
         files.push(path.to_path_buf());
@@ -239,23 +267,55 @@ pub fn surfaces(path: &Path) -> std::io::Result<Vec<(PathBuf, Result<ModuleSurfa
         .collect())
 }
 
-fn collect_crush_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
+fn collect_crush_files(
+    dir: &Path,
+    skip: &[&str],
+    visited: &mut BTreeSet<PathBuf>,
+    out: &mut Vec<PathBuf>,
+) -> std::io::Result<()> {
+    // The walk can leave the tree through a link, so an error names the
+    // directory it is about, not just the root the caller passed.
+    let named =
+        |e: std::io::Error| std::io::Error::new(e.kind(), format!("{}: {e}", dir.display()));
+    // One walk per real directory: this is what ends a symlink loop, and
+    // what keeps a directory reached by two paths from being listed twice.
+    if !visited.insert(std::fs::canonicalize(dir).map_err(named)?) {
+        return Ok(());
+    }
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(named)?
+        .map(|e| e.map(|e| e.path()))
+        .collect::<std::io::Result<_>>()
+        .map_err(named)?;
+    entries.sort();
+    let mut linked_dirs = Vec::new();
+    for path in entries {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        // `file_type` does not follow symlinks: a symlinked directory is not
-        // walked; a symlink to a `.crush` file is listed like a file.
-        let kind = entry.file_type()?;
+        // `symlink_metadata` is the entry itself; `metadata` follows a link,
+        // as the resolver's `is_file` does. A dangling link, or a link that
+        // loops on itself, has no `metadata`: the resolver cannot load it
+        // either, so it is skipped.
+        let is_link = std::fs::symlink_metadata(&path)?.file_type().is_symlink();
+        let Ok(kind) = std::fs::metadata(&path).map(|m| m.file_type()) else {
+            continue;
+        };
         if kind.is_dir() {
-            if !name.starts_with('.') && name != "target" {
-                collect_crush_files(&path, out)?;
+            if name.starts_with('.') || name == "target" || skip.contains(&name) {
+                continue;
             }
-        } else if path.extension().is_some_and(|e| e == "crush")
-            && (kind.is_file() || path.is_file())
-        {
+            if is_link {
+                linked_dirs.push(path);
+            } else {
+                collect_crush_files(&path, &[], visited, out)?;
+            }
+        } else if kind.is_file() && path.extension().is_some_and(|e| e == "crush") {
             out.push(path);
         }
+    }
+    // Real directories first, so a directory and a link to it that sit side
+    // by side are listed under the real path.
+    for path in linked_dirs {
+        collect_crush_files(&path, &[], visited, out)?;
     }
     Ok(())
 }

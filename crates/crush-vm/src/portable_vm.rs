@@ -60,7 +60,7 @@
 use crate::bytecode::{Program, instruction_size};
 use crate::host::HostCaps;
 use crate::scheduler::{
-    need_array, need_array_index, need_list, need_set, need_tuple, need_vector,
+    array_get, need_array, need_array_index, need_list, need_set, need_tuple, need_vector,
 };
 use crate::vm::{Quotas, Value, VmError, VmResult};
 
@@ -1467,11 +1467,8 @@ impl PortableVm {
                         }
                     }
                     Value::Array(arr_rc) => {
-                        let idx = need_array_index(&idx_v)?;
-                        let arr = arr_rc.borrow();
-                        let len = arr.len();
-                        let actual = wrap_index(idx, len)?;
-                        self.push(arr[actual].clone());
+                        let v = array_get(&arr_rc.borrow(), &idx_v)?;
+                        self.push(v);
                     }
                     Value::Str(s) => {
                         let idx = need_array_index(&idx_v)?;
@@ -2593,15 +2590,8 @@ impl PortableVm {
                         });
                     }
                     match &args[0] {
-                        Value::Array(elems) => {
-                            let idx = match &args[1] {
-                                Value::Int(i) => *i as usize,
-                                _ => 0,
-                            };
-                            Ok(Some(
-                                elems.borrow().get(idx).cloned().unwrap_or(Value::Null),
-                            ))
-                        }
+                        // #446: the `index` op's contract, through the same helper.
+                        Value::Array(elems) => Ok(Some(array_get(&elems.borrow(), &args[1])?)),
                         Value::Map(map) => {
                             let key = crate::map_ops::map_key_string(&args[1])?;
                             Ok(Some(crate::map_ops::map_get(&map.borrow(), &key)?))

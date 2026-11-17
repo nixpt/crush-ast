@@ -124,7 +124,8 @@ struct Cli {
     deny_legacy_visibility: bool,
 
     /// Don't compile: list the exported surface of INPUT, a `.crush` file or
-    /// a directory (every `.crush` file under it). For each module: its
+    /// a directory (every `.crush` file under it; symlinked directories are
+    /// followed, hidden directories and `target/` skipped). For each module: its
     /// `pub` names and the names its `pub` keeps private, or "legacy: no
     /// pub, everything public". Needs no other package to import it.
     #[arg(long = "list-exports")]

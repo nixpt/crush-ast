@@ -397,3 +397,99 @@ fn json_mode_keeps_the_gate_errors_off_stdout() {
     );
     assert!(stderr(&out).contains("[E-VIS01]"), "{}", text(&out));
 }
+
+/// The package gate walks what the resolver sees (#545 review): an import
+/// goes through a symlinked `src/vendor/`, so a legacy module behind the
+/// link fails the gate like one in a real directory.
+#[cfg(unix)]
+#[test]
+fn the_package_gate_follows_a_symlinked_source_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = tmp.path().join("geo");
+    write(
+        &lib,
+        &[("capsule.toml", LIB_TOML), ("src/geo.crush", PUB_GEO)],
+    );
+    write(tmp.path(), &[("shared/old.crush", LEGACY_GEO)]);
+    let ok = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
+    assert!(ok.status.success(), "no link yet: {}", text(&ok));
+
+    std::os::unix::fs::symlink("../../shared", lib.join("src/vendor")).unwrap();
+    // A loop beside it does not hang the walk.
+    std::os::unix::fs::symlink("..", lib.join("src/up")).unwrap();
+    let out = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("vendor/old.crush: legacy: no pub, everything public") && err.contains("area"),
+        "lists the module behind the link: {err}"
+    );
+    assert!(
+        err.contains("1 module(s) of package `geo`"),
+        "and only that one: {err}"
+    );
+}
+
+const ROOT_LIB_TOML: &str = "[capsule]\nname = \"geo\"\nversion = \"0.1.0\"\nentry = \"geo.crush\"\nlanguage = \"crush\"\ncategory = \"library\"\n";
+
+/// With the entry at the package root, `tests/` and `examples/` are left
+/// out of the walk itself. Each directory is walked once, so if `tests/`
+/// were walked and dropped afterwards, `tests/lib -> ../zlib` would list
+/// the real `zlib/` under `tests/` only and take it out of the gate.
+#[cfg(unix)]
+#[test]
+fn a_link_inside_tests_cannot_hide_a_source_directory_from_the_gate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = tmp.path().join("geo");
+    write(
+        &lib,
+        &[
+            ("capsule.toml", ROOT_LIB_TOML),
+            ("geo.crush", PUB_GEO),
+            ("zlib/old.crush", LEGACY_GEO),
+            ("tests/t.crush", LEGACY_GEO),
+            ("examples/e.crush", LEGACY_GEO),
+        ],
+    );
+    let fails = |when: &str| {
+        let out = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
+        assert!(!out.status.success(), "{when}: {}", text(&out));
+        let err = stderr(&out);
+        assert!(err.contains("zlib/old.crush: legacy"), "{when}: {err}");
+        assert!(
+            err.contains("1 module(s) of package `geo`"),
+            "{when}: {err}"
+        );
+    };
+    fails("no link");
+    std::os::unix::fs::symlink("../zlib", lib.join("tests/lib")).unwrap();
+    std::os::unix::fs::symlink("../zlib", lib.join("examples/lib")).unwrap();
+    fails("links from tests/ and examples/ to zlib/");
+}
+
+/// The other direction: a link from the root into `tests/` is importable
+/// under the link's name (`import lib.old`), so it is gated there.
+#[cfg(unix)]
+#[test]
+fn a_link_from_the_root_into_tests_is_gated_under_the_links_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = tmp.path().join("geo");
+    write(
+        &lib,
+        &[
+            ("capsule.toml", ROOT_LIB_TOML),
+            ("geo.crush", PUB_GEO),
+            ("tests/real/old.crush", LEGACY_GEO),
+        ],
+    );
+    let ok = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
+    assert!(ok.status.success(), "tests/ is exempt: {}", text(&ok));
+    std::os::unix::fs::symlink("tests/real", lib.join("lib")).unwrap();
+    let out = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    assert!(
+        stderr(&out).contains("lib/old.crush: legacy"),
+        "{}",
+        text(&out)
+    );
+}

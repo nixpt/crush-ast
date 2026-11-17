@@ -18,6 +18,42 @@ add its entry after yours.
   comment saying what `pub` does. A new library is no longer a legacy module (no `pub`: everything
   public): it passes `crush-pkg build --deny-legacy-visibility`, and its scaffolded test compiles
   with no `N-VIS01` note. Existing packages are not touched.
+- A type annotation can now name a container: `Array`, `List`, `Set` and `Map` are accepted
+  wherever a type is, with an `Any` element type (only these capitalised names: lowercase `array`,
+  `list`, `set`, `map` are still "Unknown type"), so
+  `cells: Array` in a struct field, a parameter or a `let` compiles instead of "Unknown type:
+  Array" (#504). They are checked like the scalar names are: by the compiler, for `let` and call
+  arguments (`fn f(x: Array)` refuses `f(5)`); engines never check annotations, and struct field
+  types are not checked at construction. A declared struct or trait with one of these names keeps its
+  old result, so no existing program changes meaning. `Array<Int>`, `Map<String, Int>` and `[Int]` are
+  still not syntax, but the parse error now says that container element types have no annotation
+  syntax yet and to write the bare name (it used to be a plain parse error such as `Expected } but found <`); any other `Name<...>` says type arguments have no annotation syntax. `Tuple`,
+  `Vector` have no bare spelling. The kind table needs no format change: a bare container field
+  is `{"Array":"Any"}` etc., a shape COSM already has.
+- **Behaviour change:** `import` inside `fn main` is now refused, like in any other function:
+  `` `import` inside `fn main`: imports go at the top level of a file `` (with the file, line and
+  column). It was accepted by accident: a file's top-level statements are merged into `main`, so the
+  placement check skipped `main` and could not tell the two apart. The same now holds for an
+  imported module's `fn main` (its `main` is ignored, so the import used to vanish unseen) and for
+  any other function of a module (it got the generic "not resolved" text). Migration: move the
+  import to the top of the file (#535).
+- fix(vm): an explicit `arr_get(a, i)` call on the scheduler VM and PortableVm now behaves like
+  `a[i]` (#446). A negative index counts from the end (`arr_get([1, 2, 3], -1)` is `3`; it was
+  `null`). Out of range raises `array index out of range: 9 (len 3)` (it was `null`). A non-Int
+  index raises `array index must be int, got str` (it read slot 0, so `arr_get(a, "x")` was
+  `a[0]`). Both errors are catchable. The capability and the `ARR_GET` opcode now share one
+  helper on both engines. `arr_get` on a map is unchanged.
+- fix(fastvm): an out-of-range index read on FastVM now raises the same error as the scheduler VM
+  and PortableVm instead of returning `null` (#445). `a[5]` on a 3-element array, `"abc"[9]`
+  and `a[-4]` raise `array index out of range: 5 (len 3)` (and so on); a non-Int index
+  (`a["x"]`, `a[1.5]`) raises `array index must be int, got str`; indexing something that is
+  not an array, map or string (`5[0]`) raises `type error: expected array, map, or string, got
+  int`. FastVM's explicit `arr_get(a, i)` takes the same path. Each error is catchable with
+  `try`/`catch` on FastVM as on the VMs. An out-of-range or non-Int FastVM *write* (`a[5] = 1`)
+  now raises the same catchable errors with the same text; it used to be an uncatchable
+  `Execution error: array index out of range: …` / `Type mismatch`. A FastVM program that read
+  past the end and got `null` now stops with an error (or enters its `catch`). JIT and AOT are
+  unchanged.
 - **Format:** owner ids, COSM `0.2.0` (V3b, #522). A kind may record the package that declares
   it (`package`, and with it `module`), and the COSM module records the package of each function
   outside the root package (`fn_packages`). **When:** only when a program uses code from another
@@ -31,6 +67,17 @@ add its entry after yours.
   takes any `1.x`. Recorded only; member visibility (#525) will enforce it. `--emit cast` of a
   program that imports a module with `struct` / `impl` / `trait` now shows `module` and
   `module_prefix` in those declarations' meta, as functions already showed `module`.
+- fix(visibility): the directory gate follows symlinked directories (#545 review). `crushc
+  --list-exports [--deny-legacy-visibility] DIR` and the package check of `crush-pkg build
+  --deny-legacy-visibility` skipped a symlinked directory, while `import a.b` goes through one,
+  so a legacy module behind a link was importable and not gated. The walk now follows the link.
+  Each directory is walked once by its canonical path: a link loop ends, and a directory two
+  paths reach is listed once. Hidden directories stay skipped (no import can name one; pass it
+  as the path to list it), and so does `target/`. A package or directory that links to legacy
+  modules now fails the gate where it passed before. For a package whose entry is at its root,
+  `tests/` and `examples/` are left out of the walk itself (API:
+  `visibility_check::surfaces_skipping`), so a link inside them cannot hide a source directory,
+  and a link into them from outside is gated. A read error names the directory that failed.
 - Visibility, the gate for stage 2 (V1.5, #539). `crushc --check --deny-legacy-visibility` fails
   (exit 1) while an exported function relies on the legacy rule: `W-VIS01` becomes an error, and a
   module with no `pub` whose functions another package uses is one `E-VIS01` error naming every

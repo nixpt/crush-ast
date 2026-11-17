@@ -795,6 +795,24 @@ impl Parser {
         if self.module_mode {
             self.toplevel = std::mem::take(&mut statements);
         }
+        // The merge below puts the file's top-level imports into `main`'s body, where they
+        // cannot be told from an `import` written INSIDE `fn main`. Mark the latter now,
+        // while the two are still apart, so the import resolver refuses them like an
+        // import in any other function (CRUSH-535).
+        if let Some(existing) = functions.get_mut("main") {
+            for stmt in &mut existing.body {
+                if let Statement::Import {
+                    import: ImportStatement::CrushModule { .. },
+                    meta,
+                } = stmt
+                {
+                    meta.insert(
+                        crate::import_system::IN_FN_MAIN.to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+                }
+            }
+        }
         if !statements.is_empty() {
             match functions.get_mut("main") {
                 Some(existing) => {
@@ -931,8 +949,11 @@ impl Parser {
         // Optional return type (not stored in AST Function currently)
         if matches!(self.peek(), Token::Arrow(_)) {
             self.advance();
-            if let Token::Ident(_, _) = self.peek() {
+            self.refuse_container_syntax(None)?;
+            if let Token::Ident(n, _) = self.peek() {
+                let name = n.clone();
                 self.advance();
+                self.refuse_container_syntax(Some(&name))?;
             }
         }
 
@@ -1017,10 +1038,12 @@ impl Parser {
     }
 
     fn parse_cast_type(&mut self) -> Result<CastType, ()> {
+        self.refuse_container_syntax(None)?;
         match self.peek() {
             Token::Ident(t, _) => {
                 let name = t.clone();
                 self.advance();
+                self.refuse_container_syntax(Some(&name))?;
                 match name.as_str() {
                     "Int" | "int" | "i64" => Ok(CastType::Int),
                     "Float" | "float" | "f64" => Ok(CastType::Float),
@@ -1028,6 +1051,9 @@ impl Parser {
                     "Bool" | "bool" | "boolean" => Ok(CastType::Bool),
                     "Null" | "null" | "unit" => Ok(CastType::Null),
                     "Any" | "any" => Ok(CastType::Any),
+                    // `Array`, `List`, `Set`, `Map` stay a name here: a declared
+                    // struct of that name wins, and only the semantic pass knows
+                    // the declared names (#504).
                     _ => Ok(CastType::TypeRef(name)),
                 }
             }
@@ -1036,6 +1062,37 @@ impl Parser {
                 Ok(CastType::Any)
             }
         }
+    }
+
+    /// Container element types have no annotation syntax yet (#504): `Array<Int>`,
+    /// `Map<String, Int>` and `[Int]` are refused with a message that says so,
+    /// instead of the bare "Expected } but found <". Called where a type is
+    /// parsed: `after` is the type name just read, `None` at the start of a type.
+    /// Neither spelling parsed before (the next token was always an error), so no
+    /// program that parses today changes.
+    fn refuse_container_syntax(&mut self, after: Option<&str>) -> Result<(), ()> {
+        let (line, col) = self.get_location(self.peek());
+        let msg = match (after, self.peek()) {
+            (Some(name), Token::Lt(_)) if crate::types::bare_container(name).is_some() => {
+                format!(
+                    "container element types have no annotation syntax yet, so `{name}<...>` \
+                     cannot be written. Write the bare `{name}` (elements are then unchecked) \
+                     or leave the annotation off"
+                )
+            }
+            (Some(name), Token::Lt(_)) => format!(
+                "type arguments have no annotation syntax yet, so `{name}<...>` cannot be \
+                 written. Write the plain name `{name}` or leave the annotation off"
+            ),
+            (None, Token::LBracket(_)) => "container element types have no annotation syntax \
+                 yet, so `[T]` cannot be written. Write the bare `Array` (elements are then \
+                 unchecked) or leave the annotation off"
+                .to_string(),
+            _ => return Ok(()),
+        };
+        self.errors
+            .push(ParseError::UnexpectedToken { line, col, msg });
+        Err(())
     }
 
     /// Parse a block of statements with error recovery
@@ -1563,8 +1620,11 @@ impl Parser {
         // Optional return type — not kept in the CAST, as for `fn`.
         if matches!(self.peek(), Token::Arrow(_)) {
             self.advance();
-            if let Token::Ident(_, _) = self.peek() {
+            self.refuse_container_syntax(None)?;
+            if let Token::Ident(n, _) = self.peek() {
+                let name = n.clone();
                 self.advance();
+                self.refuse_container_syntax(Some(&name))?;
             }
         }
         let params: Vec<(String, CastType)> =
