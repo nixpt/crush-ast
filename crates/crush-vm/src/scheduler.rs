@@ -1335,11 +1335,8 @@ fn execute_one(
                     }
                 },
                 Value::Array(arr_rc) => {
-                    let idx = need_array_index(&idx_v)?;
-                    let arr = arr_rc.borrow();
-                    let len = arr.len();
-                    let actual = wrap_index(idx, len)?;
-                    push!(arr[actual].clone());
+                    let v = array_get(&arr_rc.borrow(), &idx_v)?;
+                    push!(v);
                 }
                 Value::Str(s) => {
                     let idx = need_array_index(&idx_v)?;
@@ -2318,6 +2315,16 @@ pub(crate) fn need_array_index(v: &Value) -> Result<i64, VmError> {
     }
 }
 
+/// `arr[idx_v]` with the `index` op's contract: a negative index counts from
+/// the end, out of range is `ArrayBounds`, a non-Int index is `BadIndex`.
+/// Shared by `ARR_GET` and the `arr_get` capability on both CVM1 engines
+/// (#446: the capability used to read slot 0 for a non-Int index and `null`
+/// for a negative or out-of-range one).
+pub(crate) fn array_get(arr: &[Value], idx_v: &Value) -> Result<Value, VmError> {
+    let idx = need_array_index(idx_v)?;
+    Ok(arr[wrap_index(idx, arr.len())?].clone())
+}
+
 fn wrap_index(idx: i64, len: usize) -> Result<usize, VmError> {
     let ilen = len as i64;
     if idx >= -ilen && idx < ilen {
@@ -2734,15 +2741,8 @@ fn dispatch_cap(
                     });
                 }
                 match &args[0] {
-                    Value::Array(elems) => {
-                        let idx = match &args[1] {
-                            Value::Int(i) => *i as usize,
-                            _ => 0,
-                        };
-                        Ok(Some(
-                            elems.borrow().get(idx).cloned().unwrap_or(Value::Null),
-                        ))
-                    }
+                    // #446: the `index` op's contract, through the same helper.
+                    Value::Array(elems) => Ok(Some(array_get(&elems.borrow(), &args[1])?)),
                     Value::Map(map) => {
                         let key = crate::map_ops::map_key_string(&args[1])?;
                         Ok(Some(crate::map_ops::map_get(&map.borrow(), &key)?))
