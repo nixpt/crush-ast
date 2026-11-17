@@ -46,6 +46,7 @@ pub mod rust_debug_core;
 pub mod rust_methods;
 pub mod rust_methods_core;
 pub mod scheduler;
+pub mod receiver_builtins;
 pub mod seq;
 pub mod str_len;
 pub mod value;

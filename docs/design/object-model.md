@@ -657,6 +657,12 @@ print(t.run(1));                // loud: `run` is not callable
 
 #### 9.4 The runtime fallback: `CALL_MEMBER` on a non-Record
 
+*Implemented in part (#435):* the built-in table is `crates/crush-vm/src/receiver_builtins.rs`, with the
+receiver calls the frontend already lowers as built-ins (`push`, `append`, `pop`, `arr_get`, `arr_set`,
+`arr_slice`, `make_range`). The capability dispatch of both CVM1 VMs calls the same functions. It is
+keyed by name, not by (type, name, arity): each row type-checks its receiver and errors loudly on a wrong
+one. `parallel_map` calls back into user code, so it is not a row and stays a loud error.
+
 **Rule.** The shared implementation behind `CALL_MEMBER`
 (`cosm_rt::call_member`, extended in place — not a second copy per VM)
 dispatches on the receiver value, in §9.2's order:
