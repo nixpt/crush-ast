@@ -117,6 +117,14 @@ fn the_gate_fails_a_library_with_a_legacy_module_nobody_imports() {
     let tmp = tempfile::tempdir().unwrap();
     let lib = tmp.path().join("my-lib");
     crush_pkg::manifest::scaffold_lib_package(&lib, "my-lib").unwrap();
+    // The scaffold itself has `pub` (see the test below); make it legacy.
+    write(
+        &lib,
+        &[(
+            "src/lib.crush",
+            "fn greet(who) {\n    return \"hello, \" + who\n}\n",
+        )],
+    );
     let plain = crush_pkg(&lib, &["build"]);
     assert!(
         plain.status.success(),
@@ -141,6 +149,27 @@ fn the_gate_fails_a_library_with_a_legacy_module_nobody_imports() {
     );
     let ok = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
     assert!(ok.status.success(), "{}", text(&ok));
+}
+
+#[test]
+fn a_freshly_scaffolded_library_passes_the_gate_and_its_test_compiles_quietly() {
+    // V2 (#520): `crush-pkg new --lib` marks its export `pub`, so a new
+    // library is not a legacy module from its first build.
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = tmp.path().join("my-lib");
+    let manifest = crush_pkg::manifest::scaffold_lib_package(&lib, "my-lib").unwrap();
+    let src = std::fs::read_to_string(lib.join("src/lib.crush")).unwrap();
+    assert!(src.contains("\npub fn greet(who)"), "{src}");
+    let out = crush_pkg(&lib, &["build", "--deny-legacy-visibility"]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(!stderr(&out).contains("-VIS0"), "{}", text(&out));
+    // The scaffolded test imports `greet` from another package directory
+    // (tests/ -> src/): no note and no warning, since `greet` is `pub`.
+    let built = PackageBuilder::new(manifest, lib.clone())
+        .quiet(true)
+        .build_file(&lib.join("tests/greet.crush"));
+    let built = built.unwrap_or_else(|e| panic!("the scaffolded test compiles: {e}"));
+    assert!(built.visibility.is_empty(), "{:?}", built.visibility);
 }
 
 #[test]

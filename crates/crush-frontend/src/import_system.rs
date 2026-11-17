@@ -57,8 +57,9 @@
 //!   code, so there is no hidden init order. `struct` / `impl` / `trait` names
 //!   are **not** mangled: Kinds stay one global namespace, and the same Kind
 //!   name declared twice is the usual duplicate-declaration error.
-//! - **Graph.** Each file is loaded once per compile (a diamond shares one
-//!   copy); a cycle is a compile error that shows the cycle; nesting deeper
+//! - **Graph.** Each file is loaded once per compile (keyed by its canonical
+//!   path, so a diamond shares one copy, and so do two routes to one file
+//!   through a symlink); a cycle is a compile error that shows the cycle; nesting deeper
 //!   than [`ImportOptions::max_depth`] is a compile error.
 //! - **Visibility** (stage 1, V1 #519; `docs/design/visibility-and-packages.md`
 //!   §1). Every file belongs to one **package**: its canonical path is
@@ -66,10 +67,23 @@
 //!   wins (on a tie, the first listed): the entry file's directory and
 //!   [`ImportOptions::home_package`]'s root (both the root package), each
 //!   other [`ImportOptions::packages`] root, each search directory (`-L`,
-//!   then `CRUSH_PATH`). A file under no root, or an entry with no real file
-//!   (the REPL), is in the root package. The file decides, not the route, so
-//!   a diamond or a file reached both relatively and through `-L` has one
-//!   package. Merged functions record it in `meta["package"]` (`root`,
+//!   then `CRUSH_PATH`). The file decides, not the route, so a diamond, a
+//!   file reached both relatively and through `-L`, or a file reached
+//!   through a symlink from another package has one package: the one it
+//!   really lives in. A file whose canonical path is under **no** root is
+//!   matched by its **found path** instead (#552): the directory that
+//!   resolved the import, made canonical (the search directory, the package
+//!   root, or the importing file's own found directory), then the module's
+//!   segments as written, so a symlink below that directory is not
+//!   followed. A module reached through a link inside `-L lib` that points
+//!   outside every root is therefore in the `lib` package (it used to fall
+//!   into the root package, and its findings vanished). Only here can the
+//!   route matter: if two packages each hold a link to a file under no
+//!   root, the file is loaded once and takes the package of the **first**
+//!   import that loads it (imports resolve in source order, depth first),
+//!   and a use from the other package, its own link included, is
+//!   cross-package. Under no root either way, or an entry with no real file
+//!   (the REPL): the root package. Merged functions record it in `meta["package"]` (`root`,
 //!   `pkg:<name>` or `dir:<directory>`). The parser records `pub` as
 //!   `meta["pub"]` on `fn`, `struct` and `trait`. A **cross-package** use of
 //!   a module function that is not `pub` (the call `q.f(…)`, the value
@@ -352,7 +366,15 @@ pub fn resolve_imports_reporting(
         resolver.note_kind(stmt, &origin_display)?;
     }
     let root_dir = parent_dir(origin);
-    let root_package = resolver.package_of(&canonical_file(origin));
+    // The entry's found directory, for the found paths of what it imports.
+    let root_found_dir = canonical_dir(&root_dir);
+    let root_package = resolver.package_of(
+        &canonical_file(origin),
+        &match origin.file_name() {
+            Some(name) => root_found_dir.join(name),
+            None => root_found_dir.clone(),
+        },
+    );
     let root_names: BTreeSet<String> = program.functions.keys().cloned().collect();
     let root_fn_lines: HashMap<String, Option<(usize, usize)>> = program
         .functions
@@ -361,6 +383,7 @@ pub fn resolve_imports_reporting(
         .collect();
     let scope = resolver.bind_imports(
         &root_dir,
+        &root_found_dir,
         &origin_display,
         &imports,
         None,
@@ -483,21 +506,43 @@ struct Resolver<'a> {
 }
 
 impl Resolver<'_> {
-    /// The package of the file at `canonical` (V1, #519): the longest root
-    /// that contains it wins; on a tie, the root listed first (the root
-    /// package, then named packages, then search directories). A file under
-    /// no root is in the root package.
-    fn package_of(&self, canonical: &Path) -> usize {
+    /// The package of the file at `canonical`, which an import found at
+    /// `found` (V1, #519; #552).
+    ///
+    /// Where the file really is decides, when that is inside a known root
+    /// ([`Resolver::root_containing`] of `canonical`): the file decides, not
+    /// the route, so every route to it gives the same package.
+    ///
+    /// A file that is really under **no** root takes the package of the path
+    /// it was found through instead. The found path is the canonical
+    /// directory that resolved the import (a search directory, a package
+    /// root, or the importing file's own found directory), then the module's
+    /// segments as written, with no symlink below that directory followed
+    /// ([`Resolver::find`]). So a module reached through a symlink inside
+    /// `-L lib` that points outside every root is in the `lib` package. It
+    /// used to fall into the root package, which hid every finding about it.
+    ///
+    /// Under no root either way, it is in the root package.
+    fn package_of(&self, canonical: &Path, found: &Path) -> usize {
+        self.root_containing(canonical)
+            .or_else(|| self.root_containing(found))
+            .unwrap_or(ROOT_PACKAGE)
+    }
+
+    /// The package of the longest root that contains `path`; on a tie, the
+    /// root listed first (the root package, then named packages, then search
+    /// directories). `None` when no root contains it.
+    fn root_containing(&self, path: &Path) -> Option<usize> {
         let mut best: Option<(usize, usize)> = None;
         for (dir, pkg) in &self.roots {
-            if canonical.starts_with(dir) {
+            if path.starts_with(dir) {
                 let len = dir.components().count();
                 if best.is_none_or(|(l, _)| len > l) {
                     best = Some((len, *pkg));
                 }
             }
         }
-        best.map_or(ROOT_PACKAGE, |(_, p)| p)
+        best.map(|(_, p)| p)
     }
 
     /// The visibility findings for the uses recorded during resolution. See
@@ -662,28 +707,36 @@ impl Resolver<'_> {
 
     /// The file `import module_path` (written in `file`, in `dir`) names: in
     /// a package when the first segment is a package name, else on the
-    /// search path.
+    /// search path. Returns the file to read and its found path, which
+    /// decides its package ([`Resolver::package_of`]); `found_dir` is the
+    /// found directory of the importing file.
     fn find(
         &self,
         dir: &Path,
+        found_dir: &Path,
         file: &str,
         module_path: &str,
         at: Option<(usize, usize)>,
-    ) -> Result<PathBuf> {
+    ) -> Result<(PathBuf, PathBuf)> {
         let mut segs = module_path.split('.');
         let first = segs.next().unwrap_or_default();
         if let Some(pkg) = self.opts.packages.iter().find(|p| p.name == first) {
             let rest: Vec<&str> = segs.collect();
-            let found = if rest.is_empty() {
-                pkg.entry.clone()
+            let (found, route) = if rest.is_empty() {
+                let entry_dir = canonical_dir(&parent_dir(&pkg.entry));
+                let route = match pkg.entry.file_name() {
+                    Some(name) => entry_dir.join(name),
+                    None => entry_dir,
+                };
+                (pkg.entry.clone(), route)
             } else {
-                let mut p = pkg.root.clone();
-                p.extend(&rest);
-                p.set_extension("crush");
-                p
+                let mut rel = PathBuf::new();
+                rel.extend(&rest);
+                rel.set_extension("crush");
+                (pkg.root.join(&rel), canonical_dir(&pkg.root).join(&rel))
             };
             if found.is_file() {
-                return Ok(found);
+                return Ok((found, route));
             }
             return Err(import_error(
                 file,
@@ -702,8 +755,20 @@ impl Resolver<'_> {
         rel.set_extension("crush");
         let mut searched = vec![dir.to_path_buf()];
         searched.extend(self.opts.search_paths.iter().cloned());
-        if let Some(found) = searched.iter().map(|d| d.join(&rel)).find(|p| p.is_file()) {
-            return Ok(found);
+        if let Some((i, found)) = searched
+            .iter()
+            .map(|d| d.join(&rel))
+            .enumerate()
+            .find(|(_, p)| p.is_file())
+        {
+            // Beside the importer the route continues the importer's own;
+            // on the search path it starts at that directory.
+            let route = if i == 0 {
+                found_dir.join(&rel)
+            } else {
+                canonical_dir(&searched[i]).join(&rel)
+            };
+            return Ok((found, route));
         }
         let dirs: Vec<String> = searched
             .iter()
@@ -727,11 +792,15 @@ impl Resolver<'_> {
     }
 
     /// Resolve the `imports` of one file (in `dir`, shown as `file`) and build
-    /// its scope. `own` is the module the file is; `local` names a definition
-    /// of the importing file that a selective name would collide with.
+    /// its scope. `found_dir` is the file's found directory
+    /// ([`Resolver::package_of`]). `own` is the module the file is; `local`
+    /// names a definition of the importing file that a selective name would
+    /// collide with.
+    #[allow(clippy::too_many_arguments)]
     fn bind_imports(
         &mut self,
         dir: &Path,
+        found_dir: &Path,
         file: &str,
         imports: &[Statement],
         own: Option<usize>,
@@ -761,7 +830,7 @@ impl Resolver<'_> {
             };
             let at = span(meta);
             let line = at.map_or(0, |(l, _)| l);
-            let idx = self.load(dir, file, module_path, at)?;
+            let idx = self.load(dir, found_dir, file, module_path, at)?;
             let qualifier = match (alias, selective.is_empty()) {
                 (Some(a), _) => Some(a.clone()),
                 (None, true) => module_path.rsplit('.').next().map(str::to_string),
@@ -839,15 +908,22 @@ impl Resolver<'_> {
     }
 
     /// Find, load and merge the module `module_path` imported from `dir`
-    /// (file `file`, at `at`); its index. A file already loaded is reused.
+    /// (file `file`, at `at`); its index. A file already loaded is reused,
+    /// keyed by its canonical path. Its package is decided when it is first
+    /// loaded ([`Resolver::package_of`]). That depends on the route only for
+    /// a file under no root: if two packages each hold a symlink to such a
+    /// file, it takes the package of the first import that loads it (imports
+    /// resolve in source order, depth first), and a later import by the
+    /// other route gets the module as loaded, package included.
     fn load(
         &mut self,
         dir: &Path,
+        found_dir: &Path,
         file: &str,
         module_path: &str,
         at: Option<(usize, usize)>,
     ) -> Result<usize> {
-        let found = self.find(dir, file, module_path, at)?;
+        let (found, route) = self.find(dir, found_dir, file, module_path, at)?;
         let canonical = std::fs::canonicalize(&found).unwrap_or_else(|_| found.clone());
         if let Some(&idx) = self.by_file.get(&canonical) {
             return Ok(idx);
@@ -918,7 +994,7 @@ impl Resolver<'_> {
         }
         self.prefixes.insert(prefix.clone());
         let idx = self.modules.len();
-        let package = self.package_of(&canonical);
+        let package = self.package_of(&canonical, &route);
         let pub_functions: BTreeSet<String> = parsed
             .functions
             .iter()
@@ -977,6 +1053,7 @@ impl Resolver<'_> {
         let own_names = self.modules[idx].functions.clone();
         let scope = self.bind_imports(
             &module_dir,
+            &parent_dir(&route),
             &display,
             &imports,
             Some(idx),
@@ -1414,17 +1491,22 @@ fn canonical_file(path: &Path) -> PathBuf {
     if let Ok(c) = std::fs::canonicalize(path) {
         return c;
     }
-    let dir = parent_dir(path);
-    let dir = std::fs::canonicalize(if dir.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        &dir
-    })
-    .unwrap_or(dir);
+    let dir = canonical_dir(&parent_dir(path));
     match path.file_name() {
         Some(name) => dir.join(name),
         None => dir,
     }
+}
+
+/// `dir` made canonical (`.` for the empty path); as given when it cannot
+/// be (the REPL's directory may not exist).
+fn canonical_dir(dir: &Path) -> PathBuf {
+    std::fs::canonicalize(if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    })
+    .unwrap_or_else(|_| dir.to_path_buf())
 }
 
 /// `" (it defines: a, b, c)"`, for not-found messages.

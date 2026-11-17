@@ -67,7 +67,7 @@ $ crush-run run examples/crush/imports/main.crush
   (#515). A redeclaration inside one file keeps its old behaviour. Per-module Kinds are planned (#523,
   `docs/design/visibility-and-packages.md` §3).
 - **Graph.** Each file is loaded once per compile (keyed by canonical path, so a diamond shares one
-  copy); a cycle is a compile error showing it (`ca.crush → cb.crush → ca.crush`); nesting is capped at
+  copy, and so do two routes to one file through a symlink); a cycle is a compile error showing it (`ca.crush → cb.crush → ca.crush`); nesting is capped at
   `ImportOptions::max_depth` (64).
 - **Placement.** Imports go at the top level of a file. One inside a function (`fn main` included) or block is refused.
 
@@ -80,7 +80,20 @@ exports). Stage 1 warns; it changes no program's behaviour.
   struct`) set `meta["pub"]` on the CAST node. `pub` is contextual, not a keyword: a variable, field or
   function named `pub` keeps working.
 - **Package = a property of the file.** The file's canonical path is matched against the known roots,
-  and the longest root containing it wins: the entry file's directory (the **root package**), each
+  and the longest root containing it wins, so every route to a file gives the same package (a diamond,
+  a file reached relatively and through `-L`, a file another package reaches through its own symlink).
+  A file whose canonical path is under **no** root is matched by its **found path** instead (#552):
+  the directory that resolved the import, made canonical (the search directory, the package root, or
+  the importing file's own found directory), then the module's segments as written; a symlink below
+  that directory is not followed. A module reached through a link inside `-L lib` that points outside
+  every root is therefore in the `lib` package (it used to fall into the root package). Only there
+  can the route matter: when two packages each hold a link to a file under no root, the file is
+  loaded once and takes the package of the **first** import that loads it (source order, depth
+  first); a use from the other package, through its own link too, is then cross-package. That
+  includes a sibling in the linked directory that was loaded through the other package's link: its use
+  of the first file's private names warns (and fails the stage-2 gate). Give such a directory a root of
+  its own (`-L`) to make it one package on every route. The roots:
+  the entry file's directory (the **root package**), each
   crush-pkg package root (its entry's directory), each `-L` / `CRUSH_PATH` directory. A tie goes to the
   root package, then named packages, then search directories, so `-L .` beside the entry changes
   nothing. Inputs with no file (the REPL, `parse_source` and the string entry points, crush-web) are the

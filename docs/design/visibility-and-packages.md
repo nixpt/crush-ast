@@ -60,8 +60,29 @@ contains it wins:
 
 So polish's `src/main.crush`, `src/lint.crush` and `src/lexer.crush` share a package however they import
 each other, even when someone adds `-L .`. facet, found under a `-L` directory, is a different package. A
-diamond import gives one answer, because the file decides and not the route. One rule has to be written
-down: several unrelated libraries in a single `-L` directory form one package and share their privates. The
+diamond import gives one answer, because the file decides and not the route.
+
+*Amended by #552.* The canonical path decides only when it is inside a known root. A file that really is
+under **no** root (reached through `lib/vendor -> ../outside` under `-L lib`, with `outside/` in no root)
+used to fall into the root package: its private names were callable from the root package with no
+`W-VIS01`, and the stage-2 gate passed a legacy module there. Such a file now takes the package of its
+**found path**: the directory that resolved the import, made canonical (a search directory, a package root,
+or the importing file's own found directory), then the module's segments as written, with no symlink below
+that directory followed. It belongs to `lib`, like the same file in a real directory under `lib`.
+
+A file that is inside a root is not affected: the file still decides, so a library file that another
+package reaches through its own symlink stays the library's on every route and in every import order (the
+first version of #552 let the route decide there, which made a library's own modules foreign to each other
+once the app had imported one of them through a link; fixed on review). The route can matter in one case
+only: two packages each hold a link to the same file under no root. The file is loaded once, keyed by its
+canonical path, so it gets one package, that of the **first** import that loads it (source order, depth
+first), and a use from the other package, through its own link too, is cross-package. That includes the
+file's own neighbours: a sibling in the linked directory that is loaded through the other package's link
+lands in that other package, so its use of the first file's private names gets `W-VIS01` (an error under
+the stage-2 gate) although the two files sit side by side. The remedy is to make the directory a root of
+its own (`-L outside`), which gives it one package on every route.
+
+One rule has to be written down: several unrelated libraries in a single `-L` directory form one package and share their privates. The
 remedy is a directory each, which is what crush-pkg already does.
 
 Inputs with no path (the REPL, `parse_source` string entry points, crush-web) are the root package. The
@@ -426,8 +447,8 @@ the legacy rule. Nothing changes without it. There are two gates, and a library 
   program, `crushc --check --deny-legacy-visibility [-L <lib dir>] <program>`, not the directory
   gate (a program that shares helpers through a sibling module is one package, and that is fine).
 
-A repository passes when these exit 0. The scaffolded library of `crush-pkg new --lib` has no `pub`
-yet; it is part of V2.
+A repository passes when these exit 0. The scaffolded library of `crush-pkg new --lib` marks its one
+function `pub` (V2, #520), so a new library passes the gate from its first build.
 
 **Known limits.** No gate flag on `crush-pkg run`, `check` or the bare build-then-run (only
 `build`). The REPL, crush-debug and CAST input print no visibility findings. In crush-pkg's JSON
