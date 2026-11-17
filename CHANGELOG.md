@@ -14,6 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(fastvm): an out-of-range index read on FastVM now raises the same error as the scheduler VM
+  and PortableVm instead of returning `null` (#445). `a[5]` on a 3-element array, `"abc"[9]`
+  and `a[-4]` raise `array index out of range: 5 (len 3)` (and so on); a non-Int index
+  (`a["x"]`, `a[1.5]`) raises `array index must be int, got str`; indexing something that is
+  not an array, map or string (`5[0]`) raises `type error: expected array, map, or string, got
+  int`. FastVM's explicit `arr_get(a, i)` takes the same path. Each error is catchable with
+  `try`/`catch` on FastVM as on the VMs. An out-of-range or non-Int FastVM *write* (`a[5] = 1`)
+  now raises the same catchable errors with the same text; it used to be an uncatchable
+  `Execution error: array index out of range: …` / `Type mismatch`. A FastVM program that read
+  past the end and got `null` now stops with an error (or enters its `catch`). JIT and AOT are
+  unchanged.
 - **Format:** owner ids, COSM `0.2.0` (V3b, #522). A kind may record the package that declares
   it (`package`, and with it `module`), and the COSM module records the package of each function
   outside the root package (`fn_packages`). **When:** only when a program uses code from another
