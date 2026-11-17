@@ -458,8 +458,9 @@ mod tests {
         // CRUSH-369: 1/0 inside try unwinds to the handler, pushing the
         // fault's message as the caught value — the same catch the CVM1
         // engines (scheduler, PortableVm) do. Quota and broken-state faults
-        // stay fatal; DivisionByZero/ArithmeticOverflow/TypeMismatch are the
-        // catchable program-level faults FastVM raises.
+        // stay fatal; DivisionByZero/ArithmeticOverflow/TypeMismatch (and,
+        // since #445, TypeError/ArrayBounds/BadIndex) are the catchable
+        // program-level faults FastVM raises.
         let program = make_simple_program(vec![
             FastInstr::new(FastOp::EnterTry, 7, 0),
             FastInstr::new(FastOp::PushInt, 1, 0),
@@ -476,6 +477,63 @@ mod tests {
             r,
             FastYield::Finished(Some(RuntimeValue::String("division by zero".to_string()))),
             "the fault unwinds to the handler as the caught message"
+        );
+    }
+
+    #[test]
+    fn index_reads_raise_the_cvm1_errors() {
+        // #445: an out-of-range, non-Int or non-container read used to push
+        // Null. It now raises the CVM1 engines' error, with their wording.
+        let read = |container: FastInstr, key: FastInstr| {
+            make_vm(make_simple_program(vec![
+                container,
+                key,
+                FastInstr::simple(FastOp::Index),
+                FastInstr::simple(FastOp::Halt),
+            ]))
+            .run(10_000)
+        };
+        let empty = || FastInstr::new(FastOp::NewArray, 0, 0);
+        let bounds = read(empty(), FastInstr::new(FastOp::PushInt, 5, 0));
+        assert_eq!(
+            bounds,
+            FastYield::Error(FastError::ArrayBounds { index: 5, len: 0 })
+        );
+        let FastYield::Error(e) = bounds else {
+            unreachable!()
+        };
+        assert_eq!(e.to_string(), "array index out of range: 5 (len 0)");
+        assert_eq!(
+            read(empty(), FastInstr::simple(FastOp::PushNull)),
+            FastYield::Error(FastError::BadIndex("null"))
+        );
+        assert_eq!(
+            read(
+                FastInstr::new(FastOp::PushInt, 5, 0),
+                FastInstr::new(FastOp::PushInt, 0, 0)
+            ),
+            FastYield::Error(FastError::TypeError {
+                expected: "array, map, or string",
+                got: "int"
+            })
+        );
+    }
+
+    #[test]
+    fn an_index_fault_inside_try_is_caught() {
+        // #445: the index errors are catchable, as on CVM1.
+        let program = make_simple_program(vec![
+            FastInstr::new(FastOp::EnterTry, 4, 0),
+            FastInstr::new(FastOp::NewArray, 0, 0),
+            FastInstr::new(FastOp::PushInt, 5, 0),
+            FastInstr::simple(FastOp::Index),
+            FastInstr::simple(FastOp::Halt),
+        ]);
+        assert_eq!(
+            make_vm(program).run(10_000),
+            FastYield::Finished(Some(RuntimeValue::String(
+                "array index out of range: 5 (len 0)".to_string()
+            )))
         );
     }
 
