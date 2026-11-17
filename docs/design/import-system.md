@@ -89,8 +89,10 @@ exports). Stage 1 warns; it changes no program's behaviour.
   every root is therefore in the `lib` package (it used to fall into the root package). Only there
   can the route matter: when two packages each hold a link to a file under no root, the file is
   loaded once and takes the package of the **first** import that loads it (source order, depth
-  first); a use from the other package, through its own link too, is then cross-package. Give such a
-  directory a root of its own (`-L`) to make it one package on every route. The roots:
+  first); a use from the other package, through its own link too, is then cross-package. That
+  includes a sibling in the linked directory that was loaded through the other package's link: its use
+  of the first file's private names warns (and fails the stage-2 gate). Give such a directory a root of
+  its own (`-L`) to make it one package on every route. The roots:
   the entry file's directory (the **root package**), each
   crush-pkg package root (its entry's directory), each `-L` / `CRUSH_PATH` directory. A tie goes to the
   root package, then named packages, then search directories, so `-L .` beside the entry changes

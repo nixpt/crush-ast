@@ -76,8 +76,11 @@ first version of #552 let the route decide there, which made a library's own mod
 once the app had imported one of them through a link; fixed on review). The route can matter in one case
 only: two packages each hold a link to the same file under no root. The file is loaded once, keyed by its
 canonical path, so it gets one package, that of the **first** import that loads it (source order, depth
-first), and a use from the other package, through its own link too, is cross-package. The remedy is to
-make the directory a root of its own (`-L outside`), which gives it one package on every route.
+first), and a use from the other package, through its own link too, is cross-package. That includes the
+file's own neighbours: a sibling in the linked directory that is loaded through the other package's link
+lands in that other package, so its use of the first file's private names gets `W-VIS01` (an error under
+the stage-2 gate) although the two files sit side by side. The remedy is to make the directory a root of
+its own (`-L outside`), which gives it one package on every route.
 
 One rule has to be written down: several unrelated libraries in a single `-L` directory form one package and share their privates. The
 remedy is a directory each, which is what crush-pkg already does.
