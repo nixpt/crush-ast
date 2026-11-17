@@ -14,15 +14,16 @@ add its entry after yours.
 
 ## [Unreleased]
 
-- fix(visibility): a module's package is decided by the path it was found through, not by its
-  canonical path (#552). A module reached through a symlink inside a `-L` directory or package
-  root that points outside it (`lib/vendor -> ../outside`) was under no root, so it fell into the
-  root package: its private functions were callable from the root package with no `W-VIS01`, and
+- fix(visibility): a module that is really under no package root takes the package of the path
+  it was found through (#552). A module reached through a symlink inside a `-L` directory or
+  package root that points outside every root (`lib/vendor -> ../outside`) fell into the root
+  package: its private functions were callable from the root package with no `W-VIS01`, and
   `--deny-legacy-visibility` passed a legacy module there. It is now in the package of the root
-  that resolved the import, and reports exactly like the same files in a real directory. The
-  canonical path still decides that a file is loaded once. When a symlink makes one file
-  reachable through two packages, it takes the package of the first import that loads it (source
-  order, depth first). Only `main` since V1 (#519) was affected; no release has the check.
+  that resolved the import, and reports exactly like the same files in a real directory. A file
+  that is inside a root keeps the package of where it really is, as before, on every route. If
+  two packages each hold a link to one file under no root, it takes the package of the first
+  import that loads it (source order, depth first). Only `main` since V1 (#519) was affected; no
+  release has the check.
 - **Behaviour change:** `import` inside `fn main` is now refused, like in any other function:
   `` `import` inside `fn main`: imports go at the top level of a file `` (with the file, line and
   column). It was accepted by accident: a file's top-level statements are merged into `main`, so the

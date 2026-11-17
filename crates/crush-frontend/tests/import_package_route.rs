@@ -1,19 +1,22 @@
-//! A module's package comes from the path it was **found through** (#552):
-//! the canonical directory that resolved the import (a `-L` directory, a
-//! package root, or the importing file's own found directory), then the
-//! module's segments as written. A symlink below that directory is not
-//! followed for the package, so a module reached through a link that leaves
-//! its `-L` root is still in that root's package, and visibility findings
-//! about it are reported exactly as for the same files in a real directory.
-//! The canonical path stays the load-once identity only; when one file is
-//! reachable through two packages, the first import that loads it decides.
+//! Packages and symlinks (#552). A file's package comes from where it
+//! really is (its canonical path), when that is inside a known root: the
+//! file decides, whatever route reached it. A file that is really under
+//! **no** root takes the package of the path it was **found through**: the
+//! canonical directory that resolved the import (a `-L` directory, a package
+//! root, or the importing file's own found directory), then the module's
+//! segments as written. So a module reached through a link that leaves its
+//! `-L` root for a directory under no root is in that root's package, and
+//! visibility findings about it are reported exactly as for the same files
+//! in a real directory. Only when two packages each hold a link to a file
+//! under no root does the route matter: the first import that loads it
+//! decides.
 #![cfg(unix)]
 
 use std::path::PathBuf;
 
 use crush_cast::Program;
 use crush_frontend::diagnostics::{CompilerDiagnostic, DiagnosticSeverity};
-use crush_frontend::import_system::{E_VIS01, ImportOptions, N_VIS01, W_VIS01};
+use crush_frontend::import_system::{E_VIS01, ImportOptions, ImportPackage, N_VIS01, W_VIS01};
 
 /// A fresh directory under the system temp dir holding `files`, then the
 /// symlinks `links` (`(link, target)`, the target as the link stores it).
@@ -249,48 +252,187 @@ fn a_search_directory_that_is_itself_a_symlink_is_still_one_canonical_root() {
     assert!(pkg.starts_with("dir:") && pkg.ends_with("liblink"), "{pkg}");
 }
 
-/// One file reachable through two packages: `lib/real/geo.crush` is in the
-/// `-L lib` package by the route `import real.geo`, and in the root package
-/// by the route `import mine.geo` (`app/mine -> ../lib/real`, a link the
-/// root package holds). `first` and `second` are the two imports, in order.
-fn two_roots(tag: &str, first: &str, second: &str) -> (Program, Vec<CompilerDiagnostic>) {
-    let main = format!(
+/// `main.crush` with the two imports in the given order, using `helper`
+/// through both aliases `a` and `b`.
+fn main_importing(first: &str, second: &str) -> String {
+    format!(
         "import {first}\nimport {second}\nfn main() {{\n    print(a.helper(1))\n    print(b.helper(1))\n}}\n"
-    );
-    compile(
-        tag,
-        &[("lib/real/geo.crush", GEO), ("app/main.crush", &main)],
-        &[("app/mine", "../lib/real")],
-        "lib",
-        false,
     )
 }
 
+fn helpers(p: &Program) -> Vec<String> {
+    p.functions
+        .keys()
+        .filter(|n| n.ends_with("::helper"))
+        .cloned()
+        .collect()
+}
+
 #[test]
-fn a_file_reachable_through_two_packages_takes_the_package_of_the_first_import_that_loads_it() {
-    // The file is loaded once (canonical identity), so it has one package:
-    // the one its first import found it through. Imports resolve in source
-    // order, depth first, so this is the same on every compile.
-    let helpers = |p: &Program| -> Vec<String> {
-        p.functions
-            .keys()
-            .filter(|n| n.ends_with("::helper"))
-            .cloned()
-            .collect()
+fn a_file_inside_a_root_keeps_its_package_when_another_package_links_to_it() {
+    // `lib/real/geo.crush` really is in `-L lib`. The root package also
+    // reaches it through its own link `app/mine -> ../lib/real`. Where the
+    // file is decides, so it is the library's in either import order, and
+    // both uses from `app/` warn, the one through the app's link included.
+    for (tag, first, second) in [
+        ("own-first", "mine.geo as a", "real.geo as b"),
+        ("lib-first", "real.geo as b", "mine.geo as a"),
+    ] {
+        let main = main_importing(first, second);
+        let (program, d) = compile(
+            &format!("two-routes-{tag}"),
+            &[("lib/real/geo.crush", GEO), ("app/main.crush", &main)],
+            &[("app/mine", "../lib/real")],
+            "lib",
+            false,
+        );
+        assert_eq!(codes(&d), [W_VIS01, W_VIS01], "{tag}: {d:?}");
+        let h = helpers(&program);
+        assert_eq!(h.len(), 1, "{tag}: loaded once: {h:?}");
+        let pkg = package(&program, &h[0]);
+        assert!(
+            pkg.starts_with("dir:") && pkg.ends_with("lib"),
+            "{tag}: {pkg}"
+        );
+    }
+}
+
+#[test]
+fn a_library_stays_clean_when_the_app_imports_its_file_through_a_link_first() {
+    // The review's case: the app imports `geo` through its own link before
+    // the library's `user` imports its sibling `geo`. The library's own use
+    // of `geo.helper` must stay same-package (silent, and clean under the
+    // gate), whichever import comes first.
+    for (tag, imports) in [
+        ("link-first", "import mine.geo as a\nimport real.user"),
+        ("lib-first", "import real.user\nimport mine.geo as a"),
+    ] {
+        let main =
+            format!("{imports}\nfn main() {{\n    print(user.go())\n    print(a.area(1, 2))\n}}\n");
+        for gate in [false, true] {
+            let tag = format!("lib-clean-{tag}-{gate}");
+            let (program, d) = compile(
+                &tag,
+                &[
+                    ("lib/real/geo.crush", GEO),
+                    (
+                        "lib/real/user.crush",
+                        "import geo\npub fn go() { return geo.helper(1) }\n",
+                    ),
+                    ("app/main.crush", &main),
+                ],
+                &[("app/mine", "../lib/real")],
+                "lib",
+                gate,
+            );
+            assert!(d.is_empty(), "{tag}: {d:?}");
+            assert_eq!(
+                package(&program, "real::user::go"),
+                package(&program, &helpers(&program)[0]),
+                "{tag}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_file_under_no_root_linked_from_two_packages_takes_the_first_import_s_package() {
+    // The one case where the route decides between packages:
+    // `outside/geo.crush` is under no root, and both `-L lib`
+    // (`lib/vendor -> ../outside`) and the root package
+    // (`app/mine -> ../outside`) hold a link to it. It is loaded once, so it
+    // has one package: that of the first import that loads it. Imports
+    // resolve in source order, depth first, so this is the same on every
+    // compile.
+    let fixture = |tag: &str, first: &str, second: &str| {
+        let main = main_importing(first, second);
+        compile(
+            tag,
+            &[("outside/geo.crush", GEO), ("app/main.crush", &main)],
+            &[("lib/vendor", "../outside"), ("app/mine", "../outside")],
+            "lib",
+            false,
+        )
     };
 
-    // The root package's own link first: the module is the root package's,
-    // and both uses (either alias) are same-package, so silent.
-    let (program, d) = two_roots("two-roots-own-first", "mine.geo as a", "real.geo as b");
+    // The root package's link first: the module is the root package's, and
+    // both uses are same-package.
+    let (program, d) = fixture("no-root-own-first", "mine.geo as a", "vendor.geo as b");
     assert!(d.is_empty(), "{d:?}");
     assert_eq!(helpers(&program), ["mine::geo::helper"], "loaded once");
     assert_eq!(package(&program, "mine::geo::helper"), "root");
 
-    // The `-L` route first: the module is the library's, and both uses warn,
-    // the one through the root package's own link included.
-    let (program, d) = two_roots("two-roots-lib-first", "real.geo as b", "mine.geo as a");
+    // The `-L` route first: the module is the library's, and both uses warn.
+    let (program, d) = fixture("no-root-lib-first", "vendor.geo as b", "mine.geo as a");
     assert_eq!(codes(&d), [W_VIS01, W_VIS01], "{d:?}");
-    assert_eq!(helpers(&program), ["real::geo::helper"], "loaded once");
-    let pkg = package(&program, "real::geo::helper");
+    assert_eq!(helpers(&program), ["vendor::geo::helper"], "loaded once");
+    let pkg = package(&program, "vendor::geo::helper");
     assert!(pkg.starts_with("dir:") && pkg.ends_with("lib"), "{pkg}");
+}
+
+#[test]
+fn a_link_below_a_named_package_root_keeps_the_module_in_that_package() {
+    // The package-name route: `import facet.sub.geo` resolves inside the
+    // package root, where `sub -> ../outside` leaves it for a directory under
+    // no root. The module is in `pkg:facet`, so the root package's use of its
+    // private name warns; so does the control with `sub` a real directory.
+    for (tag, geo_at, links) in [
+        (
+            "link",
+            "outside/geo.crush",
+            vec![("facet/sub", "../outside")],
+        ),
+        ("real", "facet/sub/geo.crush", vec![]),
+    ] {
+        let dir = tree(
+            &format!("pkg-{tag}"),
+            &[
+                (geo_at, GEO),
+                ("facet/facet.crush", "pub fn f() { return 1 }\n"),
+                (
+                    "app/main.crush",
+                    "import facet.sub.geo\nfn main() {\n    print(geo.helper(1))\n}\n",
+                ),
+            ],
+            &links,
+        );
+        let opts = ImportOptions {
+            packages: vec![ImportPackage {
+                name: "facet".into(),
+                root: dir.join("facet"),
+                entry: dir.join("facet/facet.crush"),
+            }],
+            ..Default::default()
+        };
+        let (program, d) = crush_frontend::parse_file_reporting(&dir.join("app/main.crush"), &opts)
+            .unwrap_or_else(|e| panic!("{tag}: the compile must succeed: {e:#}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(codes(&d), [W_VIS01], "{tag}: {d:?}");
+        assert_eq!(
+            package(&program, "facet::sub::geo::helper"),
+            "pkg:facet",
+            "{tag}"
+        );
+    }
+}
+
+#[test]
+fn a_symlinked_entry_file_keeps_the_package_of_where_it_really_is() {
+    // Unchanged from before #552: the entry `app/main.crush` is a link to
+    // `lib/entry.crush`, which really is in `-L lib`, so it may use the
+    // private names of its real neighbours.
+    let (_, d) = compile(
+        "entry-link",
+        &[
+            ("lib/geo.crush", GEO),
+            (
+                "lib/entry.crush",
+                "import geo\nfn main() {\n    print(geo.helper(1))\n}\n",
+            ),
+        ],
+        &[("app/main.crush", "../lib/entry.crush")],
+        "lib",
+        false,
+    );
+    assert!(d.is_empty(), "{d:?}");
 }

@@ -79,16 +79,19 @@ exports). Stage 1 warns; it changes no program's behaviour.
 - **`pub` is recorded.** `pub fn`, `pub async fn`, `pub struct` and `pub trait` (also `@kind(…) pub
   struct`) set `meta["pub"]` on the CAST node. `pub` is contextual, not a keyword: a variable, field or
   function named `pub` keeps working.
-- **Package = where the file was found.** The file's **found path** is matched against the known
-  roots, and the longest root containing it wins. The found path is the directory that resolved the
-  import, made canonical (the search directory, the package root, or the importing file's own found
-  directory), then the module's segments as written; a symlink below that directory is not followed.
-  A module reached through a link inside `-L lib` is therefore in the `lib` package even when the
-  link points outside `lib` (#552). Without symlinks below a root this is the file's canonical path,
-  as before, so a file reached relatively and through `-L` has one package. With one, two routes to
-  the same file can name different packages: the file is loaded once and takes the package of the
-  **first** import that loads it (source order, depth first); a later import by the other route gets
-  that module, package included. The roots: the entry file's directory (the **root package**), each
+- **Package = a property of the file.** The file's canonical path is matched against the known roots,
+  and the longest root containing it wins, so every route to a file gives the same package (a diamond,
+  a file reached relatively and through `-L`, a file another package reaches through its own symlink).
+  A file whose canonical path is under **no** root is matched by its **found path** instead (#552):
+  the directory that resolved the import, made canonical (the search directory, the package root, or
+  the importing file's own found directory), then the module's segments as written; a symlink below
+  that directory is not followed. A module reached through a link inside `-L lib` that points outside
+  every root is therefore in the `lib` package (it used to fall into the root package). Only there
+  can the route matter: when two packages each hold a link to a file under no root, the file is
+  loaded once and takes the package of the **first** import that loads it (source order, depth
+  first); a use from the other package, through its own link too, is then cross-package. Give such a
+  directory a root of its own (`-L`) to make it one package on every route. The roots:
+  the entry file's directory (the **root package**), each
   crush-pkg package root (its entry's directory), each `-L` / `CRUSH_PATH` directory. A tie goes to the
   root package, then named packages, then search directories, so `-L .` beside the entry changes
   nothing. Inputs with no file (the REPL, `parse_source` and the string entry points, crush-web) are the
