@@ -23,6 +23,13 @@ add its entry after yours.
   canonical path still decides that a file is loaded once. When a symlink makes one file
   reachable through two packages, it takes the package of the first import that loads it (source
   order, depth first). Only `main` since V1 (#519) was affected; no release has the check.
+- **Behaviour change:** `import` inside `fn main` is now refused, like in any other function:
+  `` `import` inside `fn main`: imports go at the top level of a file `` (with the file, line and
+  column). It was accepted by accident: a file's top-level statements are merged into `main`, so the
+  placement check skipped `main` and could not tell the two apart. The same now holds for an
+  imported module's `fn main` (its `main` is ignored, so the import used to vanish unseen) and for
+  any other function of a module (it got the generic "not resolved" text). Migration: move the
+  import to the top of the file (#535).
 - fix(vm): an explicit `arr_get(a, i)` call on the scheduler VM and PortableVm now behaves like
   `a[i]` (#446). A negative index counts from the end (`arr_get([1, 2, 3], -1)` is `3`; it was
   `null`). Out of range raises `array index out of range: 9 (len 3)` (it was `null`). A non-Int
