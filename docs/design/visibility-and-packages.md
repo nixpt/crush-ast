@@ -370,8 +370,15 @@ the legacy rule. Nothing changes without it. There are two gates, and a library 
   its own package is fine (stage 3 keeps it usable there). `--emit ast` resolves no imports, so it
   is refused with the flag.
 - **The directory gate, `crushc --list-exports --deny-legacy-visibility PATH`** (a `.crush` file or a
-  directory, walked recursively in path order; hidden directories, `target/` and symlinked
-  directories are skipped): the library author's view, with no foreign user needed. Without the
+  directory, walked recursively in path order): the library author's view, with no foreign user needed.
+  The walk follows what an import can follow (it may still list a file no import can name, such
+  as `my-lib/x.crush`). It **follows a symlinked directory**, as
+  `import a.b` does when `a/` is a link; each directory is walked once by its canonical path, so a
+  link loop ends and a directory two paths reach is listed once (under the real path, when the
+  link sits beside its target). It skips a **hidden directory** (`.name`), which no import can
+  name (a module path is made of identifiers); pass one as `PATH` to list it. It also skips
+  **`target/`** as build output, although `import target.x` resolves: a module kept in a directory
+  of that name is not gated here. Without the
   flag it lists, per module, `pub: …` and `private: …`, or `legacy: no pub, everything public` with
   the names. With it, every **importable** legacy module fails (`E-VIS01`), kinds included. Exempt:
   a file with top-level statements other than definitions and Crush module imports (a `let`, a
@@ -382,7 +389,10 @@ the legacy rule. Nothing changes without it. There are two gates, and a library 
   directory with no `.crush` file prints "no .crush files" and exits 0, with or without the flag.
 - **`crush-pkg build --deny-legacy-visibility`**: both, for a package. It is a **library gate**. The
   package's sources are the entry's directory; when that is the package root, its `tests/` and
-  `examples/` are left out. Every importable legacy module there fails, the entry included, even
+  `examples/` are left out. The walk is the directory gate's (symlinked directories followed,
+  hidden directories and `target/` skipped). `tests/` and `examples/` are not entered at all, so
+  a link inside them cannot take a real source directory out of the gate, and a link from
+  outside them into them is gated under the link's path. Every importable legacy module there fails, the entry included, even
   when nobody imports it; the same two exemptions apply (top-level statements, or nothing besides
   `main`). An application does not need this gate: legacy inside one package stays fine at every
   stage. An application that runs it anyway must mark its importable modules `pub`, entry included

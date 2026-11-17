@@ -414,11 +414,6 @@ fn read_dep_source(root: &Path, dep: &crate::manifest::Dependency) -> Option<Str
     std::fs::read_to_string(dep_path.join(&dep_manifest.capsule.entry)).ok()
 }
 
-/// `name` is exactly `want` (a path component).
-fn rel_is(name: &std::ffi::OsStr, want: &str) -> bool {
-    name == std::ffi::OsStr::new(want)
-}
-
 /// The name a package is imported by: its `capsule.toml` name with `-`
 /// turned into `_` (`my-lib` → `import my_lib`), as cargo does for crates.
 pub fn import_name(package: &str) -> String {
@@ -655,7 +650,8 @@ impl PackageBuilder {
     /// module of the package's sources that has no `pub` fails, even when no
     /// other package imports it. The sources are the entry's directory; when
     /// that is the package root, its `tests/` and `examples/` are left out
-    /// (hidden directories and `target/` always are). The entry file is
+    /// (hidden directories and `target/` always are; a symlinked directory
+    /// is followed, as an import follows it). The entry file is
     /// checked like the rest: this is a library gate (an application needs
     /// none, since legacy inside one package stays fine). Each failing
     /// module is printed with its names.
@@ -667,18 +663,11 @@ impl PackageBuilder {
         let at_root =
             std::fs::canonicalize(&src_dir).ok() == std::fs::canonicalize(&self.root_dir).ok();
         let mut legacy = Vec::new();
-        for (file, surface) in crush_frontend::visibility_check::surfaces(&src_dir)? {
-            if at_root
-                && file
-                    .strip_prefix(&src_dir)
-                    .ok()
-                    .and_then(|rel| rel.components().next())
-                    .is_some_and(|first| {
-                        rel_is(first.as_os_str(), "tests") || rel_is(first.as_os_str(), "examples")
-                    })
-            {
-                continue;
-            }
+        // Left out of the walk itself, not filtered afterwards: a link
+        // `tests/lib -> ../lib` must not carry the real `lib/` out with it.
+        let skip: &[&str] = if at_root { &["tests", "examples"] } else { &[] };
+        for (file, surface) in crush_frontend::visibility_check::surfaces_skipping(&src_dir, skip)?
+        {
             let surface = surface.map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
             if surface.fails_gate() {
                 eprint!(
