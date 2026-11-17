@@ -1750,6 +1750,15 @@ impl PortableVm {
                         self.call_callee(callee, next_ip)?
                     }
                     crate::cosm_rt::MemberCall::Done(v) => self.push(v),
+                    crate::cosm_rt::MemberCall::Builtin => {
+                        // §9.4 (#435): the arguments, first on top, after the receiver.
+                        let mut args = Vec::with_capacity(argc + 1);
+                        args.push(recv);
+                        for _ in 0..argc {
+                            args.push(self.pop()?);
+                        }
+                        self.push(crate::receiver_builtins::call(&name, &args)?);
+                    }
                 }
             }
             CONSTRUCT => {
@@ -2507,100 +2516,10 @@ impl PortableVm {
                     }
                     Ok(Some(Value::Int(character as i64)))
                 }
-                "arr_slice" => crate::seq::arr_slice_values(cap, &args).map(Some),
-                "make_range" => crate::make_range::make_range_values(&args).map(Some),
-                "append" | "push" => {
-                    if args.len() < 2 {
-                        return Err(VmError::CapArity {
-                            cap: cap.to_string(),
-                            expected: 2,
-                            got: args.len(),
-                        });
-                    }
-                    match &args[0] {
-                        Value::Array(elems) => {
-                            elems.borrow_mut().push(args[1].clone());
-                            Ok(Some(args[0].clone()))
-                        }
-                        _ => Err(VmError::TypeError {
-                            expected: "array",
-                            got: args[0].type_name(),
-                        }),
-                    }
-                }
-                "pop" => {
-                    // The method-call form's value is the removed element
-                    // (CRUSH-391) — not the array: `let x = a.pop()` wants the
-                    // element, and the compiler compensates the ARR_POP
-                    // opcode's [array, value] pair only on the opcode path.
-                    if args.len() != 1 {
-                        return Err(VmError::CapArity {
-                            cap: cap.to_string(),
-                            expected: 1,
-                            got: args.len(),
-                        });
-                    }
-                    match &args[0] {
-                        Value::Array(elems) => {
-                            Ok(Some(elems.borrow_mut().pop().unwrap_or(Value::Null)))
-                        }
-                        _ => Err(VmError::TypeError {
-                            expected: "array",
-                            got: args[0].type_name(),
-                        }),
-                    }
-                }
-                "arr_set" => {
-                    if args.len() < 3 {
-                        return Err(VmError::CapArity {
-                            cap: cap.to_string(),
-                            expected: 3,
-                            got: args.len(),
-                        });
-                    }
-                    match &args[0] {
-                        Value::Array(elems) => {
-                            // Same contract as the ARR_SET opcode (#442): a negative
-                            // index counts from the end, out of range is a bounds error
-                            // and a non-Int index is BadIndex. This used to truncate the
-                            // index to usize and drop the write silently.
-                            let idx = need_array_index(&args[1])?;
-                            let mut arr = elems.borrow_mut();
-                            let actual = wrap_index(idx, arr.len())?;
-                            arr[actual] = args[2].clone();
-                            Ok(Some(args[0].clone()))
-                        }
-                        Value::Map(map) => {
-                            let key = crate::map_ops::map_key_string(&args[1])?;
-                            map.borrow_mut().insert(key, args[2].clone());
-                            Ok(Some(args[0].clone()))
-                        }
-                        _ => Err(VmError::TypeError {
-                            expected: "array or map",
-                            got: args[0].type_name(),
-                        }),
-                    }
-                }
-                "arr_get" => {
-                    if args.len() < 2 {
-                        return Err(VmError::CapArity {
-                            cap: cap.to_string(),
-                            expected: 2,
-                            got: args.len(),
-                        });
-                    }
-                    match &args[0] {
-                        // #446: the `index` op's contract, through the same helper.
-                        Value::Array(elems) => Ok(Some(array_get(&elems.borrow(), &args[1])?)),
-                        Value::Map(map) => {
-                            let key = crate::map_ops::map_key_string(&args[1])?;
-                            Ok(Some(crate::map_ops::map_get(&map.borrow(), &key)?))
-                        }
-                        _ => Err(VmError::TypeError {
-                            expected: "array or map",
-                            got: args[0].type_name(),
-                        }),
-                    }
+                // The built-in receiver calls: one implementation, shared with
+                // `CALL_MEMBER`'s fallback for a non-Record receiver (#435).
+                "arr_slice" | "make_range" | "append" | "push" | "pop" | "arr_set" | "arr_get" => {
+                    crate::receiver_builtins::call(cap, &args).map(Some)
                 }
                 _ => Err(VmError::UnknownCap(cap.to_string())),
             };
@@ -2943,7 +2862,6 @@ fn wrap_index(idx: i64, len: usize) -> Result<usize, VmError> {
         Ok(u)
     }
 }
-
 
 fn to_f64_p(v: &Value) -> f64 {
     match v {

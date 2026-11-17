@@ -240,14 +240,14 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
         });
                 reg(CapabilitySpec {
             name: "append",
-            argc: None,
+            argc: Some(2),
             returns: true,
             privileged: false,
             summary: "append an element to an array; returns the modified array",
         });
         reg(CapabilitySpec {
             name: "push",
-            argc: None,
+            argc: Some(2),
             returns: true,
             privileged: false,
             summary: "push an element onto an array; returns the modified array",
@@ -265,14 +265,14 @@ pub fn capabilities() -> &'static HashMap<&'static str, CapabilitySpec> {
         });
         reg(CapabilitySpec {
             name: "arr_set",
-            argc: None,
+            argc: Some(3),
             returns: true,
             privileged: false,
             summary: "set an array/map element at index; returns the modified container",
         });
         reg(CapabilitySpec {
             name: "arr_get",
-            argc: None,
+            argc: Some(2),
             returns: true,
             privileged: false,
             summary: "get an array/map element at index",

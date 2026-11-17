@@ -1005,10 +1005,19 @@ pub enum MemberCall {
     Call(Callee),
     /// The result, with no call (the built-in `clone()`).
     Done(Value),
+    /// A built-in receiver call on a receiver that is not a Record, a Kind
+    /// or a map (`docs/design/object-model.md` §9.4, #435): the VM pops the
+    /// arguments and runs [`crate::receiver_builtins::call`] with the
+    /// receiver first.
+    Builtin,
 }
 
 /// `CALL_MEMBER name argc` on `recv`: resolve the method through the Kind and
-/// apply its receiver strategy. Never falls back to a global capability.
+/// apply its receiver strategy. Never falls back to a global capability; a
+/// receiver that is not a Record, a Kind or a map gets the built-in receiver
+/// call of that name, if there is one (§9.4: `xs.push(v)` compiles to
+/// `CALL_MEMBER` when some struct declares `push`, and `self.a.push(v)`
+/// always does, #435).
 pub fn call_member(recv: &Value, name: &str, argc: usize) -> Result<MemberCall, VmError> {
     if let Value::Map(m) = recv {
         // CRUSH-362: method-call syntax on a map calls the function
@@ -1032,6 +1041,16 @@ pub fn call_member(recv: &Value, name: &str, argc: usize) -> Result<MemberCall, 
     let (kind, instance) = match recv {
         Value::Record(r) => (r.kind.clone(), true),
         Value::Kind(k) => (k.clone(), false),
+        _ if crate::receiver_builtins::is_builtin(name) => return Ok(MemberCall::Builtin),
+        // It calls back into user code, so it is not a §9.4 fallback row.
+        Value::Array(_) if name == "parallel_map" => {
+            return Err(VmError::Cosm(
+                "`.parallel_map(…)` on an array through a member call (a struct in this \
+                 program declares `parallel_map`, or the receiver is computed): write \
+                 `parallel_map(xs, f)`"
+                    .to_string(),
+            ));
+        }
         other => {
             return Err(VmError::Cosm(format!(
                 "`.{name}(…)` on a {}: member calls resolve on struct instances (COSM Records) and maps",
