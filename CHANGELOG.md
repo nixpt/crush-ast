@@ -14,6 +14,18 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- A type annotation can now name a container: `Array`, `List`, `Set` and `Map` are accepted
+  wherever a type is, with an `Any` element type (only these capitalised names: lowercase `array`,
+  `list`, `set`, `map` are still "Unknown type"), so
+  `cells: Array` in a struct field, a parameter or a `let` compiles instead of "Unknown type:
+  Array" (#504). They are checked like the scalar names are: by the compiler, for `let` and call
+  arguments (`fn f(x: Array)` refuses `f(5)`); engines never check annotations, and struct field
+  types are not checked at construction. A declared struct or trait with one of these names keeps its
+  old result, so no existing program changes meaning. `Array<Int>`, `Map<String, Int>` and `[Int]` are
+  still not syntax, but the parse error now says that container element types have no annotation
+  syntax yet and to write the bare name (it used to be a plain parse error such as `Expected } but found <`); any other `Name<...>` says type arguments have no annotation syntax. `Tuple`,
+  `Vector` have no bare spelling. The kind table needs no format change: a bare container field
+  is `{"Array":"Any"}` etc., a shape COSM already has.
 - **Behaviour change:** `import` inside `fn main` is now refused, like in any other function:
   `` `import` inside `fn main`: imports go at the top level of a file `` (with the file, line and
   column). It was accepted by accident: a file's top-level statements are merged into `main`, so the
