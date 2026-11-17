@@ -56,18 +56,15 @@ impl std::fmt::Display for Type {
 }
 
 /// The bare container names a type annotation may use (#504): `Array`, `List`,
-/// `Set` and `Map`, each with its lowercase twin (as every scalar name has),
-/// meaning the container with an `Any` element type. The parser cannot tell a
+/// `Set` and `Map`, meaning the container with an `Any` element type. Only the
+/// capitalised names are accepted: `array`, `list`, `set` and `map` are not
+/// type names. The parser cannot tell a
 /// declared struct of the same name apart, so it keeps the name as a
 /// `CastType::TypeRef`; the semantic pass and the kind table call this only
 /// when no declared kind has that name (a declared kind wins).
 pub(crate) fn bare_container(name: &str) -> Option<crush_cast::CastType> {
     use crush_cast::CastType;
     let any = || Box::new(CastType::Any);
-    let name = LOWERCASE_TWINS
-        .iter()
-        .find(|(twin, _)| *twin == name)
-        .map_or(name, |(_, canonical)| *canonical);
     match name {
         "Array" => Some(CastType::Array(any())),
         "List" => Some(CastType::List(any())),
@@ -76,11 +73,6 @@ pub(crate) fn bare_container(name: &str) -> Option<crush_cast::CastType> {
         _ => None,
     }
 }
-
-/// The lowercase twins of the container names (as `Int`/`int` for the scalars).
-/// Set this to `&[]` to drop them: it is the only place they are spelled.
-#[rustfmt::skip]
-const LOWERCASE_TWINS: &[(&str, &str)] = &[("array", "Array"), ("list", "List"), ("set", "Set"), ("map", "Map")];
 
 #[cfg(test)]
 mod tests {

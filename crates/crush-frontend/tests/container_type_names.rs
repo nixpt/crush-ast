@@ -60,8 +60,17 @@ fn each_name_compiles_as_field_parameter_return_and_let_annotation() {
              fn main() {{ let h = Holder {{ cells: 1 }}; let y: {name} = h.cells; return take(y) }}\n"
         );
         compile_ok(&src);
-        // The lowercase twin, as every scalar name has one.
-        compile_ok(&src.replace(name, &name.to_lowercase()));
+    }
+}
+
+#[test]
+fn the_lowercase_spellings_are_not_type_names() {
+    for (name, _) in NAMES {
+        let lower = name.to_lowercase();
+        let e = compile_err(&format!(
+            "struct Holder {{ cells: {lower} }}\nfn main() {{ return 1 }}\n"
+        ));
+        assert!(e.contains(&format!("Unknown type: {lower}")), "{e}");
     }
 }
 

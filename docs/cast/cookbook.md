@@ -77,7 +77,7 @@ exosphere's CLI and don't exist here.)
   fails validation.
 - **In Crush source**, an annotation (`x: Int`) accepts `Int`, `Float`, `String`, `Bool`,
   `Null`, `Any` (with lowercase and short aliases such as `int`, `str`, `i64`), the bare
-  container names `Array`, `List`, `Set` and `Map` (and their lowercase twins; element type
+  container names `Array`, `List`, `Set` and `Map` (capitalised only; element type
   `Any`), and the name of a declared struct. A declared struct or trait named `Array`,
   `List`, `Set` or `Map` wins over the container meaning. Element types (`Array<Int>`,
   `[Int]`) have no source syntax yet and are a parse error that says so. The compiler checks

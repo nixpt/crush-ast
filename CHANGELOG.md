@@ -14,8 +14,9 @@ add its entry after yours.
 
 ## [Unreleased]
 
-- A type annotation can now name a container: `Array`, `List`, `Set` and `Map` (and the lowercase
-  `array`, `list`, `set`, `map`) are accepted wherever a type is, with an `Any` element type, so
+- A type annotation can now name a container: `Array`, `List`, `Set` and `Map` are accepted
+  wherever a type is, with an `Any` element type (only these capitalised names: lowercase `array`,
+  `list`, `set`, `map` are still "Unknown type"), so
   `cells: Array` in a struct field, a parameter or a `let` compiles instead of "Unknown type:
   Array" (#504). They are checked like the scalar names are: by the compiler, for `let` and call
   arguments (`fn f(x: Array)` refuses `f(5)`); engines never check annotations, and struct field
