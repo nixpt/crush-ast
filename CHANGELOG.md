@@ -77,6 +77,18 @@ add its entry after yours.
   takes any `1.x`. Recorded only; member visibility (#525) will enforce it. `--emit cast` of a
   program that imports a module with `struct` / `impl` / `trait` now shows `module` and
   `module_prefix` in those declarations' meta, as functions already showed `module`.
+- fix(visibility): `target/` is left out of the directory gate only at a package root, and a
+  root entry's gate scope is explained (#545 follow-up). The walk skipped every directory named
+  `target` at any depth, while `import target.x` resolves, so a legacy module in `src/target/`
+  passed the package check of `crush-pkg build --deny-legacy-visibility` (the compile gate still
+  caught it once another package used it). Now only `crush-pkg` leaves a `target/` out, and
+  only the one at the package root when the entry is there (the build output);
+  `crushc --list-exports [--deny-legacy-visibility] DIR` walks a `target/` like any directory.
+  A package or directory with legacy modules under a `target/` now fails the gate where it
+  passed before. The scope of the package check is unchanged and follows the resolver: with the
+  entry at the package root every directory there is importable and gated (`benches/`,
+  `scripts/`, `vendor/**`; only `tests/`, `examples/` and `target/` are left out). The error
+  now says so and names the way to narrow it: move the sources to `src/`.
 - fix(visibility): the directory gate follows symlinked directories (#545 review). `crushc
   --list-exports [--deny-legacy-visibility] DIR` and the package check of `crush-pkg build
   --deny-legacy-visibility` skipped a symlinked directory, while `import a.b` goes through one,

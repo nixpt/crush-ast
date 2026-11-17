@@ -280,7 +280,10 @@ enum Commands {
         /// `pub` is all-public). Fails on every importable module of the
         /// package's sources with no `pub`, the entry included (kinds count;
         /// a file with top-level statements, or with nothing besides `main`,
-        /// is exempt), on a cross-package use of a function that is not
+        /// is exempt; the sources are the entry's directory, so an entry at
+        /// the package root puts every directory there under the gate but
+        /// tests/, examples/ and target/: move the sources to src/ to
+        /// narrow it), on a cross-package use of a function that is not
         /// `pub` (`W-VIS01`), and on a module with no `pub` whose functions
         /// another package uses (`E-VIS01`; the compile sees function uses
         /// only, not kinds). An application does not need it: legacy inside

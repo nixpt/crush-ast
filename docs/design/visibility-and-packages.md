@@ -397,9 +397,10 @@ the legacy rule. Nothing changes without it. There are two gates, and a library 
   `import a.b` does when `a/` is a link; each directory is walked once by its canonical path, so a
   link loop ends and a directory two paths reach is listed once (under the real path, when the
   link sits beside its target). It skips a **hidden directory** (`.name`), which no import can
-  name (a module path is made of identifiers); pass one as `PATH` to list it. It also skips
-  **`target/`** as build output, although `import target.x` resolves: a module kept in a directory
-  of that name is not gated here. Without the
+  name (a module path is made of identifiers); pass one as `PATH` to list it. It does **not** skip
+  **`target/`**: `import target.x` resolves, so a directory of that name is walked like any other,
+  at every depth (`crushc` knows no package root; only `crush-pkg` leaves out a package root's
+  build output, below). Without the
   flag it lists, per module, `pub: …` and `private: …`, or `legacy: no pub, everything public` with
   the names. With it, every **importable** legacy module fails (`E-VIS01`), kinds included. Exempt:
   a file with top-level statements other than definitions and Crush module imports (a `let`, a
@@ -409,11 +410,21 @@ the legacy rule. Nothing changes without it. There are two gates, and a library 
   fails. A file that does not parse, or a file argument without the `.crush` extension, exits 1; a
   directory with no `.crush` file prints "no .crush files" and exits 0, with or without the flag.
 - **`crush-pkg build --deny-legacy-visibility`**: both, for a package. It is a **library gate**. The
-  package's sources are the entry's directory; when that is the package root, its `tests/` and
-  `examples/` are left out. The walk is the directory gate's (symlinked directories followed,
-  hidden directories and `target/` skipped). `tests/` and `examples/` are not entered at all, so
+  package's sources are the entry's directory; when that is the package root, its `tests/`,
+  `examples/` and `target/` (the build output) are left out. The walk is the directory gate's
+  (symlinked directories followed, hidden directories skipped). `tests/`, `examples/` and the
+  root's `target/` are not entered at all, so
   a link inside them cannot take a real source directory out of the gate, and a link from
-  outside them into them is gated under the link's path. Every importable legacy module there fails, the entry included, even
+  outside them into them is gated under the link's path. **`target` is left out only there**, not
+  by name at every depth: a module in `src/target/` (or `lib/target/` under a root entry) is
+  importable and is gated. **The scope follows the resolver, with no further exemption**: an entry
+  at the package root can import every directory beside it (`import benches.run`,
+  `import vendor.dep.x`), so `benches/`, `scripts/`, `tools/`, `vendor/**` are all gated, and a
+  legacy file in any of them fails. The error then says so ("The entry `main.crush` is at the
+  package root, so every directory here is importable from it and is checked (only tests/,
+  examples/ and target/ are left out); moving the sources to src/ narrows the gate to src/").
+  With the entry in `src/`, only `src/` is gated; that is the way to keep non-source directories
+  out, and there is no manifest key to exclude a directory. Every importable legacy module there fails, the entry included, even
   when nobody imports it; the same two exemptions apply (top-level statements, or nothing besides
   `main`). An application does not need this gate: legacy inside one package stays fine at every
   stage. An application that runs it anyway must mark its importable modules `pub`, entry included

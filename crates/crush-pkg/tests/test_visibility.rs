@@ -493,3 +493,119 @@ fn a_link_from_the_root_into_tests_is_gated_under_the_links_path() {
         text(&out)
     );
 }
+
+const SRC_ENTRY_TOML: &str = "[capsule]\nname = \"deep\"\nversion = \"0.1.0\"\nentry = \"src/main.crush\"\nlanguage = \"crush\"\n";
+const ROOT_ENTRY_TOML: &str = "[capsule]\nname = \"rootpkg\"\nversion = \"0.1.0\"\nentry = \"main.crush\"\nlanguage = \"crush\"\n";
+const HELLO_MAIN: &str = "fn main() {\n    io.print(\"hi\")\n}\n";
+const ROOT_ENTRY_HINT: &str = "is at the package root";
+
+/// `target` is the build output only at the package root. `import target.old`
+/// resolves from `src/main.crush`, so `src/target/` is a source directory
+/// and the directory gate checks it, though nothing imports it.
+#[test]
+fn a_legacy_module_in_src_target_fails_the_directory_gate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("deep");
+    write(
+        &pkg,
+        &[
+            ("capsule.toml", SRC_ENTRY_TOML),
+            ("src/main.crush", HELLO_MAIN),
+            ("src/target/old.crush", LEGACY_GEO),
+        ],
+    );
+    let out = crush_pkg(&pkg, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("old.crush: legacy: no pub, everything public") && err.contains("area"),
+        "{err}"
+    );
+    assert!(err.contains("1 module(s) of package `deep`"), "{err}");
+    // The entry is in src/, so there is nothing to narrow.
+    assert!(!err.contains(ROOT_ENTRY_HINT), "{err}");
+    // A deeper one is checked as well.
+    write(
+        &pkg,
+        &[
+            ("src/target/old.crush", PUB_GEO),
+            ("src/util/target/older.crush", LEGACY_GEO),
+        ],
+    );
+    let out = crush_pkg(&pkg, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("older.crush: legacy") && !err.contains("old.crush: legacy"),
+        "{err}"
+    );
+}
+
+/// With the entry at the root, the root's own `target/` is the build output
+/// and is left out; a `target/` below the root is not.
+#[test]
+fn only_the_target_of_the_package_root_is_left_out() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("rootpkg");
+    write(
+        &pkg,
+        &[
+            ("capsule.toml", ROOT_ENTRY_TOML),
+            ("main.crush", HELLO_MAIN),
+            ("target/stale.crush", LEGACY_GEO),
+        ],
+    );
+    let out = crush_pkg(&pkg, &["build", "--deny-legacy-visibility"]);
+    assert!(out.status.success(), "{}", text(&out));
+    write(&pkg, &[("lib/target/old.crush", LEGACY_GEO)]);
+    let out = crush_pkg(&pkg, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("old.crush: legacy") && !err.contains("stale.crush"),
+        "{err}"
+    );
+}
+
+/// An entry at the package root can import every directory beside it
+/// (`import benches.run`), so the gate checks them all: no exemption beyond
+/// tests/, examples/ and target/. The error says why and how to narrow it.
+#[test]
+fn a_root_entry_gates_every_directory_and_the_error_says_so() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("rootpkg");
+    write(
+        &pkg,
+        &[
+            ("capsule.toml", ROOT_ENTRY_TOML),
+            ("main.crush", HELLO_MAIN),
+            ("benches/run.crush", LEGACY_GEO),
+            ("vendor/dep/x.crush", LEGACY_GEO),
+        ],
+    );
+    let out = crush_pkg(&pkg, &["build", "--deny-legacy-visibility"]);
+    assert!(!out.status.success(), "{}", text(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("run.crush: legacy") && err.contains("x.crush: legacy"),
+        "{err}"
+    );
+    assert!(
+        err.contains("The entry `main.crush` is at the package root")
+            && err.contains("every directory here is importable")
+            && err.contains("only tests/, examples/ and target/ are left out")
+            && err.contains("moving the sources to src/ narrows the gate to src/"),
+        "{err}"
+    );
+    // The way out the error names: with the entry in src/, only src/ is gated.
+    std::fs::remove_file(pkg.join("main.crush")).unwrap();
+    write(
+        &pkg,
+        &[
+            ("capsule.toml", SRC_ENTRY_TOML),
+            ("src/main.crush", HELLO_MAIN),
+        ],
+    );
+    let out = crush_pkg(&pkg, &["build", "--deny-legacy-visibility"]);
+    assert!(out.status.success(), "{}", text(&out));
+}

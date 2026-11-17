@@ -649,9 +649,14 @@ impl PackageBuilder {
     /// The stage-2 gate's package check (#539): every importable `.crush`
     /// module of the package's sources that has no `pub` fails, even when no
     /// other package imports it. The sources are the entry's directory; when
-    /// that is the package root, its `tests/` and `examples/` are left out
-    /// (hidden directories and `target/` always are; a symlinked directory
-    /// is followed, as an import follows it). The entry file is
+    /// that is the package root, its `tests/`, `examples/` and `target/`
+    /// (the build output) are left out, and nothing else is: the entry can
+    /// import every other directory there (`import benches.x`), so each is
+    /// checked, and the error says that moving the sources to `src/` narrows
+    /// the gate. `target` is not skipped by name anywhere else: a module in
+    /// `src/target/` is importable and is checked. Hidden directories are
+    /// skipped at every depth (no import can name one); a symlinked
+    /// directory is followed, as an import follows it. The entry file is
     /// checked like the rest: this is a library gate (an application needs
     /// none, since legacy inside one package stays fine). Each failing
     /// module is printed with its names.
@@ -665,7 +670,12 @@ impl PackageBuilder {
         let mut legacy = Vec::new();
         // Left out of the walk itself, not filtered afterwards: a link
         // `tests/lib -> ../lib` must not carry the real `lib/` out with it.
-        let skip: &[&str] = if at_root { &["tests", "examples"] } else { &[] };
+        // `target` is on the list only here, where it is the build output.
+        let skip: &[&str] = if at_root {
+            &["tests", "examples", "target"]
+        } else {
+            &[]
+        };
         for (file, surface) in crush_frontend::visibility_check::surfaces_skipping(&src_dir, skip)?
         {
             let surface = surface.map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
@@ -681,14 +691,26 @@ impl PackageBuilder {
             }
         }
         if !legacy.is_empty() {
+            // Why `benches/` or `vendor/` is in the list, and the way out.
+            let scope = if at_root {
+                format!(
+                    ". The entry `{}` is at the package root, so every directory here is \
+                     importable from it and is checked (only tests/, examples/ and target/ are \
+                     left out); moving the sources to src/ narrows the gate to src/",
+                    self.manifest.capsule.entry
+                )
+            } else {
+                String::new()
+            };
             anyhow::bail!(
                 "{} module(s) of package `{}` have no `pub`, so every name in them is public by \
                  the legacy rule, and fail the stage-2 gate (--deny-legacy-visibility): {} (mark \
                  their exports `pub`; before 1.0 a module with no `pub` stops being all-public, \
-                 #524)",
+                 #524){}",
                 legacy.len(),
                 self.manifest.capsule.name,
-                legacy.join(", ")
+                legacy.join(", "),
+                scope
             );
         }
         Ok(())

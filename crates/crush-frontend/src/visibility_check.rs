@@ -215,14 +215,17 @@ pub fn module_surface(source: &str) -> Result<ModuleSurface, String> {
 /// symlinked directory; the walk follows one too. Each directory is walked
 /// once, by its canonical path: a link loop ends there, and a directory
 /// that two paths reach is listed under one of them (the real path, when
-/// the link and its target sit in the same directory). The two skipped
-/// names are not symmetrical:
+/// the link and its target sit in the same directory).
 ///
-/// - a **hidden** directory (`.name`) is skipped because no import can name
-///   it: a module path is made of identifiers, and none starts with `.`. To
-///   list one, pass it as `path`: the root is never filtered.
-/// - **`target/`** is skipped as build output, although `import target.x`
-///   does resolve; a module kept in a directory of that name is not seen.
+/// One name is skipped: a **hidden** directory (`.name`), because no import
+/// can name it: a module path is made of identifiers, and none starts with
+/// `.`. To list one, pass it as `path`: the root is never filtered.
+///
+/// **`target/` is walked** like any directory, at every depth: `import
+/// target.x` resolves, so a module kept in a directory of that name is
+/// seen. A caller that knows where build output goes leaves that one
+/// directory out with [`surfaces_skipping`], as crush-pkg does for the
+/// `target/` of a package root.
 pub fn surfaces(path: &Path) -> std::io::Result<Vec<(PathBuf, Result<ModuleSurface, String>)>> {
     surfaces_skipping(path, &[])
 }
@@ -300,7 +303,7 @@ fn collect_crush_files(
             continue;
         };
         if kind.is_dir() {
-            if name.starts_with('.') || name == "target" || skip.contains(&name) {
+            if name.starts_with('.') || skip.contains(&name) {
                 continue;
             }
             if is_link {
