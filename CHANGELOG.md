@@ -14,6 +14,16 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(visibility): a module that is really under no package root takes the package of the path
+  it was found through (#552). A module reached through a symlink inside a `-L` directory or
+  package root that points outside every root (`lib/vendor -> ../outside`) fell into the root
+  package: its private functions were callable from the root package with no `W-VIS01`, and
+  `--deny-legacy-visibility` passed a legacy module there. It is now in the package of the root
+  that resolved the import, and reports exactly like the same files in a real directory. A file
+  that is inside a root keeps the package of where it really is, as before, on every route. If
+  two packages each hold a link to one file under no root, it takes the package of the first
+  import that loads it (source order, depth first). Only `main` since V1 (#519) was affected; no
+  release has the check.
 - `crush-pkg new --lib` writes `pub fn greet` in `src/lib.crush` (visibility stage 2, #520), with a
   comment saying what `pub` does. A new library is no longer a legacy module (no `pub`: everything
   public): it passes `crush-pkg build --deny-legacy-visibility`, and its scaffolded test compiles
