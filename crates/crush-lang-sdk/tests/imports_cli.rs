@@ -548,6 +548,163 @@ fn repl_keeps_imports_across_lines() {
     );
 }
 
+// ---- placement (#535): an import is only legal at the top level of a file ----
+
+const GEOM: &str = "fn area(w, h) { return w * h }\n";
+
+/// The compile failed with exactly this located error.
+fn assert_refused(o: &Output, located: &str) {
+    assert_fails(o, &[located]);
+}
+
+#[test]
+fn import_inside_fn_main_is_refused() {
+    let d = tree(&[
+        ("geom.crush", GEOM),
+        (
+            "main.crush",
+            "fn main() { import geom  print(geom.area(1, 2)) }\n",
+        ),
+    ]);
+    assert_refused(
+        &run_in(d.path(), &["main.crush"]),
+        "main.crush:1:13: `import` inside `fn main`: imports go at the top level of a file",
+    );
+}
+
+#[test]
+fn import_inside_fn_main_is_refused_for_every_form() {
+    for (line, import) in [
+        (2, "import geom { area }"),
+        (2, "import geom as g"),
+        (2, "import geom"),
+    ] {
+        let d = tree(&[
+            ("geom.crush", GEOM),
+            (
+                "main.crush",
+                &format!("fn main() {{\n    {import}\n    print(1)\n}}\n"),
+            ),
+        ]);
+        assert_refused(
+            &run_in(d.path(), &["main.crush"]),
+            &format!(
+                "main.crush:{line}:5: `import` inside `fn main`: imports go at the top level \
+                 of a file"
+            ),
+        );
+    }
+}
+
+#[test]
+fn import_inside_async_fn_main_is_refused() {
+    let d = tree(&[
+        ("geom.crush", GEOM),
+        ("main.crush", "async fn main() { import geom }\n"),
+    ]);
+    assert_refused(
+        &run_in(d.path(), &["main.crush"]),
+        "main.crush:1:19: `import` inside `fn main`: imports go at the top level of a file",
+    );
+}
+
+#[test]
+fn import_inside_fn_main_is_refused_even_next_to_top_level_statements() {
+    let d = tree(&[
+        ("geom.crush", GEOM),
+        (
+            "main.crush",
+            "import geom\nprint(geom.area(3, 2))\nfn main() {\n    import geom as g\n}\n",
+        ),
+    ]);
+    assert_refused(
+        &run_in(d.path(), &["main.crush"]),
+        "main.crush:4:5: `import` inside `fn main`: imports go at the top level of a file",
+    );
+}
+
+#[test]
+fn import_inside_another_function_is_refused_with_the_same_text() {
+    let d = tree(&[
+        ("geom.crush", GEOM),
+        (
+            "main.crush",
+            "fn f() { import geom\n return 1 }\nfn main() { print(f()) }\n",
+        ),
+    ]);
+    assert_refused(
+        &run_in(d.path(), &["main.crush"]),
+        "main.crush:1:10: `import` inside `fn f`: imports go at the top level of a file",
+    );
+}
+
+#[test]
+fn top_level_import_then_fn_main_still_works() {
+    let d = tree(&[
+        ("geom.crush", GEOM),
+        (
+            "main.crush",
+            "import geom\nfn main() { print(geom.area(1, 2)) }\n",
+        ),
+        (
+            "both.crush",
+            "import geom\nfn main() { print(geom.area(3, 2)) }\nprint(\"top\")\n",
+        ),
+    ]);
+    assert_prints(&run_in(d.path(), &["main.crush"]), &["2"]);
+    assert_prints(&run_in(d.path(), &["both.crush"]), &["top", "6"]);
+}
+
+#[test]
+fn import_inside_fn_main_of_an_imported_module_is_refused() {
+    let d = tree(&[
+        ("geom.crush", GEOM),
+        (
+            "mid.crush",
+            "fn id(x) { return x }\nfn main() { import geom\n print(1) }\n",
+        ),
+        ("main.crush", "import mid\nprint(mid.id(1))\n"),
+    ]);
+    assert_refused(
+        &run_in(d.path(), &["main.crush"]),
+        "mid.crush:2:13: `import` inside `fn main`: imports go at the top level of a file",
+    );
+}
+
+#[test]
+fn import_inside_a_function_of_an_imported_module_is_refused_with_the_same_text() {
+    let d = tree(&[
+        ("geom.crush", GEOM),
+        ("mid.crush", "fn id(x) { import geom\n return x }\n"),
+        ("main.crush", "import mid\nprint(mid.id(1))\n"),
+    ]);
+    assert_refused(
+        &run_in(d.path(), &["main.crush"]),
+        "mid.crush:1:12: `import` inside `fn id`: imports go at the top level of a file",
+    );
+}
+
+#[test]
+fn import_inside_a_block_stays_refused() {
+    let d = tree(&[
+        ("geom.crush", GEOM),
+        ("blk.crush", "if true { import geom }\nprint(1)\n"),
+        (
+            "blk_in_main.crush",
+            "fn main() { if true { import geom }\n print(1) }\n",
+        ),
+    ]);
+    for f in ["blk.crush", "blk_in_main.crush"] {
+        assert_fails(
+            &run_in(d.path(), &[f]),
+            &[
+                "`import geom` was not resolved",
+                "imports go at the top level of a file",
+            ],
+        );
+    }
+}
+
 /// V1 (#519): a cross-package use of a name that is not `pub` is the warning
 /// `W-VIS01` on stderr; the program still runs and its stdout is what it was
 /// before visibility existed. A module with no `pub` gets one `N-VIS01` note.
