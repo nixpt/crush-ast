@@ -274,24 +274,45 @@ fn rel(root: &Path, p: &Path) -> String {
 }
 
 #[test]
-fn surfaces_walks_a_directory_sorted_and_skips_hidden_and_target() {
+fn surfaces_walks_a_directory_sorted_and_skips_hidden_only() {
     let dir = tree(
         "walk",
         &[
             ("b.crush", GEO),
             ("a/z.crush", LEGACY),
             (".git/x.crush", LEGACY),
+            // `import target.y` and `import a.target.w` resolve, so `target`
+            // is a directory like any other, at every depth.
             ("target/y.crush", LEGACY),
+            ("a/target/w.crush", LEGACY),
             ("notes.txt", "not crush"),
             ("bad.crush", "fn ( {"),
         ],
     );
     let found = surfaces(&dir).unwrap();
     let names: Vec<String> = found.iter().map(|(p, _)| rel(&dir, p)).collect();
-    assert_eq!(names, ["a/z.crush", "b.crush", "bad.crush"]);
+    assert_eq!(
+        names,
+        [
+            "a/target/w.crush",
+            "a/z.crush",
+            "b.crush",
+            "bad.crush",
+            "target/y.crush"
+        ]
+    );
     assert!(found[0].1.as_ref().unwrap().fails_gate());
-    assert!(!found[1].1.as_ref().unwrap().fails_gate());
-    assert!(found[2].1.is_err(), "a parse error comes back as an error");
+    assert!(found[1].1.as_ref().unwrap().fails_gate());
+    assert!(!found[2].1.as_ref().unwrap().fails_gate());
+    assert!(found[3].1.is_err(), "a parse error comes back as an error");
+    // A caller leaves out the top-level directory it names, and no deeper
+    // one of the same name.
+    let skipped = crush_frontend::visibility_check::surfaces_skipping(&dir, &["target"]).unwrap();
+    let names: Vec<String> = skipped.iter().map(|(p, _)| rel(&dir, p)).collect();
+    assert_eq!(
+        names,
+        ["a/target/w.crush", "a/z.crush", "b.crush", "bad.crush"]
+    );
     let one = surfaces(&dir.join("b.crush")).unwrap();
     assert_eq!(one.len(), 1);
     let refused = surfaces(&dir.join("notes.txt")).unwrap_err();
