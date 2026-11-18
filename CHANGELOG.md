@@ -14,6 +14,17 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- fix(aot): escape names and strings written into AOT-generated source (#561). The AOT-to-Rust
+  generator interpolated map-literal field names and local names into the generated Rust string
+  literals without escaping, so a key like `{"a\"b": 1}` broke out of the literal and injected
+  code into the compiled binary — which runs with no capability gate. All Rust-generator name and
+  string sites now route through a shared `rust_str_escape`. The AOT-to-C generator was already
+  injection-safe but used `escape_default`, which renders non-ASCII as Rust's `\u{..}` (invalid C);
+  C sites now use a valid-C octal `c_str_escape`, and the crush-aotc `/* … */` comment path uses a
+  `c_comment_sanitize` that neutralises a `*/` terminator. Interpreter execution (`crush-run`) was
+  never affected. New tests round-trip hostile map keys (`"`, `\`, `{`, `}`, newline, non-ASCII)
+  through the AOT backends and compare against the interpreter.
+
 - fix(visibility): a module that is really under no package root takes the package of the path
   it was found through (#552). A module reached through a symlink inside a `-L` directory or
   package root that points outside every root (`lib/vendor -> ../outside`) fell into the root
