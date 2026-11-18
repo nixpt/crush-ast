@@ -43,7 +43,7 @@ pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::Unsupporte
             if let Some(fields) = casm::sealed_fields(module, &k.name) {
                 let list: Vec<String> = fields
                     .iter()
-                    .map(|f| format!("\"{}\"", f.escape_default()))
+                    .map(|f| format!("\"{}\"", c_str_escape(f)))
                     .collect();
                 out.push_str(&format!(
                     "static const char* const _cosm_sealed_{i}[] = {{{}NULL}};\n",
@@ -70,6 +70,43 @@ pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::Unsupporte
 }
 
 // ── Header ──────────────────────────────────────────────────────────────────
+
+/// Escape an arbitrary string so it is safe to embed between the quotes of a
+/// generated **C** string literal (CRUSH-561).
+///
+/// Field names (map-literal keys) and string constants are arbitrary source
+/// strings; a raw `"`, `\`, or newline would break out of the literal and
+/// inject code into the AOT-compiled binary. The C backend previously used
+/// Rust's `str::escape_default`, which keeps `"`/`\` safe but renders any
+/// non-ASCII byte as `\u{..}` — **not valid C** (C has `\uXXXX`/`\UXXXXXXXX`
+/// with no braces), so a non-ASCII field name produced source that would not
+/// compile. This escapes `"`, `\` and the common control chars by name, escapes
+/// `?` as `\?` (the C backend compiles with `-std=c99`, which leaves trigraphs
+/// on: an un-escaped `??/` is the trigraph for `\` and would re-open the escape
+/// machinery — e.g. a key `??/"` becomes `\"` after preprocessing and closes
+/// the literal early, CRUSH-561), passes the remaining printable ASCII
+/// (0x20..=0x7e) through unchanged, and renders every other byte — control
+/// characters and the UTF-8 bytes of non-ASCII characters alike — as a 3-digit
+/// octal escape (`\NNN`, which C reads as at most 3 octal digits, so it can't
+/// swallow a following digit). The octal form reproduces the exact byte
+/// sequence the interpreter holds without depending on the C compiler's source
+/// or execution character set.
+fn c_str_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'\\' => out.push_str("\\\\"),
+            b'"' => out.push_str("\\\""),
+            b'?' => out.push_str("\\?"),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            0x20..=0x7e => out.push(b as char),
+            _ => out.push_str(&format!("\\{b:03o}")),
+        }
+    }
+    out
+}
 
 fn emit_c_header(out: &mut String) {
     out.push_str(
@@ -1347,7 +1384,7 @@ fn emit_c_function(
             let next_pc = (i + 1).min(n);
             out.push_str(&format!(
                 "                {{ int __oi = _alloc_object(); if (__oi >= 0) {{ _objects[__oi].sealed_kind = \"{}\"; _objects[__oi].sealed_fields = _cosm_sealed_{idx}; }} _push(__oi >= 0 ? mk_object(__oi) : mk_null()); }} _pc={next_pc}; break;\n",
-                kind.escape_default()
+                c_str_escape(kind)
             ));
         } else if let Some(op) = emit_c_instr(out, instr, i, n, &local_index, to_check[i]) {
             unsupported.push(format!("{op} (fn {name}, instruction {i})"));
@@ -1769,8 +1806,7 @@ fn emit_c_instr(
             ));
         }
         "push_str" => {
-            let s = args["value"].as_str().unwrap_or("");
-            let escaped = s.escape_default().to_string();
+            let escaped = c_str_escape(args["value"].as_str().unwrap_or(""));
             out.push_str(&format!(
                 "                _push(mk_string(\"{escaped}\")); _pc={next_pc}; break;\n"
             ));
@@ -2250,12 +2286,12 @@ fn emit_c_instr(
         }
         "get_field" => {
             let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let escaped = field.escape_default().to_string();
+            let escaped = c_str_escape(field);
             out.push_str(&format!("                {{ Value __obj = _pop(); if (__obj.tag == TAG_OBJECT) {{ int __oi = __obj.obj_idx; if (__oi >= 0 && __oi < _object_count) {{ _push(_obj_get(&_objects[__oi], \"{escaped}\")); }} else {{ _push(mk_null()); }} }} else {{ _push(mk_null()); }} }} _pc={next_pc}; break;\n"));
         }
         "set_field" => {
             let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let escaped = field.escape_default().to_string();
+            let escaped = c_str_escape(field);
             out.push_str(&format!("                {{ Value __val = _pop(); Value __obj = _pop(); if (__obj.tag == TAG_OBJECT) {{ int __oi = __obj.obj_idx; if (__oi >= 0 && __oi < _object_count) {{ _obj_set(&_objects[__oi], \"{escaped}\", __val); }} }} _push(__obj); }} _pc={next_pc}; break;\n"));
         }
 
@@ -2443,11 +2479,12 @@ fn emit_c_instr(
 /// `1e20` as `100000000000000000000`, an integer literal too large for C (CRUSH-216);
 /// `{v:?}` is the shortest round-trip form and uses an exponent when that's shorter.
 /// `s` for the inside of a C string literal: printable ASCII as is, every
-/// other byte as an octal escape.
+/// other byte as an octal escape. `?` is escaped as `\?` so that `-std=c99`
+/// trigraphs (`??/` → `\`) cannot re-open the escape machinery (CRUSH-561).
 fn c_message(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
-            b'"' | b'\\' => format!("\\{}", b as char),
+            b'"' | b'\\' | b'?' => format!("\\{}", b as char),
             0x20..=0x7e => (b as char).to_string(),
             _ => format!("\\{b:03o}"),
         })
@@ -2541,6 +2578,39 @@ fn emit_c_ai_stub(_out: &mut String) {}
 // (an earlier fetch had these helpers inside the prelude raw-string and
 // caused a structural parse error).
 fn emit_c_dom_stub(_out: &mut String) {}
+
+#[cfg(test)]
+mod c_escape_tests {
+    use super::*;
+
+    #[test]
+    fn c_str_escape_is_valid_c_and_injection_safe() {
+        // CRUSH-561: unlike `escape_default`, non-ASCII must stay valid C.
+        assert_eq!(c_str_escape("a\"b"), "a\\\"b");
+        assert_eq!(c_str_escape("a\\b"), "a\\\\b");
+        assert_eq!(c_str_escape("a\nb"), "a\\nb");
+        assert_eq!(c_str_escape("a\tb"), "a\\tb");
+        // `?` is escaped so no `??x` trigraph can form under -std=c99.
+        assert_eq!(c_str_escape("a??/b"), "a\\?\\?/b");
+        assert!(!c_str_escape("x??/\"); abort(); //").contains("??"));
+        // A control byte becomes a 3-digit octal escape (never Rust's `\u{..}`,
+        // which C does not accept), and a following digit stays separate.
+        assert_eq!(c_str_escape("\x070"), "\\0070");
+        // Non-ASCII becomes octal escapes of its UTF-8 bytes (0xc3 0xa9),
+        // which a C compiler reads back as the same bytes — never Rust's
+        // `\u{..}`, which C does not accept.
+        assert_eq!(c_str_escape("é"), "\\303\\251");
+        assert!(!c_str_escape("café").contains("\\u{"));
+        // Every quote in the output is escaped.
+        let e = c_str_escape("x\"; abort(); \"");
+        let cs: Vec<char> = e.chars().collect();
+        for (i, &c) in cs.iter().enumerate() {
+            if c == '"' {
+                assert_eq!(cs[i - 1], '\\', "quote escaped in {e:?}");
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod typed_locals_tests {

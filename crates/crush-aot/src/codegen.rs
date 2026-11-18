@@ -756,6 +756,22 @@ fn emit_function(
     out.push_str("}\n\n");
 }
 
+/// Escape an arbitrary string so it is safe to embed between the quotes of a
+/// generated **Rust** string literal (CRUSH-561).
+///
+/// Field names come from map-literal keys, which are arbitrary string literals
+/// in source (`{"a\"b": 1}`), and local names can arrive from walker frontends;
+/// interpolating either raw would let a `"`, `\`, or newline break out of the
+/// literal and inject code into the AOT-compiled binary — which runs with no
+/// capability gate. `str::escape_default` is exactly the Rust-string escaping
+/// (`"`, `\`, control chars, and non-ASCII as `\u{..}`), so every arm that
+/// writes a name or string between quotes in the Rust backend routes through
+/// this. The C backend needs its own escaping (`\u{..}` is not valid C): see
+/// `codegen_c::c_str_escape`.
+fn rust_str_escape(s: &str) -> String {
+    s.escape_default().to_string()
+}
+
 /// Rust identifier for a Crush function. The prefix keeps Crush names from being Rust
 /// keywords (`loop`, `type`, `match`) or colliding with the runtime helpers emitted
 /// above (`bin_add`, `negate`, ...), either of which broke the build (CRUSH-214).
@@ -820,8 +836,7 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
         "push_str" => {
-            let s = args["value"].as_str().unwrap_or("");
-            let escaped = s.escape_default().to_string();
+            let escaped = rust_str_escape(args["value"].as_str().unwrap_or(""));
             out.push_str(&format!(
                 "{ind}stack.push(RuntimeValue::String(\"{escaped}\".to_string()));\n"
             ));
@@ -844,13 +859,12 @@ fn emit_body(
 
         // ── Locals ──
         "load" => {
-            let name = args["name"].as_str().unwrap_or("");
+            let name = rust_str_escape(args["name"].as_str().unwrap_or(""));
             if check_load {
                 // CRUSH-zorro-54: a local is unassigned until its first store
                 // (it isn't in `locals` yet); reading it then fails, as on the VM.
-                let msg = name.escape_default();
                 out.push_str(&format!(
-                    "{ind}stack.push(match locals.get(\"{name}\") {{ Some(v) => v.clone(), None => uninit_load(\"{msg}\") }});\n"
+                    "{ind}stack.push(match locals.get(\"{name}\") {{ Some(v) => v.clone(), None => uninit_load(\"{name}\") }});\n"
                 ));
             } else {
                 // Every path here stored to it first (`casm::assigned::loads_to_check`).
@@ -861,7 +875,7 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
         "store" => {
-            let name = args["name"].as_str().unwrap_or("");
+            let name = rust_str_escape(args["name"].as_str().unwrap_or(""));
             out.push_str(&format!(
                 "{ind}let __v = stack.pop().unwrap_or(RuntimeValue::Null); locals.insert(\"{name}\".to_string(), __v);\n"
             ));
@@ -1193,12 +1207,12 @@ fn emit_body(
             out.push_str(&next_pc_str);
         }
         "get_field" => {
-            let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let field = rust_str_escape(args.get("name").and_then(|v| v.as_str()).unwrap_or(""));
             out.push_str(&format!("{ind}{{ let __obj = stack.pop(); let __v = if let Some(RuntimeValue::Object(ref o)) = __obj {{ o.borrow().get(\"{field}\").cloned().unwrap_or(RuntimeValue::Null) }} else {{ RuntimeValue::Null }}; stack.push(__v); }}\n"));
             out.push_str(&next_pc_str);
         }
         "set_field" => {
-            let field = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let field = rust_str_escape(args.get("name").and_then(|v| v.as_str()).unwrap_or(""));
             out.push_str(&format!("{ind}{{ let __val = stack.pop().unwrap_or(RuntimeValue::Null); let __obj = stack.pop().unwrap_or(RuntimeValue::Null); if let RuntimeValue::Object(ref o) = __obj {{ o.borrow_mut().insert(\"{field}\".to_string(), __val); }} stack.push(__obj); }}\n"));
             out.push_str(&next_pc_str);
         }
@@ -1460,6 +1474,28 @@ pub extern "C" fn crush_run_free(s: *mut std::ffi::c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rust_str_escape_neutralises_literal_breakout() {
+        // CRUSH-561: a `"` or `\` in a map key must not escape the generated
+        // Rust string literal. `escape_default` is the Rust-string escaping, so
+        // the result is exactly what a Rust literal body needs.
+        assert_eq!(rust_str_escape("a\"b"), "a\\\"b");
+        assert_eq!(rust_str_escape("a\\b"), "a\\\\b");
+        assert_eq!(rust_str_escape("a\nb"), "a\\nb");
+        assert_eq!(rust_str_escape("café"), "caf\\u{e9}");
+        // No raw quote survives except as part of an escape, and no raw newline:
+        for s in ["x\"; std::process::abort(); \"", "a\nb\rc\t", "\0{}"] {
+            let e = rust_str_escape(s);
+            assert!(!e.contains('\n') && !e.contains('\r'), "stays one line: {e:?}");
+            let bytes: Vec<char> = e.chars().collect();
+            for (i, &c) in bytes.iter().enumerate() {
+                if c == '"' {
+                    assert_eq!(bytes[i - 1], '\\', "every quote is escaped in {e:?}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn rust_aot_conv_chr_ord_are_emitted() {
