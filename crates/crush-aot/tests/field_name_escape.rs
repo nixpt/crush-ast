@@ -78,6 +78,11 @@ fn cases() -> Vec<(&'static str, &'static str)> {
         ("close_brace", r#""a}b""#),
         ("newline", r#""a\nb""#),
         ("non_ascii", r#""café_αβ""#),
+        // `??/` is a C trigraph for `\` under -std=c99 (the C backend's flag).
+        // A key ending in `??/` becomes a trailing `\` that escapes the closing
+        // quote, so on the unescaped C backend the generated source fails to
+        // compile; escaping `?` keeps the literal intact.
+        ("question_trigraph", r#""a??/""#),
     ]
 }
 

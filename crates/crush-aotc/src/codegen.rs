@@ -808,8 +808,29 @@ fn mangle(name: &str) -> String {
     out
 }
 
+/// A Crush local/parameter name as a C identifier (CRUSH-561).
+///
+/// The result is used in **identifier position** (local and parameter
+/// declarations at :89/:137/:150/:177, loads/stores at :305/:337), so it must
+/// contain only `[A-Za-z0-9_]` and be injective — a name carrying C syntax
+/// (`x; evil(); int y`) would otherwise inject code, and the old
+/// `.`→`__` / `-`→`_` rewrite both left other punctuation through and collided
+/// (`a_b`, `a-b` and `a.b` all mapped together). This mirrors [`mangle`]:
+/// ASCII alphanumerics are kept, `_` doubles, and every other character
+/// becomes `_u<hex>_`, which is total and injective.
 fn mangle_local(name: &str) -> String {
-    format!("_v_{}", name.replace('.', "__").replace('-', "_"))
+    let mut out = String::with_capacity(name.len() + 3);
+    out.push_str("_v_");
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if c == '_' {
+            out.push_str("__");
+        } else {
+            out.push_str(&format!("_u{:x}_", c as u32));
+        }
+    }
+    out
 }
 
 fn c_float_literal(v: f64) -> String {
@@ -829,6 +850,11 @@ fn c_float_literal(v: f64) -> String {
 fn c_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('"', "\\\"")
+        // `?` is escaped so a `??x` trigraph can't form (`??/` is the trigraph
+        // for `\`). crush-aotc's own `cc` call passes no `-std`, so trigraphs
+        // are off today, but escape it anyway to match crush-aot and stay safe
+        // if a `-std=c99`/`-ansi` build is ever added (CRUSH-561).
+        .replace('?', "\\?")
         .replace('\n', "\\n")
         .replace('\r', "\\r")
 }
@@ -1009,6 +1035,27 @@ mod tests {
         assert_eq!(c_escape("a\"b"), "a\\\"b");
         assert_eq!(c_escape("a\\b"), "a\\\\b");
         assert_eq!(c_escape("a\nb"), "a\\nb");
+        // `?` escaped so no `??x` trigraph can form if a -std build is added.
+        assert_eq!(c_escape("a??/b"), "a\\?\\?/b");
+    }
+
+    #[test]
+    fn mangle_local_is_injective_and_identifier_safe() {
+        // CRUSH-561: the result sits in C identifier position, so it must carry
+        // no C syntax and never collide.
+        let hostile = mangle_local("x; evil(); int y");
+        assert!(
+            hostile
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "identifier-safe: {hostile}"
+        );
+        // Names the old `.`/`-`-only rewrite collided now stay distinct.
+        for (a, b) in [("a_b", "a-b"), ("a.b", "a__b"), ("a-b", "a.b")] {
+            assert_ne!(mangle_local(a), mangle_local(b), "{a} vs {b}");
+        }
+        // Plain identifiers keep their alphanumerics (the common case).
+        assert_eq!(mangle_local("count"), "_v_count");
     }
 
     #[test]

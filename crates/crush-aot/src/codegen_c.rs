@@ -80,19 +80,24 @@ pub fn gen_c_source(program: &casm::Program) -> Result<String, crate::Unsupporte
 /// Rust's `str::escape_default`, which keeps `"`/`\` safe but renders any
 /// non-ASCII byte as `\u{..}` — **not valid C** (C has `\uXXXX`/`\UXXXXXXXX`
 /// with no braces), so a non-ASCII field name produced source that would not
-/// compile. This escapes `"`, `\` and the common control chars by name, passes
-/// printable ASCII (0x20..=0x7e) through unchanged, and renders every other
-/// byte — control characters and the UTF-8 bytes of non-ASCII characters alike
-/// — as a 3-digit octal escape (`\NNN`, which C reads as at most 3 octal
-/// digits, so it can't swallow a following digit). The octal form reproduces
-/// the exact byte sequence the interpreter holds without depending on the C
-/// compiler's source or execution character set.
+/// compile. This escapes `"`, `\` and the common control chars by name, escapes
+/// `?` as `\?` (the C backend compiles with `-std=c99`, which leaves trigraphs
+/// on: an un-escaped `??/` is the trigraph for `\` and would re-open the escape
+/// machinery — e.g. a key `??/"` becomes `\"` after preprocessing and closes
+/// the literal early, CRUSH-561), passes the remaining printable ASCII
+/// (0x20..=0x7e) through unchanged, and renders every other byte — control
+/// characters and the UTF-8 bytes of non-ASCII characters alike — as a 3-digit
+/// octal escape (`\NNN`, which C reads as at most 3 octal digits, so it can't
+/// swallow a following digit). The octal form reproduces the exact byte
+/// sequence the interpreter holds without depending on the C compiler's source
+/// or execution character set.
 fn c_str_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for &b in s.as_bytes() {
         match b {
             b'\\' => out.push_str("\\\\"),
             b'"' => out.push_str("\\\""),
+            b'?' => out.push_str("\\?"),
             b'\n' => out.push_str("\\n"),
             b'\r' => out.push_str("\\r"),
             b'\t' => out.push_str("\\t"),
@@ -2474,11 +2479,12 @@ fn emit_c_instr(
 /// `1e20` as `100000000000000000000`, an integer literal too large for C (CRUSH-216);
 /// `{v:?}` is the shortest round-trip form and uses an exponent when that's shorter.
 /// `s` for the inside of a C string literal: printable ASCII as is, every
-/// other byte as an octal escape.
+/// other byte as an octal escape. `?` is escaped as `\?` so that `-std=c99`
+/// trigraphs (`??/` → `\`) cannot re-open the escape machinery (CRUSH-561).
 fn c_message(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
-            b'"' | b'\\' => format!("\\{}", b as char),
+            b'"' | b'\\' | b'?' => format!("\\{}", b as char),
             0x20..=0x7e => (b as char).to_string(),
             _ => format!("\\{b:03o}"),
         })
@@ -2584,6 +2590,9 @@ mod c_escape_tests {
         assert_eq!(c_str_escape("a\\b"), "a\\\\b");
         assert_eq!(c_str_escape("a\nb"), "a\\nb");
         assert_eq!(c_str_escape("a\tb"), "a\\tb");
+        // `?` is escaped so no `??x` trigraph can form under -std=c99.
+        assert_eq!(c_str_escape("a??/b"), "a\\?\\?/b");
+        assert!(!c_str_escape("x??/\"); abort(); //").contains("??"));
         // A control byte becomes a 3-digit octal escape (never Rust's `\u{..}`,
         // which C does not accept), and a following digit stays separate.
         assert_eq!(c_str_escape("\x070"), "\\0070");

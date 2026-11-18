@@ -756,9 +756,6 @@ fn emit_function(
     out.push_str("}\n\n");
 }
 
-/// Rust identifier for a Crush function. The prefix keeps Crush names from being Rust
-/// keywords (`loop`, `type`, `match`) or colliding with the runtime helpers emitted
-/// above (`bin_add`, `negate`, ...), either of which broke the build (CRUSH-214).
 /// Escape an arbitrary string so it is safe to embed between the quotes of a
 /// generated **Rust** string literal (CRUSH-561).
 ///
@@ -775,6 +772,9 @@ fn rust_str_escape(s: &str) -> String {
     s.escape_default().to_string()
 }
 
+/// Rust identifier for a Crush function. The prefix keeps Crush names from being Rust
+/// keywords (`loop`, `type`, `match`) or colliding with the runtime helpers emitted
+/// above (`bin_add`, `negate`, ...), either of which broke the build (CRUSH-214).
 fn sanitize_fn_name(name: &str) -> String {
     format!("crush_fn_{}", crate::names::mangle(name))
 }
