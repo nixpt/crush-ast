@@ -35,3 +35,42 @@ fn user_main_can_recurse() {
     );
     assert_eq!(out.trim(), "10");
 }
+
+fn lower_err(source: &str) -> String {
+    match crush_lang_js::js_to_cast(source, "js") {
+        Ok(_) => panic!("{source:?} lowered; expected a refusal"),
+        Err(e) => format!("{e:#}"),
+    }
+}
+
+#[test]
+fn a_parameter_named_main_is_not_renamed() {
+    let out = run(
+        "function main() { return 1; }\nfunction f(main) { return main; }\nconsole.log(f(5));\nconsole.log(main());\n",
+    );
+    let lines: Vec<&str> = out.lines().map(str::trim).collect();
+    assert_eq!(lines, ["5", "1"], "{out:?}");
+}
+
+#[test]
+fn a_local_named_main_is_not_renamed() {
+    let out = run(
+        "function main() { return 1; }\nfunction f() { let main = 3; return main; }\nconsole.log(f());\nconsole.log(main());\n",
+    );
+    let lines: Vec<&str> = out.lines().map(str::trim).collect();
+    assert_eq!(lines, ["3", "1"], "{out:?}");
+}
+
+#[test]
+fn top_level_code_rebinding_main_is_refused() {
+    let msg = lower_err("function main() { return 1; }\nmain = 5;\nconsole.log(main);\n");
+    assert!(msg.contains("rebinds `main`"), "{msg}");
+}
+
+#[test]
+fn a_taken_reserved_name_is_refused() {
+    let msg = lower_err(
+        "function __user_main() { return 2; }\nfunction main() { return 1; }\nconsole.log(main());\n",
+    );
+    assert!(msg.contains("__user_main"), "{msg}");
+}

@@ -35,3 +35,41 @@ fn user_main_can_recurse() {
     );
     assert_eq!(out.trim(), "10");
 }
+
+fn lower_err(source: &str) -> String {
+    match python_to_cast(source) {
+        Ok(_) => panic!("{source:?} lowered; expected a refusal"),
+        Err(e) => format!("{e:#}"),
+    }
+}
+
+#[test]
+fn a_parameter_named_main_is_not_renamed() {
+    let out = run(
+        "def main():\n    return 1\ndef f(main):\n    return main\nprint(f(5))\nprint(main())\n",
+    );
+    let lines: Vec<&str> = out.lines().map(str::trim).collect();
+    assert_eq!(lines, ["5", "1"], "{out:?}");
+}
+
+#[test]
+fn a_local_named_main_is_not_renamed() {
+    let out = run(
+        "def main():\n    return 1\ndef f():\n    main = 3\n    return main\nprint(f())\nprint(main())\n",
+    );
+    let lines: Vec<&str> = out.lines().map(str::trim).collect();
+    assert_eq!(lines, ["3", "1"], "{out:?}");
+}
+
+#[test]
+fn top_level_code_rebinding_main_is_refused() {
+    let msg = lower_err("def main():\n    return 1\nmain = 5\nprint(main)\n");
+    assert!(msg.contains("rebinds `main`"), "{msg}");
+}
+
+#[test]
+fn a_taken_reserved_name_is_refused() {
+    let msg =
+        lower_err("def __user_main():\n    return 2\ndef main():\n    return 1\nprint(main())\n");
+    assert!(msg.contains("__user_main"), "{msg}");
+}
