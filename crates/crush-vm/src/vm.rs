@@ -212,6 +212,10 @@ impl VmError {
     ///   or a function with the wrong argument count;
     /// - `CapArity` — a registered capability was given the wrong argument
     ///   count (a program bug, like `FuncArity`);
+    /// - `CapTimedOut` — a granted capability's own `timeout_ms` option fired
+    ///   (`tcp.recv`, `tcp.accept`, `net.*`). A timeout is not a refusal
+    ///   (#464, captain's ruling on #507/#508): the handler binds
+    ///   `<cap>: timed out after N ms` and the program can retry;
     /// - `Io` — a capability's I/O failed;
     /// - `Parallel` — a `parallel_map` worker or item failed (#175) with a
     ///   fault that is itself catchable (`ParallelFatal` is the rest);
@@ -223,13 +227,14 @@ impl VmError {
     ///   the program's;
     /// - `UnknownCap` / `CapDenied` / `CapNotDeclared` — capability-security
     ///   decisions (an ungranted or undeclared name);
-    /// - `CapFailed` / `CapTimeout` — a **registered, granted** capability ran
-    ///   and failed (`fs.read` of a missing file, an fs-sandbox refusal, a
-    ///   `timeout_ms` that fired) or ran out of wall time. Ruling 5 (#427,
-    ///   #464): a capability or sandbox refusal is fatal, like `CapDenied`,
-    ///   and is never swallowed by `try`. This reverses #369, which made
-    ///   `CapFailed` catchable; a program that must survive a missing file
-    ///   checks first (`fs.exists`);
+    /// - `CapFailed` — a **registered, granted** capability ran and refused
+    ///   or failed (`fs.read` of a missing file, an fs-sandbox refusal, a bad
+    ///   option). Ruling 5 (#427, #464): a capability or sandbox refusal is
+    ///   fatal, like `CapDenied`, and is never swallowed by `try`. This
+    ///   reverses #369, which made `CapFailed` catchable; a program that must
+    ///   survive a missing file checks first (`fs.exists`);
+    /// - `CapTimeout` — a capability ran past the VM's wall budget
+    ///   (`max_wall_time_ms`): the sandbox's limit, like the quotas;
     /// - `ParallelFatal` — any fatal fault from inside a `parallel_map` item;
     /// - `Exit` — a deliberate `sys.exit(code)` must end the run: a CLI's
     ///   own exit status is not trappable;
@@ -259,6 +264,7 @@ impl VmError {
                 | VmError::DivByZero
                 | VmError::ArithmeticOverflow
                 | VmError::CapArity { .. }
+                | VmError::CapTimedOut { .. }
         )
     }
 }
