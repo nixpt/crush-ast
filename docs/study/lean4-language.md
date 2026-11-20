@@ -7,7 +7,7 @@ Sources: crush-ast `origin/main` 9891781a; Lean 4 at leanprover/lean4 @ 450d6b1 
 read only, nothing built or run). Lean refs are `path:line` into that clone.
 
 Parts: 1 io_uring proposal, 2 Lean lessons (adopt/adapt/skip), 3 proposed tickets T1-T14, 4 proof as a
-lever (P1-P5, tickets T15-T18, and the "260k" source check).
+lever (P1-P5, tool choice per candidate in 4.5, tickets T15-T19, and the "260k" source check).
 
 Ranking key: **ADOPT** = take the idea as is; **ADAPT** = take the idea, reshape it for Crush;
 **SKIP** = understood, not worth it for us.
@@ -328,10 +328,81 @@ Proposed proof tickets (**NOT filed**, same rule as Part 3):
 
 | # | Title | Area | Depends on |
 |---|---|---|---|
-| T15 | Lean spec of CVM1 stack discipline + Rust bytecode verifier, differential-tested against it; bench the dispatch loop with checks vs. without | engines (tulya) + a tester | T9 |
-| T16 | Lean model of the io_uring backend state machine + CQE trace-replay checker in the parity tests | engines | T1 |
-| T17 | Lean statement of cap soundness over `capabilities_used` + VM call semantics; proof for the static subset | engines + me (contract) | T4 |
+| T15 | CVM1 bytecode verifier written in Verus (stack-depth soundness proved), Kani harnesses on PortableVm's unchecked pop path; bench the dispatch loop with checks vs. without | engines (tulya) + a tester | T9, T19 |
+| T16 | TLA+ spec of the io_uring submit/complete/cancel/timeout protocol (TLC), before T1's code; then Kani harnesses on the Rust state type + CQE trace-replay against the spec | engines | T1, T19 |
+| T17 | Cap soundness in Lean 4 over a core model of `capabilities_used` + VM call semantics, linked to the Rust by a differential oracle on the #493 corpus; Kani harness that `check_cap_permitted` denies every cap not granted | engines + me (contract) | T4, T19 |
 | T18 | Lean reference interpreter for CAST as a #453 oracle (no preservation proof) | tester (kasauti if minted) | #453 |
 
-Lean would be a new toolchain in the lane: `lake`, and an `elan` pin. These are proof and CI dependencies
-only. Nothing ships in crush-ast's runtime, and no Lean code runs in the VM.
+| T19 | Install the verification toolchains on zorro (Kani via `cargo kani setup`; Verus release; Lean via elan; TLA+ tools), wire one CI job per tool, check disk under the heavy-build flock | toolchain (upkar) + me | captain's go |
+
+These tools would be new in the lane. They are proof and CI dependencies only. Nothing ships in crush-ast's runtime, and no proof
+code runs in the VM. Installing them is T19, not part of this PR.
+
+### 4.5 Tool choice per candidate (addendum 2: Lean is not a requirement)
+
+The captain's goal is machine-checked proofs that let us delete work; Lean was an example, not a
+requirement. Below I compare the tools for each candidate from their **docs only**: nothing was installed or
+run. Sources are listed at the end of this section. Anything marked *unverified* I could not confirm from
+the docs.
+
+**Our toolchain:** crush-ast is a 54-member workspace on **stable** Rust.
+- `rust-toolchain.toml` channel = stable; edition 2024; `rust-version = 1.95.0`.
+- CI uses `stable` and `1.100.0`.
+- `crush-vm` default features pull `libloading` and `crush-ffi`, so harnesses build with `--no-default-features`.
+- There are **no CUDA crates** in crush-ast (`crush-ptx` depends only on casm and serde_json), so nothing
+  needs excluding for that.
+- `portable_vm.rs`: 3,778 lines, 0 `unsafe`, 1 `dyn`.
+
+| Tool | Fits our toolchain? | Code changes | Maturity | Verdict for us |
+|---|---|---|---|---|
+| **Kani** | Own pinned nightly (0.68.0 pins nightly-2026-08-21), installed by `cargo kani setup` into `~/.kani`; our stable pin is untouched. Edition 2024 should be fine on that nightly. *Unverified:* `-p`/`--workspace` behaviour and how it interacts with our `rust-toolchain.toml` | None; `#[kani::proof]` harnesses under `cfg(kani)`. Loops need unwind bounds | Active; 7 of the 10 solved AWS verify-rust-std challenges used it | **Use**: panic, overflow and OOB freedom on real code, bounded |
+| **Verus** | Pins rustc **1.100.0**, the same as our CI pin | Verified code lives in `verus!{}` with spec/proof/ghost code; code outside the macro isn't checked. Vec/HashMap supported; closures and dyn partial; no async | Active (rolling releases, latest 2026-11-20); Atmosphere microkernel (SOSP 2025), Asterinas vostd | **Use for new code** whose invariant must hold for all inputs (the verifier, a state type). Not for retrofitting the 3.8k-line VM |
+| **Creusot** | Pinned nightly-2026-10-26, Why3 backend | Pearlite annotations | Active repo; guide was down, subset *unverified* | Skip: same niche as Verus, with an extra solver stack and a nightly |
+| **Prusti** | Pinned nightly-2026-08-15 | Contracts | Unclear: a 2025 catalog says "not maintained", yet the repo was pushed 2026-11-20 | Skip until the status is clear |
+| **Aeneas + Charon** | Nightly tags only, Charon pinned; Lean version drift across Aeneas/Mathlib reported | None, but only a safe subset translates: no external-crate calls, no generic functions with trait bounds extracted directly, limited closures and loops, dyn undocumented | Research grade; SymCrypt ML-KEM/SHA3 in production | **Not for crush-ast now**: `cap_inference.rs` calls into `crush_cosm` and `casm`, and the lowering is generic, trait-heavy code. Revisit for a small, self-contained kernel |
+| **Lean 4 / Rocq / Isabelle** | Separate toolchain (elan / opam / Isabelle) | A model, not our code | Mature; CompCert (Rocq) and CakeML (HOL) for preservation, WasmCert (Rocq + Isabelle) for type soundness | **Use for "for all programs" properties** of the language. Pick **one**: Lean 4 (one toolchain for the lane, and #286 shows the extern + self-test pattern), closing the model gap with a differential oracle |
+| **TLA+ (TLC)** | Java tool, separate | A spec, before the code | Mature; no existing io_uring or async-runtime spec found | **Use for the io_uring protocol** design, before T1's code exists |
+
+**Per candidate:**
+
+| Candidate | Tool | What it proves | Runtime check or step it lets us delete | Cost |
+|---|---|---|---|---|
+| P1 bytecode verifier | **Verus** for the verifier (new code) + **Kani** on the VM's unchecked path | Verus: if `verify(prog)` accepts, every reachable instruction finds enough stack operands, jump targets and local/const indices are in range, for **all** programs. Kani: the VM's unchecked `pop` path can't panic for bounded programs that satisfy the verifier's postcondition | The ~10 `StackUnderflow` returns in `portable_vm.rs` and the `Result` on `pop()` (~106 call sites) on verified code, kept as `debug_assert!` | **M** |
+| P2 cap soundness | **Lean 4** model + differential oracle; **Kani** for the local gate | Lean: an accepted program with grants G calls no cap outside G (core language, static calls). Kani: `check_cap_permitted` denies every cap not in the grant set, and quotas never underflow | A proof instead of tests for T4/#473. The per-call check stays as defence in depth (dynamic spawn targets, polyglot); the deletion is of hand-written cap-escape tests, not of the runtime check | **M-L** |
+| P3 io_uring state machine | **TLA+** first, then **Kani** (Verus only if a bounded check isn't enough) | Each SQE completes exactly once; no buffer reuse while the kernel owns it; a timeout racing a completion yields one result; the fallback poller is observationally equal | The double-completion guards and "can't happen" panics; most hand-written race tests (the CQE trace replay against the spec replaces them) | **S** (TLA+) + **S** (Kani) |
+| P4 effect rules | **Lean 4** on a core calculus | A function inferred pure makes no cap call and has no observable effect | The conservative "don't reorder or dedupe calls" fallback in the optimizer passes (T11/T12) | **M** |
+| P5 lowering preservation | **Lean 4** reference semantics as a #453 oracle (no preservation proof) | Nothing by itself; it makes the differential harness's expected outputs come from a spec | Hand-maintained expected outputs in the differential tests | **M** (oracle) / **L** (full proof; CompCert/CakeML scale, person-years) |
+
+**Where I differ from vega's prior** ("Kani + Verus for hot invariants and the io_uring state machine; Lean,
+maybe via Aeneas, for lowering preservation and cap soundness"):
+1. **io_uring: TLA+ first.** The code doesn't exist yet, so checking the protocol before writing it is the
+   cheapest place to find a cancel/timeout race. Kani follows on the Rust state type. Verus is only worth it
+   if the bounded check isn't enough.
+2. **Aeneas: no, for crush-ast today.** Its subset excludes calls into external crates and trait-bound
+   generics. Our cap inference and lowering are built on both. A differential oracle (Lean model vs. the
+   Rust code on the #493 corpus) closes the model gap at a fraction of the cost. That is the same trust split
+   #286 uses: proofs on the spec, trusted fast code checked against it.
+3. **The bytecode verifier goes to Verus, not Lean.** It is new code, Verus matches our rustc exactly, and
+   proving the real Rust verifier is what lets the VM drop its checks. A Lean spec would still leave a
+   model-to-code gap at exactly the spot where we want to remove the check.
+
+Sources (all read 2026-11-20):
+- Kani releases https://github.com/model-checking/kani/releases
+- Kani install guide https://model-checking.github.io/kani/install-guide.html
+- Kani feature support https://model-checking.github.io/kani/rust-feature-support.html
+- verify-rust-std https://github.com/model-checking/verify-rust-std
+- Verus releases https://github.com/verus-lang/verus/releases
+- Verus toolchain pin https://raw.githubusercontent.com/verus-lang/verus/main/rust-toolchain.toml
+- Verus features https://verus-lang.github.io/verus/guide/features.html
+- Atmosphere https://mars-research.github.io/projects/atmo
+- Creusot toolchain pin https://raw.githubusercontent.com/creusot-rs/creusot/master/rust-toolchain
+- Prusti toolchain pin https://raw.githubusercontent.com/viperproject/prusti-dev/master/rust-toolchain
+- Aeneas https://github.com/AeneasVerif/aeneas
+- Charon limitations https://raw.githubusercontent.com/AeneasVerif/charon/main/docs/limitations.md
+- Aeneas/Mathlib Lean drift (2026 paper) https://arxiv.org/html/2605.30106
+- CompCert https://compcert.org/
+- CakeML https://cakeml.org/
+- TLA+ examples https://github.com/tlaplus/Examples
+
+*Unverified:* Kani's `-p`/workspace behaviour, Creusot's supported subset, Prusti's real status, and Aeneas
+dyn support.
