@@ -129,7 +129,7 @@ mod tests {
             msg.contains("dom_native.query") && msg.contains("boom"),
             "{msg}"
         );
-        // A granted capability that ran and failed: catchable `CapFailed`,
+        // A granted capability that ran and failed: `CapFailed` (fatal, ruling 5),
         // like the same failure through CAP_CALL, not a security refusal.
         assert!(matches!(err, VmError::CapFailed { .. }), "{err:?}");
     }

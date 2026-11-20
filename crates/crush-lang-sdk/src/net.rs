@@ -572,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn timeout_ms_is_a_catchable_per_request_failure() {
+    fn timeout_ms_is_a_per_request_cap_failure() {
         let caps = caps();
         let opts = || Value::new_map(HashMap::from([("timeout_ms".to_string(), Value::Int(150))]));
         let cases: [(&str, Vec<Value>); 5] = [
@@ -597,7 +597,7 @@ mod tests {
                 Err(HostCapError::Message(m)) => {
                     assert!(m.contains("timed out after 150 ms"), "{name}: {m}")
                 }
-                _ => panic!("{name}: expected a catchable timeout message"),
+                _ => panic!("{name}: expected a timeout message (CapFailed)"),
             }
             assert!(
                 start.elapsed() < Duration::from_secs(2),
@@ -671,15 +671,35 @@ mod tests {
         assert!(err.contains("expected 4 or 5 arguments"), "{err}");
     }
 
-    // Source → VM: a per-request timeout is caught by try/catch, and the
-    // response map carries reason + headers.
+    // Source → VM: a per-request timeout is a fatal CapFailed, even inside
+    // try/catch (ruling 5, #464), and the response map carries reason +
+    // headers.
     #[test]
     fn timeout_and_headers_through_the_source_pipeline() {
+        let caps = crate::HostCapsBuilder::new()
+            .net(true)
+            .net_max_response_bytes(4096)
+            .build();
+
         let (slow, _s1) = serve_once(200, "late", Duration::from_secs(3));
-        let (fast, _s2) = serve_once(201, "made", Duration::ZERO);
         let source = format!(
             "fn main() {{\n\
              try {{ net.http_get(\"{slow}\", {{ timeout_ms: 100 }}) }} catch e {{ print(\"caught\") }}\n\
+             print(\"after\")\n\
+             }}\n"
+        );
+        let prog = crate::compile::compile_crush_source(&source).expect("compile");
+        let err = crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&caps))
+            .unwrap_err();
+        assert!(
+            matches!(&err, crush_vm::VmError::CapFailed { cap, message }
+                if cap == "net.http_get" && message.contains("timed out after 100 ms")),
+            "{err:?}"
+        );
+
+        let (fast, _s2) = serve_once(201, "made", Duration::ZERO);
+        let source = format!(
+            "fn main() {{\n\
              let r = net.http_request(\"POST\", \"{fast}\", \"x\", null, {{ timeout_ms: 2000 }})\n\
              print(r.status)\n\
              print(r.reason)\n\
@@ -688,13 +708,9 @@ mod tests {
              }}\n"
         );
         let prog = crate::compile::compile_crush_source(&source).expect("compile");
-        let caps = crate::HostCapsBuilder::new()
-            .net(true)
-            .net_max_response_bytes(4096)
-            .build();
         let result =
             crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&caps)).unwrap();
-        assert_eq!(result.output, "caught\n201\nX\n4\nmade\n");
+        assert_eq!(result.output, "201\nX\n4\nmade\n");
     }
 
     // Source → VM: `net.http_put` from Crush, against a local listener.

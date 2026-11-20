@@ -513,4 +513,21 @@ mod tests {
                 .contains("isn't available inside parallel_map workers")
         );
     }
+
+    #[test]
+    fn a_worker_cap_failure_is_parallel_fatal() {
+        // Ruling 5 (#464): a granted capability that fails inside a worker
+        // is fatal on the main VM too, not the catchable `Parallel`.
+        let err = collect(vec![Err(VmError::cap_failed(
+            "fs.read",
+            "fs.read missing.txt: not found",
+        ))])
+        .unwrap_err();
+        assert!(matches!(err, VmError::ParallelFatal(_)), "{err:?}");
+        assert!(!err.is_catchable());
+        assert_eq!(
+            err.to_string(),
+            "parallel_map: item 0: fs.read: missing.txt: not found"
+        );
+    }
 }

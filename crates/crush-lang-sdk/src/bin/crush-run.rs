@@ -611,7 +611,7 @@ fn list_caps() {
             "  net.http_request METHOD URL BODY HEADERS  any method; returns {{status, reason, headers, body}}"
         );
         println!(
-            "  every net.* verb takes a last optional OPTS map: {{timeout_ms: N}} (a catchable error after N ms)"
+            "  every net.* verb takes a last optional OPTS map: {{timeout_ms: N}} (a fatal error after N ms)"
         );
     }
     #[cfg(feature = "tcp")]
@@ -631,7 +631,7 @@ fn list_caps() {
         println!("  tcp.listen URI         bind tcp://IP:PORT, return a listener id");
         println!("  tcp.accept LISTENER [OPTS]  blocking accept, return a connection id");
         println!(
-            "  OPTS for tcp.recv / tcp.accept: {{timeout_ms: N}} (a catchable error after N ms)"
+            "  OPTS for tcp.recv / tcp.accept: {{timeout_ms: N}} (a fatal error after N ms)"
         );
         println!("  (tcp.send/recv/close/ping also work under --tcp-listen; tcp.connect does not)");
     }
