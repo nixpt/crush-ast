@@ -1853,4 +1853,47 @@ mod tests {
             Token::Int(2, SourceLocation { line: 1, col: 1 })
         );
     }
+
+    /// The error a triple quote at `(line, col)` must produce (#557).
+    fn assert_triple_quote_error(result: Result<Token, ParseError>, at: (usize, usize)) {
+        match result {
+            Err(ParseError::UnexpectedToken { line, col, msg }) => {
+                assert_eq!((line, col), at);
+                assert!(msg.contains("triple-quoted strings"), "{msg}");
+            }
+            other => panic!("expected a triple-quote error, got {other:?}"),
+        }
+    }
+
+    /// #557: `"""hello"""` used to lex as `""`, `"hello"`, `""` and run as the
+    /// empty string. A triple quote is refused at the opening quote.
+    #[test]
+    fn test_lex_triple_double_quote_is_error() {
+        let mut lexer = Lexer::new(r#"let s = """hello""""#);
+        for _ in 0..3 {
+            lexer.next_token().unwrap(); // let s =
+        }
+        assert_triple_quote_error(lexer.next_token(), (1, 9));
+    }
+
+    #[test]
+    fn test_lex_triple_single_quote_is_error() {
+        let mut lexer = Lexer::new("\n  '''x'''");
+        lexer.next_token().unwrap(); // newline
+        assert_triple_quote_error(lexer.next_token(), (2, 3));
+    }
+
+    /// The empty string, and an escaped quote right after the opening quote,
+    /// are not triple quotes.
+    #[test]
+    fn test_lex_empty_and_escaped_quote_strings_unaffected() {
+        let mut lexer = Lexer::new(r#""" '' "\"\"" '\'\''"#);
+        let strings: Vec<String> = (0..4)
+            .map(|_| match lexer.next_token().unwrap() {
+                Token::String(s, _) => s,
+                other => panic!("expected a string, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(strings, ["", "", "\"\"", "''"]);
+    }
 }
