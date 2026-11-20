@@ -5,6 +5,9 @@ __pycache__/
 
 # dejavue: local-only artifacts
 .dejavue/fts.db
+# timeline.jsonl is written by every `dejavue` event; tracking it made every PR pair
+# conflict on GitHub (merge=union is not applied there). Local-only now (CRUSH-431).
+.dejavue/timeline.jsonl
 .dejavue/*.tmp
 .dejavue/.first-use
 .dejavue/ingested.lock
