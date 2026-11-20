@@ -185,7 +185,11 @@ impl VmError {
     /// Build a [`VmError::CapTimedOut`] from a cap's own `timeout_ms` firing,
     /// with the cap's leading name stripped from `message` as for
     /// [`VmError::cap_failed`], so all engines show the same text.
-    pub fn cap_timed_out(cap: impl Into<String>, timeout_ms: u64, message: impl AsRef<str>) -> Self {
+    pub fn cap_timed_out(
+        cap: impl Into<String>,
+        timeout_ms: u64,
+        message: impl AsRef<str>,
+    ) -> Self {
         let cap = cap.into();
         let message = strip_cap_prefix(&cap, message.as_ref()).to_string();
         VmError::CapTimedOut {

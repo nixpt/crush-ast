@@ -601,7 +601,10 @@ mod tests {
                     timeout_ms: 150,
                     message,
                 }) => {
-                    assert!(message.contains("timed out after 150 ms"), "{name}: {message}")
+                    assert!(
+                        message.contains("timed out after 150 ms"),
+                        "{name}: {message}"
+                    )
                 }
                 other => panic!("{name}: expected a catchable TimedOut, got {other:?}"),
             }

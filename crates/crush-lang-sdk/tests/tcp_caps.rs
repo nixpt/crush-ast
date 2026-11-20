@@ -361,8 +361,9 @@ fn accept_timeout_is_catchable_and_opts_are_checked() {
     let out = crush_run(&["run", "--tcp-listen", &prog]).output().unwrap();
     assert!(!out.status.success(), "the bad opts key must end the run");
     let text = stdout(&out);
+    assert!(text.starts_with("caught: "), "{text}");
     assert!(
-        text.contains("caught: tcp.accept: timed out after 150 ms"),
+        text.contains("tcp.accept: timed out after 150 ms"),
         "{text}"
     );
     assert!(!text.contains("bad: "), "{text}");

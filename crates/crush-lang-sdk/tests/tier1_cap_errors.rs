@@ -64,9 +64,7 @@ fn fast_outcome(y: FastYield) -> Outcome {
         FastYield::Finished(Some(RuntimeValue::String(s))) => Outcome::Ok(s),
         FastYield::Finished(v) => Outcome::Ok(format!("{v:?}")),
         FastYield::Error(e @ FastError::CapFailed { .. }) => Outcome::CapFailed(e.to_string()),
-        FastYield::Error(e @ FastError::CapTimedOut { .. }) => {
-            Outcome::CapTimedOut(e.to_string())
-        }
+        FastYield::Error(e @ FastError::CapTimedOut { .. }) => Outcome::CapTimedOut(e.to_string()),
         other => Outcome::Other(format!("{other:?}")),
     }
 }
@@ -179,7 +177,9 @@ fn fastvm(source: &str) -> Outcome {
     fast_outcome(vm.run(100_000))
 }
 
-const ENGINES: [(&str, fn(&str) -> Outcome); 3] = [
+type Engine = (&'static str, fn(&str) -> Outcome);
+
+const ENGINES: [Engine; 3] = [
     ("scheduler", scheduler),
     ("PortableVm", portable),
     ("FastVM", fastvm),

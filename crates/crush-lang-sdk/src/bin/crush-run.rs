@@ -630,7 +630,9 @@ fn list_caps() {
         );
         println!("  tcp.listen URI         bind tcp://IP:PORT, return a listener id");
         println!("  tcp.accept LISTENER [OPTS]  blocking accept, return a connection id");
-        println!("  OPTS for tcp.recv / tcp.accept: {{timeout_ms: N}} (a catchable error after N ms)");
+        println!(
+            "  OPTS for tcp.recv / tcp.accept: {{timeout_ms: N}} (a catchable error after N ms)"
+        );
         println!("  (tcp.send/recv/close/ping also work under --tcp-listen; tcp.connect does not)");
     }
     #[cfg(feature = "db")]
