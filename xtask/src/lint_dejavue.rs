@@ -625,7 +625,13 @@ mod tests {
             .unwrap()
             .join(".dejavue/timeline.jsonl");
         if !p.exists() {
-            panic!("smoke test: dejavue timeline missing at {}", p.display());
+            // The timeline is gitignored (CRUSH-431), so CI and fresh checkouts
+            // do not have it. The fixture tests above cover the lint logic.
+            eprintln!(
+                "skip: no local dejavue timeline at {} (untracked since CRUSH-431)",
+                p.display()
+            );
+            return;
         }
         let v = lint(&p).unwrap();
         assert!(
