@@ -67,7 +67,9 @@ pub fn lower_module(module: &Module, ctx: &LowerCtx) -> anyhow::Result<Program> 
     }
     check_nested_captures(&[], &main_body)?;
 
-    if !main_body.is_empty() && !functions.contains_key("main") {
+    if !main_body.is_empty() {
+        // A user `function main` is an ordinary function, not the module body (CRUSH-560).
+        crush_walker_core::entry::reserve_main(&mut functions, &mut main_body)?;
         functions.insert(
             "main".to_string(),
             Function {
