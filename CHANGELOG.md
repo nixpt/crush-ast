@@ -14,6 +14,16 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Behaviour change** — fix(vm): a granted capability that fails (`CapFailed`) is fatal and is
+  no longer caught by `try`/`catch`, on the scheduler, PortableVm and FastVM (ruling 5, #427,
+  #464). This reverses #369: a script that caught `fs.read` of a missing file, an fs-sandbox
+  refusal, or a `net.*` / `tcp.recv` / `tcp.accept` `timeout_ms` error now aborts with
+  `<cap>: <message>`. Check first instead (`if fs.exists(p) { … }`). A `CapFailed` inside a
+  `parallel_map` worker is now `ParallelFatal`. FastVM used to push the error text as the call's
+  value and carry on; it now stops with `FastError::CapFailed`, the same text as the other
+  engines. `CapArity` (wrong argument count) stays catchable. JIT and AOT capability errors are
+  unchanged by this entry.
+
 - fix(aot): escape names and strings written into AOT-generated source (#561). The AOT-to-Rust
   generator interpolated map-literal field names and local names into the generated Rust string
   literals without escaping, so a key like `{"a\"b": 1}` broke out of the literal and injected

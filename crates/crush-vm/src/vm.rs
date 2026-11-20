@@ -186,10 +186,8 @@ impl VmError {
     /// - `TypeError` — an operand of the wrong type at run time;
     /// - `NotCallable` / `FuncArity` / `ApplyArgsType` — calling a non-function
     ///   or a function with the wrong argument count;
-    /// - `CapFailed` / `CapArity` — a **registered, granted** capability ran
-    ///   and failed (`fs.read` of a missing file — CRUSH-241/#370's wording)
-    ///   or was given the wrong argument count. A CLI can catch these, report,
-    ///   and exit with its own status (#369);
+    /// - `CapArity` — a registered capability was given the wrong argument
+    ///   count (a program bug, like `FuncArity`);
     /// - `Io` — a capability's I/O failed;
     /// - `Parallel` — a `parallel_map` worker or item failed (#175) with a
     ///   fault that is itself catchable (`ParallelFatal` is the rest);
@@ -200,8 +198,14 @@ impl VmError {
     ///   `WallTimeQuota`, `CallDepthQuota`) — the sandbox's own limits, not
     ///   the program's;
     /// - `UnknownCap` / `CapDenied` / `CapNotDeclared` — capability-security
-    ///   decisions (an ungranted or undeclared name), unlike a *failing
-    ///   granted* capability, which is `CapFailed` above (#67's distinction);
+    ///   decisions (an ungranted or undeclared name);
+    /// - `CapFailed` / `CapTimeout` — a **registered, granted** capability ran
+    ///   and failed (`fs.read` of a missing file, an fs-sandbox refusal, a
+    ///   `timeout_ms` that fired) or ran out of wall time. Ruling 5 (#427,
+    ///   #464): a capability or sandbox refusal is fatal, like `CapDenied`,
+    ///   and is never swallowed by `try`. This reverses #369, which made
+    ///   `CapFailed` catchable; a program that must survive a missing file
+    ///   checks first (`fs.exists`);
     /// - `ParallelFatal` — any fatal fault from inside a `parallel_map` item;
     /// - `Exit` — a deliberate `sys.exit(code)` must end the run: a CLI's
     ///   own exit status is not trappable;
@@ -230,7 +234,6 @@ impl VmError {
                 | VmError::BadIndex(_)
                 | VmError::DivByZero
                 | VmError::ArithmeticOverflow
-                | VmError::CapFailed { .. }
                 | VmError::CapArity { .. }
         )
     }

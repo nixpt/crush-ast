@@ -55,7 +55,11 @@ fn fast_outcome(y: FastYield) -> Outcome {
 fn scheduler(source: &str) -> Outcome {
     let prog = crush_lang_sdk::compile::compile_crush_source(source).expect("compile");
     let caps = HostCapsBuilder::new().fs_memory().build();
-    vm_outcome(crush_vm::run_with_caps(&prog, &Quotas::default(), Some(&caps)))
+    vm_outcome(crush_vm::run_with_caps(
+        &prog,
+        &Quotas::default(),
+        Some(&caps),
+    ))
 }
 
 fn portable(source: &str) -> Outcome {

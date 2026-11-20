@@ -1,8 +1,9 @@
-// Read a missing file; on failure print a message and continue.
+// Read a file that may be missing; if it is, print a message and continue.
+// A failing fs.read is fatal even inside try/catch (ruling 5, #464), so check first.
 fn main() {
-  try {
+  if fs.exists("nope.txt") {
     let c = fs.cat("nope.txt")
-  } catch e {
+  } else {
     io.print("nope.txt missing, using default")
   }
   io.print("continued")

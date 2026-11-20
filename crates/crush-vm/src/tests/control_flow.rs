@@ -246,9 +246,10 @@ fn fault_unwinds_to_a_handler_inside_the_polyglot_block() {
 
 #[test]
 fn uncatchable_faults_are_refused_by_the_shared_unwinder() {
-    // Quota exhaustion, a deliberate sys.exit, capability-security refusals
-    // and a fatal fault from a parallel_map item stay fatal even with a
-    // handler active: the unwinder returns them untouched.
+    // Quota exhaustion, a deliberate sys.exit, capability-security refusals,
+    // a failing granted capability (ruling 5) and a fatal fault from a
+    // parallel_map item stay fatal even with a handler active: the unwinder
+    // returns them untouched.
     let mut try_stack = vec![TryHandler {
         handler_ip: 7,
         call_depth: 1,
@@ -264,6 +265,8 @@ fn uncatchable_faults_are_refused_by_the_shared_unwinder() {
         VmError::UnknownCap("fs.read".into()),
         VmError::CapDenied("fs.read".into()),
         VmError::CapNotDeclared("fs.read".into()),
+        // Ruling 5 (#464): a granted capability that failed is fatal too.
+        VmError::cap_failed("fs.read", "missing.txt: not found"),
         VmError::ParallelFatal("item 0: step quota exceeded".into()),
     ];
     for fatal in fatal_kinds {

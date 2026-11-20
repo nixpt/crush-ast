@@ -1472,11 +1472,11 @@ impl HostCap for ProcessExecCap {
         // the result, not a run-ending error: no process ran, so there is no
         // exit status and `exit_code` carries the `-1` "no status" sentinel
         // the signal-killed path below uses, with the reason on `stderr`
-        // (CRUSH-242). A catchable error would be the better shape, but cap
-        // failures aren't catchable yet (CRUSH-219); when that lands this can
-        // move to `Err` without breaking the success path. The one error that
-        // stays an error is the run's wall-clock budget running out (CRUSH-186):
-        // `call_with_deadline` turns it into a timeout that names the limit.
+        // (CRUSH-242). It stays a result: a cap failure is fatal even inside
+        // try/catch (ruling 5, #464), so an `Err` would end the run. The one
+        // error that stays an error is the run's wall-clock budget running
+        // out (CRUSH-186): `call_with_deadline` turns it into a timeout that
+        // names the limit.
         let (exit_code, stdout, stderr) = match exec_with_wall_limit(&cmd, &exec_args) {
             Ok(output) => (
                 i64::from(output.status.code().unwrap_or(-1)),

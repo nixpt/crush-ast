@@ -15,9 +15,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Cases whose Crush version is known not to match bash yet, and why.
-/// Empty since CRUSH-369: a failing capability call inside try/catch is now
-/// caught (`t11_missing_file`), which was the last listed gap (CRUSH-219's
-/// catch half).
+/// Empty since CRUSH-369. `t11_missing_file` checks `fs.exists` first: a
+/// failing capability call is fatal even inside try/catch (ruling 5, #464).
 const KNOWN_GAPS: &[(&str, &str)] = &[];
 
 const ARGS: [&str; 2] = ["one", "two words"];
