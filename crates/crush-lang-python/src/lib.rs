@@ -152,6 +152,8 @@ fn stmts_to_cast(stmts: Vec<py_ast::Stmt>, source: &str) -> anyhow::Result<Progr
     }
 
     if !main_body.is_empty() {
+        // A user `def main` is an ordinary function, not the module body (CRUSH-560).
+        crush_walker_core::entry::reserve_main(&mut functions, &mut main_body)?;
         functions.insert(
             "main".to_string(),
             Function {

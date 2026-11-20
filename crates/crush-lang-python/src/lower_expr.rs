@@ -1135,4 +1135,3 @@ mod comprehension_lowering_tests {
         assert!(err.to_string().contains("generator"));
     }
 }
-

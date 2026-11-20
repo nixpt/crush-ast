@@ -53,6 +53,8 @@
 //! ```
 
 pub mod adapter;
+/// Keep a user function named `main` apart from the module body (CRUSH-560).
+pub mod entry;
 /// Shared bash/zsh → CAST lowering (CRUSH-202).
 pub mod shell;
 
