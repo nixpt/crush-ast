@@ -45,9 +45,12 @@ pub(crate) fn unwind_to_frame(
 /// detail: `DivisionByZero`, `ArithmeticOverflow`, `TypeMismatch`/`TypeError`,
 /// `ArrayBounds`, `BadIndex` (the counterparts of the CVM1 engines' catchable
 /// `DivByZero` / `ArithmeticOverflow` / `TypeError` / `ArrayBounds` /
-/// `BadIndex`; the last two since #445). Everything else stays fatal:
+/// `BadIndex`; the last two since #445), and `CapTimedOut`, a granted
+/// capability's own `timeout_ms` firing (#464). Everything else stays fatal:
 /// `ResourceLimitExceeded` is the quota (never catchable, as on the CVM1
-/// engines), `InvalidCapability` is a security decision, and
+/// engines), `InvalidCapability` is a security decision, `CapFailed` is a
+/// granted capability that failed (fatal by ruling 5, #464, as on the CVM1
+/// engines), and
 /// `StackUnderflow`/`InvalidLocal`/`InvalidFunction`/`InternalError` are
 /// broken VM state; `Unimplemented`/`ExecutionError` are backend gaps, not
 /// program faults.
@@ -60,6 +63,7 @@ pub(crate) fn is_catchable_fault(err: &FastError) -> bool {
             | FastError::TypeError { .. }
             | FastError::ArrayBounds { .. }
             | FastError::BadIndex(_)
+            | FastError::CapTimedOut { .. }
     )
 }
 
@@ -283,13 +287,30 @@ pub fn execute_one(
             }
             args.reverse();
 
-            // Call capability (this is where we exit the fast path to native code)
+            // Call capability (this is where we exit the fast path to native code).
+            // A failing capability is a fatal `CapFailed`, as on the CVM1
+            // engines (ruling 5, #464): nothing is pushed, and `try` does not
+            // catch it (`is_catchable_fault` leaves it out); a `timeout_ms`
+            // that fired is the catchable `CapTimedOut`. FastVM used to push
+            // the error text as the call's result and carry on.
             match cap.call(arena, args, hal.clone()) {
                 Ok(result) => stack.push(result),
                 Err(e) => {
-                    // TODO: Better error handling
-                    let err_str = arena.alloc(Object::Str(e.to_string()));
-                    stack.push(RuntimeValue::Ref(err_str));
+                    let name = cap.name().to_string();
+                    let message = crate::vm::strip_cap_prefix(&name, &e.to_string()).to_string();
+                    // A capability raises a timeout by returning a
+                    // `HostCapError::TimedOut` (it is a `std::error::Error`):
+                    // catchable, unlike every other failure (#464).
+                    if let Some(crate::host::HostCapError::TimedOut { timeout_ms, .. }) =
+                        e.downcast_ref::<crate::host::HostCapError>()
+                    {
+                        return Err(FastError::CapTimedOut {
+                            cap: name,
+                            timeout_ms: *timeout_ms,
+                            message,
+                        });
+                    }
+                    return Err(FastError::CapFailed { cap: name, message });
                 }
             }
         }

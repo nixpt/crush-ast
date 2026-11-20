@@ -100,6 +100,17 @@ pub enum VmError {
     /// just didn't succeed (CRUSH-241 / GitHub #370).
     #[error("{cap}: {message}")]
     CapFailed { cap: String, message: String },
+    /// A granted capability's own `timeout_ms` option fired before it
+    /// finished (`tcp.recv(c, {timeout_ms: 150})`). Not a refusal: catchable
+    /// (#464, captain's ruling on #507/#508), unlike `CapFailed` and unlike
+    /// `CapTimeout` (the VM's wall budget ran out). Displays like
+    /// `CapFailed`: `tcp.recv: timed out after 150 ms`.
+    #[error("{cap}: {message}")]
+    CapTimedOut {
+        cap: String,
+        timeout_ms: u64,
+        message: String,
+    },
     /// A `throw` that no enclosing `try` caught. The payload is the thrown
     /// value's text. (Was reported as `UnknownCap`, CRUSH-127.)
     #[error("uncaught error: {0}")]
@@ -171,6 +182,23 @@ impl VmError {
         VmError::CapFailed { cap, message }
     }
 
+    /// Build a [`VmError::CapTimedOut`] from a cap's own `timeout_ms` firing,
+    /// with the cap's leading name stripped from `message` as for
+    /// [`VmError::cap_failed`], so all engines show the same text.
+    pub fn cap_timed_out(
+        cap: impl Into<String>,
+        timeout_ms: u64,
+        message: impl AsRef<str>,
+    ) -> Self {
+        let cap = cap.into();
+        let message = strip_cap_prefix(&cap, message.as_ref()).to_string();
+        VmError::CapTimedOut {
+            cap,
+            timeout_ms,
+            message,
+        }
+    }
+
     /// Whether a `try` frame may catch this fault (CRUSH-369). A catchable
     /// fault raised while a `try` handler is active in the current task
     /// unwinds to that handler as a caught `Value::Error` (see
@@ -186,10 +214,12 @@ impl VmError {
     /// - `TypeError` — an operand of the wrong type at run time;
     /// - `NotCallable` / `FuncArity` / `ApplyArgsType` — calling a non-function
     ///   or a function with the wrong argument count;
-    /// - `CapFailed` / `CapArity` — a **registered, granted** capability ran
-    ///   and failed (`fs.read` of a missing file — CRUSH-241/#370's wording)
-    ///   or was given the wrong argument count. A CLI can catch these, report,
-    ///   and exit with its own status (#369);
+    /// - `CapArity` — a registered capability was given the wrong argument
+    ///   count (a program bug, like `FuncArity`);
+    /// - `CapTimedOut` — a granted capability's own `timeout_ms` option fired
+    ///   (`tcp.recv`, `tcp.accept`, `net.*`). A timeout is not a refusal
+    ///   (#464, captain's ruling on #507/#508): the handler binds
+    ///   `<cap>: timed out after N ms` and the program can retry;
     /// - `Io` — a capability's I/O failed;
     /// - `Parallel` — a `parallel_map` worker or item failed (#175) with a
     ///   fault that is itself catchable (`ParallelFatal` is the rest);
@@ -200,8 +230,15 @@ impl VmError {
     ///   `WallTimeQuota`, `CallDepthQuota`) — the sandbox's own limits, not
     ///   the program's;
     /// - `UnknownCap` / `CapDenied` / `CapNotDeclared` — capability-security
-    ///   decisions (an ungranted or undeclared name), unlike a *failing
-    ///   granted* capability, which is `CapFailed` above (#67's distinction);
+    ///   decisions (an ungranted or undeclared name);
+    /// - `CapFailed` — a **registered, granted** capability ran and refused
+    ///   or failed (`fs.read` of a missing file, an fs-sandbox refusal, a bad
+    ///   option). Ruling 5 (#427, #464): a capability or sandbox refusal is
+    ///   fatal, like `CapDenied`, and is never swallowed by `try`. This
+    ///   reverses #369, which made `CapFailed` catchable; a program that must
+    ///   survive a missing file checks first (`fs.exists`);
+    /// - `CapTimeout` — a capability ran past the VM's wall budget
+    ///   (`max_wall_time_ms`): the sandbox's limit, like the quotas;
     /// - `ParallelFatal` — any fatal fault from inside a `parallel_map` item;
     /// - `Exit` — a deliberate `sys.exit(code)` must end the run: a CLI's
     ///   own exit status is not trappable;
@@ -230,8 +267,8 @@ impl VmError {
                 | VmError::BadIndex(_)
                 | VmError::DivByZero
                 | VmError::ArithmeticOverflow
-                | VmError::CapFailed { .. }
                 | VmError::CapArity { .. }
+                | VmError::CapTimedOut { .. }
         )
     }
 }

@@ -68,6 +68,10 @@ pub fn dispatch(
             limit_ms: deadline_ms,
         }),
         Err(HostCapError::Message(message)) => Err(VmError::cap_failed(gate, message)),
+        Err(HostCapError::TimedOut {
+            timeout_ms,
+            message,
+        }) => Err(VmError::cap_timed_out(gate, timeout_ms, message)),
         Err(HostCapError::Exit(code)) => Err(VmError::Exit(code)),
     }
 }
@@ -129,8 +133,9 @@ mod tests {
             msg.contains("dom_native.query") && msg.contains("boom"),
             "{msg}"
         );
-        // A granted capability that ran and failed: catchable `CapFailed`,
-        // like the same failure through CAP_CALL, not a security refusal.
+        // A granted capability that ran and failed: `CapFailed` (fatal by
+        // ruling 5), like the same failure through CAP_CALL, not a security
+        // refusal.
         assert!(matches!(err, VmError::CapFailed { .. }), "{err:?}");
     }
 

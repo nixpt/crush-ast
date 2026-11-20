@@ -95,7 +95,7 @@ impl HostCap for Clock {
                 )),
             },
             Clock::Sleep(name) => sleep_ms(name, &args, None).map_err(|e| match e {
-                HostCapError::Message(m) => m,
+                HostCapError::Message(m) | HostCapError::TimedOut { message: m, .. } => m,
                 HostCapError::Timeout => format!("{name}: timed out"),
                 HostCapError::Exit(code) => format!("{name}: exit {code}"),
             }),

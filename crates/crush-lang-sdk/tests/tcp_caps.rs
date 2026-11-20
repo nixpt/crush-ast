@@ -338,7 +338,8 @@ fn recv_timeout_is_catchable_and_send_takes_bytes() {
 }
 
 /// #507: `tcp.accept(l, {timeout_ms})` gives up catchably when no client
-/// comes; bad opts are refused with the key named.
+/// comes (`CapTimedOut`, #464). Bad opts are refused with the key named, and
+/// a refusal is fatal even inside try/catch (ruling 5).
 #[test]
 fn accept_timeout_is_catchable_and_opts_are_checked() {
     let port = free_port();
@@ -358,13 +359,19 @@ fn accept_timeout_is_catchable_and_opts_are_checked() {
     );
     let start = Instant::now();
     let out = crush_run(&["run", "--tcp-listen", &prog]).output().unwrap();
-    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!out.status.success(), "the bad opts key must end the run");
     let text = stdout(&out);
+    assert!(text.starts_with("caught: "), "{text}");
     assert!(
         text.contains("tcp.accept: timed out after 150 ms"),
         "{text}"
     );
-    assert!(text.contains("unknown opts key 'timeout'"), "{text}");
-    assert!(text.ends_with("done\n"), "{text}");
+    assert!(!text.contains("bad: "), "{text}");
+    assert!(!text.contains("done"), "{text}");
+    assert!(
+        stderr(&out).contains("unknown opts key 'timeout'"),
+        "{}",
+        stderr(&out)
+    );
     assert!(start.elapsed() < Duration::from_secs(5));
 }

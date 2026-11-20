@@ -9,8 +9,9 @@
 //!
 //! Every verb takes an optional trailing `opts` map (#508):
 //! `{ timeout_ms: N }` bounds that one request. A request that outlives its
-//! own `timeout_ms` fails with a catchable error (`… timed out after N ms`);
-//! the VM's wall budget still applies on top and stays uncatchable.
+//! own `timeout_ms` fails with a catchable error (`… timed out after N ms`,
+//! `VmError::CapTimedOut`, #464); the VM's wall budget still applies on top
+//! and stays uncatchable (`CapTimeout`).
 //! `net.http_request` returns `{status, reason, headers, body}`; `headers` is
 //! a map of lower-cased response header names (repeated headers joined with
 //! `, `). `status` and `body` are unchanged from CRUSH-153.
@@ -101,7 +102,7 @@ impl HostCap for NetHttpCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         request(self.verb, &args, self.max_response_bytes, None).map_err(|e| match e {
-            HostCapError::Message(m) => m,
+            HostCapError::Message(m) | HostCapError::TimedOut { message: m, .. } => m,
             HostCapError::Timeout => format!("{}: timed out", self.verb.name()),
             // `sys.exit` is the only source of `Exit`, and an HTTP request never raises it;
             // the string-returning `call()` has no way to carry a status, so report it.
@@ -166,7 +167,8 @@ fn request(
     };
 
     // The per-request bound wins only when it is tighter than the VM's wall
-    // budget; then a timeout is this request's own (catchable) failure.
+    // budget; then a timeout is this request's own, catchable failure
+    // (`HostCapError::TimedOut`, #464).
     let own_bound = match (timeout_ms, deadline_ms) {
         (Some(t), Some(d)) => t < d,
         (Some(_), None) => true,
@@ -178,9 +180,10 @@ fn request(
     };
     let timed_out = || -> HostCapError {
         match (own_bound, timeout_ms) {
-            (true, Some(t)) => {
-                HostCapError::Message(format!("{cap} {url}: timed out after {t} ms"))
-            }
+            (true, Some(t)) => HostCapError::TimedOut {
+                timeout_ms: t,
+                message: format!("{cap} {url}: timed out after {t} ms"),
+            },
             _ => HostCapError::Timeout,
         }
     };
@@ -594,10 +597,16 @@ mod tests {
             // The wall budget (30 s) is far away: the request's own bound fires.
             let result = caps.get(name).unwrap().call_with_deadline(args, 30_000);
             match result {
-                Err(HostCapError::Message(m)) => {
-                    assert!(m.contains("timed out after 150 ms"), "{name}: {m}")
+                Err(HostCapError::TimedOut {
+                    timeout_ms: 150,
+                    message,
+                }) => {
+                    assert!(
+                        message.contains("timed out after 150 ms"),
+                        "{name}: {message}"
+                    )
                 }
-                _ => panic!("{name}: expected a catchable timeout message"),
+                other => panic!("{name}: expected a catchable TimedOut, got {other:?}"),
             }
             assert!(
                 start.elapsed() < Duration::from_secs(2),
@@ -671,8 +680,8 @@ mod tests {
         assert!(err.contains("expected 4 or 5 arguments"), "{err}");
     }
 
-    // Source → VM: a per-request timeout is caught by try/catch, and the
-    // response map carries reason + headers.
+    // Source → VM: a per-request timeout is caught by try/catch (a catchable
+    // `CapTimedOut`, #464), and the response map carries reason + headers.
     #[test]
     fn timeout_and_headers_through_the_source_pipeline() {
         let (slow, _s1) = serve_once(200, "late", Duration::from_secs(3));

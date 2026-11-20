@@ -196,7 +196,10 @@ impl Bound {
 
     fn expired(&self, cap: &str) -> HostCapError {
         match self.own_ms {
-            Some(t) => HostCapError::Message(format!("{cap}: timed out after {t} ms")),
+            Some(t) => HostCapError::TimedOut {
+                timeout_ms: t,
+                message: format!("{cap}: timed out after {t} ms"),
+            },
             None => HostCapError::Timeout,
         }
     }
@@ -207,7 +210,7 @@ fn to_call_result(
     cap: &str,
 ) -> Result<Option<Value>, String> {
     r.map_err(|e| match e {
-        HostCapError::Message(m) => m,
+        HostCapError::Message(m) | HostCapError::TimedOut { message: m, .. } => m,
         HostCapError::Timeout => format!("{cap}: timed out"),
         HostCapError::Exit(code) => format!("{cap}: unexpected exit({code})"),
     })

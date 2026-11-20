@@ -2783,6 +2783,10 @@ fn dispatch_cap(
                 limit_ms: quotas.max_wall_time_ms,
             }),
             Err(crate::host::HostCapError::Message(msg)) => Err(VmError::cap_failed(cap, msg)),
+            Err(crate::host::HostCapError::TimedOut {
+                timeout_ms,
+                message,
+            }) => Err(VmError::cap_timed_out(cap, timeout_ms, message)),
             Err(crate::host::HostCapError::Exit(code)) => Err(VmError::Exit(code)),
         };
     }
