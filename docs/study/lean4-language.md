@@ -6,6 +6,9 @@ Date: 2026-11-20. Author: altair (crush lane).
 Sources: crush-ast `origin/main` 9891781a; Lean 4 at leanprover/lean4 @ 450d6b1 (shallow clone,
 read only, nothing built or run). Lean refs are `path:line` into that clone.
 
+Parts: 1 io_uring proposal, 2 Lean lessons (adopt/adapt/skip), 3 proposed tickets T1-T14, 4 proof as a
+lever (P1-P5, tickets T15-T18, and the "260k" source check).
+
 Ranking key: **ADOPT** = take the idea as is; **ADAPT** = take the idea, reshape it for Crush;
 **SKIP** = understood, not worth it for us.
 
@@ -246,3 +249,89 @@ Overlap was checked against the 87 open crush-ast issues on 2026-11-20.
 
 Each finding's scope and done-when, as drafted by the study, follows the pattern in Parts 1 and 2. Full
 ticket bodies get written when the captain picks which ones to file.
+
+---
+
+## Part 4: proof as a lever (the captain's angle)
+
+The question: where can a Lean-checked spec let us **delete** work, or **prove** something we now only test?
+
+### 4.1 How Lean turns a proof into speed
+
+- Array indexing takes a proof of the bound as an argument:
+  `instance : GetElem (Array α) Nat α fun xs i => i < xs.size` (`src/Init/GetElem.lean:391`).
+- The proof is erased at compile time. The access compiles to `lean_array_fget` / `lean_array_uget`, which
+  do **no bounds check** (`src/include/lean/lean.h:1099-1112`).
+- `@[implemented_by …Unsafe]` (`src/Init/Data/Array/Basic.lean:557, 610, 679`) runs fast unsafe code that
+  stands in for a safe definition.
+
+So the pattern is: **check once, statically, then run without the check.** That is the lever.
+
+There is a limit. Lean is not capability-secure, and its compiler is trusted, not proved. So for Crush,
+Lean is a place to write and check **specs and checkers**. The runtime stays Rust. A Lean proof covers our
+Rust code only through one of two routes:
+- a Rust checker that is differential-tested against the Lean one; or
+- a Lean model whose traces the Rust code replays.
+
+### 4.2 The "260k" source
+
+**No Lean entry scored 260k.** Source: twelve-dollar-server-challenge
+(https://github.com/arjaythedev/twelve-dollar-server-challenge), `LEADERBOARD.md` at 8ad6f30 (2026-11-20).
+Scored holds are on the challenge box (1 vCPU / 2 GB) for 5 minutes. I read the table; I reproduced nothing.
+
+- **260,000 is an F# claim.** The PR body of #142 (fsharp-kestrel-delneg) says 260,000 users held for
+  5 minutes. The leaderboard scores that entry at its follow-up #201: **247,000** (rank 43).
+- **The Lean entries:**
+
+| Entry | PR | Proofs | Scored on the leaderboard | Self-reported in the PR |
+|---|---|---|---|---|
+| lean-derive-hargup | #153 (merged) | none shown; Lean contract, generated C, io_uring | **280,000** (rank 11; p99 316 ms) | 280k |
+| lean-verified-soonhokong | #286 (merged 2026-11-05, e7acdcc; replaces closed #271) | 819 theorems "about the code that runs", no `sorry` | **270,000** (rank 22; p99 282.8 ms, 954 MB peak) | 290k at 6d5b097; 340-360k on the author's own VMs (#271) |
+
+- For scale: the top rows score 310,000. Those are rust-iouring-kensac #264 and fsharp-uring-delneg #437,
+  both io_uring + SQLite B-tree reads.
+- So the proved Lean server is about 13% behind the leader. Its proofs didn't make it fast; io_uring and the
+  B-tree reads did. Every top entry shares that design.
+
+#286 matters for us because of **what it trusts**. Its own body says the C runtime, SQLite, the io_uring
+transport and Lean's compiler are **trusted and tested, not proved**. The hot C leaves, behind `@[extern]`,
+are checked against their Lean definitions on 20,000 random inputs in the build's self-test. Its B-tree C
+helpers are reused, with credit, from c-iouring-pavlyhalim #245 (LEADERBOARD.md notes). That is the split
+this section proposes: the proof covers the spec and the logic, while the fast unsafe parts stay trusted
+code with a differential test against the spec.
+
+Other leads, unverified:
+- segment-tree/LeanServer: 914 theorems, 0 `sorry`, by its README.
+- A Rust HTTP server verified with Lean 4 (Medium, Koukyosyumei).
+- Hale/Warp (typednotes.github.io/hale/Warp).
+
+### 4.3 Candidates
+
+| # | Candidate | What we'd prove | What it lets us delete or relax | Cost | Payoff |
+|---|---|---|---|---|---|
+| P1 | **Bytecode verifier (CVM1 stack discipline)** | For a verified program, every instruction finds enough operands on the stack, jump targets are in range, and locals and constant indices are in bounds (a Lean spec of CVM1 typing) | The ~10 `StackUnderflow` checks in `crates/crush-vm/src/portable_vm.rs` (e.g. :904, :915, :1158) and the `Result` on `pop()` (:2804) on the verified path: about 106 pop sites. Today crush-vm has **0** `get_unchecked` and **no** bytecode verifier. This is the direct analogue of GetElem → `uget` | **M** | Hot-loop speed in PortableVm (measure first: the interpreter dispatch loop with checks vs. without). One verifier also guards JIT and AOT inputs. Ties to T9 |
+| P2 | **Capability soundness** | If `verify_caps(program, grants)` (T4) accepts, then no execution reaches a cap call outside `grants`. This is stated over a Lean model of `capabilities_used` (`crates/crush-vm/src/cap_inference.rs:40`) and the VM call semantics | The per-call `check_cap_permitted` (`crates/crush-vm/src/scheduler.rs:89`; callers at `portable_vm.rs:1228, 1264, 1989`, `dom_args.rs:53`, `ai_args.rs:87`) becomes **defence in depth** for statically verified programs. It can't go away fully, because quotas and dynamic targets (spawn of a computed function, polyglot blocks) still need it. AOT gets the gate it lacks today (`crush-aot/src/codegen.rs:1221`) | **M-L** | Mainly **safety**: closes the AOT cap gap with a proof, not a test. The speed win is small (one check per cap call). Honest residual: dynamic dispatch and polyglot need a conservative over-approximation, or stay checked at runtime |
+| P3 | **io_uring backend state machine** (T1/T2) | Each submitted SQE completes exactly once (completion, error or cancel); no buffer is reused while the kernel owns it; a timeout racing a completion yields one result; fallback gives the same observable results as the poller | Defensive bookkeeping in the backend (double-completion guards, "should not happen" panics), and most hand-written race tests. These are replaced by a Lean model plus a **trace-replay oracle**: the Rust backend logs its SQE/CQE sequence, and a checker validates it against the model in CI | **S-M** | Safety of the riskiest new code in Part 1, at low cost: the model is small, and the oracle runs on the parity tests we already planned |
+| P4 | **Type checker and effect rules** | Effect soundness: a function inferred pure (F11/T12) performs no cap call and has no observable side effect | Lets the compiler **reorder, dedupe, memoize and parallelize** pure calls without a conservative fallback (T11's dead-branch pass, `parallel_map` fusion) | **M** | Speed from optimizations we'd otherwise not dare to ship. Depends on T4/T12 |
+| P5 | **CAST → CASM → CVM1 lowering preservation** | Lowering preserves meaning (a simulation proof over a Lean semantics of CAST and CVM1) | Full proof: none of our code goes away cheaply. Practical form: a Lean **reference interpreter** used as the oracle in the differential harness (#453), which could replace part of the hand-maintained expected outputs | **L** (full proof) / **M** (oracle only) | Confidence across five engines. The oracle form is worth it; the full CompCert-style proof isn't, before 1.0 |
+
+### 4.4 Recommendation
+
+1. **P1 first.** It is the one where a proof buys speed directly, the same way GetElem does in Lean. Gate it
+   on a measurement: if removing the checks in a branch saves under ~5% on the dispatch-loop bench, do the
+   verifier for safety only and keep the checks.
+2. **P3 together with T1.** It is cheap, and it covers the code most likely to have race bugs.
+3. **P2 after T4 lands.** It turns T4 from "tested" into "proved". Keep the runtime check either way.
+4. P4 and P5 (oracle form) are later; they depend on T12 and #453.
+
+Proposed proof tickets (**NOT filed**, same rule as Part 3):
+
+| # | Title | Area | Depends on |
+|---|---|---|---|
+| T15 | Lean spec of CVM1 stack discipline + Rust bytecode verifier, differential-tested against it; bench the dispatch loop with checks vs. without | engines (tulya) + a tester | T9 |
+| T16 | Lean model of the io_uring backend state machine + CQE trace-replay checker in the parity tests | engines | T1 |
+| T17 | Lean statement of cap soundness over `capabilities_used` + VM call semantics; proof for the static subset | engines + me (contract) | T4 |
+| T18 | Lean reference interpreter for CAST as a #453 oracle (no preservation proof) | tester (kasauti if minted) | #453 |
+
+Lean would be a new toolchain in the lane: `lake`, and an `elan` pin. These are proof and CI dependencies
+only. Nothing ships in crush-ast's runtime, and no Lean code runs in the VM.
