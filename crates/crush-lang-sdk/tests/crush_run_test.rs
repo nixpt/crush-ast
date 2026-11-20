@@ -665,6 +665,39 @@ fn crush_run_streams_output_while_the_program_runs() {
     );
 }
 
+// #389: a `.cvm1` blob streams its output as it runs, like the source path
+// (the blob arm used to be suspected of buffering into `VmResult` and dropping it).
+#[test]
+fn crush_run_streams_output_of_a_cvm1_blob_while_it_runs() {
+    use std::io::{BufRead, BufReader};
+    let program = crush_vm::assemble(
+        ".func main\nPUSH_STR \"first\"\nCAP_CALL \"io.print\" 1\nPUSH 1500\nCAP_CALL \"time.sleep\" 1\nPOP\nPUSH_STR \"second\"\nCAP_CALL \"io.print\" 1\nHALT\n",
+        Some(&["io.print", "time.sleep"]),
+        Some("stream"),
+    )
+    .expect("assemble should succeed");
+    let dir = tempfile::tempdir().unwrap();
+    let blob = dir.path().join("stream.cvm1");
+    std::fs::write(&blob, program.to_blob()).unwrap();
+    let mut child = Command::new(crush_run_bin())
+        .args(["run", "--time", blob.to_str().unwrap()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn crush-run");
+    let start = std::time::Instant::now();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    assert_eq!(lines.next().unwrap().unwrap(), "first");
+    let first_at = start.elapsed();
+    assert_eq!(lines.next().unwrap().unwrap(), "second");
+    child.wait().unwrap();
+    assert!(
+        first_at < std::time::Duration::from_millis(1200),
+        "the first line arrived after {first_at:?}, i.e. only when the program ended"
+    );
+}
+
 #[test]
 fn crush_run_fs_write_as_a_statement_and_as_a_value() {
     let (dir, path) = temp_program(
