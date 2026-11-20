@@ -193,6 +193,13 @@ pub enum FastError {
     InternalError(String),
     ExecutionError(String),
     ResourceLimitExceeded,
+    /// A granted capability ran and failed: `VmError::CapFailed`'s counterpart
+    /// and wording (`{cap}: {message}`, the cap's own leading name stripped).
+    /// Fatal, never caught by `try` (ruling 5, #464).
+    CapFailed {
+        cap: String,
+        message: String,
+    },
 
     FunctionNotFound,
     InvalidSession,
@@ -220,6 +227,7 @@ impl std::fmt::Display for FastError {
             FastError::InternalError(msg) => write!(f, "Internal error: {}", msg),
             FastError::ExecutionError(msg) => write!(f, "Execution error: {}", msg),
             FastError::ResourceLimitExceeded => write!(f, "Resource limit exceeded"),
+            FastError::CapFailed { cap, message } => write!(f, "{cap}: {message}"),
             FastError::FunctionNotFound => write!(f, "Function not found"),
             FastError::InvalidSession => write!(f, "Invalid session"),
             FastError::InvalidAgent => write!(f, "Invalid agent"),
