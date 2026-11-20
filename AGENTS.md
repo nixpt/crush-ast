@@ -48,6 +48,11 @@ managed block below this content without clobbering it; see CONTRIBUTING.md.
   in `.dejavue/decisions.md`. `CHANGELOG.md` and the remaining `.dejavue` logs are still
   `merge=union`: a PR whose only overlap is there can show "conflicting" on GitHub while
   a local merge is clean. Merge `origin/main` into the branch locally and push.
+  After pulling CRUSH-431, git deletes your local timeline (it was tracked); restore it:
+  `git show f5ab5ebb:.dejavue/timeline.jsonl > .dejavue/timeline.jsonl` (any commit before
+  the CRUSH-431 merge works). If the pull refuses over local timeline changes, copy the
+  file aside, `git checkout -- .dejavue/timeline.jsonl`, pull, then restore the copy
+  (append it to the `git show` output if you want both).
 - Live-verify before calling something done: compile it, run it against real
   input, check the actual output. Tests passing and CI green are both
   necessary, neither is sufficient — this repo's own history (a trailing-
