@@ -102,6 +102,7 @@ pub fn dispatch(
             limit_ms: deadline_ms,
         }),
         Err(HostCapError::Message(message)) => Err(VmError::cap_failed(gate, message)),
+        Err(HostCapError::TimedOut { message, .. }) => Err(VmError::cap_failed(gate, message)),
         Err(HostCapError::Exit(code)) => Err(VmError::Exit(code)),
     }
 }

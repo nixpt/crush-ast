@@ -308,13 +308,12 @@ fn recv_reassembles_a_utf8_character_split_across_reads() {
     h.join().unwrap();
 }
 
-/// #507: `tcp.recv(c, {timeout_ms})` gives up after `timeout_ms`. Since
-/// ruling 5 (#464) that failure is a fatal `CapFailed`: `try`/`catch` does
-/// not swallow it and the run ends. Also: tcp.send takes a bytes value.
+/// #507: `tcp.recv(c, {timeout_ms})` fails catchably and loses nothing: the
+/// data that arrives later is read by the next call. Also: tcp.send takes
+/// a bytes value.
 #[test]
-fn recv_timeout_is_fatal_and_send_takes_bytes() {
-    // The server never answers; it only collects what the client sent.
-    let (port, h) = chunked_server(vec![vec![]], Duration::from_millis(600));
+fn recv_timeout_is_catchable_and_send_takes_bytes() {
+    let (port, h) = chunked_server(vec![vec![], b"late".to_vec()], Duration::from_millis(600));
     let dir = tempfile::tempdir().unwrap();
     let prog = write_prog(
         &dir,
@@ -324,55 +323,54 @@ fn recv_timeout_is_fatal_and_send_takes_bytes() {
     let c = tcp.connect("tcp://127.0.0.1:{port}")
     tcp.send(c, bytes.from_string("hi"))
     try {{ tcp.recv(c, {{ timeout_ms: 150 }}) }} catch e {{ io.print("caught: " + conv.to_str(e)) }}
-    io.print("after")
+    io.print(tcp.recv(c, {{ timeout_ms: 5000 }}))
+    tcp.close(c)
 }}
 "#
         ),
     );
     let out = crush_run(&["run", "--tcp", &prog]).output().unwrap();
-    assert!(!out.status.success(), "the timeout must end the run");
-    assert!(
-        stderr(&out).contains("tcp.recv: timed out after 150 ms"),
-        "{}",
-        stderr(&out)
-    );
-    assert!(!stdout(&out).contains("caught"), "{}", stdout(&out));
-    assert!(!stdout(&out).contains("after"), "{}", stdout(&out));
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("tcp.recv: timed out after 150 ms"), "{text}");
+    assert!(text.ends_with("late\n"), "{text}");
     assert_eq!(h.join().unwrap(), b"hi");
 }
 
-/// #507: `tcp.accept(l, {timeout_ms})` gives up when no client comes, and
-/// bad opts are refused with the key named. Since ruling 5 (#464) both are
-/// a fatal `CapFailed`, even inside `try`/`catch`.
+/// #507: `tcp.accept(l, {timeout_ms})` gives up catchably when no client
+/// comes (`CapTimedOut`, #464). Bad opts are refused with the key named, and
+/// a refusal is fatal even inside try/catch (ruling 5).
 #[test]
-fn accept_timeout_is_fatal_and_opts_are_checked() {
-    let run = |name: &str, call: &str| {
-        let port = free_port();
-        let dir = tempfile::tempdir().unwrap();
-        let prog = write_prog(
-            &dir,
-            name,
-            &format!(
-                r#"fn main() {{
+fn accept_timeout_is_catchable_and_opts_are_checked() {
+    let port = free_port();
+    let dir = tempfile::tempdir().unwrap();
+    let prog = write_prog(
+        &dir,
+        "accept.crush",
+        &format!(
+            r#"fn main() {{
     let l = tcp.listen("tcp://127.0.0.1:{port}")
-    try {{ {call} }} catch e {{ io.print("caught: " + conv.to_str(e)) }}
+    try {{ tcp.accept(l, {{ timeout_ms: 150 }}) }} catch e {{ io.print("caught: " + conv.to_str(e)) }}
+    try {{ tcp.accept(l, {{ timeout: 150 }}) }} catch e {{ io.print("bad: " + conv.to_str(e)) }}
     io.print("done")
 }}
 "#
-            ),
-        );
-        let out = crush_run(&["run", "--tcp-listen", &prog]).output().unwrap();
-        assert!(
-            !out.status.success(),
-            "{name}: the failure must end the run"
-        );
-        assert_eq!(stdout(&out), "", "{name}: nothing after the failure runs");
-        stderr(&out)
-    };
+        ),
+    );
     let start = Instant::now();
-    let err = run("accept.crush", "tcp.accept(l, { timeout_ms: 150 })");
-    assert!(err.contains("tcp.accept: timed out after 150 ms"), "{err}");
+    let out = crush_run(&["run", "--tcp-listen", &prog]).output().unwrap();
+    assert!(!out.status.success(), "the bad opts key must end the run");
+    let text = stdout(&out);
+    assert!(
+        text.contains("caught: tcp.accept: timed out after 150 ms"),
+        "{text}"
+    );
+    assert!(!text.contains("bad: "), "{text}");
+    assert!(!text.contains("done"), "{text}");
+    assert!(
+        stderr(&out).contains("unknown opts key 'timeout'"),
+        "{}",
+        stderr(&out)
+    );
     assert!(start.elapsed() < Duration::from_secs(5));
-    let err = run("opts.crush", "tcp.accept(l, { timeout: 150 })");
-    assert!(err.contains("unknown opts key 'timeout'"), "{err}");
 }

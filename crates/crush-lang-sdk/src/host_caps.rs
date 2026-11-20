@@ -1346,7 +1346,8 @@ macro_rules! sleep_cap {
             fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
                 // No deadline, so the only error is a bad argument.
                 sleep_ms($name, &args, None).map_err(|e| match e {
-                    crush_vm::host::HostCapError::Message(m) => m,
+                    crush_vm::host::HostCapError::Message(m)
+                    | crush_vm::host::HostCapError::TimedOut { message: m, .. } => m,
                     crush_vm::host::HostCapError::Timeout => format!("{}: timed out", $name),
                     crush_vm::host::HostCapError::Exit(code) => format!("{}: exit {code}", $name),
                 })

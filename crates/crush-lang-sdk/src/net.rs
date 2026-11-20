@@ -9,9 +9,9 @@
 //!
 //! Every verb takes an optional trailing `opts` map (#508):
 //! `{ timeout_ms: N }` bounds that one request. A request that outlives its
-//! own `timeout_ms` fails with a `CapFailed` error (`… timed out after N ms`),
-//! fatal like every capability failure (ruling 5, #464); the VM's wall budget
-//! still applies on top.
+//! own `timeout_ms` fails with a catchable error (`… timed out after N ms`,
+//! `VmError::CapTimedOut`, #464); the VM's wall budget still applies on top
+//! and stays uncatchable (`CapTimeout`).
 //! `net.http_request` returns `{status, reason, headers, body}`; `headers` is
 //! a map of lower-cased response header names (repeated headers joined with
 //! `, `). `status` and `body` are unchanged from CRUSH-153.
@@ -102,7 +102,7 @@ impl HostCap for NetHttpCap {
 
     fn call(&self, args: Vec<Value>) -> Result<Option<Value>, String> {
         request(self.verb, &args, self.max_response_bytes, None).map_err(|e| match e {
-            HostCapError::Message(m) => m,
+            HostCapError::Message(m) | HostCapError::TimedOut { message: m, .. } => m,
             HostCapError::Timeout => format!("{}: timed out", self.verb.name()),
             // `sys.exit` is the only source of `Exit`, and an HTTP request never raises it;
             // the string-returning `call()` has no way to carry a status, so report it.
@@ -167,7 +167,8 @@ fn request(
     };
 
     // The per-request bound wins only when it is tighter than the VM's wall
-    // budget; then a timeout is this request's own failure (`CapFailed`).
+    // budget; then a timeout is this request's own, catchable failure
+    // (`HostCapError::TimedOut`, #464).
     let own_bound = match (timeout_ms, deadline_ms) {
         (Some(t), Some(d)) => t < d,
         (Some(_), None) => true,
@@ -179,9 +180,10 @@ fn request(
     };
     let timed_out = || -> HostCapError {
         match (own_bound, timeout_ms) {
-            (true, Some(t)) => {
-                HostCapError::Message(format!("{cap} {url}: timed out after {t} ms"))
-            }
+            (true, Some(t)) => HostCapError::TimedOut {
+                timeout_ms: t,
+                message: format!("{cap} {url}: timed out after {t} ms"),
+            },
             _ => HostCapError::Timeout,
         }
     };
@@ -573,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn timeout_ms_is_a_per_request_cap_failure() {
+    fn timeout_ms_is_a_catchable_per_request_failure() {
         let caps = caps();
         let opts = || Value::new_map(HashMap::from([("timeout_ms".to_string(), Value::Int(150))]));
         let cases: [(&str, Vec<Value>); 5] = [
@@ -595,10 +597,13 @@ mod tests {
             // The wall budget (30 s) is far away: the request's own bound fires.
             let result = caps.get(name).unwrap().call_with_deadline(args, 30_000);
             match result {
-                Err(HostCapError::Message(m)) => {
-                    assert!(m.contains("timed out after 150 ms"), "{name}: {m}")
+                Err(HostCapError::TimedOut {
+                    timeout_ms: 150,
+                    message,
+                }) => {
+                    assert!(message.contains("timed out after 150 ms"), "{name}: {message}")
                 }
-                _ => panic!("{name}: expected a timeout message (CapFailed)"),
+                other => panic!("{name}: expected a catchable TimedOut, got {other:?}"),
             }
             assert!(
                 start.elapsed() < Duration::from_secs(2),
@@ -672,35 +677,15 @@ mod tests {
         assert!(err.contains("expected 4 or 5 arguments"), "{err}");
     }
 
-    // Source → VM: a per-request timeout is a fatal CapFailed, even inside
-    // try/catch (ruling 5, #464), and the response map carries reason +
-    // headers.
+    // Source → VM: a per-request timeout is caught by try/catch (a catchable
+    // `CapTimedOut`, #464), and the response map carries reason + headers.
     #[test]
     fn timeout_and_headers_through_the_source_pipeline() {
-        let caps = crate::HostCapsBuilder::new()
-            .net(true)
-            .net_max_response_bytes(4096)
-            .build();
-
         let (slow, _s1) = serve_once(200, "late", Duration::from_secs(3));
-        let source = format!(
-            "fn main() {{\n\
-             try {{ net.http_get(\"{slow}\", {{ timeout_ms: 100 }}) }} catch e {{ print(\"caught\") }}\n\
-             print(\"after\")\n\
-             }}\n"
-        );
-        let prog = crate::compile::compile_crush_source(&source).expect("compile");
-        let err =
-            crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&caps)).unwrap_err();
-        assert!(
-            matches!(&err, crush_vm::VmError::CapFailed { cap, message }
-                if cap == "net.http_get" && message.contains("timed out after 100 ms")),
-            "{err:?}"
-        );
-
         let (fast, _s2) = serve_once(201, "made", Duration::ZERO);
         let source = format!(
             "fn main() {{\n\
+             try {{ net.http_get(\"{slow}\", {{ timeout_ms: 100 }}) }} catch e {{ print(\"caught\") }}\n\
              let r = net.http_request(\"POST\", \"{fast}\", \"x\", null, {{ timeout_ms: 2000 }})\n\
              print(r.status)\n\
              print(r.reason)\n\
@@ -709,9 +694,13 @@ mod tests {
              }}\n"
         );
         let prog = crate::compile::compile_crush_source(&source).expect("compile");
+        let caps = crate::HostCapsBuilder::new()
+            .net(true)
+            .net_max_response_bytes(4096)
+            .build();
         let result =
             crush_vm::run_with_caps(&prog, &crush_vm::Quotas::default(), Some(&caps)).unwrap();
-        assert_eq!(result.output, "201\nX\n4\nmade\n");
+        assert_eq!(result.output, "caught\n201\nX\n4\nmade\n");
     }
 
     // Source → VM: `net.http_put` from Crush, against a local listener.

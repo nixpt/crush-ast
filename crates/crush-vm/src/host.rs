@@ -23,17 +23,42 @@ pub struct HostCapSpec {
 /// Error from [`HostCap::call_with_deadline`] — distinguishes "self-enforced
 /// wall-clock timeout" from an ordinary capability failure so `dispatch_cap`
 /// can map it to `VmError::CapTimeout` instead of `VmError::CapDenied`.
+///
+/// It is also a `std::error::Error`, so a FastVM capability (which returns
+/// `anyhow::Result`) can raise [`HostCapError::TimedOut`] and FastVM finds it
+/// by downcasting (#464).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostCapError {
     /// An ordinary failure message (same shape `call()` has always returned).
+    /// The VM raises it as the fatal `VmError::CapFailed` (ruling 5).
     Message(String),
     /// The capability self-enforced `deadline_ms` from
-    /// [`HostCap::call_with_deadline`] and gave up before completing.
+    /// [`HostCap::call_with_deadline`] and gave up before completing: the
+    /// VM's wall budget ran out. Fatal `VmError::CapTimeout`.
     Timeout,
+    /// The call's own `timeout_ms` option fired (`tcp.recv(c, {timeout_ms})`,
+    /// `net.http_get(url, {timeout_ms})`) before the VM's wall budget did.
+    /// Not a refusal: the VM raises the catchable `VmError::CapTimedOut`
+    /// (#464, captain's ruling on #507/#508). `message` is the cap's own text
+    /// (`tcp.recv: timed out after 150 ms`), cap prefix included.
+    TimedOut { timeout_ms: u64, message: String },
     /// The program asked to stop with this exit status (`sys.exit`). Not a
     /// failure: the VM ends the run with [`VmError::Exit`](crate::VmError::Exit)
     /// and the host decides what the status means (a CLI exits with it).
     Exit(i32),
 }
+
+impl std::fmt::Display for HostCapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HostCapError::Message(m) | HostCapError::TimedOut { message: m, .. } => f.write_str(m),
+            HostCapError::Timeout => f.write_str("timed out"),
+            HostCapError::Exit(code) => write!(f, "exit({code})"),
+        }
+    }
+}
+
+impl std::error::Error for HostCapError {}
 
 impl From<String> for HostCapError {
     fn from(msg: String) -> Self {

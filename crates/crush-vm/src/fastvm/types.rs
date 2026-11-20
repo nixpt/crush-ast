@@ -200,6 +200,13 @@ pub enum FastError {
         cap: String,
         message: String,
     },
+    /// A granted capability's own `timeout_ms` fired:
+    /// `VmError::CapTimedOut`'s counterpart and wording. Catchable (#464).
+    CapTimedOut {
+        cap: String,
+        timeout_ms: u64,
+        message: String,
+    },
 
     FunctionNotFound,
     InvalidSession,
@@ -228,6 +235,7 @@ impl std::fmt::Display for FastError {
             FastError::ExecutionError(msg) => write!(f, "Execution error: {}", msg),
             FastError::ResourceLimitExceeded => write!(f, "Resource limit exceeded"),
             FastError::CapFailed { cap, message } => write!(f, "{cap}: {message}"),
+            FastError::CapTimedOut { cap, message, .. } => write!(f, "{cap}: {message}"),
             FastError::FunctionNotFound => write!(f, "Function not found"),
             FastError::InvalidSession => write!(f, "Invalid session"),
             FastError::InvalidAgent => write!(f, "Invalid agent"),

@@ -2641,6 +2641,7 @@ impl PortableVm {
                     limit_ms: self.quotas.max_wall_time_ms,
                 }),
                 Err(crate::host::HostCapError::Message(msg)) => Err(VmError::cap_failed(cap, msg)),
+                Err(crate::host::HostCapError::TimedOut { message, .. }) => Err(VmError::cap_failed(cap, message)),
                 Err(crate::host::HostCapError::Exit(code)) => Err(VmError::Exit(code)),
             };
         }

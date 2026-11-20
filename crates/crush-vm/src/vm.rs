@@ -100,6 +100,17 @@ pub enum VmError {
     /// just didn't succeed (CRUSH-241 / GitHub #370).
     #[error("{cap}: {message}")]
     CapFailed { cap: String, message: String },
+    /// A granted capability's own `timeout_ms` option fired before it
+    /// finished (`tcp.recv(c, {timeout_ms: 150})`). Not a refusal: catchable
+    /// (#464, captain's ruling on #507/#508), unlike `CapFailed` and unlike
+    /// `CapTimeout` (the VM's wall budget ran out). Displays like
+    /// `CapFailed`: `tcp.recv: timed out after 150 ms`.
+    #[error("{cap}: {message}")]
+    CapTimedOut {
+        cap: String,
+        timeout_ms: u64,
+        message: String,
+    },
     /// A `throw` that no enclosing `try` caught. The payload is the thrown
     /// value's text. (Was reported as `UnknownCap`, CRUSH-127.)
     #[error("uncaught error: {0}")]
@@ -169,6 +180,19 @@ impl VmError {
         let cap = cap.into();
         let message = strip_cap_prefix(&cap, message.as_ref()).to_string();
         VmError::CapFailed { cap, message }
+    }
+
+    /// Build a [`VmError::CapTimedOut`] from a cap's own `timeout_ms` firing,
+    /// with the cap's leading name stripped from `message` as for
+    /// [`VmError::cap_failed`], so all engines show the same text.
+    pub fn cap_timed_out(cap: impl Into<String>, timeout_ms: u64, message: impl AsRef<str>) -> Self {
+        let cap = cap.into();
+        let message = strip_cap_prefix(&cap, message.as_ref()).to_string();
+        VmError::CapTimedOut {
+            cap,
+            timeout_ms,
+            message,
+        }
     }
 
     /// Whether a `try` frame may catch this fault (CRUSH-369). A catchable

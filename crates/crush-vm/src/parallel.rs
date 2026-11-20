@@ -530,4 +530,22 @@ mod tests {
             "parallel_map: item 0: fs.read: missing.txt: not found"
         );
     }
+
+    #[test]
+    fn a_worker_timeout_is_the_catchable_parallel() {
+        // #464: a cap's own `timeout_ms` firing in a worker is not a
+        // refusal; it stays catchable on the main VM as `Parallel`.
+        let err = collect(vec![Err(VmError::cap_timed_out(
+            "tcp.recv",
+            150,
+            "tcp.recv: timed out after 150 ms",
+        ))])
+        .unwrap_err();
+        assert!(matches!(err, VmError::Parallel(_)), "{err:?}");
+        assert!(err.is_catchable());
+        assert_eq!(
+            err.to_string(),
+            "parallel_map: item 0: tcp.recv: timed out after 150 ms"
+        );
+    }
 }
