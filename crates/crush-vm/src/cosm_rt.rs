@@ -1005,16 +1005,21 @@ pub enum MemberCall {
     Call(Callee),
     /// The result, with no call (the built-in `clone()`).
     Done(Value),
+    /// Run a pure VM-internal built-in method on a primitive receiver (§9.4);
+    /// the VM pops `argc` arguments (top-first -> forward order) and delegates
+    /// to `receiver_builtins::call_array_member`.
+    Builtin,
 }
 
 /// `CALL_MEMBER name argc` on `recv`: resolve the method through the Kind and
 /// apply its receiver strategy. Never falls back to a global capability.
 pub fn call_member(recv: &Value, name: &str, argc: usize) -> Result<MemberCall, VmError> {
     if let Value::Map(m) = recv {
-        // CRUSH-362: method-call syntax on a map calls the function
-        // stored under the key (`h.add(41)` on
-        // `{ add: |a| => a + 1 }`), with the captured values as the
-        // leading parameters — the same convention CALL_VALUE uses.
+        // CRUSH-362 / #559: method-call syntax on a map does field lookup only
+        // (§9.4): it calls the function stored under the key (`h.add(41)` on
+        // `{ add: |a| => a + 1 }`), with the captured values as the leading
+        // parameters — the same convention CALL_VALUE uses. Never falls through
+        // to array built-ins or capabilities.
         let v = m.borrow().get(name).cloned();
         return match v {
             Some(v) => {
@@ -1028,6 +1033,20 @@ pub fn call_member(recv: &Value, name: &str, argc: usize) -> Result<MemberCall, 
                 "map has no member `{name}`: a member call on a map calls the value stored under the key"
             ))),
         };
+    }
+    if matches!(recv, Value::Array(_)) {
+        // §9.4 built-in fallback for array receivers: VM-internal operations
+        // only, no capability lookup or permission check (§9.6.4).
+        if crate::receiver_builtins::is_array_member(name) {
+            return Ok(MemberCall::Builtin);
+        }
+        if name == "parallel_map" {
+            return Err(VmError::Cosm(
+                "`.parallel_map(…)` on an array through a member call is not supported: \
+                 write `parallel_map(xs, f)`"
+                    .to_string(),
+            ));
+        }
     }
     let (kind, instance) = match recv {
         Value::Record(r) => (r.kind.clone(), true),

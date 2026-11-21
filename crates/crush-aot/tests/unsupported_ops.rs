@@ -156,3 +156,33 @@ fn ai_semantic_match_from_source_is_rejected() {
         .unwrap_err();
     assert!(err.to_string().contains("ai_semantic_match"), "{err}");
 }
+
+/// #559: map receiver member calls (`m.arr_get`, `m.push`) lower uniformly to
+/// `call_member` with or without an unrelated struct declaring the method name.
+/// - Closure-bearing map calls (`{"push": |v| => v * 2}`) are refused at
+///   compile time by both AOT backends (`make_closure`).
+/// - Non-builtin member names (`m.foo(1)`) are refused at compile time by both
+///   AOT backends (`call_member`).
+/// - Built-in array member names on a map (`m.arr_get`, `m.arr_set`, with or
+///   without an unrelated struct) compile via the array fallback and refuse
+///   loudly at run time (pinned in `stdout_parity.rs`).
+#[test]
+fn map_receiver_member_calls_are_rejected_by_both_aot_backends() {
+    for source in [
+        "let m = {\"push\": |v| => v * 2}\nprint(m.push(4))\n",
+        "struct S { x }\nimpl S { fn push(self, v) { return v } }\nlet m = {\"push\": |v| => v * 2}\nprint(m.push(4))\n",
+        "let m = {\"k\": 1}\nprint(m.foo(1))\n",
+    ] {
+        let program = casm(source);
+        for err in [
+            crush_aot::codegen::gen_rust_source(&program).unwrap_err(),
+            crush_aot::codegen_c::gen_c_source(&program).unwrap_err(),
+        ] {
+            let msg = err.to_string();
+            assert!(
+                msg.contains("call_member") || msg.contains("COSM") || msg.contains("make_closure"),
+                "expected loud compile-time refusal for {source:?}, got: {msg}"
+            );
+        }
+    }
+}

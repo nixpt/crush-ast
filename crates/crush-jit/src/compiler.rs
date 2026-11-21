@@ -20,7 +20,7 @@ use crush_vm::fastvm::{FastInstr, FastOp, LoweredProgram};
 
 use crate::runtime::{
     JIT_MAX_LOCALS, JitContext, OP_ADD_STR, OP_ARR_SET, OP_ARRAY_POP, OP_ARRAY_POP_VALUE,
-    OP_ARRAY_PUSH, OP_CAP_CALL, OP_CAST, OP_CMP_EQUAL, OP_CMP_ORDERED, OP_ENTER_TRY, OP_EXIT_TRY,
+    OP_ARRAY_PUSH, OP_CALL_ARRAY_MEMBER, OP_CAP_CALL, OP_CAST, OP_CMP_EQUAL, OP_CMP_ORDERED, OP_ENTER_TRY, OP_EXIT_TRY,
     OP_GET_FIELD, OP_INDEX, OP_LEN, OP_LIST_PUSH, OP_MAKE_LIST, OP_MAKE_MAP, OP_MAKE_RANGE,
     OP_MAP_KEYS, OP_NEW_ARRAY, OP_NEW_LIST, OP_NEW_OBJ, OP_NEW_SET, OP_NEW_STRUCT, OP_NEW_TUPLE,
     OP_NEW_VECTOR, OP_PUSH_STR, OP_SET_FIELD, OP_SET_PUSH, OP_STR_CONTAINS, OP_STR_ENDS_WITH,
@@ -1528,6 +1528,10 @@ fn emit_one(
         // Checked: pop on a non-array stops the run here, like FastVM.
         ArrayPopValue => {
             emit_helper_call_checked(b, ctx, OP_ARRAY_POP_VALUE, 0, _ptr_ty, helper_sig)
+        }
+        CallArrayMember => {
+            let packed = ((instr.arg2 as i64) << 32) | (instr.arg as i64 & 0xffff_ffff);
+            emit_helper_call_checked(b, ctx, OP_CALL_ARRAY_MEMBER, packed, _ptr_ty, helper_sig)
         }
         ArrSet => emit_helper_call(b, ctx, OP_ARR_SET, 0, _ptr_ty, helper_sig),
 

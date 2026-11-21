@@ -41,6 +41,7 @@ pub mod marshal;
 pub mod num_text;
 pub mod parallel;
 pub mod portable_vm;
+pub mod receiver_builtins;
 pub mod rust_debug;
 pub mod rust_debug_core;
 pub mod rust_methods;
