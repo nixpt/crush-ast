@@ -132,6 +132,9 @@ pub(crate) const OP_CMP_EQUAL: i64 = 43;
 /// removed element — the method-call form's value (unlike OP_ARRAY_POP,
 /// which keeps [array, value] for the `array.pop(a)` opcode path).
 pub(crate) const OP_ARRAY_POP_VALUE: i64 = 44;
+/// `call_member <name> <argc>` for built-in array members (#559):
+/// `arg` packs `(argc << 32) | (name_idx & 0xffff_ffff)`.
+pub(crate) const OP_CALL_ARRAY_MEMBER: i64 = 45;
 
 /// `ctx.error` for a load of an unassigned local; the message is in
 /// [`take_error_message`] (CRUSH-zorro-55).
@@ -529,6 +532,36 @@ pub unsafe extern "C" fn jit_runtime_helper(ctx: *mut JitContext, opcode: i64, a
                 None => {
                     ctx.error = 1; // FastVM: TypeMismatch
                 }
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // OP_CALL_ARRAY_MEMBER (45) — call_member array fallback (#559)
+        // ════════════════════════════════════════════════════════════════════
+        OP_CALL_ARRAY_MEMBER => {
+            let name_idx = (arg & 0xffff_ffff) as usize;
+            let argc = ((arg as u64) >> 32) as usize;
+            let name = if ctx.strings_ptr.is_null() {
+                String::new()
+            } else {
+                let strings = unsafe { &*(ctx.strings_ptr as *const Vec<String>) };
+                strings.get(name_idx).cloned().unwrap_or_default()
+            };
+            let recv = jit_to_rtv(ctx.pop().unwrap_or(JitValue::null()));
+            let mut args = Vec::with_capacity(argc);
+            for _ in 0..argc {
+                args.push(jit_to_rtv(ctx.pop().unwrap_or(JitValue::null())));
+            }
+            if let Some(arena) = arena_mut(ctx.arena) {
+                match crush_vm::fastvm::execution::exec_array_member(arena, &name, recv, &args) {
+                    Ok(v) => ctx.push(rtv_to_jit(&v)),
+                    Err(e) => {
+                        set_error_message(e.to_string());
+                        ctx.error = ERR_COSM;
+                    }
+                }
+            } else {
+                ctx.error = 1;
             }
         }
 

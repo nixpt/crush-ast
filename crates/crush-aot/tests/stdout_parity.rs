@@ -430,3 +430,139 @@ fn str_ord_chr_aliases_match_conv_on_the_aot_backends() {
         "65\nb\n65\nb\n",
     );
 }
+
+// #559 review 1: an array passed as a function parameter (`q.crush`) lowers
+// uniformly to `call_member`, and must still run on the VMs, FastVM, JIT, and
+// both AOT backends (`crush-aotc` CLI included).
+#[test]
+fn param_array_call_member_runs_on_vm_fastvm_jit_and_aot() {
+    let q_source = r#"fn add(xs) {
+  xs.push(3)
+  return xs.pop()
+}
+fn main() { return add([1, 2]) }
+"#;
+    let casm = crush_frontend::compile_crush_source(q_source).expect("frontend");
+    let prog = crush_lang_sdk::compile::casm_to_vm(&casm).expect("casm_to_vm");
+
+    // 1. Scheduler VM + PortableVm
+    let sched = crush_vm::run(&prog, &crush_vm::Quotas::default()).expect("scheduler VM");
+    assert_eq!(sched.return_value, Some(crush_vm::vm::Value::Int(3)));
+    let portable = crush_vm::PortableVm::new(prog).run().expect("PortableVm");
+    assert_eq!(
+        portable.return_value.or(portable.stack.last().cloned()),
+        Some(crush_vm::vm::Value::Int(3))
+    );
+
+    // 2. FastVM
+    let fast = crush_vm::run_fastvm(&casm).expect("FastVM");
+    assert_eq!(
+        fast,
+        crush_vm::fastvm::FastYield::Finished(Some(crush_vm::RuntimeValue::Int(3)))
+    );
+
+    // 3. JIT
+    let lowered = crush_vm::fastvm::lower_program(&casm).expect("lower for JIT");
+    let jit = crush_jit::JitEngine::new().expect("JitEngine");
+    let jit_res = jit.run(&lowered).expect("JIT run");
+    assert_eq!(
+        jit_res,
+        crush_vm::fastvm::FastYield::Finished(Some(crush_vm::RuntimeValue::Int(3)))
+    );
+
+    // 4. Rust AOT + C AOT via AotCompiler & crush-aot-runner
+    let compiler = AotCompiler::new();
+    let rust_so = compiler
+        .compile_casm(&casm, "q_param_array_rust")
+        .expect("rust backend");
+    let rust_out = Command::new(aot_runner())
+        .arg(&rust_so)
+        .output()
+        .expect("spawn crush-aot-runner");
+    assert!(
+        rust_out.status.success(),
+        "rust AOT failed: {}",
+        String::from_utf8_lossy(&rust_out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&rust_out.stdout).trim(), "int:3");
+
+    if cc_available("gcc") {
+        let c_so = compiler
+            .compile_c(&casm, "q_param_array_c", "gcc")
+            .expect("c backend");
+        let c_out = Command::new(aot_runner())
+            .arg(&c_so)
+            .output()
+            .expect("spawn crush-aot-runner");
+        assert!(
+            c_out.status.success(),
+            "C AOT failed: {}",
+            String::from_utf8_lossy(&c_out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&c_out.stdout).trim(), "int:3");
+    }
+
+    // 5. `crush-aotc run q.crush` CLI end-to-end
+    let dir = tempfile::tempdir().expect("tempdir");
+    let q_path = dir.path().join("q.crush");
+    std::fs::write(&q_path, q_source).expect("write q.crush");
+    let cli = Command::new(env!("CARGO_BIN_EXE_crush-aotc"))
+        .args(["run", q_path.to_str().unwrap()])
+        .output()
+        .expect("spawn crush-aotc");
+    assert!(
+        cli.status.success(),
+        "crush-aotc run q.crush failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&cli.stdout),
+        String::from_utf8_lossy(&cli.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&cli.stdout).contains("3"),
+        "expected 3 in crush-aotc stdout, got: {}",
+        String::from_utf8_lossy(&cli.stdout)
+    );
+
+    // 6. All built-in array member ops through a parameter receiver on VM + AOT.
+    assert_prints_everywhere(
+        "param_array_all_builtins",
+        r#"fn ops(xs) {
+               xs.append(30)
+               xs.arr_set(0, 11)
+               io.print(xs.arr_get(0))
+               io.print(xs.arr_get(-1))
+               let sl = xs.arr_slice(1, 3)
+               io.print(len(sl))
+               io.print(sl.arr_get(0))
+               return 0
+           }
+           fn main() { return ops([10, 20]) }"#,
+        "11\n30\n2\n20\n",
+    );
+}
+
+// #559: `m.arr_get("k")` / `m.arr_set("k", 2)` on a map (with or without an
+// unrelated struct declaring the method name) compile through the array
+// fallback on AOT and refuse loudly at run time instead of indexing the map.
+#[test]
+fn map_arr_get_and_arr_set_fail_loudly_at_runtime_on_aot() {
+    assert_fails_on_aot(
+        "map_arr_get_refusal_no_struct",
+        "let m = {\"k\": 1}\nio.print(m.arr_get(\"k\"))\n",
+        "arr_get",
+    );
+    assert_fails_on_aot(
+        "map_arr_get_refusal_with_struct",
+        "struct S { x }\nimpl S { fn arr_get(self, k) { return 0 } }\nlet m = {\"k\": 1}\nio.print(m.arr_get(\"k\"))\n",
+        "arr_get",
+    );
+    assert_fails_on_aot(
+        "map_arr_set_refusal_no_struct",
+        "let m = {\"k\": 1}\nm.arr_set(\"k\", 2)\n",
+        "arr_set",
+    );
+    assert_fails_on_aot(
+        "map_arr_set_refusal_with_struct",
+        "struct S { x }\nimpl S { fn arr_set(self, k, v) { return 0 } }\nlet m = {\"k\": 1}\nm.arr_set(\"k\", 2)\n",
+        "arr_set",
+    );
+}

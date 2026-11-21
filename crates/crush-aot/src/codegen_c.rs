@@ -2467,6 +2467,46 @@ fn emit_c_instr(
         "str_trim" => {
             out.push_str(&format!("                {{ Value __s = _pop(); _push(__s.tag == TAG_STRING ? mk_string(_str_trim(__s.s)) : __s); }} _pc={next_pc}; break;\n"));
         }
+        // ── Built-in array `call_member` fallback (#559) ──
+        // Array receiver + name in `ARRAY_MEMBER_NAMES` runs the array op; any
+        // non-array receiver refuses loudly at run time (never indexes a map
+        // or silently drops), and any other member name stays refused at
+        // compile time. Stack before op: [arg_{n-1}, ..., arg_0, recv].
+        "call_member" => {
+            let member = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if !crush_vm::receiver_builtins::is_array_member(member) {
+                unsupported = Some(format!("`call_member` '{member}'"));
+            } else {
+                let c_name = c_message(member);
+                match (member, argc) {
+                    ("append" | "push", 1) => {
+                        out.push_str(&format!("                {{ Value __recv = _pop(); Value __val = _pop(); if (__recv.tag != TAG_ARRAY) _crush_arith_error(\"call_member .{c_name}: expected array\"); int __ai = __recv.array_idx; if (__ai < 0 || __ai >= _array_count) _crush_arith_error(\"call_member .{c_name}: invalid array\"); _array_push(&_arrays[__ai], __val); _push(__recv); }} _pc={next_pc}; break; // call_member {c_name}\n"));
+                    }
+                    ("pop", 0) => {
+                        out.push_str(&format!("                {{ Value __recv = _pop(); if (__recv.tag != TAG_ARRAY) _crush_arith_error(\"call_member .pop: expected array\"); int __ai = __recv.array_idx; Value __v = mk_null(); if (__ai >= 0 && __ai < _array_count) {{ CrushArray* __a = &_arrays[__ai]; if (__a->len > 0) {{ __v = __a->data[--__a->len]; }} }} _push(__v); }} _pc={next_pc}; break; // call_member pop\n"));
+                    }
+                    ("arr_get", 1) => {
+                        out.push_str(&format!("                {{ Value __recv = _pop(); Value __idx = _pop(); if (__recv.tag != TAG_ARRAY) _crush_arith_error(\"call_member .arr_get: expected array\"); if (__idx.tag != TAG_INT) _crush_arith_error(\"call_member .arr_get: index must be int\"); int __ai = __recv.array_idx; if (__ai < 0 || __ai >= _array_count) _crush_arith_error(\"call_member .arr_get: invalid array\"); CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx.i, __a->len); if (__wi < 0) _crush_arith_error(\"call_member .arr_get: index out of range\"); _push(__a->data[__wi]); }} _pc={next_pc}; break; // call_member arr_get\n"));
+                    }
+                    ("arr_set", 2) => {
+                        out.push_str(&format!("                {{ Value __recv = _pop(); Value __idx = _pop(); Value __val = _pop(); if (__recv.tag != TAG_ARRAY) _crush_arith_error(\"call_member .arr_set: expected array\"); if (__idx.tag != TAG_INT) _crush_arith_error(\"call_member .arr_set: index must be int\"); int __ai = __recv.array_idx; if (__ai < 0 || __ai >= _array_count) _crush_arith_error(\"call_member .arr_set: invalid array\"); CrushArray* __a = &_arrays[__ai]; int __wi = _wrap_index((int)__idx.i, __a->len); if (__wi < 0) _crush_arith_error(\"call_member .arr_set: index out of range\"); __a->data[__wi] = __val; _push(__recv); }} _pc={next_pc}; break; // call_member arr_set\n"));
+                    }
+                    ("arr_slice", 1) => {
+                        out.push_str(&format!("                {{ Value __recv = _pop(); Value __start = _pop(); if (__recv.tag != TAG_ARRAY) _crush_arith_error(\"call_member .arr_slice: expected array\"); _push(_seq_slice(__recv, __start, mk_null(), mk_int(1))); }} _pc={next_pc}; break; // call_member arr_slice\n"));
+                    }
+                    ("arr_slice", 2) => {
+                        out.push_str(&format!("                {{ Value __recv = _pop(); Value __start = _pop(); Value __end = _pop(); if (__recv.tag != TAG_ARRAY) _crush_arith_error(\"call_member .arr_slice: expected array\"); _push(_seq_slice(__recv, __start, __end, mk_int(1))); }} _pc={next_pc}; break; // call_member arr_slice\n"));
+                    }
+                    _ => {
+                        unsupported = Some(format!(
+                            "`call_member` '{member}' with {argc} arguments"
+                        ));
+                    }
+                }
+            }
+        }
+
         // `str_split` / `str_replace` / `str_join` need dynamic strings this
         // backend doesn't have; they used to compile to a null stub.
         "nop" => out.push_str(&format!("                _pc = {next_pc}; break;\n")),

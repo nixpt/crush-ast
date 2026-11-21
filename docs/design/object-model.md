@@ -856,7 +856,13 @@ by construction rather than by check:
    capability lookup, no permission check and no host-cap call; the
    fallback table (§9.4) is VM-internal operations only. The scheduler's
    capability dispatcher is reachable only from `CAP_CALL`
-   (`crates/crush-vm/src/scheduler.rs:2051-2060` is its gate).
+   (`crates/crush-vm/src/scheduler.rs:2051-2060` is its gate). Pure receiver
+   operations (`xs.push`, `xs.pop`, `xs.arr_get`, `xs.arr_set`, `xs.arr_slice`,
+   `xs.append`) are not subject to the host allow-list (`Quotas::allowed_caps`)
+   when dispatched via `CALL_MEMBER`'s §9.4 fallback or lowered to VM opcodes
+   (`array.push`), whereas provably-primitive receiver calls that still lower
+   to `CAP_CALL` (§9.1 rule 5) pass through `dispatch_cap` and therefore remain
+   subject to `Quotas::allowed_caps`.
 
 *Reason.* PR #285's review found a real path from an unresolved member
 call to a granted host capability (fixed by the `member_call` guard
