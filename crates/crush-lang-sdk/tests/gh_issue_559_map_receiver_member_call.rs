@@ -338,3 +338,34 @@ fn main() { return add([1, 2]) }
         FastYield::Finished(Some(crush_vm::RuntimeValue::Int(3)))
     );
 }
+
+/// Pins #559 behaviour change (c): `xs.parallel_map(f)` in receiver form on a
+/// parameter lowers to `call_member` and refuses loudly on both VM engines
+/// with the `parallel_map(xs, f)` hint instead of falling back to `cap_call`.
+#[test]
+fn param_array_parallel_map_member_call_refuses_loudly() {
+    let source = r#"
+fn run(xs, f) { return xs.parallel_map(f) }
+fn main() { print(run([1, 2, 3], |x| => x * 2)) }
+"#;
+    let (sched, portable) = run_both_vms(source);
+    assert_eq!(sched, portable, "scheduler vs PortableVm");
+    match &sched {
+        Outcome::Err(msg) => {
+            assert!(
+                msg.contains(
+                    "`.parallel_map(…)` on an array through a member call is not supported"
+                ),
+                "expected member-call refusal, got: {msg}"
+            );
+            assert!(
+                msg.contains("parallel_map(xs, f)"),
+                "expected `parallel_map(xs, f)` hint, got: {msg}"
+            );
+        }
+        Outcome::Ok(out) => {
+            panic!("expected parallel_map member-call refusal, got output: {out:?}")
+        }
+    }
+    assert_fastvm_refuses(source);
+}

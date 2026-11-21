@@ -14,6 +14,26 @@ add its entry after yours.
 
 ## [Unreleased]
 
+- **Behaviour change** — fix(frontend,vm,aot): dotted member calls on maps and non-literal
+  receivers now lower uniformly to `call_member`, without consulting unrelated `struct` methods
+  (#559). Four visible changes follow:
+  - `m.push(..)`, `m.arr_get(..)`, `m.arr_set(..)` and the other array member names on a **map**
+    now do map field lookup only (calling a function stored under that key, or failing with
+    ``map has no member `<name>` ``). Before, without an unrelated struct declaring that method,
+    they lowered to `cap_call` and either gave `expected array, got map` or indexed the map.
+    Function form (`arr_get(m, k)`, `arr_set(m, k, v)`) and subscripts (`m[k]`) still index maps.
+  - Pure array receiver ops (`push`, `append`, `pop`, `arr_get`, `arr_set`, `arr_slice`) on
+    parameters and non-literal bindings now dispatch through `call_member`'s built-in fallback
+    and are no longer gated by `Quotas::allowed_caps` (`docs/design/object-model.md` §9.6.4,
+    follow-up #590). Literal bindings still lower to `cap_call` and remain gated.
+  - `xs.parallel_map(f)` and `n.make_range(m)` in receiver form on a parameter or non-literal
+    binding used to run through `cap_call`. They now refuse loudly (with the hint
+    `parallel_map(xs, f)` for `xs.parallel_map(f)`); write `parallel_map(xs, f)` and
+    `make_range(n, m)` instead.
+  - AOT (Rust and C backends): the refusal for `m.arr_get(..)` / `m.arr_set(..)` on a map moved
+    from compile time to runtime (stderr + exit 1), since array built-in member calls compile
+    through the runtime array-receiver fallback.
+
 - **Behaviour change** — fix(vm): a granted capability that refuses or fails (`CapFailed`) is
   fatal and is no longer caught by `try`/`catch`, on the scheduler, PortableVm and FastVM (ruling 5,
   #427, #464). This reverses #369: a script that caught `fs.read` of a missing file, an fs-sandbox
