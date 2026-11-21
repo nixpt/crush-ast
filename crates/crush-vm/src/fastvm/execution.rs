@@ -755,6 +755,18 @@ pub fn execute_one(
             }
         }
 
+        FastOp::CallArrayMember => {
+            let name = symbols.strings[instr.arg as usize].as_str();
+            let argc = instr.arg2 as usize;
+            let recv = stack.pop().ok_or(FastError::StackUnderflow)?;
+            let mut args = Vec::with_capacity(argc);
+            for _ in 0..argc {
+                args.push(stack.pop().ok_or(FastError::StackUnderflow)?);
+            }
+            let result = exec_array_member(arena, name, recv, &args)?;
+            stack.push(result);
+        }
+
         FastOp::TuplePush => {
             let val = stack.pop().ok_or(FastError::StackUnderflow)?;
             let arr_ref = stack.pop().ok_or(FastError::StackUnderflow)?;
@@ -1443,6 +1455,113 @@ pub fn execute_one(
     }
 
     Ok(None)
+}
+
+/// Shared built-in array `call_member` implementation for FastVM and the JIT
+/// (#559). Runs the array operation when `recv` is an arena `Object::Array`;
+/// refuses loudly on any non-array receiver (maps/objects, ints, etc.) so a
+/// map receiver never silently indexes or drops a call.
+pub fn exec_array_member(
+    arena: &mut Arena,
+    name: &str,
+    recv: RuntimeValue,
+    args: &[RuntimeValue],
+) -> Result<RuntimeValue, FastError> {
+    let ptr = match recv {
+        RuntimeValue::Ref(ptr) if matches!(arena.get(ptr), Some(Object::Array(_))) => ptr,
+        _ => {
+            return Err(FastError::ExecutionError(format!(
+                "`.{name}(…)` on a {}: member calls on non-array values need Kinds/maps \
+                 (run on the scheduler VM or PortableVm)",
+                cvm1_type_name(&recv, arena)
+            )));
+        }
+    };
+    let arity_err = |expected: usize| {
+        Err(FastError::ExecutionError(format!(
+            "array.{name} expects {expected} argument(s), got {}",
+            args.len()
+        )))
+    };
+    match name {
+        "append" | "push" => {
+            if args.len() != 1 {
+                return arity_err(1);
+            }
+            if let Ok(Object::Array(arr)) = arena.get_mut(ptr) {
+                arr.push(args[0].clone());
+                Ok(RuntimeValue::Ref(ptr))
+            } else {
+                Err(FastError::TypeMismatch)
+            }
+        }
+        "pop" => {
+            if !args.is_empty() {
+                return arity_err(0);
+            }
+            if let Ok(Object::Array(arr)) = arena.get_mut(ptr) {
+                Ok(arr.pop().unwrap_or(RuntimeValue::Null))
+            } else {
+                Err(FastError::TypeMismatch)
+            }
+        }
+        "arr_get" => {
+            if args.len() != 1 {
+                return arity_err(1);
+            }
+            let RuntimeValue::Int(idx) = args[0] else {
+                return Err(FastError::BadIndex(cvm1_type_name(&args[0], arena)));
+            };
+            let Some(Object::Array(arr)) = arena.get(ptr) else {
+                return Err(FastError::TypeMismatch);
+            };
+            let len = arr.len();
+            let i = wrap_index(idx, len).ok_or(FastError::ArrayBounds { index: idx, len })?;
+            Ok(arr[i].clone())
+        }
+        "arr_set" => {
+            if args.len() != 2 {
+                return arity_err(2);
+            }
+            let RuntimeValue::Int(idx) = args[0] else {
+                return Err(FastError::BadIndex(cvm1_type_name(&args[0], arena)));
+            };
+            let Ok(Object::Array(arr)) = arena.get_mut(ptr) else {
+                return Err(FastError::TypeMismatch);
+            };
+            let len = arr.len();
+            let i = wrap_index(idx, len).ok_or(FastError::ArrayBounds { index: idx, len })?;
+            arr[i] = args[1].clone();
+            Ok(RuntimeValue::Ref(ptr))
+        }
+        "arr_slice" => {
+            if args.is_empty() || args.len() > 2 {
+                return arity_err(2);
+            }
+            let bound = |v: &RuntimeValue| match v {
+                RuntimeValue::Int(i) => Ok(Some(*i)),
+                RuntimeValue::Null => Ok(None),
+                _ => Err(FastError::TypeMismatch),
+            };
+            let start = bound(&args[0])?;
+            let end = match args.get(1) {
+                Some(v) => bound(v)?,
+                None => None,
+            };
+            let sliced: Vec<RuntimeValue> = {
+                let Some(Object::Array(arr)) = arena.get(ptr) else {
+                    return Err(FastError::TypeMismatch);
+                };
+                let indices = crate::seq::slice_indices(arr.len() as i64, start, end, 1);
+                indices.into_iter().map(|i| arr[i as usize].clone()).collect()
+            };
+            let new_ptr = arena.alloc(Object::Array(sliced));
+            Ok(RuntimeValue::Ref(new_ptr))
+        }
+        _ => Err(FastError::ExecutionError(format!(
+            "`.{name}(…)` on an array: unsupported member call"
+        ))),
+    }
 }
 
 /// A Python-style index into a sequence of `len` items: a negative index

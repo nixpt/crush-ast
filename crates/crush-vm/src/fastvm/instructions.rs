@@ -107,6 +107,11 @@ pub enum FastOp {
     ArrayPush,
     ArrayPop,
     ArrayPopValue, // cap_call "pop" (CRUSH-391): pop arr, push only the removed element
+    /// `call_member <name> <argc>` for built-in array members (#559):
+    /// `arg` = string table index of member name, `arg2` = argc (non-receiver args).
+    /// Runs the array operation when the receiver is an array; refuses loudly
+    /// on any non-array receiver (maps, ints, etc.).
+    CallArrayMember,
     NewTuple,
     TuplePush,
     NewList,
@@ -886,7 +891,28 @@ pub fn lower_bytecode_program(
                 sealed_new(program.kind_table(), kind, &mut symbols)
                     .unwrap_or(FastInstr::simple(FastOp::NewObj))
             }
-            GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | CALL_MEMBER | CONSTRUCT
+            CALL_MEMBER => {
+                let idx = u16::from_be_bytes(
+                    code[pc + 1..pc + 3]
+                        .try_into()
+                        .map_err(|_| LowerError::MissingArgument("CALL_MEMBER name index".into()))?,
+                ) as usize;
+                let argc = code[pc + 3] as u32;
+                let name = program
+                    .consts
+                    .get(idx)
+                    .ok_or_else(|| LowerError::MissingArgument("CALL_MEMBER name".into()))?;
+                if crate::receiver_builtins::is_array_member(name) {
+                    let s_idx = symbols.intern_string(name);
+                    FastInstr::new(FastOp::CallArrayMember, s_idx as u64, argc)
+                } else {
+                    return Err(LowerError::UnknownOpcode(format!(
+                        "bytecode 0x{opcode:02X} at offset {pc}: COSM member ops need Kinds, \
+                         which FastVM and the JIT don't implement (they run on the scheduler VM and the portable VM)"
+                    )));
+                }
+            }
+            GET_MEMBER | SET_MEMBER | HAS_MEMBER | DEL_MEMBER | CONSTRUCT
             | GET_SLOT | SET_SLOT | IS_KIND | COPY | LOAD_KIND => {
                 return Err(LowerError::UnknownOpcode(format!(
                     "bytecode 0x{opcode:02X} at offset {pc}: COSM member ops need Kinds, \
@@ -1497,6 +1523,25 @@ fn lower_instruction(
         "str_split" => Ok(FastInstr::simple(FastOp::StrSplit)),
         "str_replace" => Ok(FastInstr::simple(FastOp::StrReplace)),
         "str_join" => Ok(FastInstr::simple(FastOp::StrJoin)),
+
+        "call_member" => {
+            let name = instr
+                .args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| LowerError::MissingArgument("call_member name".into()))?;
+            let argc = instr
+                .args
+                .get("argc")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            if crate::receiver_builtins::is_array_member(name) {
+                let s_idx = symbols.intern_string(name);
+                Ok(FastInstr::new(FastOp::CallArrayMember, s_idx as u64, argc))
+            } else {
+                Err(LowerError::UnknownOpcode("call_member".to_string()))
+            }
+        }
 
         other => Err(LowerError::UnknownOpcode(other.to_string())),
     }

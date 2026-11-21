@@ -1384,6 +1384,52 @@ fn emit_body(
             }
         }
 
+        // ── Built-in array `call_member` fallback (#559) ──
+        // Array receiver + name in `ARRAY_MEMBER_NAMES` runs the array op; any
+        // non-array receiver refuses loudly at run time (never indexes a map
+        // or silently drops), and any other member name stays refused at
+        // compile time. Stack before op: [arg_{n-1}, ..., arg_0, recv].
+        "call_member" => {
+            let member = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let argc = args.get("argc").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if !crush_vm::receiver_builtins::is_array_member(member) {
+                unsupported = Some(format!("`call_member` '{member}'"));
+            } else {
+                let err_msg = rust_str_escape(member);
+                match (member, argc) {
+                    ("append" | "push", 1) => {
+                        out.push_str(&format!("{ind}{{ let __recv = stack.pop().unwrap_or(RuntimeValue::Null); let __val = stack.pop().unwrap_or(RuntimeValue::Null); if let RuntimeValue::Array(ref a) = __recv {{ a.borrow_mut().push(__val); stack.push(__recv); }} else {{ eprintln!(\"crush(aot): `.{err_msg}(…)` requires an array receiver on AOT, got {{:?}}\", __recv); std::process::exit(1); }} }}\n"));
+                        out.push_str(&next_pc_str);
+                    }
+                    ("pop", 0) => {
+                        out.push_str(&format!("{ind}{{ let __recv = stack.pop().unwrap_or(RuntimeValue::Null); let __v = if let RuntimeValue::Array(ref a) = __recv {{ a.borrow_mut().pop().unwrap_or(RuntimeValue::Null) }} else {{ eprintln!(\"crush(aot): `.pop(…)` requires an array receiver on AOT, got {{:?}}\", __recv); std::process::exit(1); }}; stack.push(__v); }}\n"));
+                        out.push_str(&next_pc_str);
+                    }
+                    ("arr_get", 1) => {
+                        out.push_str(&format!("{ind}{{ let __recv = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); if let RuntimeValue::Array(ref a) = __recv {{ let a = a.borrow(); if let RuntimeValue::Int(i) = __idx {{ if let Some(j) = wrap_index(i, a.len()) {{ stack.push(a[j].clone()); }} else {{ eprintln!(\"crush(aot): array index out of range: {{}} (len {{}})\", i, a.len()); std::process::exit(1); }} }} else {{ eprintln!(\"crush(aot): array index must be int, got {{:?}}\", __idx); std::process::exit(1); }} }} else {{ eprintln!(\"crush(aot): `.arr_get(…)` requires an array receiver on AOT, got {{:?}}\", __recv); std::process::exit(1); }} }}\n"));
+                        out.push_str(&next_pc_str);
+                    }
+                    ("arr_set", 2) => {
+                        out.push_str(&format!("{ind}{{ let __recv = stack.pop().unwrap_or(RuntimeValue::Null); let __idx = stack.pop().unwrap_or(RuntimeValue::Null); let __val = stack.pop().unwrap_or(RuntimeValue::Null); if let RuntimeValue::Array(ref a) = __recv {{ let mut a = a.borrow_mut(); if let RuntimeValue::Int(i) = __idx {{ if let Some(j) = wrap_index(i, a.len()) {{ a[j] = __val; drop(a); stack.push(__recv); }} else {{ eprintln!(\"crush(aot): array index out of range: {{}} (len {{}})\", i, a.len()); std::process::exit(1); }} }} else {{ eprintln!(\"crush(aot): array index must be int, got {{:?}}\", __idx); std::process::exit(1); }} }} else {{ eprintln!(\"crush(aot): `.arr_set(…)` requires an array receiver on AOT, got {{:?}}\", __recv); std::process::exit(1); }} }}\n"));
+                        out.push_str(&next_pc_str);
+                    }
+                    ("arr_slice", 1) => {
+                        out.push_str(&format!("{ind}{{ let __recv = stack.pop().unwrap_or(RuntimeValue::Null); let __start = stack.pop().unwrap_or(RuntimeValue::Null); if matches!(__recv, RuntimeValue::Array(_)) {{ stack.push(seq_slice(__recv, __start, RuntimeValue::Null, RuntimeValue::Int(1))); }} else {{ eprintln!(\"crush(aot): `.arr_slice(…)` requires an array receiver on AOT, got {{:?}}\", __recv); std::process::exit(1); }} }}\n"));
+                        out.push_str(&next_pc_str);
+                    }
+                    ("arr_slice", 2) => {
+                        out.push_str(&format!("{ind}{{ let __recv = stack.pop().unwrap_or(RuntimeValue::Null); let __start = stack.pop().unwrap_or(RuntimeValue::Null); let __end = stack.pop().unwrap_or(RuntimeValue::Null); if matches!(__recv, RuntimeValue::Array(_)) {{ stack.push(seq_slice(__recv, __start, __end, RuntimeValue::Int(1))); }} else {{ eprintln!(\"crush(aot): `.arr_slice(…)` requires an array receiver on AOT, got {{:?}}\", __recv); std::process::exit(1); }} }}\n"));
+                        out.push_str(&next_pc_str);
+                    }
+                    _ => {
+                        unsupported = Some(format!(
+                            "`call_member` '{member}' with {argc} arguments"
+                        ));
+                    }
+                }
+            }
+        }
+
         // ── Green tasks without `spawn` (issue #161) ──
         // With no spawned task `yield` is a cooperative-yield no-op and `await`
         // has no handle (issue #251: `await v` on a non-handle returns `v`, so

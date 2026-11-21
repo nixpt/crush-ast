@@ -53,6 +53,13 @@ pub struct Compiler {
     local_functions: HashSet<String>,
     /// Variable names declared in the current function scope (from VarDecl / Assign).
     declared_vars: HashSet<String>,
+    /// Local variables in the current function scope that are provably bound
+    /// only to primitive values (int/float/bool/str/null/array literals and
+    /// array-returning ops on such locals, never maps, structs, parameters,
+    /// loop/catch/pattern bindings, or boxed closure cells). Only these
+    /// qualify for the §9.1 rule-5 `RECEIVER_CAPABILITIES` fast path; every
+    /// other receiver lowers unconditionally to `call_member` (#559).
+    provably_primitive: HashSet<String>,
     /// When true, every function whose name appears in an `Invariant`'s
     /// `applies_to` list AND that has a non-empty `check_source` gets a
     /// `cap_call "invariant.evaluate"` instruction prepended, AFTER the
@@ -123,6 +130,7 @@ impl Compiler {
             last_debug_info: None,
             local_functions: HashSet::new(),
             declared_vars: HashSet::new(),
+            provably_primitive: HashSet::new(),
             invariant_runtime: false,
             lambdas: HashMap::new(),
             lambda_outer_vars: Vec::new(),
@@ -467,11 +475,14 @@ impl Compiler {
                     }
                     self.lambda_aliases
                         .push(params.iter().map(|(n, _)| (n.clone(), None)).collect());
+                    let outer_prim = std::mem::take(&mut self.provably_primitive);
                     let body_start =
                         self.enter_function_scope(params, body, &mut func_instrs, meta);
+                    self.provably_primitive = provably_primitive_vars(params, body, &self.boxed, &[]);
                     let nested: Result<()> = body
                         .iter()
                         .try_for_each(|inner_stmt| self.compile_stmt(inner_stmt, &mut func_instrs));
+                    self.provably_primitive = outer_prim;
                     self.lambda_aliases.pop();
                     nested?;
                     self.rewrite_cells(&mut func_instrs, body_start);
@@ -511,9 +522,15 @@ impl Compiler {
                 ));
             }
             let body_start = if func.is_async {
+                self.provably_primitive =
+                    provably_primitive_vars(&func.params, &func.body, &HashSet::new(), &[]);
                 0
             } else {
-                self.enter_function_scope(&func.params, &func.body, &mut instrs, &func.meta)
+                let start =
+                    self.enter_function_scope(&func.params, &func.body, &mut instrs, &func.meta);
+                self.provably_primitive =
+                    provably_primitive_vars(&func.params, &func.body, &self.boxed, &[]);
+                start
             };
 
             // Optionally emit `cap_call "invariant.evaluate"` for every
@@ -2702,11 +2719,11 @@ impl Compiler {
                     // member call on a declared receiver; anything else
                     // is a missing method (or a field holding a
                     // function, CRUSH-zorro-44), refused outright.
-                    if meta
+                    let marked_member_call = meta
                         .get("member_call")
                         .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                    {
+                        .unwrap_or(false);
+                    if marked_member_call {
                         let resolves = name.find('.').is_some_and(|pos| {
                             self.declared_vars.contains(&name[..pos])
                                 && (self.receiver_methods.contains(&name[pos + 1..])
@@ -2734,47 +2751,21 @@ impl Compiler {
                         let dot_pos = name.find('.').unwrap();
                         let obj_name = &name[..dot_pos];
                         let method = &name[dot_pos + 1..];
-                        if self.receiver_methods.contains(method)
-                            || (method == "clone"
-                                && self.cosm.as_ref().is_some_and(|m| !m.kinds.is_empty()))
+                        // §9.1 rule 5 / #559: only a provably-primitive
+                        // receiver (int/float/bool/str/null/array literal or
+                        // array-returning op on such a binding) uses the
+                        // `RECEIVER_CAPABILITIES` `cap_call` fast path (args
+                        // in order, receiver first). Any other receiver —
+                        // maps, structs, parameters, call results, or bindings
+                        // that can hold a non-primitive value — lowers
+                        // unconditionally to `call_member` so resolution
+                        // depends solely on the receiver's runtime value
+                        // (§9.4), never on whether an unrelated struct in the
+                        // program happens to declare a method of that name.
+                        if !marked_member_call
+                            && self.provably_primitive.contains(obj_name)
+                            && RECEIVER_CAPABILITIES.contains(&method)
                         {
-                            // COSM K1.4: `p.norm2(…)` resolves the method on the
-                            // receiver's Kind (CALL_MEMBER: arguments last-first,
-                            // the receiver on top) — never a global capability.
-                            // `clone()` is built in for every struct instance.
-                            for arg in args.iter().rev() {
-                                self.compile_arg(arg, instrs)?;
-                            }
-                            instrs.push(self.create_instr(
-                                "load",
-                                serde_json::json!({"name": obj_name}),
-                                meta,
-                            ));
-                            instrs.push(self.create_instr(
-                                "call_member",
-                                serde_json::json!({"name": method, "argc": args.len()}),
-                                meta,
-                            ));
-                            return Ok(());
-                        }
-                        // Marked member calls were already resolved
-                        // (or refused) ahead of the `is_method_call`
-                        // split; only the parser's unmarked idiom
-                        // reaches this point. A name in
-                        // `RECEIVER_CAPABILITIES` stays the host
-                        // capability it has always been (CRUSH-235:
-                        // args in order, the receiver first). Anything
-                        // else is a member call whose receiver's type
-                        // isn't statically known (a local can hold a
-                        // struct instance *or* a map), so it resolves
-                        // at run time with CALL_MEMBER (CRUSH-362): a
-                        // struct instance resolves the method on its
-                        // Kind, a map calls the function stored under
-                        // the key — method-call syntax on a declared
-                        // variable never implies a host capability
-                        // named after the field. Last-to-first like
-                        // every member call, the receiver on top.
-                        if RECEIVER_CAPABILITIES.contains(&method) {
                             self.all_permissions.insert(method.to_string());
                             instrs.push(self.create_instr(
                                 "load",
@@ -3149,6 +3140,10 @@ impl Compiler {
                     &mut self.declared_vars,
                     pnames.iter().chain(captures.iter()).cloned().collect(),
                 );
+                let outer_prim = std::mem::replace(
+                    &mut self.provably_primitive,
+                    provably_primitive_vars(params, body, &self.boxed, &captures),
+                );
                 self.lambda_outer_vars.push(outer.clone());
                 self.lambda_aliases
                     .push(params.iter().map(|(n, _)| (n.clone(), None)).collect());
@@ -3167,6 +3162,7 @@ impl Compiler {
                 self.lambda_aliases.pop();
                 self.lambda_outer_vars.pop();
                 self.declared_vars = outer;
+                self.provably_primitive = outer_prim;
                 body_result?;
                 self.ensure_return(&mut func_instrs, Some(meta));
                 self.rewrite_cells(&mut func_instrs, body_start);
@@ -3737,6 +3733,7 @@ fn rebound_names(params: &[(String, CastType)], body: &[Statement]) -> HashSet<S
                     _ => {}
                 }
                 bind(field("variable"), counts);
+                bind(field("error_var"), counts);
                 o.values().for_each(|c| walk(c, counts));
             }
             _ => {}
@@ -3752,6 +3749,254 @@ fn rebound_names(params: &[(String, CastType)], body: &[Statement]) -> HashSet<S
         .filter(|(_, n)| *n > 1)
         .map(|(k, _)| k)
         .collect()
+}
+
+/// Local variables in one function/lambda scope that are provably bound only
+/// to primitive values (int/float/bool/str/null/array literals, or
+/// self-returning array operations on such variables). Never includes
+/// parameters, captures, boxed closure cells, loop/catch/pattern/lang-block
+/// bindings, maps, structs, or call results (#559, §9.1 rule 5).
+fn provably_primitive_vars(
+    params: &[(String, CastType)],
+    body: &[Statement],
+    boxed: &HashSet<String>,
+    captures: &[String],
+) -> HashSet<String> {
+    fn disqualify_pattern(pat: &Pattern, disqualified: &mut HashSet<String>) {
+        match pat {
+            Pattern::Wildcard | Pattern::Literal { .. } => {}
+            Pattern::Identifier { name } => {
+                disqualified.insert(name.clone());
+            }
+            Pattern::Struct { fields, .. } => {
+                for (_, sub) in fields {
+                    disqualify_pattern(sub, disqualified);
+                }
+            }
+        }
+    }
+
+    fn scan_expr<'a>(
+        expr: &'a Expression,
+        bindings: &mut HashMap<String, Vec<&'a Expression>>,
+        disqualified: &mut HashSet<String>,
+    ) {
+        match expr {
+            Expression::Lambda { .. } => {}
+            Expression::Call { function, args, .. } => {
+                if function == "__crush_assign__"
+                    && let Some(Expression::Var { name, .. }) = args.first()
+                {
+                    disqualified.insert(name.clone());
+                }
+                for a in args {
+                    scan_expr(a, bindings, disqualified);
+                }
+            }
+            Expression::Match {
+                expression, arms, ..
+            } => {
+                scan_expr(expression, bindings, disqualified);
+                for arm in arms {
+                    disqualify_pattern(&arm.pattern, disqualified);
+                    scan_stmts(&arm.body, bindings, disqualified);
+                }
+            }
+            Expression::BinaryOp { left, right, .. } => {
+                scan_expr(left, bindings, disqualified);
+                scan_expr(right, bindings, disqualified);
+            }
+            Expression::UnaryOp { operand, .. } => scan_expr(operand, bindings, disqualified),
+            Expression::ArrayLiteral { elements, .. }
+            | Expression::TupleLiteral { elements, .. }
+            | Expression::ListLiteral { elements, .. }
+            | Expression::VectorLiteral { elements, .. }
+            | Expression::SetLiteral { elements, .. } => {
+                for e in elements {
+                    scan_expr(e, bindings, disqualified);
+                }
+            }
+            Expression::ObjectLiteral { properties, .. } => {
+                for (_, v) in properties {
+                    scan_expr(v, bindings, disqualified);
+                }
+            }
+            Expression::Index { target, index, .. } => {
+                scan_expr(target, bindings, disqualified);
+                scan_expr(index, bindings, disqualified);
+            }
+            Expression::GetField { target, .. } => scan_expr(target, bindings, disqualified),
+            Expression::MethodCall { target, args, .. } => {
+                scan_expr(target, bindings, disqualified);
+                for a in args {
+                    scan_expr(a, bindings, disqualified);
+                }
+            }
+            Expression::CallValue { callee, args, .. } => {
+                scan_expr(callee, bindings, disqualified);
+                for a in args {
+                    scan_expr(a, bindings, disqualified);
+                }
+            }
+            Expression::CapabilityCall { args, .. }
+            | Expression::VectorMath { args, .. }
+            | Expression::Spawn { args, .. }
+            | Expression::Construct { args, .. } => {
+                for a in args {
+                    scan_expr(a, bindings, disqualified);
+                }
+            }
+            Expression::Range { start, end, .. } => {
+                scan_expr(start, bindings, disqualified);
+                scan_expr(end, bindings, disqualified);
+            }
+            Expression::Pipeline { segments, .. } => {
+                for s in segments {
+                    scan_expr(s, bindings, disqualified);
+                }
+            }
+            Expression::Await { expression, .. } => {
+                scan_expr(expression, bindings, disqualified);
+            }
+            Expression::DomQuery { selector, .. } => {
+                scan_expr(selector, bindings, disqualified);
+            }
+            _ => {}
+        }
+    }
+
+    fn scan_stmts<'a>(
+        stmts: &'a [Statement],
+        bindings: &mut HashMap<String, Vec<&'a Expression>>,
+        disqualified: &mut HashSet<String>,
+    ) {
+        for stmt in stmts {
+            match stmt {
+                Statement::VarDecl { name, value, .. } => {
+                    bindings.entry(name.clone()).or_default().push(value);
+                    scan_expr(value, bindings, disqualified);
+                }
+                Statement::Assign { target, value, .. } => {
+                    bindings.entry(target.clone()).or_default().push(value);
+                    scan_expr(value, bindings, disqualified);
+                }
+                Statement::Export { value, .. }
+                | Statement::ExprStmt { expr: value, .. }
+                | Statement::Throw { value, .. } => {
+                    scan_expr(value, bindings, disqualified);
+                }
+                Statement::Return { value: Some(v), .. } => {
+                    scan_expr(v, bindings, disqualified);
+                }
+                Statement::If {
+                    condition,
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    scan_expr(condition, bindings, disqualified);
+                    scan_stmts(then_body, bindings, disqualified);
+                    if let Some(eb) = else_body {
+                        scan_stmts(eb, bindings, disqualified);
+                    }
+                }
+                Statement::While {
+                    condition, body, ..
+                } => {
+                    scan_expr(condition, bindings, disqualified);
+                    scan_stmts(body, bindings, disqualified);
+                }
+                Statement::For {
+                    variable,
+                    iterable,
+                    body,
+                    ..
+                } => {
+                    disqualified.insert(variable.clone());
+                    scan_expr(iterable, bindings, disqualified);
+                    scan_stmts(body, bindings, disqualified);
+                }
+                Statement::TryCatch {
+                    body,
+                    error_var,
+                    handler,
+                    ..
+                } => {
+                    disqualified.insert(error_var.clone());
+                    scan_stmts(body, bindings, disqualified);
+                    scan_stmts(handler, bindings, disqualified);
+                }
+                Statement::FunctionDef { name, .. } => {
+                    disqualified.insert(name.clone());
+                }
+                Statement::SetField { target, value, .. } => {
+                    scan_expr(target, bindings, disqualified);
+                    scan_expr(value, bindings, disqualified);
+                }
+                Statement::LangBlock { outputs, .. } => {
+                    for out in outputs {
+                        disqualified.insert(out.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn is_primitive_expr(expr: &Expression, prim: &HashSet<String>) -> bool {
+        match expr {
+            Expression::IntLiteral { .. }
+            | Expression::FloatLiteral { .. }
+            | Expression::BoolLiteral { .. }
+            | Expression::StringLiteral { .. }
+            | Expression::NullLiteral { .. }
+            | Expression::ArrayLiteral { .. }
+            | Expression::Range { .. } => true,
+            Expression::CapabilityCall { name, .. } => {
+                name == "array.push"
+                    || name.split_once('.').is_some_and(|(recv, method)| {
+                        prim.contains(recv)
+                            && matches!(method, "push" | "append" | "arr_set" | "arr_slice")
+                    })
+            }
+            Expression::Call { function, .. } => {
+                matches!(function.as_str(), "array.push" | "make_range" | "range")
+            }
+            _ => false,
+        }
+    }
+
+    let mut disqualified: HashSet<String> = boxed.clone();
+    for (p, _) in params {
+        disqualified.insert(p.clone());
+    }
+    for c in captures {
+        disqualified.insert(c.clone());
+    }
+    let mut bindings: HashMap<String, Vec<&Expression>> = HashMap::new();
+    scan_stmts(body, &mut bindings, &mut disqualified);
+
+    let mut prim: HashSet<String> = bindings
+        .keys()
+        .filter(|name| !disqualified.contains(*name))
+        .cloned()
+        .collect();
+    loop {
+        let next: HashSet<String> = prim
+            .iter()
+            .filter(|name| {
+                bindings
+                    .get(*name)
+                    .is_some_and(|exprs| exprs.iter().all(|e| is_primitive_expr(e, &prim)))
+            })
+            .cloned()
+            .collect();
+        if next.len() == prim.len() {
+            break;
+        }
+        prim = next;
+    }
+    prim
 }
 
 /// What one scope binds and references at its own level — not inside nested

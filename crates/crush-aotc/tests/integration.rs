@@ -453,3 +453,28 @@ fn ai_and_dom_ops_are_refused() {
         );
     }
 }
+
+/// #559: map receiver member calls (`m.arr_get`, `m.push`) are refused loudly
+/// with or without an unrelated struct declaring the method name.
+#[test]
+fn map_receiver_member_calls_are_refused() {
+    for source in [
+        "let m = {\"k\": 1}\nprint(m.arr_get(\"k\"))\n",
+        "struct S { x }\nimpl S { fn arr_get(self, k) { return 0 } }\nlet m = {\"k\": 1}\nprint(m.arr_get(\"k\"))\n",
+        "let m = {\"push\": |v| => v * 2}\nprint(m.push(4))\n",
+        "struct S { x }\nimpl S { fn push(self, v) { return v } }\nlet m = {\"push\": |v| => v * 2}\nprint(m.push(4))\n",
+    ] {
+        let program = crush_frontend::compile_crush_source(source).expect("compiles");
+        let err = AotcCompiler::new(AotcOpts::default())
+            .compile(&program)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("call_member")
+                || err.contains("COSM")
+                || err.contains("new_obj")
+                || err.contains("make_closure"),
+            "expected loud refusal for {source:?}, got: {err}"
+        );
+    }
+}
