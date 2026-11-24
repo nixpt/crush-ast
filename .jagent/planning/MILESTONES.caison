@@ -5,16 +5,17 @@ schema: "milestones/1"
 project: {
   name: "crush-ast"
   kind: "repo"
-  lifecycle: "active" @verified { at: "2026-10-14", by: "mile-seed" }
-  home: "main"
+  lifecycle: "shipped" ~0.8 @verified { at: "2026-11-18", by: "altair" }
+  lifecycle_since: "2026-10-30"
+  home: "zorro"
   ticket_prefix: "CRUSH"
-  summary: "the Crush language toolchain (CAST, CVM/FastVM/JIT/AOT, polyglot walkers); v0.8.0 tagged 2026-10-30 (e142a5c) and on crates.io; M0 and M1 done, M2/M5 and the publish lane still open in parallel, walker and stdlib work landing under the test-drive sweep"
+  summary: "the Crush language toolchain (CAST, CVM/FastVM/JIT/AOT, polyglot walkers); v0.11.2 tagged 2026-11-07 and crush-vm/crush-frontend/crush-lang-sdk 0.11.2 on crates.io; now on the 1.0 freeze-prep path (feature freeze 2026-12-31): module visibility V0-V3b landed, V4-V6 open, engine-parity and silently-wrong fixes in flight"
   north_star: "write in your language, ship at C speed: AI-native, polyglot, capability-sandboxed"
-  stewards: ["foreman"]
+  stewards: ["altair", "foreman"]
   stale_after_days: 14
   evidence: {
     default_branch: "main"
-    registries: [{ registry: "crates.io", name: "crush-vm" }, { registry: "crates.io", name: "crush-frontend" }]
+    registries: [{ registry: "crates.io", name: "crush-vm" }, { registry: "crates.io", name: "crush-frontend" }, { registry: "crates.io", name: "crush-lang-sdk" }]
   }
 }
 
@@ -38,83 +39,126 @@ milestones: [
       { claim: "all M1 tickets closed", check: { kind: "tickets", status: "Done" } },
       { claim: "CRUSH-1 (AI opcodes wired, fail-loud when ungranted — not self-executing; full execution needs an ai_native.* host) and CRUSH-7 (nested indexing/slicing) closed", met: true @verified { at: "2026-10-15", by: "opencode" } },
     ]
-    notes: "Closed 2026-10-15. CRUSH-1 done via CRUSH-32 (AI opcodes wired + fail-loud); the remaining silent-NOP AI statements (capability_discovery/adaptation_request/semantic_switch) are CRUSH-265 (M9). CRUSH-7 done for arrays (nested indexing + slice syntax verified); string slicing -> CRUSH-268, .slice() method -> CRUSH-267. CRUSH-13 done (AOT backends differentially tested in crush-aot/tests/)."
+    notes: "Closed 2026-10-15. CRUSH-1 done via CRUSH-32 (AI opcodes wired + fail-loud); the remaining silent-NOP AI statements were CRUSH-265 (Done 'declined: loud error'). CRUSH-7 done for arrays; string slicing -> CRUSH-268, .slice() method -> CRUSH-267. CRUSH-13 done (AOT backends differentially tested in crush-aot/tests/)."
   },
   {
     id: "M2"
     title: "JIT completion"
-    status: "active" ~0.7 @verified { at: "2026-10-14", by: "mile-seed" }
+    status: "planned" ~0.6 @verified { at: "2026-11-18", by: "altair" }
     done_when: [
       { claim: "phases 1-5 (skeleton, locals/calls, data/caps, exceptions, ExoLight) landed", met: true @verified { at: "2026-10-14", by: "mile-seed" } },
-      { claim: "full FastOp conformance audit, optimization validation, AOT-from-JIT, differential coverage vs AOT-C", met: false @verified { at: "2026-10-14", by: "mile-seed" } },
+      { claim: "full FastOp conformance audit, optimization validation, AOT-from-JIT, differential coverage vs AOT-C", met: false @verified { at: "2026-11-18", by: "altair" } },
     ]
-    notes: "phases 6/7 are tracked under M10 (CRUSH-60/61); the cranelift fuzz finding (~55 of 86 FastOps disagree) has no ticket yet"
+    notes: "Partial (phases 1-5 landed), no active work: planned, behind the 1.0 freeze. Since 2026-10-14 the JIT got correctness fixes (CRUSH-213 division edge cases, CRUSH-215 value equality, CRUSH-294 heap print, CRUSH-295 frame stride; CHANGELOG 0.9.0-0.10.0) but no conformance audit or AOT-from-JIT. Under the 1.0 ruling the JIT is not a Tier-1 engine; phases 6/7 are tracked under M10 (CRUSH-60/61)."
   },
   {
     id: "M3"
     title: "debugger completion"
-    status: "active" ~0.5 @verified { at: "2026-10-14", by: "mile-seed" }
+    status: "done" ~0.85 @verified { at: "2026-11-18", by: "altair" }
+    done_at: "2026-10-31"
+    version: "v0.9.0"
+    tickets: ["CRUSH-317"]
     done_when: [
-      "variable inspection (print <var>)",
-      "source -> bytecode sourcemap (unblocked by CRUSH-74/79)",
-      "step-by-step state inspection",
+      { claim: "variable inspection (print <var>)", met: true @verified { at: "2026-11-18", by: "altair" } },
+      { claim: "source -> bytecode sourcemap (break FILE:LINE resolves in source lines)", met: true @verified { at: "2026-11-18", by: "altair" } },
+      { claim: "step-by-step state inspection (step/next by source line, locals, watch)", met: true @verified { at: "2026-11-18", by: "altair" } },
+      { claim: "the debugger ships in a release", check: { kind: "tag", pattern: "v0.9.0" } },
     ]
-    notes: "partial: breakpoint registry, REPL, VM integration and the NDJSON wire are built"
+    notes: "CRUSH-317 (PR #341, in v0.9.0): `crush debug FILE` / `crush-debug` compiles source, resolves breakpoints in source lines, prints/watches named variables, steps by line, NDJSON event mode. Checked from the CHANGELOG entry, not by running it."
   },
   {
     id: "M4"
     title: "cross-project integration"
-    status: "active" ~0.5 @verified { at: "2026-10-14", by: "mile-seed" }
+    status: "planned" ~0.4 @verified { at: "2026-11-18", by: "altair" }
     tickets: ["CRUSH-23"]
     done_when: [
       "surfer's in-tree Crush runtime migrated to crush-ast (tier 3)",
       "divergence with exosphere's in-tree crush reconciled",
     ]
-    notes: "partial: the C<->Crush FFI bridge is built. CRUSH-55 closed 2026-10-12 as 'ast is a superset of exo, retire exo runtimes' (3458e7d), which is the exosphere half of this."
+    notes: "Partial, no active work (planned). The C<->Crush FFI bridge is built. CRUSH-55 closed 2026-10-12 as 'ast is a superset of exo, retire exo runtimes' (3458e7d), the exosphere half. CRUSH-23 is still Backlog (2026-11-18); no surfer migration commits seen since 2026-10-14."
   },
   {
     id: "publish"
     title: "crates.io lane"
-    status: "active" ~0.7 @verified { at: "2026-10-14", by: "mile-seed" }
+    status: "active" ~0.7 @verified { at: "2026-11-18", by: "altair" }
     done_when: [
       { claim: "crush-vm on crates.io", check: { kind: "published", registry: "crates.io", name: "crush-vm" } },
       { claim: "crush-aot on crates.io (unblocks crush-aotc)", check: { kind: "published", registry: "crates.io", name: "crush-aot" } },
       "every crate uses version.workspace; walker-core published; the squatted 'walker' package renamed crush-walker",
     ]
-    notes: "checked 2026-10-31 against the crates.io API: crush-vm, crush-frontend, crush-lang-sdk, crush-pkg, crush-lang-python, crush-lang-js, crush-walker-core are at 0.8.0 (2026-10-30); crush-aot, walker-core and crush-walker do not exist on crates.io. CRUSH-104 (version.workspace sweep, walker-core publish lane) is Done (PR #90)."
+    notes: "checked 2026-11-18 against the crates.io API: crush-vm, crush-frontend, crush-lang-sdk at 0.11.2; crush-aot, walker-core and crush-walker do not exist. Lock-step versioning for 1.0 is CRUSH-482 (open)."
   },
   {
     id: "M5"
     title: "AI-native compiler layer"
-    status: "active" @verified { at: "2026-10-14", by: "mile-seed" }
-    tickets: ["CRUSH-27", "CRUSH-28", "CRUSH-29", "CRUSH-30", "CRUSH-31", "CRUSH-32", "CRUSH-33", "CRUSH-34"]
+    status: "planned" ~0.6 @verified { at: "2026-11-18", by: "altair" }
+    tickets: ["CRUSH-27", "CRUSH-28", "CRUSH-29", "CRUSH-30", "CRUSH-31", "CRUSH-32", "CRUSH-33", "CRUSH-34", "CRUSH-234"]
     depends_on: ["M1"]
     done_when: [
       { claim: "all M5 tickets closed", check: { kind: "tickets", status: "Done" } },
       "annotations are CAST nodes, crush-index is live, AI opcodes execute",
     ]
-    notes: "ticket files (2026-10-31 survey): CRUSH-27/28/29/31/32/33 Done (31/33/34 each also have an older superseded spec file under the same ID); CRUSH-30 Done by scope ruling 2026-10-16, residue CRUSH-30a; CRUSH-34 In Progress (Commits 2-3 open). CRUSH-1 is Done via CRUSH-32; the remaining silent-NOP AI statements are CRUSH-265."
+    notes: "Partial, no active work (planned). 2026-11-18: CRUSH-27..33 Done, CRUSH-34 Superseded, CRUSH-234 (provider + grant flag) Backlog. AI opcodes still run only as echo stubs / a local toolchain engine, no model is called (docs/design/ai-native-status.md). AI ops are experimental in 1.0 (RELEASE-1.0-CRITERIA §3)."
   },
   {
     id: "M6"
     title: "walker parity & multi-language completeness"
-    status: "planned" @verified { at: "2026-10-14", by: "mile-seed" }
+    status: "planned" ~0.6 @verified { at: "2026-11-18", by: "altair" }
     tickets: ["CRUSH-21", "CRUSH-35", "CRUSH-36", "CRUSH-37", "CRUSH-38", "CRUSH-103"]
     depends_on: ["M5"]
     done_when: [
       "the remaining walker-lowering gaps from VISION.md are closed",
       "the Frontend / LanguageAdapter trait families are unified",
     ]
-    notes: "ROADMAP/TASKS: Proposed. Walker fixes landed 2026-10-12 under the test-drive sweep tickets (CRUSH-197 rust, CRUSH-201 C done; CRUSH-200 python, CRUSH-260 JS in progress), not under M6's own tickets. CRUSH-39 is a burned ID; its walker->AOT scope is CRUSH-103. 2026-10-31: CRUSH-36/37 In Progress, 21/35/38/103 Backlog."
+    notes: "Partial; ROADMAP still says Active but no walker-parity ticket moved recently, so planned here. 2026-11-18 ticket files: CRUSH-36/37 In Progress, CRUSH-21/35/38/103 Backlog. Walkers are experimental in 1.0. Open walker bugs: #501 (C switch), #560 (JS/Python main)."
+  },
+  {
+    id: "VIS"
+    title: "module visibility and packages (CRUSH-509, V0-V6)"
+    status: "active" @verified { at: "2026-11-18", by: "altair" }
+    started_at: "2026-11-14"
+    done_when: [
+      { claim: "design ruled by the captain", check: { kind: "file", path: "docs/design/visibility-and-packages.md", contains: "Rulings (captain, 2026-11-14" } },
+      { claim: "V0 #518, V1 #519, V1.5 #539, V3a #521, V3b #522 closed", met: true @verified { at: "2026-11-18", by: "altair" } },
+      "V2 #520: pub added across facet, crush-http, polish, examples, guide, awesome-crush",
+      "V4 #523 per-module kinds, V5 #524 W-VIS01 becomes an error",
+      "V6 #525 member visibility (experimental unless it lands before the freeze)",
+    ]
+    notes: "V2 started: crush-pkg new --lib scaffolds pub (#546). Gate follow-ups #551/#552/#553 merged 2026-11-17."
+  },
+  {
+    id: "FREEZE"
+    title: "1.0 freeze prep (feature freeze 2026-12-31)"
+    status: "active" @verified { at: "2026-11-18", by: "altair" }
+    target: "2026-12-31"
+    depends_on: ["VIS"]
+    done_when: [
+      { claim: "1.0 criteria written and ruled", check: { kind: "file", path: "docs/planning/RELEASE-1.0-CRITERIA.md", contains: "Feature freeze: 2026-12-31" } },
+      "the freeze release (last minor on or before 2026-12-31) is cut",
+      "the silently-wrong class is closed on Tier-1 engines (engine parity #444-#447, #531, #532, #557)",
+      "freeze-blocking tickets CRUSH-457, CRUSH-475..500 closed",
+    ]
+    notes: "RELEASE-1.0-CRITERIA.md on 2026-11-13: 22 ok / 24 partial / 21 not met of 67. Path: freeze prep -> freeze release -> 1.0.0-rc.N (>= 4 weeks soak) -> 1.0.0. Security follow-ups from the 2026-11-17 capability-gate audit: AOT codegen injection fixed (#561/#562); grants into AOT, per-backend deny-by-default probe, parser fuzzing await the captain's call."
+  },
+  {
+    id: "1.0"
+    title: "Crush 1.0.0"
+    status: "planned" @verified { at: "2026-11-18", by: "altair" }
+    depends_on: ["FREEZE"]
+    target: "2027-02" ~0.3
+    done_when: [
+      { claim: "v1.0.0 tagged", check: { kind: "tag", pattern: "v1.0.0" } },
+      "1.0.0-rc soaked >= 4 weeks with no stable-surface change",
+    ]
   },
   {
     id: "M9"
     title: "cross-project convergence & stdlib restoration"
-    status: "planned" @verified { at: "2026-10-14", by: "mile-seed" }
+    status: "planned" @verified { at: "2026-11-18", by: "altair" }
     depends_on: ["M4"]
     done_when: [
       "surfer migrated, exosphere/nakshatra converged, stdlib remainder CRUSH-151..155 landed",
     ]
-    notes: "ROADMAP/TASKS: Proposed. Stdlib migration hygiene filed CRUSH-264/265 on 2026-10-12."
+    notes: "ROADMAP: Partial: CRUSH-55 Closed 2026-10-12; CRUSH-56/57 Superseded; CRUSH-54/58 Backlog (re-checked 2026-11-18)."
   },
 ]
